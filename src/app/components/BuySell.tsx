@@ -163,25 +163,38 @@ export function BuySell() {
   // Stepper connector script – load once, never remove (ChangeNOW's
   // stepper-connector.js crashes if the script tag is removed while its
   // internal MutationObserver is still active).
+  // We poll for the actual iframe DOM node instead of a blind timeout so the
+  // script never runs before the iframe exists (avoids "iframe-widget not found").
   const scriptLoaded = useRef(false);
   useEffect(() => {
     if (scriptLoaded.current) return;
     if (activeTab !== "crosschain" && activeTab !== "topup") return;
 
-    // Small delay so the iframe DOM node (id="iframe-widget") is present
-    // before the script runs its querySelector.
-    const timer = setTimeout(() => {
-      const existing = document.querySelector('script[src*="stepper-connector"]');
-      if (!existing) {
-        const s = document.createElement("script");
-        s.src = "https://changenow.io/embeds/exchange-widget/v2/stepper-connector.js";
-        s.defer = true;
-        document.body.appendChild(s);
-      }
-      scriptLoaded.current = true;
-    }, 400);
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 50; // ~830ms at 60 fps — generous for React render
 
-    return () => clearTimeout(timer);
+    const tryLoad = () => {
+      if (cancelled) return;
+      const iframe = document.getElementById("iframe-widget");
+      if (iframe) {
+        const existing = document.querySelector('script[src*="stepper-connector"]');
+        if (!existing) {
+          const s = document.createElement("script");
+          s.src = "https://changenow.io/embeds/exchange-widget/v2/stepper-connector.js";
+          s.defer = true;
+          document.body.appendChild(s);
+        }
+        scriptLoaded.current = true;
+        return;
+      }
+      if (++attempts < maxAttempts) {
+        requestAnimationFrame(tryLoad);
+      }
+    };
+    requestAnimationFrame(tryLoad);
+
+    return () => { cancelled = true; };
   }, [activeTab]);
 
   // Fetch live HBAR price

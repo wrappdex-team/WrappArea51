@@ -14,9 +14,6 @@ import {
   Percent,
   BarChart3,
   Info,
-  ExternalLink,
-  ArrowUpRight,
-  ArrowDownRight,
   Loader2,
   RefreshCw,
   Wifi,
@@ -25,10 +22,9 @@ import {
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { WalletConnectModal } from "./WalletConnectModal";
+import { BonzoLendBorrow } from "./BonzoLendBorrow";
 import {
   fetchBonzoMarkets,
-  getBonzoLendUrl,
-  isBonzoConfigured,
   type BonzoMarket,
   type BonzoProtocolStats,
 } from "../utils/bonzo";
@@ -262,7 +258,7 @@ export function DeFi() {
 
   const tabs: { key: Tab; label: string; icon: any; count?: number }[] = [
     { key: "pools", label: "Liquidity Pools", icon: Droplets, count: poolCount },
-    { key: "lend", label: "Lend & Borrow", icon: Zap, count: bonzoMarkets.length || 5 },
+    { key: "lend", label: "Lend & Borrow", icon: Zap, count: bonzoMarkets.length || 6 },
     { key: "staking", label: "Staking", icon: Lock, count: stakingPools.length || 5 },
   ];
 
@@ -538,281 +534,7 @@ export function DeFi() {
       )}
 
       {/* ═══ LEND & BORROW TAB (Bonzo Finance) ═══ */}
-      {activeTab === "lend" && (
-        <div className="space-y-4">
-          {/* Bonzo Finance Header */}
-          <div className={`rounded-xl p-4 md:p-5 flex flex-col sm:flex-row items-start gap-4 ${isDark ? "bg-gradient-to-br from-teal-900/20 to-emerald-900/10 border border-teal-500/20" : "bg-gradient-to-br from-teal-50 to-emerald-50 border border-teal-200"}`}>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${isDark ? "bg-teal-500/20" : "bg-teal-100"}`}>
-                <Zap className="w-6 h-6 text-teal-500" />
-              </div>
-              <div>
-                <div className="font-bold text-sm flex items-center gap-2">
-                  Powered by Bonzo Finance
-                  <a
-                    href={getBonzoLendUrl()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full transition-colors ${isDark ? "bg-teal-500/10 text-teal-400 hover:bg-teal-500/20" : "bg-teal-100 text-teal-700 hover:bg-teal-200"}`}
-                  >
-                    app.bonzo.finance/lend <ExternalLink className="w-2.5 h-2.5" />
-                  </a>
-                </div>
-                <div className={`text-xs mt-0.5 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                  Aave V2 lending protocol on Hedera — supply assets to earn interest, borrow against collateral
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 sm:ml-auto shrink-0">
-              <a
-                href={getBonzoLendUrl()}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all ${isDark ? "bg-teal-500/10 text-teal-400 hover:bg-teal-500/20 border border-teal-500/20" : "bg-teal-100 text-teal-700 hover:bg-teal-200 border border-teal-200"}`}
-              >
-                Open Bonzo <ExternalLink className="w-3 h-3" />
-              </a>
-              <a
-                href="https://github.com/Bonzo-Labs/bonzo-finance-contracts"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all ${isDark ? "bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 border border-slate-700" : "bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200"}`}
-              >
-                Contracts <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          </div>
-
-          {/* Data Pipeline Status */}
-          {bonzoStats && bonzoStats.dataSource === "pending" && !bonzoLoading && (
-            <div className={`rounded-xl p-4 flex items-start gap-3 ${isDark ? "bg-amber-500/5 border border-amber-500/20" : "bg-amber-50 border border-amber-200"}`}>
-              <Clock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <div className="font-bold text-sm mb-0.5">Awaiting On-Chain Data</div>
-                <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                  Live supply/borrow rates will populate once the Bonzo ProtocolDataProvider contract address is configured.
-                  Supply and Borrow buttons link directly to{" "}
-                  <a href={getBonzoLendUrl()} target="_blank" rel="noopener noreferrer" className="text-teal-400 hover:underline">app.bonzo.finance/lend</a>{" "}
-                  where you can interact with pools now.
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Loading State */}
-          {bonzoLoading && (
-            <div className={`rounded-xl p-12 flex flex-col items-center gap-3 ${cardClass}`}>
-              <Loader2 className={`w-8 h-8 animate-spin ${isDark ? "text-teal-400" : "text-teal-600"}`} />
-              <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Loading Bonzo markets...</div>
-            </div>
-          )}
-
-          {/* Error State */}
-          {bonzoError && !bonzoLoading && (
-            <div className={`rounded-xl p-4 flex items-start gap-3 ${isDark ? "bg-red-500/5 border border-red-500/20" : "bg-red-50 border border-red-200"}`}>
-              <Info className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-              <div className="text-sm">
-                <span className="font-bold">Connection issue: </span>
-                <span className={isDark ? "text-slate-400" : "text-gray-500"}>{bonzoError}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Markets Table */}
-          {!bonzoLoading && bonzoMarkets.length > 0 && (
-            <>
-              <div className={`rounded-xl overflow-hidden ${cardClass}`}>
-                {/* Desktop Header */}
-                <div className={`hidden md:grid grid-cols-12 gap-3 px-4 py-3 text-xs uppercase tracking-wider ${isDark ? "text-slate-500 border-b border-teal-500/10" : "text-gray-400 border-b border-gray-100"}`}>
-                  <div className="col-span-3">Asset</div>
-                  <div className="col-span-2 text-right">Supply APY</div>
-                  <div className="col-span-2 text-right">Borrow APY</div>
-                  <div className="col-span-2 text-right">Utilization</div>
-                  <div className="col-span-3 text-center">Actions</div>
-                </div>
-
-                {/* Market Rows */}
-                {bonzoMarkets.map((market) => (
-                  <div
-                    key={market.id}
-                    className={`grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-3 px-4 py-4 transition-all duration-200 ${isDark ? "hover:bg-slate-800/30 border-b border-teal-500/5" : "hover:bg-gray-50 border-b border-gray-50"}`}
-                  >
-                    {/* Asset */}
-                    <div className="md:col-span-3 flex items-center gap-3">
-                      <img
-                        src={market.logo}
-                        alt={market.symbol}
-                        className="w-9 h-9 rounded-full"
-                        onError={(e) => {
-                          e.currentTarget.style.display = "none";
-                        }}
-                      />
-                      <div>
-                        <div className="font-bold text-sm flex items-center gap-1.5">
-                          {market.symbol}
-                          {market.canBeCollateral && (
-                            <Shield className={`w-3 h-3 ${isDark ? "text-teal-500" : "text-teal-600"}`} title={`Collateral — ${market.maxLTV}% LTV`} />
-                          )}
-                        </div>
-                        <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                          {market.name}
-                          {market.hederaTokenId !== "native" && (
-                            <span className={`ml-1 ${isDark ? "text-slate-600" : "text-gray-300"}`}>
-                              ({market.hederaTokenId})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Mobile Stats Row */}
-                    <div className="grid grid-cols-3 gap-3 md:hidden">
-                      <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supply APY</div>
-                        <div className="text-sm font-bold">
-                          {market.supplyAPY != null ? (
-                            <span className="text-emerald-400 flex items-center gap-0.5">
-                              <ArrowUpRight className="w-3 h-3" />
-                              {market.supplyAPY.toFixed(2)}%
-                            </span>
-                          ) : (
-                            <span className={isDark ? "text-slate-600" : "text-gray-300"}>—</span>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Borrow APY</div>
-                        <div className="text-sm font-bold">
-                          {market.variableBorrowAPY != null ? (
-                            <span className="text-amber-400 flex items-center gap-0.5">
-                              <ArrowDownRight className="w-3 h-3" />
-                              {market.variableBorrowAPY.toFixed(2)}%
-                            </span>
-                          ) : (
-                            <span className={isDark ? "text-slate-600" : "text-gray-300"}>—</span>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Utilization</div>
-                        <div className="text-sm font-bold">
-                          {market.utilization != null ? (
-                            <span>{market.utilization}%</span>
-                          ) : (
-                            <span className={isDark ? "text-slate-600" : "text-gray-300"}>—</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Desktop: Supply APY */}
-                    <div className="hidden md:flex col-span-2 items-center justify-end">
-                      {market.supplyAPY != null ? (
-                        <span className="font-bold text-sm text-emerald-400 flex items-center gap-0.5">
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                          {market.supplyAPY.toFixed(2)}%
-                        </span>
-                      ) : (
-                        <span className={`text-sm ${isDark ? "text-slate-600" : "text-gray-300"}`}>—</span>
-                      )}
-                    </div>
-
-                    {/* Desktop: Borrow APY */}
-                    <div className="hidden md:flex col-span-2 items-center justify-end">
-                      {market.variableBorrowAPY != null ? (
-                        <span className="font-bold text-sm text-amber-400 flex items-center gap-0.5">
-                          <ArrowDownRight className="w-3.5 h-3.5" />
-                          {market.variableBorrowAPY.toFixed(2)}%
-                        </span>
-                      ) : (
-                        <span className={`text-sm ${isDark ? "text-slate-600" : "text-gray-300"}`}>—</span>
-                      )}
-                    </div>
-
-                    {/* Desktop: Utilization */}
-                    <div className="hidden md:flex col-span-2 items-center justify-end gap-2">
-                      {market.utilization != null ? (
-                        <>
-                          <div className={`w-16 h-1.5 rounded-full overflow-hidden ${isDark ? "bg-slate-800" : "bg-gray-200"}`}>
-                            <div
-                              className={`h-full rounded-full ${
-                                market.utilization > 80 ? "bg-red-500" : market.utilization > 50 ? "bg-amber-500" : "bg-teal-500"
-                              }`}
-                              style={{ width: `${market.utilization}%` }}
-                            />
-                          </div>
-                          <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{market.utilization}%</span>
-                        </>
-                      ) : (
-                        <span className={`text-sm ${isDark ? "text-slate-600" : "text-gray-300"}`}>—</span>
-                      )}
-                    </div>
-
-                    {/* Actions — all link to https://app.bonzo.finance/lend */}
-                    <div className="md:col-span-3 flex items-center justify-center gap-2">
-                      <a
-                        href={market.supplyUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg shadow-teal-500/20"
-                      >
-                        Supply <ExternalLink className="w-3 h-3" />
-                      </a>
-                      <a
-                        href={market.borrowUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700" : "bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200"}`}
-                      >
-                        Borrow <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Bonzo Info Footer */}
-              <div className={`rounded-xl p-4 ${isDark ? "bg-slate-900/20 border border-slate-800" : "bg-gray-50 border border-gray-200"}`}>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                  <div className={`p-3 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-white"}`}>
-                    <div className="font-bold mb-1 flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5 text-teal-400" />
-                      How Supply Works
-                    </div>
-                    <div className={isDark ? "text-slate-400" : "text-gray-500"}>
-                      Deposit assets into Bonzo lending pools to earn interest. Supply APY adjusts with pool utilization. Withdraw anytime.
-                    </div>
-                  </div>
-                  <div className={`p-3 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-white"}`}>
-                    <div className="font-bold mb-1 flex items-center gap-1.5">
-                      <Percent className="w-3.5 h-3.5 text-amber-400" />
-                      How Borrow Works
-                    </div>
-                    <div className={isDark ? "text-slate-400" : "text-gray-500"}>
-                      Supply collateral on Bonzo, then borrow other assets. Variable interest accrues per block. Keep your health factor above 1.0.
-                    </div>
-                  </div>
-                  <div className={`p-3 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-white"}`}>
-                    <div className="font-bold mb-1 flex items-center gap-1.5">
-                      <Info className="w-3.5 h-3.5 text-blue-400" />
-                      Data Pipeline
-                    </div>
-                    <div className={isDark ? "text-slate-400" : "text-gray-500"}>
-                      {isBonzoConfigured()
-                        ? "Live rates fetched from Bonzo's ProtocolDataProvider via Hedera Mirror Node."
-                        : "Rates will activate when the ProtocolDataProvider contract address is configured in bonzo.ts."
-                      }{" "}
-                      <a href="https://github.com/Bonzo-Labs/bonzo-finance-contracts" target="_blank" rel="noopener noreferrer" className="text-teal-400 hover:underline">
-                        View contracts
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+      {activeTab === "lend" && <BonzoLendBorrow />}
 
       {/* ═══ STAKING TAB ═══ */}
       {activeTab === "staking" && (

@@ -150,6 +150,7 @@ export function Trading() {
 
   const currentPrice = prices[selectedToken.symbol]?.current_price || selectedToken.fallbackPrice;
   const currentChange = prices[selectedToken.symbol]?.price_change_percentage_24h || selectedToken.fallbackChange;
+  const currentChangeSource = prices[selectedToken.symbol]?.change_source || "fallback";
   const currentVolume = prices[selectedToken.symbol]?.total_volume;
   const currentLogo = prices[selectedToken.symbol]?.image || selectedToken.logo;
   const currentOracleSource: OracleSource = prices[selectedToken.symbol]?.oracle_source || "fallback";
@@ -625,10 +626,16 @@ export function Trading() {
                 </span>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
-                <div className={`flex items-center gap-1 text-xs ${currentChange >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                  {currentChange >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                  {currentChange >= 0 ? "+" : ""}{currentChange.toFixed(2)}% <span className={`${isDark ? "text-slate-500" : "text-gray-400"}`}>24h</span>
-                </div>
+                {currentChangeSource === "fallback" ? (
+                  <div className={`flex items-center gap-1 text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`} title="Waiting for live 24h data from CoinCap/CoinGecko...">
+                    <span>~</span> — <span className={`${isDark ? "text-slate-500" : "text-gray-400"}`}>24h</span>
+                  </div>
+                ) : (
+                  <div className={`flex items-center gap-1 text-xs ${currentChange >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                    {currentChange >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                    {currentChange >= 0 ? "+" : ""}{currentChange.toFixed(2)}% <span className={`${isDark ? "text-slate-500" : "text-gray-400"}`}>24h</span>
+                  </div>
+                )}
                 {currentOracleSource === "chainlink" && currentOracleUpdatedAt && (
                   <span className={`text-[10px] ${isDark ? "text-blue-400/60" : "text-blue-600/60"}`}>
                     Oracle: {formatOracleAge(currentOracleUpdatedAt)}

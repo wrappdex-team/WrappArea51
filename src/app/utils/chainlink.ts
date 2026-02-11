@@ -159,7 +159,7 @@ function answerToPrice(answer: bigint, decimals: number): number {
 async function batchEthCall(
   rpcUrl: string,
   calls: { to: string; data: string }[],
-  timeoutMs: number = 12_000
+  timeoutMs: number = 8_000
 ): Promise<(string | null)[]> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

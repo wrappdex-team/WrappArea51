@@ -1,6 +1,25 @@
 /**
  * Environment Configuration
  * Centralizes API endpoints, feature flags, and app constants.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * SECURITY AUDIT NOTES — 2026-02-11
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * [AUDIT-E01] WALLETCONNECT_PROJECT_ID, DYNAMIC_ENVIRONMENT_ID, and
+ *   CHANGENOW_AFFILIATE_ID have hardcoded fallback values. While these
+ *   are considered "public" keys (they're shipped to the browser anyway),
+ *   hardcoded fallbacks mean they can't be rotated without a deploy.
+ *   RECOMMENDATION: Require env vars in production (throw on missing).
+ *
+ * [AUDIT-E02] The SUPABASE_URL and SUPABASE_ANON_KEY are imported from
+ *   /utils/supabase/info.tsx elsewhere. Ensure that SUPABASE_SERVICE_ROLE_KEY
+ *   is NEVER imported or referenced in any frontend file. Grep confirmed:
+ *   it only appears in server-side code.
+ *
+ * [AUDIT-E03] No secrets, private keys, or service role keys exist in
+ *   this file or any other frontend file. PASS.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 
 const IS_PROD = import.meta.env.PROD ?? false;
@@ -19,6 +38,17 @@ const DYNAMIC_ENVIRONMENT_ID =
   import.meta.env.VITE_DYNAMIC_ENV_ID || "7e0e9ad0-5717-40f4-8aa4-5a2bdc7f062e";
 const CHANGENOW_AFFILIATE_ID =
   import.meta.env.VITE_CHANGENOW_AFFILIATE_ID || "4de8efb2ccff7a";
+
+// [AUDIT-E01] Runtime check — warn once in production if env vars are missing
+if (IS_PROD) {
+  const missing: string[] = [];
+  if (!import.meta.env.VITE_WALLETCONNECT_PROJECT_ID) missing.push("VITE_WALLETCONNECT_PROJECT_ID");
+  if (!import.meta.env.VITE_DYNAMIC_ENV_ID) missing.push("VITE_DYNAMIC_ENV_ID");
+  if (!import.meta.env.VITE_CHANGENOW_AFFILIATE_ID) missing.push("VITE_CHANGENOW_AFFILIATE_ID");
+  if (missing.length > 0) {
+    console.warn(`[SECURITY] Production build using hardcoded fallback values for: ${missing.join(", ")}. Set these env vars to enable rotation without redeployment.`);
+  }
+}
 
 const HBARH_TOKEN_ID = "0.0.9356476";
 const VIP_NFT_TOKEN_ID = "0.0.10146181";

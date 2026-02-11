@@ -29,12 +29,16 @@ import {
   type EvmTransaction,
   getExplorerTxUrl,
   CHAIN_INFO,
+  enrichEvmTransactions,
 } from "../utils/metamask";
-import hbarhLogoDark from "figma:asset/19456341201af071ab9a18b4f9f24e121f5add0f.png";
-import hbarhLogoLight from "figma:asset/a4dcb71ed037398f210b836928214a568ecf191e.png";
-import hbarhBrandingDark from "figma:asset/695748e7e35fb39de1cc1cb52064264e7ddfd3f6.png";
-import hbarhBrandingLight from "figma:asset/22a663b499ccaee62117fe6d922420ef74f8821d.png";
-import hashpackLogo from "figma:asset/88a04a0e847751906ce5a271fa9d750625ac069d.png";
+import {
+  HBARH_LOGO_DARK,
+  HBARH_LOGO_LIGHT,
+  HBARH_BRANDING_DARK,
+  HBARH_BRANDING_LIGHT,
+  HASHPACK_LOGO,
+  METAMASK_LOGO,
+} from "../assets/brand";
 import {
   formatHbar,
   getHashScanAccountUrl,
@@ -62,13 +66,13 @@ const TOKEN_LOGOS: Record<string, string> = {
 };
 
 function getTokenLogo(symbol: string, tokenId?: string, isDark = true): string | null {
-  if (tokenId === HBARH_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? hbarhLogoDark : hbarhLogoLight;
+  if (tokenId === HBARH_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT;
   if (tokenId === WBTC_TOKEN_ID || symbol === "WBTC") return TOKEN_LOGOS.WBTC;
   return TOKEN_LOGOS[symbol] || null;
 }
 
 const CONNECTOR_LOGOS: Record<string, string> = {
-  MetaMask: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#F6851B"/><path d="M29.5 9l-7.8 5.8 1.4-3.4z" fill="#E2761B" stroke="#E2761B" stroke-width=".3"/><path d="M10.5 9l7.7 5.9-1.3-3.5zm13.3 16.6l-2.1 3.2 4.4 1.2 1.3-4.3zm-16.4.1l1.3 4.3 4.4-1.2-2.1-3.2z" fill="#E4761B" stroke="#E4761B" stroke-width=".3"/></svg>`)}`,
+  MetaMask: METAMASK_LOGO,
 };
 
 // Donut chart colors
@@ -288,7 +292,7 @@ export function Wallet() {
     if (metaMaskAccount) {
       setLoadingEvmTxns(true);
       fetchEvmTransactions(metaMaskAccount.address, metaMaskAccount.chainId)
-        .then(setEvmTxns)
+        .then((txns) => setEvmTxns(enrichEvmTransactions(txns, metaMaskAccount.address, metaMaskAccount.chainId)))
         .catch(() => setEvmTxns([]))
         .finally(() => setLoadingEvmTxns(false));
     } else {
@@ -470,7 +474,7 @@ export function Wallet() {
       } catch { /* non-critical */ }
       try {
         const txns = await fetchEvmTransactions(metaMaskAccount.address, metaMaskAccount.chainId);
-        setEvmTxns(txns);
+        setEvmTxns(enrichEvmTransactions(txns, metaMaskAccount.address, metaMaskAccount.chainId));
       } catch { /* non-critical */ }
     }
     setIsRefreshingMM(false);
@@ -557,7 +561,7 @@ export function Wallet() {
           {/* HBAR.ħ Price */}
           <div>
             <div className="flex items-center gap-1">
-              <img src={isDark ? hbarhLogoDark : hbarhLogoLight} alt="" className="w-3 h-3 rounded-full object-cover" />
+              <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
               <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
             </div>
             <div className="font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
@@ -605,7 +609,7 @@ export function Wallet() {
                 {/* Account header */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3 min-w-0">
-                    <img src={hashpackLogo} alt="HashPack" className="w-10 h-10 rounded-xl flex-shrink-0" />
+                    <img src={HASHPACK_LOGO} alt="HashPack" className="w-10 h-10 rounded-xl flex-shrink-0" />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold">HashPack</span>
@@ -653,7 +657,7 @@ export function Wallet() {
                   </div>
                   <div className={`p-3 rounded-lg ${isDark ? "bg-black/20" : "bg-gray-50"}`}>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <img src={isDark ? hbarhLogoDark : hbarhLogoLight} alt="" className="w-3 h-3 rounded-full object-cover" />
+                      <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
                       <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
                     </div>
                     <div className="font-bold">
@@ -905,7 +909,7 @@ export function Wallet() {
             {hederaAccount && (
               <>
                 <div className="flex items-center gap-2 mb-2">
-                  <img src={hashpackLogo} alt="" className="w-4 h-4 rounded" />
+                  <img src={HASHPACK_LOGO} alt="" className="w-4 h-4 rounded" />
                   <span className={`text-xs font-bold ${isDark ? "text-slate-400" : "text-gray-600"}`}>Hedera</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isDark ? "bg-purple-500/15 text-purple-400" : "bg-purple-100 text-purple-600"}`}>
                     Mirror Node

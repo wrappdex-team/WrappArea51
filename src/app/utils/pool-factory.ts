@@ -277,7 +277,7 @@ export interface PoolableToken {
  */
 function buildPoolableTokens(): PoolableToken[] {
   const stables = new Set(["USDC", "USDT"]);
-  const majors = new Set(["WHBAR", "WBTC", "WETH", "LINK"]);
+  const majors = new Set(["WHBAR", "WBTC", "WETH", "LINK", "WPOL"]);
   const protocol = new Set(["HBAR.ħ"]);
   const defi = new Set(["SAUCE", "HBARX"]);
 

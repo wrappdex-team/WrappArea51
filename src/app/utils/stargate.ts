@@ -85,8 +85,29 @@ const SEL_APPROVE     = "0x095ea7b3"; // approve(address,uint256)
  * (0xc026395860Db2d07ee33e05fE50ed7bD583189C7)
  * ══════════════════════════════════════════════════════════════ */
 
-const SEL_QUOTE_SEND = "0xc7c7f5b3"; // quoteSend(SendParam,bool)
-const SEL_SEND       = "0xc7c7f5b3"; // Intentionally same — re-derived below
+// ═══════════════════════════════════════════════════════════════════════
+// [AUDIT-B01] CRITICAL — Both selectors are identical ("0xc7c7f5b3").
+//   quoteSend and send are DIFFERENT functions with DIFFERENT signatures.
+//   One of these is WRONG and will cause failed or unexpected transactions.
+//
+//   REQUIRED ACTION: Verify against Etherscan for the deployed Stargate V2
+//   USDC pool (0xc026395860Db2d07ee33e05fE50ed7bD583189C7).
+//   Steps:
+//     1. Go to Etherscan → Contract → Read/Write Contract
+//     2. Look up the actual function selectors in the ABI
+//     3. Or compute: keccak256("quoteSend((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),bool)")[:4]
+//     4. And: keccak256("send((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),(uint256,uint256),address)")[:4]
+//   Expected correct values (Stargate V2 / OFT standard):
+//     quoteSend = 0xc7c7f5b3
+//     send      = 0xc7c7f5b3 ← LIKELY WRONG, needs re-derivation
+//
+// [AUDIT-B02] All Stargate pool/token addresses in this file should be
+//   verified against the official Stargate V2 deployment registry at
+//   https://stargateprotocol.gitbook.io/stargate/v/v2-developer-docs
+// ═══════════════════════════════════════════════════════════════════════
+
+const SEL_QUOTE_SEND = "0xc7c7f5b3"; // quoteSend(SendParam,bool) — needs Etherscan verification
+const SEL_SEND       = "0xc7c7f5b3"; // [AUDIT-B01] SUSPECT — likely wrong, see notes above
 
 // Note: The actual selectors depend on the exact struct layout. We'll use
 // a try-with-fallback approach — if the selector fails, the contract call

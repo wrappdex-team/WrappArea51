@@ -17,13 +17,17 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { fetchRecentTransactions } from "../utils/hedera";
 import type { HederaTransaction } from "../utils/hedera";
-// metamask utils not needed here since mock txn generation uses address directly
+import {
+  fetchEvmTransactions,
+  CHAIN_INFO,
+  type EtherscanTx,
+} from "../utils/metamask";
 
 // ─── Unified transaction type ───
 interface UnifiedTransaction {
   id: string;
   type: "buy" | "sell" | "deposit" | "withdraw" | "transfer" | "contract";
-  network: "hedera" | "ethereum" | "solana";
+  network: "hedera" | "ethereum";
   pair: string;
   amount: number;
   price: number | null;
@@ -36,91 +40,108 @@ interface UnifiedTransaction {
   walletLabel: string;
 }
 
-// Generate deterministic mock EVM transactions from MetaMask address
-function generateMockEvmTxns(address: string, chainId: number, ethPrice: number): UnifiedTransaction[] {
-  const seed = parseInt(address.slice(2, 10), 16);
-  const now = Date.now();
-  const pairs = ["ETH/USDC", "ETH/USDT", "WBTC/ETH", "UNI/ETH", "LINK/ETH", "AAVE/ETH"];
-  const types: ("buy" | "sell" | "deposit" | "withdraw")[] = ["buy", "sell", "deposit", "withdraw"];
-  const explorer = chainId === 1 ? "https://etherscan.io" : "https://etherscan.io";
-  const txns: UnifiedTransaction[] = [];
+// ─── Convert real Etherscan transactions to unified format ───
+function convertEvmTxns(
+  txns: EtherscanTx[],
+  address: string,
+  chainId: number,
+  nativePrice: number,
+): UnifiedTransaction[] {
+  const chain = CHAIN_INFO[chainId];
+  const explorerBase = chain?.explorer || "https://etherscan.io";
+  const nativeSymbol = chain?.symbol || "ETH";
 
-  for (let i = 0; i < 10; i++) {
-    const txSeed = (seed + i * 7919) % 1000000;
-    const type = types[txSeed % types.length];
-    const pairIdx = (txSeed + i) % pairs.length;
-    const pair = type === "deposit" || type === "withdraw" ? "ETH" : pairs[pairIdx];
-    const amount = type === "deposit" || type === "withdraw"
-      ? parseFloat(((txSeed % 5000) / 1000 + 0.01).toFixed(4))
-      : parseFloat(((txSeed % 3000) / 1000 + 0.001).toFixed(4));
-    const price = pair.includes("/") ? ethPrice : null;
-    const total = price ? parseFloat((amount * price).toFixed(2)) : null;
-    const fee = parseFloat(((txSeed % 100) / 1000 + 0.001).toFixed(4));
-    const timeOffset = i * 3600000 + (txSeed % 3600000);
-    const ts = now - timeOffset;
-    const txHash = `0x${(txSeed * 12345 + i).toString(16).padStart(64, "0").slice(0, 64)}`;
+  // Deduplicate by hash
+  const seen = new Set<string>();
+  const unique = txns.filter((tx) => {
+    if (seen.has(tx.hash)) return false;
+    seen.add(tx.hash);
+    return true;
+  });
 
-    txns.push({
-      id: txHash,
+  return unique.map((tx) => {
+    const fromMe = tx.from.toLowerCase() === address.toLowerCase();
+    const toMe = tx.to?.toLowerCase() === address.toLowerCase();
+    const valueWei = BigInt(tx.value || "0");
+    const amount = Number(valueWei) / 1e18; // native token always 18 decimals
+    const hasContractInteraction = tx.input && tx.input !== "0x" && tx.input.length > 10;
+
+    // Determine transaction type from on-chain data
+    let type: UnifiedTransaction["type"] = "transfer";
+
+    if (hasContractInteraction) {
+      // Common DEX function signatures
+      const methodId = tx.methodId || tx.input?.slice(0, 10) || "";
+      const swapMethods = [
+        "0x38ed1739", // swapExactTokensForTokens
+        "0x8803dbee", // swapTokensForExactTokens
+        "0x7ff36ab5", // swapExactETHForTokens
+        "0x18cbafe5", // swapExactTokensForETH
+        "0x5c11d795", // swapExactTokensForTokensSupportingFeeOnTransferTokens
+        "0xb6f9de95", // swapExactETHForTokensSupportingFeeOnTransferTokens
+        "0x791ac947", // swapExactTokensForETHSupportingFeeOnTransferTokens
+        "0x04e45aaf", // Uniswap V3 exactInputSingle
+        "0xb858183f", // Uniswap V3 exactInput
+        "0x414bf389", // Uniswap V3 exactInputSingle (older)
+        "0xdb3e2198", // Uniswap V3 exactOutputSingle
+        "0x472b43f3", // swapExactTokensForTokens (V3 router)
+        "0x42712a67", // swapTokensForExactTokens (V3 router)
+      ];
+
+      if (swapMethods.includes(methodId)) {
+        type = fromMe ? "sell" : "buy";
+      } else if (methodId === "0xa9059cbb" || methodId === "0x23b872dd") {
+        // ERC-20 transfer / transferFrom
+        type = fromMe ? "withdraw" : "deposit";
+      } else {
+        type = "contract";
+      }
+    } else if (valueWei > 0n) {
+      // Simple native token transfer
+      type = fromMe ? "withdraw" : "deposit";
+    } else {
+      type = "contract";
+    }
+
+    const ts = parseInt(tx.timeStamp, 10) * 1000;
+    const gasUsed = BigInt(tx.gasUsed || "0");
+    const gasPrice = BigInt(tx.gasPrice || "0");
+    const feeWei = gasUsed * gasPrice;
+    const feeNative = Number(feeWei) / 1e18;
+    const feeUsd = feeNative * nativePrice;
+
+    // Build pair label
+    let pair = nativeSymbol;
+    if (hasContractInteraction && type !== "contract") {
+      // For swaps, we know it involves the native token + something else
+      if (type === "buy" || type === "sell") {
+        pair = `${nativeSymbol}/Token`;
+        // Try to parse function name for better labeling
+        if (tx.functionName) {
+          const fn = tx.functionName.toLowerCase();
+          if (fn.includes("eth") && fn.includes("token")) {
+            pair = `${nativeSymbol}/Token`;
+          }
+        }
+      }
+    }
+
+    return {
+      id: tx.hash,
       type,
-      network: "ethereum",
+      network: "ethereum" as const,
       pair,
       amount,
-      price,
-      total,
-      fee,
-      status: "completed",
+      price: nativePrice,
+      total: amount > 0 ? parseFloat((amount * nativePrice).toFixed(2)) : null,
+      fee: feeUsd,
+      status: tx.isError === "0" ? ("completed" as const) : ("failed" as const),
       time: new Date(ts).toLocaleString(),
       timestamp: ts,
-      explorerUrl: `${explorer}/tx/${txHash}`,
+      explorerUrl: `${explorerBase}/tx/${tx.hash}`,
       walletLabel: "MetaMask",
-    });
-  }
-
-  return txns;
-}
-
-// Generate deterministic mock SOL transactions from derived SOL address
-function generateMockSolTxns(ethAddress: string, solPrice: number): UnifiedTransaction[] {
-  const seed = parseInt(ethAddress.slice(10, 18), 16);
-  const now = Date.now();
-  const pairs = ["SOL/USDC", "SOL/USDT", "RAY/SOL", "JTO/SOL", "BONK/SOL"];
-  const types: ("buy" | "sell" | "deposit" | "withdraw")[] = ["buy", "sell", "deposit", "withdraw"];
-  const txns: UnifiedTransaction[] = [];
-
-  for (let i = 0; i < 6; i++) {
-    const txSeed = (seed + i * 6271) % 1000000;
-    const type = types[txSeed % types.length];
-    const pairIdx = (txSeed + i) % pairs.length;
-    const pair = type === "deposit" || type === "withdraw" ? "SOL" : pairs[pairIdx];
-    const amount = type === "deposit" || type === "withdraw"
-      ? parseFloat(((txSeed % 20000) / 1000 + 0.1).toFixed(4))
-      : parseFloat(((txSeed % 10000) / 1000 + 0.01).toFixed(4));
-    const price = pair.includes("/") ? solPrice : null;
-    const total = price ? parseFloat((amount * price).toFixed(2)) : null;
-    const fee = parseFloat(((txSeed % 50) / 10000 + 0.00001).toFixed(5));
-    const timeOffset = i * 5400000 + (txSeed % 5400000);
-    const ts = now - timeOffset;
-    const sig = `${(txSeed * 54321 + i).toString(36).padStart(44, "0").slice(0, 44)}`;
-
-    txns.push({
-      id: sig,
-      type,
-      network: "solana",
-      pair,
-      amount,
-      price,
-      total,
-      fee,
-      status: "completed",
-      time: new Date(ts).toLocaleString(),
-      timestamp: ts,
-      explorerUrl: `https://solscan.io/tx/${sig}`,
-      walletLabel: "MetaMask (SOL)",
-    });
-  }
-
-  return txns;
+    };
+  });
 }
 
 // Convert Hedera mirror node transactions to unified format
@@ -166,7 +187,7 @@ function convertHederaTxns(
       price: null,
       total: null,
       fee: 0.0001,
-      status: tx.result === "SUCCESS" ? "completed" as const : "failed" as const,
+      status: tx.result === "SUCCESS" ? ("completed" as const) : ("failed" as const),
       time: new Date(ts).toLocaleString(),
       timestamp: ts,
       explorerUrl: `https://hashscan.io/${network}/transaction/${tx.transactionId}`,
@@ -176,19 +197,22 @@ function convertHederaTxns(
 }
 
 export function History() {
-  const [filter, setFilter] = useState<"all" | "trades" | "deposits" | "withdrawals" | "hedera" | "ethereum" | "solana">("all");
+  const [filter, setFilter] = useState<"all" | "trades" | "deposits" | "withdrawals" | "hedera" | "ethereum">("all");
   const [showAll, setShowAll] = useState(false);
   const { isDark } = useTheme();
   const {
     hederaAccount,
     metaMaskAccount,
     ethPrice,
-    solPrice,
     connectedWallets,
   } = useWallet();
 
   const [hederaTxns, setHederaTxns] = useState<HederaTransaction[]>([]);
   const [loadingHedera, setLoadingHedera] = useState(false);
+
+  const [evmTxns, setEvmTxns] = useState<EtherscanTx[]>([]);
+  const [loadingEvm, setLoadingEvm] = useState(false);
+  const [evmError, setEvmError] = useState<string | null>(null);
 
   const hasAnyWallet = !!hederaAccount || !!metaMaskAccount || connectedWallets.length > 0;
 
@@ -204,6 +228,33 @@ export function History() {
     }
   }, [hederaAccount?.accountId, hederaAccount?.network]);
 
+  // Fetch real EVM transactions from Etherscan-family API
+  useEffect(() => {
+    if (metaMaskAccount) {
+      setLoadingEvm(true);
+      setEvmError(null);
+      fetchEvmTransactions(metaMaskAccount.address, metaMaskAccount.chainId, 50)
+        .then((txns) => {
+          setEvmTxns(txns);
+          if (txns.length === 0) {
+            const chain = CHAIN_INFO[metaMaskAccount.chainId];
+            if (!chain) {
+              setEvmError(`Chain ${metaMaskAccount.chainId} is not yet supported for transaction history.`);
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("[History] Failed to fetch EVM transactions:", err);
+          setEvmError("Failed to fetch transaction history from block explorer.");
+          setEvmTxns([]);
+        })
+        .finally(() => setLoadingEvm(false));
+    } else {
+      setEvmTxns([]);
+      setEvmError(null);
+    }
+  }, [metaMaskAccount?.address, metaMaskAccount?.chainId]);
+
   // Build unified transaction list from all connected wallets
   const allTransactions = useMemo(() => {
     const txns: UnifiedTransaction[] = [];
@@ -215,18 +266,18 @@ export function History() {
       );
     }
 
-    // MetaMask EVM transactions (simulated)
-    if (metaMaskAccount) {
-      txns.push(...generateMockEvmTxns(metaMaskAccount.address, metaMaskAccount.chainId, ethPrice));
-      // Also generate Solana transactions (linked via MetaMask)
-      txns.push(...generateMockSolTxns(metaMaskAccount.address, solPrice));
+    // Real EVM transactions from Etherscan
+    if (metaMaskAccount && evmTxns.length > 0) {
+      txns.push(
+        ...convertEvmTxns(evmTxns, metaMaskAccount.address, metaMaskAccount.chainId, ethPrice)
+      );
     }
 
     // Sort by timestamp descending (most recent first)
     txns.sort((a, b) => b.timestamp - a.timestamp);
 
     return txns;
-  }, [hederaAccount, hederaTxns, metaMaskAccount, ethPrice, solPrice]);
+  }, [hederaAccount, hederaTxns, metaMaskAccount, evmTxns, ethPrice]);
 
   // Apply filters
   const filteredTransactions = useMemo(() => {
@@ -237,7 +288,6 @@ export function History() {
       if (filter === "withdrawals") return tx.type === "withdraw";
       if (filter === "hedera") return tx.network === "hedera";
       if (filter === "ethereum") return tx.network === "ethereum";
-      if (filter === "solana") return tx.network === "solana";
       return true;
     });
   }, [allTransactions, filter]);
@@ -268,20 +318,34 @@ export function History() {
     );
   };
 
-  const getNetworkBadge = (network: string) => {
+  const getNetworkBadge = (network: string, chainName?: string) => {
     const styles: Record<string, string> = {
       hedera: isDark ? "bg-indigo-500/15 text-indigo-400" : "bg-indigo-100 text-indigo-600",
       ethereum: isDark ? "bg-blue-500/15 text-blue-400" : "bg-blue-100 text-blue-600",
-      solana: isDark ? "bg-purple-500/15 text-purple-400" : "bg-purple-100 text-purple-600",
     };
-    const labels: Record<string, string> = {
-      hedera: "Hedera",
-      ethereum: "ETH",
-      solana: "SOL",
-    };
+    // For EVM, show the chain name (e.g. "Ethereum", "Polygon", "Arbitrum")
+    let label = network === "hedera" ? "Hedera" : "ETH";
+    if (network === "ethereum" && metaMaskAccount) {
+      const chain = CHAIN_INFO[metaMaskAccount.chainId];
+      if (chain) {
+        // Short labels for well-known chains
+        const shortNames: Record<number, string> = {
+          1: "ETH",
+          137: "MATIC",
+          56: "BNB",
+          42161: "ARB",
+          10: "OP",
+          8453: "BASE",
+          43114: "AVAX",
+          5: "Goerli",
+          11155111: "Sepolia",
+        };
+        label = shortNames[metaMaskAccount.chainId] || chain.symbol;
+      }
+    }
     return (
       <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${styles[network] || ""}`}>
-        {labels[network] || network}
+        {label}
       </span>
     );
   };
@@ -296,7 +360,6 @@ export function History() {
     const networkBreakdown = {
       hedera: allTransactions.filter((tx) => tx.network === "hedera").length,
       ethereum: allTransactions.filter((tx) => tx.network === "ethereum").length,
-      solana: allTransactions.filter((tx) => tx.network === "solana").length,
     };
     return { trades: trades.length, totalVolume, totalFees, networkBreakdown };
   }, [allTransactions]);
@@ -319,12 +382,12 @@ export function History() {
             Connect a Wallet to View History
           </h3>
           <p className={`text-sm max-w-lg mx-auto mb-6 px-4 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            Your transaction history will appear here once you connect a Hedera, Ethereum, or Solana wallet.
-            All transactions are pulled directly from connected wallets.
+            Your transaction history will appear here once you connect a Hedera or EVM wallet.
+            All transactions are pulled directly from on-chain data.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 text-xs px-4">
             <span className="flex items-center gap-1.5 text-emerald-400">
-              <Shield className="w-3.5 h-3.5" /> Wallet-sourced data
+              <Shield className="w-3.5 h-3.5" /> On-chain verified
             </span>
             <span className={isDark ? "text-slate-700" : "text-gray-300"}>|</span>
             <span className="flex items-center gap-1.5 text-purple-400">
@@ -353,8 +416,7 @@ export function History() {
             {allTransactions.length} transactions from {
               [
                 hederaAccount ? "Hedera" : null,
-                metaMaskAccount ? "Ethereum" : null,
-                metaMaskAccount ? "Solana" : null,
+                metaMaskAccount ? (CHAIN_INFO[metaMaskAccount.chainId]?.name || "EVM") : null,
               ].filter(Boolean).join(", ")
             }
           </p>
@@ -369,8 +431,7 @@ export function History() {
           { key: "deposits" as const, label: "Deposits", icon: false },
           { key: "withdrawals" as const, label: "Withdrawals", icon: false },
           ...(hederaAccount ? [{ key: "hedera" as const, label: "Hedera", icon: false }] : []),
-          ...(metaMaskAccount ? [{ key: "ethereum" as const, label: "Ethereum", icon: false }] : []),
-          ...(metaMaskAccount ? [{ key: "solana" as const, label: "Solana", icon: false }] : []),
+          ...(metaMaskAccount ? [{ key: "ethereum" as const, label: CHAIN_INFO[metaMaskAccount.chainId]?.name || "EVM", icon: false }] : []),
         ]).map((btn) => (
           <button
             key={btn.key}
@@ -389,13 +450,27 @@ export function History() {
         ))}
       </div>
 
-      {/* Loading state for Hedera */}
-      {loadingHedera && (
+      {/* Loading states */}
+      {(loadingHedera || loadingEvm) && (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="w-5 h-5 animate-spin text-pink-400" />
           <span className={`ml-2 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            Fetching Hedera transactions...
+            {loadingHedera && loadingEvm
+              ? "Fetching Hedera & EVM transactions..."
+              : loadingHedera
+                ? "Fetching Hedera transactions..."
+                : "Fetching EVM transactions..."}
           </span>
+        </div>
+      )}
+
+      {/* EVM error / warning */}
+      {evmError && !loadingEvm && (
+        <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${
+          isDark ? "bg-yellow-500/10 border border-yellow-500/20 text-yellow-400" : "bg-yellow-50 border border-yellow-200 text-yellow-600"
+        }`}>
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {evmError}
         </div>
       )}
 
@@ -415,7 +490,7 @@ export function History() {
                 <th className={`text-right p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Amount</th>
                 <th className={`text-right p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Price</th>
                 <th className={`text-right p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total</th>
-                <th className={`text-right p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Fee</th>
+                <th className={`text-right p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Gas Fee</th>
                 <th className={`text-left p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Status</th>
                 <th className={`text-left p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Time</th>
                 <th className={`text-center p-4 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Details</th>
@@ -440,13 +515,6 @@ export function History() {
                   <td className="p-4">
                     <div className="flex items-center gap-1.5">
                       {getNetworkBadge(tx.network)}
-                      {tx.network !== "hedera" && (
-                        <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${
-                          isDark ? "bg-yellow-500/10 text-yellow-500/70 border border-yellow-500/20" : "bg-yellow-50 text-yellow-600 border border-yellow-200"
-                        }`} title="Simulated demo data — live indexing coming soon">
-                          DEMO
-                        </span>
-                      )}
                     </div>
                   </td>
                   <td className="p-4 font-mono">{tx.pair}</td>
@@ -494,9 +562,14 @@ export function History() {
           </table>
         </div>
 
-        {filteredTransactions.length === 0 && !loadingHedera && (
+        {filteredTransactions.length === 0 && !loadingHedera && !loadingEvm && (
           <div className={`p-12 text-center ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            <p>No transactions found for this filter</p>
+            <p>No transactions found{filter !== "all" ? " for this filter" : ""}</p>
+            {metaMaskAccount && evmTxns.length === 0 && !evmError && (
+              <p className="text-xs mt-2 opacity-60">
+                If this is a new wallet, there may be no on-chain transactions yet.
+              </p>
+            )}
           </div>
         )}
 
@@ -545,7 +618,7 @@ export function History() {
             ? "bg-gradient-to-br from-blue-900/20 to-cyan-900/20 border border-blue-500/20"
             : "bg-gradient-to-br from-blue-50 to-cyan-50 border border-blue-200"
         }`}>
-          <div className={`text-sm mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total Fees</div>
+          <div className={`text-sm mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total Gas Fees</div>
           <div className="text-2xl font-bold">
             ${stats.totalFees.toFixed(4)}
           </div>
@@ -568,14 +641,7 @@ export function History() {
               <span className={`text-xs px-2 py-1 rounded font-bold ${
                 isDark ? "bg-blue-500/15 text-blue-400" : "bg-blue-100 text-blue-600"
               }`}>
-                ETH {stats.networkBreakdown.ethereum}
-              </span>
-            )}
-            {stats.networkBreakdown.solana > 0 && (
-              <span className={`text-xs px-2 py-1 rounded font-bold ${
-                isDark ? "bg-purple-500/15 text-purple-400" : "bg-purple-100 text-purple-600"
-              }`}>
-                SOL {stats.networkBreakdown.solana}
+                {metaMaskAccount ? (CHAIN_INFO[metaMaskAccount.chainId]?.symbol || "ETH") : "ETH"} {stats.networkBreakdown.ethereum}
               </span>
             )}
           </div>
@@ -591,7 +657,8 @@ export function History() {
         <Shield className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
         <p className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}>
           {hederaAccount && "Hedera transactions are fetched live from the Mirror Node. "}
-          {metaMaskAccount && "Ethereum and Solana transactions are simulated based on your connected wallet address — live blockchain indexing coming soon. "}
+          {metaMaskAccount && `${CHAIN_INFO[metaMaskAccount.chainId]?.name || "EVM"} transactions are fetched from the on-chain block explorer API. `}
+          All data is sourced directly from the blockchain — no mock or simulated data.
           Connect additional wallets to see their transaction history here.
         </p>
       </div>

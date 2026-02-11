@@ -6,8 +6,7 @@ import { HashPortBridgeWidget } from "./HashPortBridgeWidget";
 import { StargateBridgeWidget } from "./StargateBridgeWidget";
 
 // ── Official brand logos ──
-import squidLogo from "figma:asset/29d60835fb1c27fec24f24737da2b23596433909.png";
-import hashportLogo from "figma:asset/361e908e8e84e0eeb5da449426c15dc4ec627a57.png";
+import { SQUID_LOGO, HASHPORT_LOGO } from "../assets/brand";
 
 // Stargate — inline SVG (dark circle with nested diamond geometry)
 const STARGATE_LOGO = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#1B1B2B"/><g fill="none" stroke="#fff" stroke-width="2.5"><polygon points="60,16 104,60 60,104 16,60" stroke-width="3"/><polygon points="60,30 90,60 60,90 30,60" stroke-width="2.5"/><circle cx="60" cy="60" r="11" fill="#fff" stroke="none"/></g></svg>`)}`;
@@ -31,7 +30,7 @@ const bridgeOptions: BridgeOption[] = [
     id: "squid",
     name: "Squid (Axelar)",
     description: "Cross-chain swaps across 60+ chains including Ethereum, Arbitrum, Polygon, Avalanche, Base and more.",
-    logo: squidLogo,
+    logo: SQUID_LOGO,
     fallbackLetter: "S",
     gradient: "from-purple-500 to-indigo-500",
     accentColor: "purple",
@@ -42,7 +41,7 @@ const bridgeOptions: BridgeOption[] = [
     id: "hashport",
     name: "HashPort",
     description: "Official Hedera bridge. Move tokens between Hedera and Ethereum/EVM chains with audited security.",
-    logo: hashportLogo,
+    logo: HASHPORT_LOGO,
     fallbackLetter: "H",
     gradient: "from-teal-500 to-cyan-500",
     accentColor: "teal",

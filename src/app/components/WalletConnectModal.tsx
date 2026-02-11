@@ -29,19 +29,15 @@ import type { HashPackSession } from "../utils/hashpack";
 import {
   isHashPackExtensionInstalled,
   detectHashPackExtension,
+  injectPairingUri,
+  forceResetHashConnect,
   openHashPackExtension,
   getHashPackDownloadUrl,
   getHashPackDeepLink,
-  getWalletConnectUniversalLink,
-  injectPairingUri,
-  forceResetHashConnect,
   clearWCStorage,
+  getWalletConnectUniversalLink,
 } from "../utils/hashpack";
-import dynamicLogo from "figma:asset/31f4159e893e1bb0c3379868de210c68bae08c26.png";
-import hashpackLogo from "figma:asset/88a04a0e847751906ce5a271fa9d750625ac069d.png";
-
-// SVG data URI logo for MetaMask
-const METAMASK_LOGO = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#F6851B"/><path d="M29.5 9l-7.8 5.8 1.4-3.4z" fill="#E2761B" stroke="#E2761B" stroke-width=".3"/><path d="M10.5 9l7.7 5.9-1.3-3.5zm13.3 16.6l-2.1 3.2 4.4 1.2 1.3-4.3zm-16.4.1l1.3 4.3 4.4-1.2-2.1-3.2z" fill="#E4761B" stroke="#E4761B" stroke-width=".3"/><path d="M13 18.5l-1.2 1.9 4.4.2-.2-4.7zm14 0l-3.1-2.7-.1 4.8 4.4-.2zm-13.9 8.1l2.6-1.3-2.3-1.8zm7.2-1.3l2.6 1.3-.3-3z" fill="#E4761B" stroke="#E4761B" stroke-width=".3"/><path d="M22.9 26.6l-2.6-1.3.2 1.7v.7zm-5.8 0l.3 2.4v-.7l.2-1.7z" fill="#D7C1B3" stroke="#D7C1B3" stroke-width=".3"/><path d="M17.3 22.5l-2.2-.6 1.5-.7zm5.4 0l.7-1.3 1.5.7z" fill="#233447" stroke="#233447" stroke-width=".3"/><path d="M17.1 26.6l.3-3.2-2.4.1zm5.5-3.2l.3 3.2 2.1-3.1zm2.6-5.3l-4.4.2.4 2.2.7-1.3 1.6.7zm-10.1 1.8l1.5-.7.7 1.3.4-2.2-4.4-.2z" fill="#CD6116" stroke="#CD6116" stroke-width=".3"/><path d="M11.8 19.9l1.9 3.7-.1-1.8zm8.5 1.9l-.1 1.8 1.9-3.7zm-4.1-1.7l-.4 2.2.5 2.6.1-3.4zm3.6 0l-.2 1.3.1 3.5.5-2.6z" fill="#E4751F" stroke="#E4751F" stroke-width=".3"/><path d="M22.7 22.5l-.5 2.6.3.2 2.3-1.8.1-1.8zm-7.6-.8l.1 1.8 2.2 1.8.4-.2-.5-2.6z" fill="#F6851B" stroke="#F6851B" stroke-width=".3"/><path d="M22.8 29l.1-.7-.2-.2h-5.4l-.2.2v.7l-4.4-2.1 1.5 1.3 3.1 2.2h5.5l3.1-2.2 1.5-1.3z" fill="#C0AD9E" stroke="#C0AD9E" stroke-width=".3"/><path d="M20.3 25.3l-.4-.2h-2.4l-.3.2-.2 1.7.2-.2h5.4l.2.2z" fill="#161616" stroke="#161616" stroke-width=".3"/><path d="M30 10l.7-3.5L29.5 9l-7.3 2.7 3.1 2.7 4.3 1.3 1.5-1.8-.7-.5 1-.9-.7-.6 1-.8zM9.3 6.5L10 10l-.7.8 1 .8-.7.6 1 .9-.7.5 1.5 1.8 4.3-1.3L18.5 9 11.2 6.3z" fill="#763D16" stroke="#763D16" stroke-width=".3"/></svg>`)}`;
+import { DYNAMIC_LOGO, HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
 
 interface WalletConnectModalProps {
   onClose: () => void;
@@ -401,7 +397,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
             <img
-              src={hashpackLogo}
+              src={HASHPACK_LOGO}
               alt="HashPack"
               className="w-7 h-7 rounded-lg object-cover"
             />
@@ -488,7 +484,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
             <img
-              src={hashpackLogo}
+              src={HASHPACK_LOGO}
               alt="HashPack"
               className="w-7 h-7 rounded-lg object-cover"
             />
@@ -711,7 +707,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
         >
           <div className="w-11 h-11 rounded-xl bg-white flex items-center justify-center overflow-hidden shrink-0">
             <img
-              src={dynamicLogo}
+              src={DYNAMIC_LOGO}
               alt="Dynamic"
               className="w-9 h-9 object-contain"
             />
@@ -744,7 +740,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
         >
           <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
             <img
-              src={hashpackLogo}
+              src={HASHPACK_LOGO}
               alt="HashPack"
               className="w-11 h-11 object-cover"
             />

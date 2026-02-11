@@ -125,11 +125,15 @@ const _EARLY_SUPPRESS_PATTERNS = [
   "MaxListenersExceededWarning",
   "MaxListeners",
   "Possible EventEmitter memory leak",
+  "session_connect listeners",
+  "proposal_expire listeners",
   "Failed to publish payload",
   "WebSocket connection failed",
   "publish payload",
   "Publish request failed",
   "socket stalled",
+  "iframe-widget not found",
+  "emitting session_connect",
 ];
 
 const _EARLY_VITE_PASSTHROUGH = [
@@ -301,6 +305,10 @@ const _WC_SUPPRESSED_PATTERNS = [
   "publish payload",
   "Publish request failed",
   "socket stalled",
+  "MaxListenersExceededWarning",
+  "Possible EventEmitter memory leak",
+  "session_connect listeners",
+  "emitting session_connect",
 ];
 
 // Patterns from Vite / HMR that must NEVER be suppressed

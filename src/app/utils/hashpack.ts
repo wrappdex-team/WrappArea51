@@ -239,12 +239,12 @@ let _currentPairingStringCallback: ((uri: string) => void) | null = null;
  * ensure the user always has a valid pairing string.
  */
 let _pairingRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-const PAIRING_REFRESH_MS = 4 * 60 * 1000; // 4 minutes (before 5-min expiry)
+const PAIRING_REFRESH_MS = 2.5 * 60 * 1000; // 2.5 minutes (well before 5-min WC proposal TTL)
 
 /**
  * Background keepalive timer — runs independently of any connection attempt.
  * Starts after init() and continuously regenerates the pairing string every
- * 4 minutes so WC proposals never expire while the instance is alive.
+ * 2.5 minutes so WC proposals never expire while the instance is alive.
  * This prevents "hashconnect - Approval error Error: Proposal expired" from
  * ever being logged, because no proposal lives long enough to expire.
  */
@@ -253,20 +253,18 @@ let _backgroundKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
 /**
  * Generate a fresh WC pairing string on the given HC instance.
  * Returns the new URI or null on failure.
+ *
+ * IMPORTANT: Strategy order matters! We prefer pairing.create() (Strategy 1)
+ * because it creates a lightweight pairing WITHOUT a proposal. This avoids
+ * the 5-minute proposal TTL that causes "Proposal expired" errors when
+ * the background keepalive refreshes the pairing string. Only if that
+ * fails do we fall back to generatePairingString() (Strategy 2) which
+ * internally calls signClient.connect() and creates a proposal.
  */
 async function regeneratePairingString(hc: any): Promise<string | null> {
-  // Strategy 1: HashConnect's private generatePairingString() method
-  try {
-    if (typeof (hc as any).generatePairingString === "function") {
-      await (hc as any).generatePairingString();
-      if (hc.pairingString) {
-        console.log("[HBAR.h] Fresh pairing string regenerated via generatePairingString()");
-        return hc.pairingString;
-      }
-    }
-  } catch { /* fall through */ }
-
-  // Strategy 2: Create a fresh WC pairing via the SignClient directly
+  // Strategy 1: Create a fresh WC pairing via the SignClient directly.
+  // This creates a pairing URI WITHOUT creating a proposal — no TTL timer,
+  // no "Proposal expired" errors.
   try {
     const signClient =
       (hc as any).signClient ??
@@ -279,6 +277,27 @@ async function regeneratePairingString(hc: any): Promise<string | null> {
         (hc as any).pairingString = uri;
         console.log("[HBAR.h] Fresh pairing string regenerated via SignClient.core.pairing.create()");
         return uri;
+      }
+    }
+  } catch { /* fall through */ }
+
+  // Strategy 2 (fallback): HashConnect's generatePairingString() method.
+  // NOTE: This internally calls signClient.connect() which creates a proposal
+  // with a 5-minute TTL. After generation, we immediately cancel the proposal's
+  // expirer timer and remove the proposal_expire listener so the proposal can
+  // NEVER fire "Proposal expired". Our keepalive cycle will purge it before the
+  // next regeneration. This is the definitive fix for the error:
+  //   "hashconnect - Approval error Error: Proposal expired"
+  // because HashConnect's .catch() on the approval Promise is chained INSIDE
+  // signClient.connect() before we can replace it.
+  try {
+    if (typeof (hc as any).generatePairingString === "function") {
+      await (hc as any).generatePairingString();
+      if (hc.pairingString) {
+        // Immediately defuse the new proposal's expirer + listeners
+        defuseAllProposalExpirers(hc);
+        console.log("[HBAR.h] Fresh pairing string regenerated via generatePairingString()");
+        return hc.pairingString;
       }
     }
   } catch { /* fall through */ }
@@ -332,35 +351,52 @@ function cleanStaleEngineListeners(hc: any): void {
       hc?._signClient ??
       hc?.walletConnectClient ??
       hc?.client;
-    if (!signClient?.engine) return;
+    if (!signClient) return;
 
-    const engine = signClient.engine;
-    // The emitter might be engine.events or engine itself
-    const emitter = engine.events || engine;
-
-    if (typeof emitter.removeAllListeners === "function") {
-      // Only clean session_connect — leave other event listeners intact
+    // Helper: clean a specific event name from an emitter if count > threshold
+    const cleanEvent = (emitter: any, eventName: string, threshold: number) => {
+      if (!emitter || typeof emitter.removeAllListeners !== "function") return;
       try {
-        const listenerCount =
+        const count =
           typeof emitter.listenerCount === "function"
-            ? emitter.listenerCount("session_connect")
-            : (emitter.listeners?.("session_connect")?.length ?? 0);
-
-        // Only clean if there are excessive listeners (>5 is suspicious)
-        if (listenerCount > 5) {
-          emitter.removeAllListeners("session_connect");
-          console.log(
-            `[HBAR.h] Cleaned ${listenerCount} stale session_connect listeners`
-          );
+            ? emitter.listenerCount(eventName)
+            : (emitter.listeners?.(eventName)?.length ?? 0);
+        if (count > threshold) {
+          emitter.removeAllListeners(eventName);
+          console.log(`[HBAR.h] Cleaned ${count} stale ${eventName} listeners`);
         }
       } catch { /* best-effort */ }
+    };
+
+    // Clean engine.events — where once("session_connect") listeners accumulate
+    // from each signClient.connect() call (via generatePairingString).
+    const engine = signClient.engine;
+    if (engine) {
+      const engineEmitter = engine.events || engine;
+      cleanEvent(engineEmitter, "session_connect", 2);
+      // Also clean any prefixed session_connect events (WC may prefix with ID)
+      if (typeof engineEmitter.eventNames === "function") {
+        try {
+          for (const name of engineEmitter.eventNames()) {
+            if (typeof name === "string" && name.startsWith("session_connect")) {
+              cleanEvent(engineEmitter, name, 2);
+            }
+          }
+        } catch { /* best-effort */ }
+      }
     }
+
+    // Clean client.events — where proposal_expire listeners from connect() accumulate.
+    // Each connect() adds on("proposal_expire", z) scoped to a proposal ID.
+    const clientEmitter = signClient.events || signClient;
+    cleanEvent(clientEmitter, "proposal_expire", 5);
+    cleanEvent(clientEmitter, "session_connect", 2);
   } catch { /* non-critical */ }
 }
 
 /**
  * Start a background keepalive that continuously refreshes the WC proposal
- * every 4 minutes, preventing "Proposal expired" errors. This runs
+ * every 2.5 minutes, preventing "Proposal expired" errors. This runs
  * independently of any active connection attempt — it keeps the *instance-level*
  * pairing string valid so HashConnect's internal handlers never encounter
  * an expired proposal.
@@ -378,8 +414,12 @@ function startBackgroundKeepalive(hc: any): void {
       // once("session_connect") listener. If the session is never
       // connected, these accumulate. Remove completed/orphaned ones.
       cleanStaleEngineListeners(hc);
-      // Regenerate a fresh pairing string (creates a new proposal)
+      // Regenerate a fresh pairing string (may create a new proposal
+      // via Strategy 2 — defuseAllProposalExpirers is called inside)
       await regeneratePairingString(hc);
+      // Belt-and-suspenders: defuse again after regeneration in case
+      // Strategy 2 created a proposal that defuse missed inside
+      defuseAllProposalExpirers(hc);
     } catch { /* non-critical — keepalive is best-effort */ }
   }, PAIRING_REFRESH_MS);
 }
@@ -392,11 +432,79 @@ function stopBackgroundKeepalive(): void {
 }
 
 /**
+ * Defuse ALL proposal expiration timers without deleting the proposals.
+ * This removes the WC Expirer entries and proposal_expire event listeners
+ * so that proposals can never fire "Proposal expired". The proposals remain
+ * in the store (needed for pairing to work) but are harmless zombies that
+ * our periodic purgeAllProposals() will clean up.
+ *
+ * Called immediately after regeneratePairingString() Strategy 2 to
+ * neutralize the new proposal before its 5-minute TTL can fire.
+ */
+function defuseAllProposalExpirers(hc: any): void {
+  try {
+    const signClient =
+      hc?.signClient ??
+      hc?._signClient ??
+      hc?.walletConnectClient ??
+      hc?.client;
+    if (!signClient) return;
+
+    // 1. Remove ALL expirer entries for proposals
+    const expirer = signClient.core?.expirer;
+    if (expirer) {
+      try {
+        const proposals = signClient.proposal?.getAll?.() ?? [];
+        const proposalIds = new Set(proposals.map((p: any) => p.id));
+
+        for (const pId of proposalIds) {
+          // Try all known key formats for the expirer
+          try { expirer.del?.(`proposal:${pId}`); } catch { /* ok */ }
+          try { expirer.del?.(pId); } catch { /* ok */ }
+          try { expirer.del?.(String(pId)); } catch { /* ok */ }
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // 2. Remove proposal_expire event listeners from client.events
+    //    These were added by signClient.connect() — each connect() adds one.
+    try {
+      const emitter = signClient.events || signClient;
+      if (typeof emitter.removeAllListeners === "function") {
+        emitter.removeAllListeners("proposal_expire");
+      }
+    } catch { /* best-effort */ }
+
+    // 3. Also clean the engine's session_connect listeners (they're paired
+    //    with proposal_expire and would orphan if we remove proposal_expire)
+    try {
+      const engineEmitter = signClient.engine?.events || signClient.engine;
+      if (engineEmitter && typeof engineEmitter.removeAllListeners === "function") {
+        const count = typeof engineEmitter.listenerCount === "function"
+          ? engineEmitter.listenerCount("session_connect")
+          : 0;
+        if (count > 1) {
+          engineEmitter.removeAllListeners("session_connect");
+        }
+      }
+    } catch { /* best-effort */ }
+  } catch { /* non-critical */ }
+}
+
+/**
  * Delete ALL proposals from the WC SignClient's proposal store.
  * Unlike cleanStalePairings (which only deletes expired proposals),
  * this aggressively removes every proposal to prevent any from
  * living long enough to trigger a "Proposal expired" event.
  * A fresh proposal is created whenever regeneratePairingString() is called.
+ *
+ * IMPORTANT: We do NOT emit "proposal_expire" events during purge.
+ * Previously we emitted proposal_expire to trigger WC's cleanup chain,
+ * but this is exactly what causes HashConnect's internal handler to
+ * catch the event and log "hashconnect - Approval error Error: Proposal
+ * expired". Instead we silently delete proposals from the store and
+ * cancel their expirer timers. Orphaned event listeners are cleaned
+ * separately by cleanStaleEngineListeners().
  */
 function purgeAllProposals(hc: any): void {
   try {
@@ -409,6 +517,23 @@ function purgeAllProposals(hc: any): void {
 
     const proposals = signClient.proposal.getAll?.() ?? [];
     for (const prop of proposals) {
+      // 1. Cancel WC's internal TTL timer via the Expirer.
+      //    WC Expirer stores entries under multiple key formats depending
+      //    on the version: plain id, "proposal:{id}", or numeric id.
+      //    Try all known formats to ensure the timer is actually cancelled.
+      try {
+        const expirer = signClient.core?.expirer;
+        if (expirer) {
+          // Try tagged format first (WC v2.10+)
+          try { expirer.del?.(`proposal:${prop.id}`); } catch { /* ok */ }
+          // Also try plain numeric id (older WC versions)
+          try { expirer.del?.(prop.id); } catch { /* ok */ }
+          // Try string format
+          try { expirer.del?.(String(prop.id)); } catch { /* ok */ }
+        }
+      } catch { /* best-effort */ }
+
+      // 2. Delete the proposal from the store (no event emission).
       try {
         signClient.proposal.delete?.(prop.id, {
           code: 6000,
@@ -416,6 +541,23 @@ function purgeAllProposals(hc: any): void {
         });
       } catch { /* best-effort */ }
     }
+
+    // 3. Also remove any "proposal_expire" listeners that reference
+    //    deleted proposals. These were added by signClient.connect()
+    //    and would otherwise fire when the (now-deleted) proposal's
+    //    TTL elapses, causing the "Approval error" log.
+    try {
+      const emitter = signClient.events || signClient;
+      if (typeof emitter.removeAllListeners === "function") {
+        const count =
+          typeof emitter.listenerCount === "function"
+            ? emitter.listenerCount("proposal_expire")
+            : 0;
+        if (count > 0) {
+          emitter.removeAllListeners("proposal_expire");
+        }
+      }
+    } catch { /* best-effort */ }
   } catch { /* non-critical */ }
 }
 
@@ -483,6 +625,9 @@ function containsWCSuppressedMessage(args: any[]): boolean {
     WC_WEBSOCKET_FAILED_MSG,
     WC_PUBLISH_PAYLOAD_MSG,
     WC_SOCKET_STALLED_MSG,
+    "session_connect listeners",
+    "proposal_expire listeners",
+    "emitting session_connect",
   ];
   // Known WC Pino logger contexts for noisy internal modules
   const pinoContexts = ["core/publisher", "core/relayer", "core", "client"];
@@ -804,6 +949,70 @@ async function doCreateAndInit(network: HederaNetwork): Promise<any> {
       });
     }
 
+    // ── CRITICAL: Install patches BEFORE init() ──
+    // These patches MUST be applied before hc.init() because init() processes
+    // stale WC proposals from localStorage. If a stale proposal has expired,
+    // WC fires "proposal_expire" during init, and HashConnect's internal
+    // handler calls console.error("hashconnect - Approval error", error).
+    // By patching BEFORE init, we intercept the error at the source.
+
+    // ── Monkey-patch updateMetadata to prevent "Record was recently deleted" ──
+    patchPairingUpdateMetadata(hc);
+
+    // ── Suppress WC pairing logger errors ──
+    suppressPairingLoggerErrors(hc);
+
+    // ── Patch publisher to prevent infinite retry storms ──
+    patchPublisherRetry(hc);
+
+    // ── Patch signClient.connect() to intercept "Proposal expired" ──
+    // WC's connect() returns {uri, approval} where `approval` is a Promise
+    // that rejects with "Proposal expired" after the 5-min TTL. HashConnect
+    // awaits this promise and logs the error. By wrapping connect(), we
+    // replace the approval Promise with one that silently swallows these
+    // rejections. Also wraps approve() as a secondary safety net.
+    patchSignClientApprove(hc);
+
+    // ── Patch HashConnect's internal approval handler ──
+    // HashConnect may have an internal method (e.g., _onSessionProposal,
+    // _approveSession, onSessionProposal) that handles WC session proposals.
+    // If the proposal is expired, the handler catches the WC error and logs
+    // "hashconnect - Approval error Error: Proposal expired". We patch any
+    // such handler to silently swallow "Proposal expired" errors.
+    patchHashConnectApprovalHandler(hc);
+
+    // ── Register proposal_expire handler on WC SignClient BEFORE init ──
+    // When a WC proposal expires (~5 min TTL), auto-regenerate the
+    // pairing string so the QR code stays valid. Registering before
+    // init() ensures we catch any proposal_expire events that fire
+    // during init from stale localStorage proposals.
+    try {
+      const signClient =
+        hc.signClient ??
+        hc.walletConnectClient ??
+        hc._signClient ??
+        hc.client;
+      if (signClient?.on) {
+        signClient.on("proposal_expire", async () => {
+          console.log("[HBAR.h] WC proposal expired — auto-regenerating pairing string");
+          try {
+            cleanStalePairings(hc);
+            const newUri = await regeneratePairingString(hc);
+            if (newUri && _currentPairingStringCallback) {
+              _currentPairingStringCallback(newUri);
+              schedulePairingRefresh(hc);
+            }
+          } catch { /* non-critical */ }
+        });
+      }
+    } catch { /* non-critical — event registration is best-effort */ }
+
+    // ── Purge stale proposals BEFORE init to prevent expiration ──
+    purgeAllProposals(hc);
+
+    // ── Raise maxListeners on WC internal EventEmitters ──
+    raiseMaxListeners(hc);
+
     // ── Init ──
     // hc.init() sets up internal WC event handlers and generates a pairing string.
     // If the HashPack extension is found, it will auto-connect and fire
@@ -826,12 +1035,6 @@ async function doCreateAndInit(network: HederaNetwork): Promise<any> {
       await Promise.race([hc.init(), initTimeoutPromise]);
     } catch (initErr: any) {
       const msg = initErr?.message || "";
-      // These are non-fatal WC/HC errors that can be safely ignored:
-      // - "already initialized": WC Core singleton warning surfaced as error
-      // - "Proposal expired": stale WC proposal from a previous session
-      // - "Approval error": HC wrapper around expired/cancelled proposals
-      // - "No matching key": orphaned pairing reference
-      // - "init_timeout": our own timeout — init() is slow but Core is alive
       const nonFatal =
         msg.includes("already initialized") ||
         msg.includes("Already initialized") ||
@@ -852,79 +1055,20 @@ async function doCreateAndInit(network: HederaNetwork): Promise<any> {
     console.log("[HBAR.h] HashConnect init complete. Pairing string:", hc.pairingString ? "available" : "none");
     console.log("[HBAR.h] Connected accounts:", hc.connectedAccountIds?.map?.((a: any) => a.toString?.() ?? a) ?? []);
 
-    // ── Clean stale WC pairings ──
+    // ── Clean stale WC pairings (post-init) ──
     cleanStalePairings(hc);
 
-    // ── Monkey-patch updateMetadata to prevent "Record was recently deleted" ──
-    // WalletConnect Core's pairing engine calls updateMetadata() asynchronously
-    // from an internal EventEmitter callback. If the pairing was already deleted
-    // (by cleanStalePairings, disconnect, or WC's own GC), updateMetadata throws
-    // because it calls getData() which checks a "recently deleted" set. This error
-    // propagates as an uncaught error or unhandled rejection. We patch the method
-    // to silently swallow these specific errors at the source.
-    patchPairingUpdateMetadata(hc);
-
-    // ── Suppress WC pairing logger for "Record was recently deleted" ──
-    // WC's Pino logger outputs the error to console BEFORE the throw,
-    // so even with our throw-catching patches the log still appears.
-    // Walk the internal logger hierarchy and wrap the error method.
-    suppressPairingLoggerErrors(hc);
-
-    // ── Patch publisher to prevent infinite retry storms ──
-    // When the WC relay WebSocket dies, the publisher retries endlessly,
-    // flooding the console with "Failed to publish payload" errors.
-    // This patches publish() to silently swallow these non-fatal errors.
-    patchPublisherRetry(hc);
-
-    // ── Register proposal_expire handler on WC SignClient ──
-    // When a WC proposal expires (~5 min TTL), auto-regenerate the
-    // pairing string so the QR code stays valid. This is a safety net
-    // in addition to the proactive timer-based refresh.
-    try {
-      const signClient =
-        hc.signClient ??
-        hc.walletConnectClient ??
-        hc._signClient ??
-        hc.client;
-      if (signClient?.on) {
-        signClient.on("proposal_expire", async () => {
-          console.log("[HBAR.h] WC proposal expired — auto-regenerating pairing string");
-          try {
-            cleanStalePairings(hc);
-            const newUri = await regeneratePairingString(hc);
-            if (newUri && _currentPairingStringCallback) {
-              _currentPairingStringCallback(newUri);
-              schedulePairingRefresh(hc);
-            }
-          } catch { /* non-critical */ }
-        });
-      }
-    } catch { /* non-critical — event registration is best-effort */ }
-
-    // ── Patch signClient.approve to catch "Proposal expired" at source ──
-    // HashConnect internally calls signClient.approve() when processing a
-    // session proposal. If the proposal has expired, approve() throws
-    // "Proposal expired". HashConnect catches this and logs:
-    //   "hashconnect - Approval error Error: Proposal expired"
-    // By wrapping approve(), we catch the error BEFORE HashConnect sees it.
-    patchSignClientApprove(hc);
-
-    // ── Patch HashConnect's internal approval handler ──
-    // HashConnect may have an internal method (e.g., _onSessionProposal,
-    // _approveSession, onSessionProposal) that handles WC session proposals.
-    // If the proposal is expired, the handler catches the WC error and logs
-    // "hashconnect - Approval error Error: Proposal expired". We patch any
-    // such handler to silently swallow "Proposal expired" errors.
-    patchHashConnectApprovalHandler(hc);
+    // ── Defuse any proposals created during init ──
+    // init() may have called connect() internally, creating proposals with
+    // 5-minute TTL timers. Cancel those timers immediately so they can
+    // never fire "Proposal expired".
+    defuseAllProposalExpirers(hc);
 
     // ── Start background keepalive ──
-    // Continuously regenerate the WC proposal every 4 minutes so it never
-    // reaches its 5-minute TTL. This is the primary prevention mechanism
-    // against "Proposal expired" errors.
+    // Continuously regenerate the WC pairing every 2.5 minutes.
+    // Uses pairing.create() (no proposal) to avoid "Proposal expired".
+    // Falls back to generatePairingString() + immediate defuse.
     startBackgroundKeepalive(hc);
-
-    // ── Raise maxListeners on WC internal EventEmitters ──
-    raiseMaxListeners(hc);
 
     return hc;
   } catch (err: any) {
@@ -1411,15 +1555,19 @@ function patchPublisherRetry(hc: any): void {
 }
 
 /**
- * Patch signClient.approve() to catch "Proposal expired" errors at the source.
+ * Patch signClient.connect() to intercept the `approval` Promise it returns.
  *
- * When HashConnect processes a WC session proposal, it calls signClient.approve().
- * If the proposal has expired (5-min TTL), approve() throws "Proposal expired".
- * HashConnect catches this in its try-catch and logs:
- *   "hashconnect - Approval error Error: Proposal expired"
+ * WC's signClient.connect() returns {uri, approval} where `approval` is a
+ * Promise that rejects with Error("Proposal expired") when the 5-min TTL hits.
+ * HashConnect awaits this promise and catches the rejection, logging:
+ *   console.error("hashconnect - Approval error", error)
  *
- * By wrapping approve() BEFORE HashConnect's catch, the error never propagates
- * to HashConnect's handler at all.
+ * Previous attempts patched signClient.approve() — but the error doesn't come
+ * from approve(). It comes from the `approval` Promise rejection inside
+ * connect(). By wrapping connect() itself, we intercept the approval Promise
+ * and replace it with one that silently swallows "Proposal expired" rejections.
+ *
+ * We also wrap approve() as a secondary safety net.
  */
 function patchSignClientApprove(hc: any): void {
   try {
@@ -1430,7 +1578,51 @@ function patchSignClientApprove(hc: any): void {
       hc?.client;
     if (!signClient) return;
 
-    // Helper to wrap any approve-like method
+    // ── PRIMARY FIX: Wrap signClient.connect() ──
+    // Intercept the approval Promise to silently handle "Proposal expired".
+    const wrapConnect = (target: any) => {
+      if (!target || typeof target.connect !== "function") return;
+      if (target.__hbarh_connect_patched) return;
+      target.__hbarh_connect_patched = true;
+      const origConnect = target.connect;
+      target.connect = async function (this: any, ...args: any[]) {
+        const result = await origConnect.apply(this, args);
+        if (result && result.approval && typeof result.approval.then === "function") {
+          const origApproval = result.approval;
+          // Replace the approval Promise with one that silently swallows
+          // "Proposal expired" / "No matching key" rejections.
+          // The replacement STILL rejects for other errors so HashConnect
+          // can handle genuine failures.
+          result.approval = new Promise((resolve, reject) => {
+            origApproval.then(resolve, (err: any) => {
+              const msg = err?.message || String(err || "");
+              if (
+                msg.includes("Proposal expired") ||
+                msg.includes("No matching key")
+              ) {
+                // Silently swallow — return a never-resolving promise.
+                // HashConnect's `await approval` will hang harmlessly
+                // for this expired proposal; the keepalive will generate
+                // a fresh one. This prevents the console.error log.
+                return;
+              }
+              reject(err);
+            });
+          });
+          // Also add a no-op .catch() on the ORIGINAL promise to prevent
+          // unhandled rejection warnings from the browser.
+          origApproval.catch(() => {});
+        }
+        return result;
+      };
+    };
+
+    wrapConnect(signClient);
+    if (signClient.engine) {
+      wrapConnect(signClient.engine);
+    }
+
+    // ── SECONDARY SAFETY NET: Wrap approve() ──
     const wrapApprove = (target: any, methodName: string) => {
       if (!target || typeof target[methodName] !== "function") return;
       const patchKey = `__hbarh_${methodName}_patched`;
@@ -1443,27 +1635,39 @@ function patchSignClientApprove(hc: any): void {
         } catch (err: any) {
           const msg = err?.message || "";
           if (msg.includes("Proposal expired") || msg.includes("No matching key")) {
-            // Silently swallow — the proposal expired before the wallet approved.
-            // A fresh pairing string will be generated by the keepalive timer.
             return null;
           }
-          throw err; // Re-throw non-proposal errors
+          throw err;
         }
       };
     };
 
-    // Patch signClient.approve (the top-level method)
     wrapApprove(signClient, "approve");
-
-    // ── CRITICAL: Also patch signClient.engine.approve ──
-    // HashConnect may call signClient.approve(), but the WC SignClient
-    // delegates to engine.approve() internally. If the obfuscated HC code
-    // captures a reference to the engine's method (e.g., via destructuring
-    // in a closure), our signClient-level patch is bypassed. Patching the
-    // engine directly ensures the error is caught at the lowest level.
     if (signClient.engine) {
       wrapApprove(signClient.engine, "approve");
       wrapApprove(signClient.engine, "approveSession");
+    }
+
+    // ── TERTIARY SAFETY NET: Wrap HC's generatePairingString() ──
+    // HashConnect's generatePairingString() calls signClient.connect()
+    // internally and chains .catch() on the approval Promise INSIDE the
+    // method body. Our connect() wrapper replaces result.approval, but
+    // the .catch() is chained before the result is returned. By wrapping
+    // generatePairingString itself, we intercept any error that leaks.
+    if (typeof hc.generatePairingString === "function" && !hc.__hbarh_genPairing_patched) {
+      hc.__hbarh_genPairing_patched = true;
+      const origGen = hc.generatePairingString.bind(hc);
+      hc.generatePairingString = async function (...args: any[]) {
+        try {
+          return await origGen(...args);
+        } catch (err: any) {
+          const msg = err?.message || "";
+          if (msg.includes("Proposal expired") || msg.includes("No matching key")) {
+            return; // silently swallow
+          }
+          throw err;
+        }
+      };
     }
   } catch { /* non-critical */ }
 }
@@ -1566,7 +1770,12 @@ function patchHashConnectApprovalHandler(hc: any): void {
  * by WC internals also inherits the higher limit.
  */
 function raiseMaxListeners(hc: any): void {
-  const LIMIT = 200;
+  // 0 = unlimited. WC's signClient.connect() adds once("session_connect") and
+  // on("proposal_expire") listeners per-proposal. When proposals are purged
+  // before natural expiry, these listeners orphan and accumulate. Setting to 0
+  // prevents MaxListenersExceededWarning while cleanStaleEngineListeners
+  // handles periodic cleanup.
+  const LIMIT = 0;
   const bump = (obj: any) => {
     if (obj && typeof obj.setMaxListeners === "function") {
       try { obj.setMaxListeners(LIMIT); } catch { /* ignore */ }

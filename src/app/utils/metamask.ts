@@ -235,6 +235,20 @@ export const CHAIN_INFO: Record<
   },
 };
 
+/**
+ * Build a block-explorer transaction URL for any chain in CHAIN_INFO.
+ * Returns an empty string if the chainId is unknown.
+ */
+export function getExplorerTxUrl(txHash: string, chainId: number): string {
+  const info = CHAIN_INFO[chainId];
+  if (!info) return "";
+  // Hedera HashScan uses a different URL pattern
+  if (chainId === 295 || chainId === 296) {
+    return `${info.explorer}/transaction/${txHash}`;
+  }
+  return `${info.explorer}/tx/${txHash}`;
+}
+
 export interface MetaMaskAccountInfo {
   address: string;
   balanceWei: string;
@@ -537,176 +551,201 @@ export async function switchToHederaMainnet(): Promise<boolean> {
   return switchChain(295);
 }
 
-/**
- * Get the block explorer URL for a transaction hash
- */
-export function getExplorerTxUrl(txHash: string, chainId: number): string {
-  const chain = CHAIN_INFO[chainId];
-  if (!chain) return "";
-  return `${chain.explorer}/tx/${txHash}`;
-}
-
-// ── EVM Transaction History ─────────────────────────────────────────
-// Uses block explorer APIs (Etherscan and compatible) to fetch recent
-// transactions for the connected EVM wallet. Free tier (no API key)
-// supports up to 5 req/sec.
-
-const EXPLORER_API: Record<number, string> = {
-  1:     "https://api.etherscan.io/api",
-  5:     "https://api-goerli.etherscan.io/api",
-  11155111: "https://api-sepolia.etherscan.io/api",
-  137:   "https://api.polygonscan.com/api",
-  56:    "https://api.bscscan.com/api",
-  42161: "https://api.arbiscan.io/api",
-  10:    "https://api-optimistic.etherscan.io/api",
-  8453:  "https://api.basescan.org/api",
-  43114: "https://api.snowtrace.io/api",
-};
-
-export interface EvmTransaction {
-  hash: string;
-  from: string;
-  to: string;
-  value: string;       // in Wei
-  valueEth: number;    // human-readable native units
-  timestamp: number;   // unix seconds
-  isIncoming: boolean;
-  isError: boolean;
-  functionName: string;
-  gasUsed: string;
-  nativeSymbol: string;
-  chainId: number;
-}
+// ── Price Feeds ──────────────────────────────────────────────────────
+// Simple price fetchers using CoinGecko's free API (no key required).
 
 /**
- * Fetch recent EVM transactions from a block explorer API.
- * Returns the most recent 25 normal (non-internal) transactions.
- */
-export async function fetchEvmTransactions(
-  address: string,
-  chainId: number,
-): Promise<EvmTransaction[]> {
-  const apiBase = EXPLORER_API[chainId];
-  if (!apiBase) return [];
-
-  const chain = CHAIN_INFO[chainId];
-  const nativeSymbol = chain?.symbol || "ETH";
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-
-    const url = `${apiBase}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=25&sort=desc`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!res.ok) return [];
-    const json = await res.json();
-
-    if (json.status !== "1" || !Array.isArray(json.result)) return [];
-
-    const addrLower = address.toLowerCase();
-
-    return json.result.map((tx: any) => {
-      const valueWei = tx.value || "0";
-      const valueEth = Number(BigInt(valueWei)) / 1e18;
-      return {
-        hash: tx.hash,
-        from: tx.from,
-        to: tx.to || "",
-        value: valueWei,
-        valueEth,
-        timestamp: parseInt(tx.timeStamp || "0", 10),
-        isIncoming: tx.to?.toLowerCase() === addrLower,
-        isError: tx.isError === "1" || tx.txreceipt_status === "0",
-        functionName: tx.functionName || "",
-        gasUsed: tx.gasUsed || "0",
-        nativeSymbol,
-        chainId,
-      } as EvmTransaction;
-    });
-  } catch (err) {
-    console.debug("[MetaMask] fetchEvmTransactions failed:", err);
-    return [];
-  }
-}
-
-/**
- * Fetch ETH price from CoinGecko (with fallback)
+ * Fetch current ETH price in USD from CoinGecko.
+ * Returns a fallback of 3500 if the request fails.
  */
 export async function fetchEthPrice(): Promise<number> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const response = await fetch(
+    const res = await fetch(
       "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
-      { signal: controller.signal }
+      { signal: AbortSignal.timeout(8000) }
     );
-    clearTimeout(timeout);
-    if (!response.ok) return 3500;
-    const data = await response.json();
-    return data.ethereum?.usd ?? 3500;
+    if (!res.ok) return 3500;
+    const data = await res.json();
+    return data?.ethereum?.usd ?? 3500;
   } catch {
     return 3500;
   }
 }
 
 /**
- * Fetch SOL price from CoinGecko (with fallback)
+ * Fetch current SOL price in USD from CoinGecko.
+ * Returns a fallback of 185 if the request fails.
  */
 export async function fetchSolPrice(): Promise<number> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const response = await fetch(
+    const res = await fetch(
       "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
-      { signal: controller.signal }
+      { signal: AbortSignal.timeout(8000) }
     );
-    clearTimeout(timeout);
-    if (!response.ok) return 185;
-    const data = await response.json();
-    return data.solana?.usd ?? 185;
+    if (!res.ok) return 185;
+    const data = await res.json();
+    return data?.solana?.usd ?? 185;
   } catch {
     return 185;
   }
 }
 
+// ── Real EVM Transaction History ─────────────────────────────────────
+// Fetches actual on-chain transaction history from Etherscan-family
+// block explorer APIs. These APIs allow keyless access (rate-limited
+// to ~1 req/5s) which is fine for a history page.
+
+/** Etherscan-family API endpoints keyed by chainId */
+const EXPLORER_API: Record<number, string> = {
+  1:        "https://api.etherscan.io/api",
+  5:        "https://api-goerli.etherscan.io/api",
+  11155111: "https://api-sepolia.etherscan.io/api",
+  137:      "https://api.polygonscan.com/api",
+  56:       "https://api.bscscan.com/api",
+  42161:    "https://api.arbiscan.io/api",
+  10:       "https://api-optimistic.etherscan.io/api",
+  8453:     "https://api.basescan.org/api",
+  43114:    "https://api.snowtrace.io/api",
+};
+
+/** Raw transaction record from Etherscan API */
+export interface EtherscanTx {
+  hash: string;
+  from: string;
+  to: string;
+  value: string;           // wei
+  gas: string;
+  gasPrice: string;
+  gasUsed: string;
+  timeStamp: string;       // unix seconds
+  isError: string;         // "0" = success
+  txreceipt_status: string;
+  functionName: string;
+  methodId: string;
+  blockNumber: string;
+  input: string;
+}
+
+/** Enriched transaction record with computed display properties */
+export interface EvmTransaction extends Omit<EtherscanTx, 'isError'> {
+  /** True if the connected wallet is the recipient */
+  isIncoming: boolean;
+  /** Unix timestamp as a number (parsed from EtherscanTx.timeStamp) */
+  timestamp: number;
+  /** Value in native token (e.g. ETH) as a float */
+  valueEth: number;
+  /** Native token symbol for the chain (e.g. "ETH", "MATIC") */
+  nativeSymbol: string;
+  /** Chain ID this transaction belongs to */
+  chainId: number;
+  /** True if the transaction reverted */
+  isError: boolean;
+}
+
 /**
- * Generate a deterministic mock SOL address from an ETH address
+ * Enrich raw EtherscanTx records with computed display fields.
+ * @param txns  Raw transactions from Etherscan-family API
+ * @param address  The connected wallet address (for isIncoming)
+ * @param chainId  The chain these transactions belong to
  */
-export function deriveMockSolAddress(ethAddress: string): string {
-  // Create a pseudo-Solana address from the ETH address bytes
-  const clean = ethAddress.replace("0x", "").toLowerCase();
-  const chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  let sol = "";
-  for (let i = 0; i < 44; i++) {
-    const idx = parseInt(clean.substring((i * 2) % clean.length, (i * 2) % clean.length + 2), 16);
-    sol += chars[idx % chars.length];
+export function enrichEvmTransactions(
+  txns: EtherscanTx[],
+  address: string,
+  chainId: number,
+): EvmTransaction[] {
+  const addrLower = address.toLowerCase();
+  const nativeSymbol = CHAIN_INFO[chainId]?.symbol ?? "ETH";
+  return txns.map((tx) => ({
+    ...tx,
+    isIncoming: tx.to?.toLowerCase() === addrLower,
+    isError: tx.isError !== "0",
+    timestamp: parseInt(tx.timeStamp, 10) || 0,
+    valueEth: Number(BigInt(tx.value || "0")) / 1e18,
+    nativeSymbol,
+    chainId,
+  })) as unknown as EvmTransaction[];
+}
+
+/**
+ * Fetch real EVM transaction history for an address on a given chain.
+ * Uses Etherscan-family APIs (no key required, rate-limited).
+ * Returns up to `limit` most recent normal transactions.
+ */
+export async function fetchEvmTransactions(
+  address: string,
+  chainId: number,
+  limit: number = 25,
+): Promise<EtherscanTx[]> {
+  const apiBase = EXPLORER_API[chainId];
+  if (!apiBase) {
+    console.debug(`[MetaMask] No explorer API configured for chain ${chainId}`);
+    return [];
   }
-  return sol;
+
+  const url = new URL(apiBase);
+  url.searchParams.set("module", "account");
+  url.searchParams.set("action", "txlist");
+  url.searchParams.set("address", address);
+  url.searchParams.set("startblock", "0");
+  url.searchParams.set("endblock", "99999999");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("offset", String(limit));
+  url.searchParams.set("sort", "desc");
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      console.debug(`[MetaMask] Explorer API HTTP ${res.status} for chain ${chainId}`);
+      return [];
+    }
+    const data = await res.json();
+    // Etherscan returns { status: "1", result: [...] } on success
+    if (data.status === "1" && Array.isArray(data.result)) {
+      return data.result as EtherscanTx[];
+    }
+    // status "0" with message "No transactions found" is a valid empty result
+    if (data.message === "No transactions found") {
+      return [];
+    }
+    console.debug(`[MetaMask] Explorer API returned status=${data.status}, message=${data.message}`);
+    return [];
+  } catch (err) {
+    console.debug(`[MetaMask] Failed to fetch EVM transactions for chain ${chainId}:`, err);
+    return [];
+  }
 }
 
 /**
- * Generate a deterministic mock SOL balance from an ETH address (simulated)
+ * Also fetch internal (contract) transactions — these capture value
+ * transfers triggered inside smart contract calls (e.g. DEX swaps).
  */
-export function getMockSolBalance(ethAddress: string): string {
-  // Deterministic mock balance based on address bytes
-  const num = parseInt(ethAddress.slice(2, 10), 16);
-  const balance = (num % 50000) / 1000 + 0.5; // 0.5 - 50.5 SOL range
-  return balance.toFixed(4);
-}
+export async function fetchEvmInternalTransactions(
+  address: string,
+  chainId: number,
+  limit: number = 25,
+): Promise<EtherscanTx[]> {
+  const apiBase = EXPLORER_API[chainId];
+  if (!apiBase) return [];
 
-// Augment window type for TypeScript
-declare global {
-  interface Window {
-    ethereum?: {
-      isMetaMask?: boolean;
-      request: (args: { method: string; params?: any[] }) => Promise<any>;
-      on: (event: string, handler: (...args: any[]) => void) => void;
-      removeListener: (
-        event: string,
-        handler: (...args: any[]) => void
-      ) => void;
-    };
+  const url = new URL(apiBase);
+  url.searchParams.set("module", "account");
+  url.searchParams.set("action", "txlistinternal");
+  url.searchParams.set("address", address);
+  url.searchParams.set("startblock", "0");
+  url.searchParams.set("endblock", "99999999");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("offset", String(limit));
+  url.searchParams.set("sort", "desc");
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (data.status === "1" && Array.isArray(data.result)) {
+      return data.result as EtherscanTx[];
+    }
+    return [];
+  } catch {
+    return [];
   }
 }

@@ -179,6 +179,12 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     logo: "https://www.saucerswap.finance/images/tokens/hbar-h.svg",
     rank: 13, isWrapped: false,
   },
+  {
+    symbol: "WPOL", name: "Wrapped POL (Polygon)", htsId: "0.0.3306241",
+    evmAddress: htsIdToEvmAddress("0.0.3306241"), decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+    rank: 14, isWrapped: true, bridge: "Hashport",
+  },
 ];
 
 export const TOKEN_BY_SYMBOL = new Map(SAUCERSWAP_TOKENS.map((t) => [t.symbol, t]));
@@ -191,7 +197,7 @@ export function resolveToken(symbol: string): AllowedToken | undefined {
   if (exact) return exact;
 
   // HBAR (native) is its own token now — not aliased to WHBAR
-  const aliases: Record<string, string> = { ETH: "WETH", BTC: "WBTC" };
+  const aliases: Record<string, string> = { ETH: "WETH", BTC: "WBTC", MATIC: "WPOL", POL: "WPOL", POLY: "WPOL" };
   const upper = symbol.toUpperCase();
   const resolved = aliases[upper] || upper;
   return TOKEN_BY_SYMBOL.get(resolved);
@@ -636,37 +642,63 @@ async function fetchRouterQuote(
  * Uses the Uniswap V2 constant product fee model (0.3% per hop).
  */
 
-// Hardcoded fallback prices — used when live prices are unavailable
+// Hardcoded fallback prices — used when live prices are unavailable.
+// IMPORTANT: HBAR/WHBAR MUST have non-zero fallbacks.  The previous value of 0
+// caused `!inputPrice` to be true (since !0 === true in JS), which killed the
+// price-based quote estimation (Strategy 3) and produced the
+// "All quote strategies failed — using minOutput=1" error for every swap
+// involving HBAR whenever live prices were stale or not yet fetched.
 const FALLBACK_TOKEN_PRICES_USD: Record<string, number> = {
-  HBAR: 0, WHBAR: 0, USDC: 1.0, USDT: 1.0, WBTC: 97000, WETH: 3600,
-  LINK: 19.0, SAUCE: 0.045, HBARX: 0.30, KARATE: 0.0003,
+  HBAR: 0.20, WHBAR: 0.20, USDC: 1.0, USDT: 1.0, WBTC: 97000, WETH: 3600,
+  LINK: 19.0, WPOL: 0.40, SAUCE: 0.045, HBARX: 0.30, KARATE: 0.0003,
   PACK: 0.015, DOVU: 0.002, HST: 0.018, "HBAR.ħ": 0.008,
 };
 
 // Live price cache — updated by fetchLiveTokenPrices()
 let _liveTokenPricesUsd: Record<string, number> = {};
 let _liveTokenPricesTimestamp = 0;
-const LIVE_PRICE_TTL_MS = 60_000; // 60 seconds
+const LIVE_PRICE_TTL_MS = 300_000; // 5 minutes (was 60s — too aggressive, caused
+// constant cache misses during swap flows and forced fallback to $0 HBAR prices)
 
 /**
  * Get the best available price for a token symbol.
- * Prefers live prices from SaucerSwap, falls back to hardcoded prices.
+ * Prefers live prices from SaucerSwap, falls back to stale live or hardcoded.
  */
 function getTokenPriceUsd(symbol: string): number | undefined {
-  // Prefer live prices if fresh
+  // 1. Fresh live price
   if (Date.now() - _liveTokenPricesTimestamp < LIVE_PRICE_TTL_MS && _liveTokenPricesUsd[symbol]) {
     return _liveTokenPricesUsd[symbol];
   }
-  return FALLBACK_TOKEN_PRICES_USD[symbol];
+  // 2. Non-zero fallback
+  const fallback = FALLBACK_TOKEN_PRICES_USD[symbol];
+  if (fallback && fallback > 0) return fallback;
+  // 3. Stale live price (better than zero/undefined)
+  if (_liveTokenPricesUsd[symbol] && _liveTokenPricesUsd[symbol] > 0) {
+    return _liveTokenPricesUsd[symbol];
+  }
+  return fallback;
 }
 
-// Merged accessor: returns live prices overlaid on fallbacks
+// Merged accessor: returns live prices overlaid on fallbacks.
+// Priority: fresh live price → stale live price (if fallback is 0) → fallback.
+// The "stale live" tier is critical: it prevents the disastrous case where
+// live prices expire after 60s and HBAR/WHBAR revert to a $0 fallback,
+// silently killing every price-based quote estimation.
 const TOKEN_PRICES_USD: Record<string, number> = new Proxy(FALLBACK_TOKEN_PRICES_USD, {
   get(target, prop: string) {
+    // 1. Fresh live price (within TTL)
     if (Date.now() - _liveTokenPricesTimestamp < LIVE_PRICE_TTL_MS && _liveTokenPricesUsd[prop] != null) {
       return _liveTokenPricesUsd[prop];
     }
-    return target[prop];
+    // 2. Fallback price — but only if it's non-zero
+    const fallback = target[prop];
+    if (fallback && fallback > 0) return fallback;
+    // 3. Stale live price (better than zero)
+    if (_liveTokenPricesUsd[prop] != null && _liveTokenPricesUsd[prop] > 0) {
+      return _liveTokenPricesUsd[prop];
+    }
+    // 4. Truly no price available
+    return fallback ?? 0;
   },
   has(target, prop: string) {
     return prop in _liveTokenPricesUsd || prop in target;
@@ -1015,9 +1047,39 @@ function estimateOutputFromPrices(
 ): number | null {
   const inputSym = inputToken.isNative ? "HBAR" : inputToken.symbol;
   const outputSym = outputToken.isNative ? "HBAR" : outputToken.symbol;
-  const inputPrice = TOKEN_PRICES_USD[inputSym];
-  const outputPrice = TOKEN_PRICES_USD[outputSym];
-  if (!inputPrice || !outputPrice || outputPrice <= 0) return null;
+
+  // Read prices through the proxy (tries: fresh live → non-zero fallback → stale live)
+  let inputPrice = TOKEN_PRICES_USD[inputSym];
+  let outputPrice = TOKEN_PRICES_USD[outputSym];
+
+  // Guard: reject only genuinely missing/undefined prices, not zero
+  // (zero prices are now guarded by the proxy's stale-live fallback)
+  if (inputPrice == null || outputPrice == null || outputPrice <= 0) {
+    console.warn(
+      `[HBAR.h] estimateOutputFromPrices: cannot estimate — ` +
+      `inputPrice[${inputSym}]=${inputPrice}, outputPrice[${outputSym}]=${outputPrice}`
+    );
+    return null;
+  }
+
+  // Extra safety: if inputPrice is 0 (shouldn't happen after proxy fix, but just in case),
+  // try one more heuristic — WHBAR price for HBAR and vice versa
+  if (inputPrice <= 0 && (inputSym === "HBAR" || inputSym === "WHBAR")) {
+    const alt = TOKEN_PRICES_USD[inputSym === "HBAR" ? "WHBAR" : "HBAR"];
+    if (alt && alt > 0) inputPrice = alt;
+  }
+  if (outputPrice <= 0 && (outputSym === "HBAR" || outputSym === "WHBAR")) {
+    const alt = TOKEN_PRICES_USD[outputSym === "HBAR" ? "WHBAR" : "HBAR"];
+    if (alt && alt > 0) outputPrice = alt;
+  }
+
+  if (inputPrice <= 0 || outputPrice <= 0) {
+    console.warn(
+      `[HBAR.h] estimateOutputFromPrices: zero price after fallbacks — ` +
+      `inputPrice[${inputSym}]=${inputPrice}, outputPrice[${outputSym}]=${outputPrice}`
+    );
+    return null;
+  }
 
   // Convert raw amount to human-readable
   const humanInput = rawAmountIn / Math.pow(10, inputToken.decimals);
@@ -1094,6 +1156,8 @@ export async function fetchSaucerSwapQuote(
   }
 
   // ── Strategy 3: Price-based estimation ──
+  // This should almost always succeed now that HBAR/WHBAR have non-zero
+  // fallback prices and the proxy prefers stale live prices over zero.
   if (options?.inputToken && options?.outputToken) {
     const hops = (options.pathAddresses?.length || 2) - 1;
     const estimated = estimateOutputFromPrices(
@@ -1111,6 +1175,16 @@ export async function fetchSaucerSwapQuote(
         source: "price-estimate",
       };
     }
+    console.warn(
+      `[HBAR.h] Price-based estimation also failed for ${options.inputToken.symbol} → ${options.outputToken.symbol}. ` +
+      `Prices: ${options.inputToken.symbol}=$${TOKEN_PRICES_USD[options.inputToken.isNative ? "HBAR" : options.inputToken.symbol]}, ` +
+      `${options.outputToken.symbol}=$${TOKEN_PRICES_USD[options.outputToken.isNative ? "HBAR" : options.outputToken.symbol]}. ` +
+      `Live cache age: ${Math.round((Date.now() - _liveTokenPricesTimestamp) / 1000)}s`
+    );
+  } else {
+    console.warn(
+      `[HBAR.h] Strategy 3 (price estimation) skipped — inputToken/outputToken not provided in options`
+    );
   }
 
   return null;
@@ -2653,8 +2727,18 @@ async function executeSaucerSwapV2Direct(
       minOutput = Math.max(1, Math.floor(quote.amountOut * (1 - effectiveSlippage / 100)));
       console.log(`[HBAR.h] V2 Quote: source=${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${effectiveSlippage}% slippage)`);
     } else {
-      minOutput = 1;
-      console.warn("[HBAR.h] V2: All quote strategies failed — using minOutput=1 (no slippage protection)");
+      // Last-ditch inline estimate before surrendering to minOutput=1
+      const inTok = isInputNative ? whbar : inputToken;
+      const outTok = isOutputNative ? whbar : outputToken;
+      const lastDitch = estimateOutputFromPrices(rawInput, inTok, outTok, 1);
+      if (lastDitch && lastDitch > 0) {
+        const safeSlippage = Math.max(slippagePct, 10); // very generous for emergency estimate
+        minOutput = Math.max(1, Math.floor(lastDitch * (1 - safeSlippage / 100)));
+        console.warn(`[HBAR.h] V2: All strategies failed but inline price estimate rescued quote: minOutput=${minOutput} (${safeSlippage}% slippage)`);
+      } else {
+        minOutput = 1;
+        console.warn("[HBAR.h] V2: All quote strategies failed including inline rescue — using minOutput=1 (no slippage protection)");
+      }
     }
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min
@@ -3286,7 +3370,7 @@ async function executeSaucerSwapDirect(
 
     // ── minOutput calculation ──
     // When quote is available: use it with slippage tolerance.
-    // When all strategies fail: set minOutput to 1 (accept any output).
+    // When all strategies fail: try one more inline price estimate before surrendering.
     let minOutput: number;
     if (quote && quote.amountOut > 0) {
       // For price estimates, use wider slippage (prices may be stale)
@@ -3296,9 +3380,18 @@ async function executeSaucerSwapDirect(
       minOutput = Math.max(1, Math.floor(quote.amountOut * (1 - effectiveSlippage / 100)));
       console.log(`[HBAR.h] Quote source: ${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${effectiveSlippage}% slippage)`);
     } else {
-      // No quote available from any strategy — accept any output.
-      minOutput = 1;
-      console.warn("[HBAR.h] All quote strategies failed — using minOutput=1 (no slippage protection)");
+      // Last-ditch inline estimate before surrendering to minOutput=1
+      const inTok = isInputNative ? whbar : inputToken;
+      const outTok = isOutputNative ? whbar : outputToken;
+      const lastDitch = estimateOutputFromPrices(rawInput, inTok, outTok, pathAddresses.length - 1);
+      if (lastDitch && lastDitch > 0) {
+        const safeSlippage = Math.max(slippagePct, 10); // very generous for emergency estimate
+        minOutput = Math.max(1, Math.floor(lastDitch * (1 - safeSlippage / 100)));
+        console.warn(`[HBAR.h] All strategies failed but inline price estimate rescued quote: minOutput=${minOutput} (${safeSlippage}% slippage)`);
+      } else {
+        minOutput = 1;
+        console.warn("[HBAR.h] All quote strategies failed including inline rescue — using minOutput=1 (no slippage protection)");
+      }
     }
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min deadline

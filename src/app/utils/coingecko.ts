@@ -60,6 +60,9 @@ export interface CoinPrice {
   oracle_source?: OracleSource;
   oracle_updated_at?: number;  // unix timestamp from on-chain feed
   chainlink_feed?: string;     // Chainlink feed contract address
+  // Tracks where the 24h % change came from (may differ from price source)
+  // When Chainlink provides price but APIs fail, change stays "fallback" (mock data)
+  change_source?: OracleSource;
 }
 
 const FALLBACK_DATA: Record<string, CoinPrice> = {
@@ -70,7 +73,7 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
   SOL:  { id: "solana",     symbol: "sol",  name: "Solana",     current_price: 186.73,   price_change_percentage_24h: 5.67,  market_cap: 89200000000,   total_volume: 3200000000,  image: TOKEN_LOGOS.SOL },
   USDC: { id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0002,   price_change_percentage_24h: 0.01,  market_cap: 58400000000,   total_volume: 6400000000,  image: TOKEN_LOGOS.USDC },
   XRP:  { id: "ripple",     symbol: "xrp",  name: "XRP",        current_price: 2.43,     price_change_percentage_24h: -1.23, market_cap: 138500000000,  total_volume: 4500000000,  image: TOKEN_LOGOS.XRP },
-  HBAR: { id: "hedera",     symbol: "hbar", name: "Hedera",     current_price: 0,        price_change_percentage_24h: 0,     market_cap: 11200000000,   total_volume: 420000000,   image: TOKEN_LOGOS.HBAR },
+  HBAR: { id: "hedera",     symbol: "hbar", name: "Hedera",     current_price: 0.19,     price_change_percentage_24h: 2.5,   market_cap: 11200000000,   total_volume: 420000000,   image: TOKEN_LOGOS.HBAR },
   DOGE: { id: "dogecoin",   symbol: "doge", name: "Dogecoin",   current_price: 0.3421,   price_change_percentage_24h: 4.23,  market_cap: 50300000000,   total_volume: 2100000000,  image: TOKEN_LOGOS.DOGE },
   ADA:  { id: "cardano",    symbol: "ada",  name: "Cardano",    current_price: 0.9234,   price_change_percentage_24h: 2.34,  market_cap: 32400000000,   total_volume: 890000000,   image: TOKEN_LOGOS.ADA },
   AVAX: { id: "avalanche",  symbol: "avax", name: "Avalanche",  current_price: 38.67,    price_change_percentage_24h: 6.78,  market_cap: 16800000000,   total_volume: 620000000,   image: TOKEN_LOGOS.AVAX },
@@ -90,7 +93,7 @@ async function fetchFromCoinCap(symbols: string[]): Promise<Record<string, CoinP
   if (!ids) return {};
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
 
   try {
     const res = await fetch(`${COINCAP_API}/assets?ids=${ids}`, { signal: controller.signal });
@@ -139,7 +142,7 @@ async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, Coi
   if (!coinIds) return {};
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
 
   try {
     const res = await fetch(
@@ -195,6 +198,63 @@ async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, Coi
 // The merge logic uses Chainlink for `current_price` and CoinCap/CoinGecko
 // for auxiliary market data.
 // ─────────────────────────────────────────────────────────────────────
+
+// ── Fast-Path HBAR Price Fetch ─────────────────────────────────────
+// Dedicated single-asset fetch from CoinCap for HBAR price.
+// Uses a 3s timeout and the lightweight single-asset endpoint to get
+// HBAR's price as fast as possible. Called by the Dashboard alongside
+// the main oracle pipeline so HBAR displays immediately even if the
+// bulk batch requests are slow. Also caches the result to prevent
+// repeated requests within the same fetch cycle.
+// ─────────────────────────────────────────────────────────────────────
+let _hbarFastCache: { price: CoinPrice; ts: number } | null = null;
+const HBAR_FAST_CACHE_TTL = 15_000; // 15s — short so it stays fresh
+
+export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
+  // Return cache if still fresh
+  if (_hbarFastCache && Date.now() - _hbarFastCache.ts < HBAR_FAST_CACHE_TTL) {
+    return _hbarFastCache.price;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+  try {
+    const res = await fetch(`${COINCAP_API}/assets/hedera-hashgraph`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+
+    const json = await res.json();
+    const asset = json?.data;
+    if (!asset) return null;
+
+    const price = parseFloat(asset.priceUsd);
+    if (!price || price <= 0) return null;
+
+    const result: CoinPrice = {
+      id: "hedera",
+      symbol: "hbar",
+      name: asset.name || "Hedera",
+      current_price: price,
+      price_change_percentage_24h: parseFloat(asset.changePercent24Hr) || 0,
+      market_cap: parseFloat(asset.marketCapUsd) || 0,
+      total_volume: parseFloat(asset.volumeUsd24Hr) || 0,
+      image: TOKEN_LOGOS.HBAR,
+      oracle_source: "coincap",
+      change_source: "coincap",
+    };
+
+    _hbarFastCache = { price: result, ts: Date.now() };
+    console.debug(`[Oracle] HBAR fast-path: $${price.toFixed(4)} via CoinCap single-asset`);
+    return result;
+  } catch {
+    clearTimeout(timeoutId);
+    return null;
+  }
+}
+
 export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string, CoinPrice>> => {
   // Fire all three oracle sources in parallel
   // All three functions handle errors internally and always return {} on failure
@@ -213,13 +273,15 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
 
   for (const symbol of symbols) {
     // Start with fallback
+    // change_source tracks where price_change_percentage_24h actually came from
+    // (may differ from oracle_source when Chainlink overrides price but not %)
     let result: CoinPrice | null = FALLBACK_DATA[symbol]
-      ? { ...FALLBACK_DATA[symbol], oracle_source: "fallback" as OracleSource }
+      ? { ...FALLBACK_DATA[symbol], oracle_source: "fallback" as OracleSource, change_source: "fallback" as OracleSource }
       : null;
 
     // Layer CoinGecko (lowest priority API)
     if (coingecko[symbol]) {
-      result = { ...coingecko[symbol] };
+      result = { ...coingecko[symbol], change_source: "coingecko" as OracleSource };
     }
 
     // Layer CoinCap (higher priority API)
@@ -233,14 +295,17 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
           market_cap: coincap[symbol].market_cap || result.market_cap,
           total_volume: coincap[symbol].total_volume || result.total_volume,
           oracle_source: "coincap" as OracleSource,
+          change_source: "coincap" as OracleSource,
         };
       } else {
-        result = { ...coincap[symbol] };
+        result = { ...coincap[symbol], change_source: "coincap" as OracleSource };
       }
     }
 
     // Override ONLY the price with Chainlink data (highest priority — decentralized oracle)
     // Keep 24h change, volume, and market cap from CoinCap/CoinGecko
+    // IMPORTANT: change_source is preserved from the layer beneath — Chainlink
+    // does NOT provide 24h change, so change_source stays whatever it was
     if (chainlink[symbol] && chainlink[symbol].current_price > 0) {
       if (result) {
         result = {
@@ -249,6 +314,8 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
           oracle_source: "chainlink" as OracleSource,
           oracle_updated_at: chainlink[symbol].oracle_updated_at,
           chainlink_feed: chainlink[symbol].chainlink_feed,
+          // change_source intentionally NOT overridden — it stays from the
+          // underlying source (coincap/coingecko/fallback)
         };
       } else {
         // No API data at all — use Chainlink alone with fallback metadata
@@ -267,6 +334,7 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
           oracle_source: "chainlink" as OracleSource,
           oracle_updated_at: chainlink[symbol].oracle_updated_at,
           chainlink_feed: chainlink[symbol].chainlink_feed,
+          change_source: "fallback" as OracleSource,
         };
       }
     }

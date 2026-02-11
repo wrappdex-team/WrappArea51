@@ -1,7 +1,5 @@
 import { useState, useCallback, useRef, useEffect, Suspense } from "react";
-import hbarhBrandingDark from "figma:asset/6f6e9c5ee80a8ecc30ace31949b8726033214876.png";
-import hbarhBrandingLight from "figma:asset/223816e04d625491d254d68760fc0c00ebfa9486.png";
-import hashpackLogo from "figma:asset/88a04a0e847751906ce5a271fa9d750625ac069d.png";
+import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT, HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
 import { Outlet, Link, useLocation } from "react-router";
 import { TrendingUp, Wallet, History, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, X, Volume2, VolumeOff, Droplets, Layers, Crown } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
@@ -83,7 +81,7 @@ export function Layout() {
     { path: "/swap", label: "Swap", icon: ArrowRightLeft },
     { path: "/buy-sell", label: "Buy/Sell", icon: DollarSign },
     { path: "/defi", label: "DeFi", icon: Droplets },
-    { path: "/smart-liquidity", label: "Smart Liquidity", icon: Layers },
+    { path: "/smart-liquidity", label: "Smart Liquidity", shortLabel: "Liquidity", icon: Layers },
     { path: "/wallet", label: "Wallet", icon: Wallet },
     { path: "/history", label: "History", icon: History },
     { path: "/dao", label: "DAO", icon: Vote },
@@ -129,25 +127,25 @@ export function Layout() {
           ? "border-pink-900/20 bg-[#12121a]/50"
           : "border-gray-200 bg-white/85"
       }`}>
-        <div className="container mx-auto px-3 md:px-4 py-2 md:py-4">
-          <div className="flex items-center justify-between">
-            {/* HBAR.ħ Logo — 25% larger, VIP pulse when active */}
-            <Link to="/" className="flex items-center group">
+        <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
+          <div className="flex items-center justify-between gap-2">
+            {/* HBAR.ħ Logo — compact on lg to free nav space */}
+            <Link to="/" className="flex items-center group flex-shrink-0 ml-1">
               <div className={`relative flex-shrink-0 transition-transform duration-300 ${vipActive ? "animate-vip-pulse" : ""}`}>
                 {isDark ? (
-                  <div className="h-[75px] md:h-[105px] flex items-center">
+                  <div className="h-[60px] md:h-[70px] lg:h-[60px] xl:h-[70px] flex items-center">
                     <img
-                      src={hbarhBrandingDark}
-                      alt="HBAR.ħ Decentralized Exchange"
-                      className="h-[68px] md:h-[90px] w-auto object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.4)]"
+                      src={HBARH_BRANDING_DARK}
+                      alt="Wrappdex Decentralized Exchange"
+                      className="h-[54px] md:h-[64px] lg:h-[54px] xl:h-[64px] w-auto object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.4)]"
                     />
                   </div>
                 ) : (
-                  <div className="h-[75px] md:h-[105px] flex items-center">
+                  <div className="h-[70px] md:h-[85px] lg:h-[70px] xl:h-[80px] flex items-center">
                     <img
-                      src={hbarhBrandingLight}
-                      alt="HBAR.ħ Decentralized Exchange"
-                      className="h-[68px] md:h-[90px] w-auto object-contain"
+                      src={HBARH_BRANDING_LIGHT}
+                      alt="Wrappdex Decentralized Exchange"
+                      className="h-[64px] md:h-[78px] lg:h-[64px] xl:h-[74px] w-auto object-contain"
                     />
                   </div>
                 )}
@@ -155,7 +153,8 @@ export function Layout() {
             </Link>
 
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex gap-1">
+            <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3">
+              <div className="flex items-center gap-px xl:gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.path);
@@ -166,7 +165,7 @@ export function Layout() {
                     to={item.path}
                     onClick={() => handleTabClick(item.path)}
                     onMouseEnter={() => preloadRoute(item.path)}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all duration-300 text-sm ${
+                    className={`flex items-center gap-1 px-2 xl:px-2.5 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap ${
                       active
                         ? `text-white shadow-lg shadow-pink-500/30 active-nav nav-iridescent ${isFlashing ? "tab-click-flash" : ""}`
                         : isDark
@@ -174,15 +173,23 @@ export function Layout() {
                         : "text-gray-500 hover:text-gray-900 hover:bg-gray-100 link-iridescent"
                     }`}
                   >
-                    <Icon className="w-4 h-4" />
-                    <span>{item.label}</span>
+                    <Icon className="w-3.5 h-3.5 hidden xl:block" />
+                    {item.shortLabel ? (
+                      <>
+                        <span className="xl:hidden">{item.shortLabel}</span>
+                        <span className="hidden xl:inline">{item.label}</span>
+                      </>
+                    ) : (
+                      <span>{item.label}</span>
+                    )}
                   </Link>
                 );
               })}
+              </div>
             </nav>
 
             {/* Right Side: Theme Toggle + Wallet + Mobile Menu */}
-            <div className="flex items-center gap-2 md:gap-3">
+            <div className="flex items-center gap-1 md:gap-1.5 flex-shrink-0">
               {/* Social Links */}
               <a
                 href="https://x.com/WRAPpDEX"
@@ -288,11 +295,17 @@ export function Layout() {
                           />
                         ) : (
                           <img
-                            src={hashpackLogo}
+                            src={HASHPACK_LOGO}
                             alt="HashPack"
                             className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex-shrink-0 object-cover"
                           />
                         )
+                      ) : primaryWallet.connector === "MetaMask" ? (
+                        <img
+                          src={METAMASK_LOGO}
+                          alt="MetaMask"
+                          className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex-shrink-0 object-cover"
+                        />
                       ) : (
                         <div className={`w-7 h-7 md:w-8 md:h-8 bg-gradient-to-br ${getWalletColor(primaryWallet.type)} rounded-lg flex items-center justify-center font-bold text-xs md:text-sm text-white`}>
                           {primaryWallet.connector[0]}
@@ -369,8 +382,14 @@ export function Layout() {
                             <div className="flex items-center gap-3">
                               {wallet.type === "hedera" ? (
                                 <img
-                                  src={hashpackLogo}
+                                  src={HASHPACK_LOGO}
                                   alt="HashPack"
+                                  className="w-8 h-8 rounded-lg flex-shrink-0 object-cover"
+                                />
+                              ) : wallet.connector === "MetaMask" ? (
+                                <img
+                                  src={METAMASK_LOGO}
+                                  alt="MetaMask"
                                   className="w-8 h-8 rounded-lg flex-shrink-0 object-cover"
                                 />
                               ) : (

@@ -5,7 +5,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { FearGreedGauge } from "./FearGreedGauge";
 import { RSIGauge } from "./RSIGauge";
-import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, type CoinPrice } from "../utils/coingecko";
+import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, fetchHbarFastPath, type CoinPrice } from "../utils/coingecko";
 import type { GlobalMarketData, OracleSource } from "../utils/coingecko";
 import { CandlestickChart } from "./CandlestickChart";
 import { MarketDetailChart } from "./MarketDetailChart";
@@ -17,8 +17,7 @@ import type { CandlestickData } from "lightweight-charts";
 import { isVipEligible, loadVipPrefs } from "../utils/vip";
 import { playVipButtonChime } from "../utils/sounds";
 import { SiteActivity } from "./SiteActivity";
-import hbarhLogoDark from "figma:asset/a4dcb71ed037398f210b836928214a568ecf191e.png";
-import hbarhLogoLight from "figma:asset/a4dcb71ed037398f210b836928214a568ecf191e.png";
+import { HBARH_LOGO_DARK, HBARH_LOGO_LIGHT } from "../assets/brand";
 
 // ── Types & Helpers ────────────────────────────────────────────────
 
@@ -35,6 +34,8 @@ interface MarketAsset {
   oracleSource?: OracleSource;
   oracleUpdatedAt?: number;
   chainlinkFeed?: string;
+  /** Where the 24h % change actually came from — "fallback" means it's mock/stale data */
+  changeSource?: OracleSource;
 }
 
 /** Symbols that get real candlestick chart backgrounds */
@@ -63,6 +64,7 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
       oracleSource: p?.oracle_source,
       oracleUpdatedAt: p?.oracle_updated_at,
       chainlinkFeed: p?.chainlink_feed,
+      changeSource: p?.change_source,
     };
   });
 }
@@ -143,7 +145,22 @@ export function Dashboard() {
 
   useEffect(() => {
     const loadPrices = async () => {
-      const prices = await fetchCoinPrices(ALL_SYMBOLS);
+      // Fire HBAR fast-path and full oracle pipeline in parallel.
+      // The fast-path uses CoinCap's single-asset endpoint (3s timeout)
+      // and resolves before the bulk batch requests, ensuring HBAR
+      // always has a live price even if the main oracle is slow.
+      const [prices, hbarFast] = await Promise.all([
+        fetchCoinPrices(ALL_SYMBOLS),
+        fetchHbarFastPath().catch(() => null),
+      ]);
+
+      // Patch HBAR price if main oracle returned fallback or zero
+      if (hbarFast && hbarFast.current_price > 0) {
+        const existing = prices["HBAR"];
+        if (!existing || existing.oracle_source === "fallback" || existing.current_price <= 0) {
+          prices["HBAR"] = hbarFast;
+        }
+      }
 
       const assets = buildMarketAssets(prices);
 
@@ -180,7 +197,7 @@ export function Dashboard() {
       change: hbarhData.change24h,
       volume: formatUsdCompact(hbarhData.volume24h),
       marketCap: "—",
-      logo: isDark ? hbarhLogoDark : hbarhLogoLight,
+      logo: isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT,
       category: "defi",
       chartData: generateCandlestickData("HBAR.ħ", hbarhData.priceUsd, 0.18),
       oracleSource: undefined, // Handled with custom DexScreener badge
@@ -277,7 +294,7 @@ export function Dashboard() {
               HBAR.ħ Price
             </div>
             <img
-              src={isDark ? hbarhLogoDark : hbarhLogoLight}
+              src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT}
               alt="HBAR.ħ"
               className="w-6 h-6 rounded-full flex-shrink-0 object-cover"
             />
@@ -371,18 +388,16 @@ export function Dashboard() {
                 {f === "all" ? "All" : f === "layer1" ? "Layer 1" : "Stablecoins"}
               </button>
             ))}
-            <a
-              href="https://www.bonzo.finance/"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              to="/defi"
               className={`px-3 py-1 rounded-lg text-sm flex items-center gap-1 transition-all duration-300 whitespace-nowrap ${
                 isDark
                   ? "bg-slate-800/50 text-slate-400 hover:text-white"
                   : "bg-gray-100 text-gray-500 hover:text-gray-900"
               }`}
             >
-              DeFi <ExternalLink className="w-3 h-3" />
-            </a>
+              DeFi
+            </Link>
           </div>
         </div>
 
@@ -457,28 +472,50 @@ export function Dashboard() {
                         ${item.price >= 1 ? item.price.toLocaleString() : item.price < 0.001 ? item.price.toFixed(8) : item.price.toFixed(4)}
                       </div>
                       {/* Mobile-only change below price */}
-                      <div
-                        className={`flex items-center justify-end gap-0.5 text-xs md:hidden ${
-                          item.change >= 0 ? "text-emerald-500" : "text-red-500"
-                        }`}
-                      >
-                        {item.change >= 0 ? "+" : ""}{Math.abs(item.change).toFixed(2)}%
-                      </div>
+                      {item.changeSource === "fallback" ? (
+                        <div
+                          className={`flex items-center justify-end gap-0.5 text-xs md:hidden ${
+                            isDark ? "text-slate-500" : "text-gray-400"
+                          } animate-pulse`}
+                          title="Waiting for live 24h data..."
+                        >
+                          —
+                        </div>
+                      ) : (
+                        <div
+                          className={`flex items-center justify-end gap-0.5 text-xs md:hidden ${
+                            item.change >= 0 ? "text-emerald-500" : "text-red-500"
+                          }`}
+                        >
+                          {item.change >= 0 ? "+" : ""}{Math.abs(item.change).toFixed(2)}%
+                        </div>
+                      )}
                     </div>
 
                     <div className="hidden md:block w-20 text-right">
-                      <div
-                        className={`flex items-center justify-end gap-1 font-bold text-sm ${
-                          item.change >= 0 ? "text-emerald-500" : "text-red-500"
-                        }`}
-                      >
-                        {item.change >= 0 ? (
-                          <TrendingUp className="w-3.5 h-3.5" />
-                        ) : (
-                          <TrendingDown className="w-3.5 h-3.5" />
-                        )}
-                        {Math.abs(item.change).toFixed(2)}%
-                      </div>
+                      {item.changeSource === "fallback" ? (
+                        <div
+                          className={`flex items-center justify-end gap-1 font-bold text-sm ${
+                            isDark ? "text-slate-500" : "text-gray-400"
+                          } animate-pulse`}
+                          title="Waiting for live 24h data from CoinCap/CoinGecko..."
+                        >
+                          <span className="text-xs">~</span> —
+                        </div>
+                      ) : (
+                        <div
+                          className={`flex items-center justify-end gap-1 font-bold text-sm ${
+                            item.change >= 0 ? "text-emerald-500" : "text-red-500"
+                          }`}
+                        >
+                          {item.change >= 0 ? (
+                            <TrendingUp className="w-3.5 h-3.5" />
+                          ) : (
+                            <TrendingDown className="w-3.5 h-3.5" />
+                          )}
+                          {Math.abs(item.change).toFixed(2)}%
+                        </div>
+                      )}
                     </div>
 
                     <div className={`hidden lg:block w-20 text-right text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>

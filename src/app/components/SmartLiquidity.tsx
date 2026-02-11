@@ -11,7 +11,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronDown,
-  Clock,
   Droplets,
   Info,
   Layers,
@@ -25,11 +24,14 @@ import {
   Crown,
   AlertCircle,
   Plus,
+  Globe,
+  ExternalLink,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { isVipEligible } from "../utils/vip";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 import {
   fetchPools,
   getPoolStats,
@@ -39,6 +41,7 @@ import {
   formatUsd,
   formatFeeBps,
   timeSince,
+  WRAPPED_TOKENS,
   type LiquidityPool,
   type PoolStats,
   type SwapQuote,
@@ -192,21 +195,24 @@ function SwapModal({
         <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
           <div className="flex items-center justify-between mb-2">
             <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Pay</span>
-            <select
-              value={tokenInIdx}
-              onChange={(e) => {
-                const idx = Number(e.target.value);
-                setTokenInIdx(idx);
-                if (idx === tokenOutIdx) setTokenOutIdx(tokenInIdx);
-              }}
-              className={`text-xs px-2 py-1 rounded-lg outline-none ${
-                isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"
-              }`}
-            >
-              {pool.tokens.map((t, i) => (
-                <option key={t.tokenId} value={i}>{t.symbol}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1.5">
+              <img src={tokenIn.logo} alt={tokenIn.symbol} className="w-4 h-4 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <select
+                value={tokenInIdx}
+                onChange={(e) => {
+                  const idx = Number(e.target.value);
+                  setTokenInIdx(idx);
+                  if (idx === tokenOutIdx) setTokenOutIdx(tokenInIdx);
+                }}
+                className={`text-xs px-2 py-1 rounded-lg outline-none ${
+                  isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"
+                }`}
+              >
+                {pool.tokens.map((t, i) => (
+                  <option key={t.tokenId} value={i}>{t.symbol}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <input
             type="number"
@@ -241,21 +247,24 @@ function SwapModal({
         <div className={`rounded-xl p-4 mt-2 mb-4 ${inputClass}`}>
           <div className="flex items-center justify-between mb-2">
             <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Receive</span>
-            <select
-              value={tokenOutIdx}
-              onChange={(e) => {
-                const idx = Number(e.target.value);
-                setTokenOutIdx(idx);
-                if (idx === tokenInIdx) setTokenInIdx(tokenOutIdx);
-              }}
-              className={`text-xs px-2 py-1 rounded-lg outline-none ${
-                isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"
-              }`}
-            >
-              {pool.tokens.map((t, i) => (
-                <option key={t.tokenId} value={i}>{t.symbol}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1.5">
+              <img src={tokenOut.logo} alt={tokenOut.symbol} className="w-4 h-4 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <select
+                value={tokenOutIdx}
+                onChange={(e) => {
+                  const idx = Number(e.target.value);
+                  setTokenOutIdx(idx);
+                  if (idx === tokenInIdx) setTokenInIdx(tokenOutIdx);
+                }}
+                className={`text-xs px-2 py-1 rounded-lg outline-none ${
+                  isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"
+                }`}
+              >
+                {pool.tokens.map((t, i) => (
+                  <option key={t.tokenId} value={i}>{t.symbol}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="text-2xl">
             {quote ? quote.amountOut.toFixed(quote.amountOut >= 1 ? 4 : 8) : "0.00"}
@@ -471,8 +480,49 @@ export function SmartLiquidity() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"pools" | "orderbook" | "create">("pools");
   const [oracleRefreshing, setOracleRefreshing] = useState(false);
+  const [serverPrices, setServerPrices] = useState<Record<string, number> | null>(null);
 
   const accountId = hashPackSession?.accountId || null;
+
+  // Fetch live prices from server backend (supplements client oracle)
+  useEffect(() => {
+    const fetchServerPrices = async () => {
+      try {
+        const res = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-54299934/pools/prices`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.prices) setServerPrices(data.prices);
+        }
+      } catch { /* non-critical — client oracle is primary */ }
+    };
+    fetchServerPrices();
+    const iv = setInterval(fetchServerPrices, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Enrich pools with server-backed prices when available
+  const enrichedPools = useMemo(() => {
+    if (!serverPrices || pools.length === 0) return pools;
+    return pools.map((pool) => ({
+      ...pool,
+      tokens: pool.tokens.map((token) => {
+        const serverPrice = serverPrices[token.tokenId];
+        // Only apply server price if it's valid and the token currently has fallback pricing
+        if (serverPrice && serverPrice > 0 && token.oracleSource === "fallback") {
+          return {
+            ...token,
+            oraclePriceUsd: serverPrice,
+            oracleSource: "saucerswap" as const,
+            oracleTimestamp: Math.floor(Date.now() / 1000),
+          };
+        }
+        return token;
+      }),
+    }));
+  }, [pools, serverPrices]);
 
   const isVip = useMemo(() => {
     if (!hederaAccount?.tokens) return false;
@@ -512,13 +562,13 @@ export function SmartLiquidity() {
   }, [loadData]);
 
   const filteredPools = useMemo(() => {
-    if (!search) return pools;
+    if (!search) return enrichedPools;
     const q = search.toLowerCase();
-    return pools.filter((p) =>
+    return enrichedPools.filter((p) =>
       p.name.toLowerCase().includes(q) ||
       p.tokens.some((t) => t.symbol.toLowerCase().includes(q))
     );
-  }, [pools, search]);
+  }, [enrichedPools, search]);
 
   const cardClass = isDark
     ? "bg-slate-900/30 border border-pink-500/20 backdrop-blur-sm"
@@ -569,7 +619,7 @@ export function SmartLiquidity() {
             Smart Liquidity
           </h1>
           <p className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            USDC-routed index pools with oracle-anchored zero-slippage swaps
+            Trade WBTC, WETH, LINK, WPOL, USDC, USDT — USDC-routed with oracle pricing
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -605,15 +655,104 @@ export function SmartLiquidity() {
         <div className="flex items-start gap-3">
           <Info className={`w-5 h-5 mt-0.5 flex-shrink-0 ${isDark ? "text-blue-400" : "text-blue-600"}`} />
           <div>
-            <div className="text-sm font-bold mb-1">USDC-Routed Oracle Pricing</div>
+            <div className="text-sm font-bold mb-1">Wrapped Pair Trading — USDC-Routed Oracle Pricing</div>
             <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              Trade the top HashPort-bridged assets on Hedera: <strong>WBTC, WETH, LINK, WPOL, USDC, USDT</strong>.
               Every swap routes through USDC for price stability. Oracle prices
-              from SaucerSwap&apos;s live API enable zero-slippage execution
-              within tolerance bands. When oracles are stale, the weighted
-              constant-product AMM provides fallback pricing. Pools are
-              pre-configured and ready to fill with real liquidity at launch.
+              from SaucerSwap&apos;s live API enable zero-slippage execution.
+              When oracles are stale, the weighted constant-product AMM provides
+              fallback pricing. All token IDs are verified on HashScan mainnet.
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Wrapped Token Ticker */}
+      <div className={`rounded-xl p-3 border overflow-hidden ${cardClass}`}>
+        <div className={`flex items-center gap-2 mb-2 text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+          <Globe className="w-3.5 h-3.5" />
+          Tradeable Wrapped Pairs on Hedera
+          {serverPrices && (
+            <span className={`text-[10px] font-normal px-1.5 py-0.5 rounded ${isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600"}`}>
+              Server-backed
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 overflow-x-auto pb-1">
+          {enrichedPools.length > 0
+            ? (() => {
+                // Deduplicate tokens across all pools by tokenId
+                const seen = new Set<string>();
+                const unique: typeof enrichedPools[0]["tokens"] = [];
+                for (const pool of enrichedPools) {
+                  for (const t of pool.tokens) {
+                    if (!seen.has(t.tokenId)) {
+                      seen.add(t.tokenId);
+                      unique.push(t);
+                    }
+                  }
+                }
+                return unique.map((token) => (
+                  <div
+                    key={token.tokenId}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg flex-shrink-0 border ${
+                      isDark ? "bg-slate-800/50 border-pink-500/10" : "bg-white border-gray-200"
+                    }`}
+                  >
+                    <img
+                      src={token.logo}
+                      alt={token.symbol}
+                      className="w-5 h-5 rounded-full"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                    <div>
+                      <div className="text-xs font-bold flex items-center gap-1">
+                        {token.symbol}
+                        {token.bridge && (
+                          <span className={`text-[8px] px-1 rounded ${isDark ? "bg-blue-500/10 text-blue-400" : "bg-blue-50 text-blue-600"}`}>
+                            {token.bridge}
+                          </span>
+                        )}
+                      </div>
+                      <div className={`text-[10px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                        ${token.oraclePriceUsd >= 1
+                          ? token.oraclePriceUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                          : token.oraclePriceUsd.toFixed(4)
+                        }
+                        <span className={`ml-1 ${token.oracleSource === "saucerswap" ? "text-emerald-400" : "text-amber-400"}`}>
+                          {token.oracleSource === "saucerswap" ? "Live" : "Fallback"}
+                        </span>
+                      </div>
+                    </div>
+                    <a
+                      href={`https://hashscan.io/mainnet/token/${token.tokenId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`ml-1 ${isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ));
+              })()
+            : WRAPPED_TOKENS.map((t) => (
+                <div
+                  key={t.tokenId}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg flex-shrink-0 border ${
+                    isDark ? "bg-slate-800/50 border-pink-500/10" : "bg-white border-gray-200"
+                  }`}
+                >
+                  <img src={t.logo} alt={t.symbol} className="w-5 h-5 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  <div>
+                    <div className="text-xs font-bold">{t.symbol}</div>
+                    <div className={`text-[10px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                      ${t.fallbackPrice >= 1 ? t.fallbackPrice.toLocaleString() : t.fallbackPrice.toFixed(4)}
+                    </div>
+                  </div>
+                </div>
+              ))
+          }
         </div>
       </div>
 
@@ -723,8 +862,22 @@ export function SmartLiquidity() {
                       onClick={() => setExpandedPool(isExpanded ? null : pool.id)}
                       className="w-full p-4 flex items-center gap-4 text-left"
                     >
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500/20 to-purple-500/20 flex items-center justify-center flex-shrink-0">
-                        <Layers className={`w-5 h-5 ${isDark ? "text-pink-400" : "text-pink-500"}`} />
+                      {/* Stacked token logos */}
+                      <div className="flex -space-x-2 flex-shrink-0">
+                        {pool.tokens.slice(0, 4).map((t) => (
+                          <img
+                            key={t.tokenId}
+                            src={t.logo}
+                            alt={t.symbol}
+                            className="w-8 h-8 rounded-full border-2 border-slate-900 bg-slate-800"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ))}
+                        {pool.tokens.length > 4 && (
+                          <div className={`w-8 h-8 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] font-bold ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-600"}`}>
+                            +{pool.tokens.length - 4}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex-1 min-w-0">
@@ -793,10 +946,16 @@ export function SmartLiquidity() {
                                 }`}
                               >
                                 <div className="flex items-center gap-1.5">
+                                  <img src={token.logo} alt={token.symbol} className="w-4 h-4 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                                   <span className="font-bold">{token.symbol}</span>
+                                  {token.bridge && (
+                                    <span className={`text-[8px] px-1 py-0.5 rounded ${isDark ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" : "bg-blue-50 text-blue-600"}`}>
+                                      {token.bridge}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-right">
-                                  ${token.oraclePriceUsd.toFixed(token.oraclePriceUsd < 0.01 ? 6 : 4)}
+                                  ${token.oraclePriceUsd.toFixed(token.oraclePriceUsd < 0.01 ? 6 : 2)}
                                 </div>
                                 <div className="text-right">
                                   {formatUsd(token.reserveUsd)}
@@ -898,8 +1057,8 @@ export function SmartLiquidity() {
             </div>
             <p>
               Pools auto-rebalance when any token drifts beyond its
-              threshold. At launch: 10 tokens. Scaling to 50 as
-              liquidity grows. HBAR.ħ is the protocol token anchor.
+              threshold. Currently trading: WBTC, WETH, LINK, WPOL,
+              USDC, USDT. More bridged pairs added after testing.
             </p>
           </div>
         </div>

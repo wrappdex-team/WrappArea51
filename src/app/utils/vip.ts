@@ -14,6 +14,25 @@
  *
  * Features unlock when VIP is active and the user toggles them on.
  * Preferences persist to localStorage.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * SECURITY AUDIT NOTES — 2026-02-11
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * [AUDIT-V01] PASS — The VIP system uses a double-check architecture:
+ *   1. Primary check: WalletContext cached token list (fast, UI-gating)
+ *   2. Secondary check: Direct Mirror Node query (verifyVipEligibilityDirect)
+ *   This is sound. The Mirror Node is the authoritative on-chain source.
+ *
+ * [AUDIT-V02] VIP preferences in localStorage are cosmetic-only (theme,
+ *   sounds, glow). A user could manually set VIP active in localStorage,
+ *   but the token-gate check in isVipEligible() is called separately
+ *   from the prefs, so feature gating is still enforced at render time.
+ *   No financial risk from localStorage manipulation.
+ *
+ * [AUDIT-V03] The GATE_THRESHOLD (100M) is imported from dao.ts which
+ *   is the single source of truth. No duplication risk. PASS.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 
 import type { HederaTokenBalance } from "./hedera";

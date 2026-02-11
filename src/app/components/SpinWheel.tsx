@@ -12,9 +12,50 @@ import {
   Sparkles,
   Trophy,
   ShieldCheck,
+  Shield,
+  RotateCcw,
+  Infinity,
+  Percent,
+  Settings,
 } from "lucide-react";
-import hbarhLogo from "figma:asset/a4dcb71ed037398f210b836928214a568ecf191e.png";
+import { HBAR_LOGO as hbarhLogo } from "../assets/brand";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECURITY AUDIT NOTES — 2026-02-11
+// ═══════════════════════════════════════════════════════════════════════
+//
+// [AUDIT-G01] FIXED — Win outcome now determined SERVER-SIDE via
+//   POST /spin endpoint using crypto.getRandomValues(). The client
+//   only receives { win, ticketId, segmentIndex, spinDelta } and
+//   animates the wheel. No client-side RNG for outcomes.
+//
+// [AUDIT-G02] Admin wallet check (ADMIN_WALLET_ID) is used client-side
+//   for UI (panel visibility, stat tracking). Server also checks admin
+//   wallet for 50% odds and cooldown bypass. Remove for production.
+//
+// [AUDIT-G03] FIXED — Ticket IDs generated server-side with
+//   crypto.getRandomValues(). No client-side ID generation.
+//
+// [AUDIT-G04] FIXED — Cooldown enforced server-side via KV store
+//   (spin_cd_{accountId}). localStorage kept as client UX hint only.
+//
+// Remaining Math.random() calls below are COSMETIC ONLY:
+//   - Sparkle particle positions (line ~410)
+//   - Audio pitch jitter (line ~647)
+//   - Confetti positions (line ~903)
+// These have zero security impact — PRNG prediction gains nothing.
+//
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Admin Configuration ─────────────────────────────────────────────
+
+/** Wallet ID that unlocks admin controls (must be connected) */
+const ADMIN_WALLET_ID = "0.0.518487";
+
+// Odds constants removed — RNG now handled server-side in POST /spin.
+// Server uses: NORMAL_ODDS = 0.04 (4%), ADMIN_ODDS = 0.5 (50%).
+// See /supabase/functions/server/index.tsx for authoritative values.
 
 // ── Config ───────────────────────────────────────────────────────────
 
@@ -118,25 +159,51 @@ async function fetchWinnerHistory(): Promise<WinnerRecord[]> {
   }
 }
 
-async function postWinner(record: WinnerRecord): Promise<WinnerRecord[]> {
+// Legacy postWinner removed — winner recording now happens server-side in POST /spin
+
+interface SpinResult {
+  win: boolean;
+  ticketId: string | null;
+  segmentIndex: number;
+  spinDelta: number;
+  timestamp: number;
+  winners?: WinnerRecord[];
+  canSpin?: boolean;
+  cooldownMs?: number;
+  error?: string;
+}
+
+async function requestSpin(accountId: string): Promise<SpinResult | null> {
   try {
-    const res = await fetch(`${API_BASE}/winners`, {
+    const res = await fetch(`${API_BASE}/spin`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${publicAnonKey}`,
       },
-      body: JSON.stringify(record),
+      body: JSON.stringify({ accountId }),
     });
-    if (!res.ok) {
-      console.log(`Failed to post winner: ${res.status} ${res.statusText}`);
-      return [];
-    }
     const data = await res.json();
-    return (data.winners ?? []) as WinnerRecord[];
+    if (!res.ok) {
+      console.log(`Spin request failed: ${res.status}`, data);
+      return { win: false, ticketId: null, segmentIndex: 0, spinDelta: 0, timestamp: 0, error: data.error || "Spin failed", canSpin: data.canSpin, cooldownMs: data.cooldownMs };
+    }
+    return data as SpinResult;
   } catch (err) {
-    console.log("Error posting winner to backend:", err);
-    return [];
+    console.log("Error requesting spin from server:", err);
+    return null;
+  }
+}
+
+async function fetchServerCooldown(accountId: string): Promise<{ canSpin: boolean; cooldownMs: number }> {
+  try {
+    const res = await fetch(`${API_BASE}/spin/cooldown/${accountId}`, {
+      headers: { Authorization: `Bearer ${publicAnonKey}` },
+    });
+    if (!res.ok) return { canSpin: true, cooldownMs: 0 };
+    return await res.json();
+  } catch {
+    return { canSpin: true, cooldownMs: 0 };
   }
 }
 
@@ -349,7 +416,7 @@ function PrizeTicket({
                   }}
                   transition={{
                     duration: 2,
-                    repeat: Infinity,
+                    repeat: 9999,
                     delay: Math.random() * 2,
                   }}
                 />
@@ -383,7 +450,7 @@ function PrizeTicket({
                 alt="HBAR.ħ"
                 className="w-16 h-16 rounded-full ring-2 ring-pink-500/50 shadow-lg shadow-pink-500/30"
                 animate={{ rotate: [0, 5, -5, 0] }}
-                transition={{ duration: 3, repeat: Infinity }}
+                transition={{ duration: 3, repeat: 9999 }}
               />
             </div>
 
@@ -500,6 +567,22 @@ export function SpinWheel({ accountId }: { accountId: string }) {
   const spinAudioRef = useRef<AudioContext | null>(null);
   const [winnerHistory, setWinnerHistory] = useState<WinnerRecord[]>([]);
 
+  // ── Admin Mode ──
+  const isAdmin = accountId === ADMIN_WALLET_ID;
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [adminSpinCount, setAdminSpinCount] = useState(0);
+  const [adminWinCount, setAdminWinCount] = useState(0);
+
+  // Reset spin on mount for admin (clear cooldown)
+  useEffect(() => {
+    if (isAdmin) {
+      try {
+        localStorage.removeItem(SPIN_STORAGE_KEY + accountId);
+      } catch { /* non-critical */ }
+      setCooldown(0);
+    }
+  }, [isAdmin, accountId]);
+
   // Load winner history on mount
   useEffect(() => {
     fetchWinnerHistory().then(setWinnerHistory);
@@ -543,7 +626,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
     return () => clearInterval(iv);
   }, [accountId]);
 
-  const canSpin = cooldown === 0 && !isSpinning;
+  const canSpin = (isAdmin || cooldown === 0) && !isSpinning;
 
   // Helper: ensure AudioContext exists
   const getAudioCtx = useCallback(() => {
@@ -682,75 +765,56 @@ export function SpinWheel({ accountId }: { accountId: string }) {
     // Casino chime on spin start
     playCasinoChime();
 
-    // Determine outcome
-    const isWin = Math.random() < 0.04; // 1:25 odds
-
-    // Calculate target rotation
-    // The pointer is at the top (12 o'clock = 0 degrees)
-    // We need the winning segment's center to align with 0 degrees
-    // Segment center = (index * segmentAngle) + (segmentAngle / 2)
-    let targetSegmentIndex: number;
-
-    if (isWin) {
-      targetSegmentIndex = WINNER_INDEX;
-    } else {
-      // Pick a random non-winning segment
-      let idx: number;
-      do {
-        idx = Math.floor(Math.random() * SEGMENT_COUNT);
-      } while (idx === WINNER_INDEX);
-      targetSegmentIndex = idx;
-    }
-
-    // The angle at which the target segment's CENTER is at the top (pointer)
-    // pointer at top = 0deg in CSS rotation frame
-    // segment center angle from wheel's 0: (index * segAngle) + (segAngle/2)
-    const segCenterAngle = targetSegmentIndex * SEGMENT_ANGLE + SEGMENT_ANGLE / 2;
-    // To bring this segment to the top (0deg pointer), rotate wheel by -(segCenterAngle)
-    // Add small random offset within segment for realism
-    const jitter = (Math.random() - 0.5) * SEGMENT_ANGLE * 0.6;
-    const targetAngle = 360 - segCenterAngle + jitter;
-
-    // Account for the current accumulated rotation so the final position is correct
-    const currentAngleMod = ((rotation % 360) + 360) % 360;
-    const neededRotation = ((targetAngle - currentAngleMod) % 360 + 360) % 360;
-
-    // Add multiple full rotations for visual effect (5-8 turns)
-    const fullRotations = (5 + Math.floor(Math.random() * 4)) * 360;
-    const finalRotation = rotation + fullRotations + neededRotation;
-
-    setRotation(finalRotation);
-
-    // Tick sounds during spin
-    const tickCount = 30;
-    for (let i = 0; i < tickCount; i++) {
-      setTimeout(() => playTick(), 100 + i * (3500 / tickCount) * (i / tickCount));
-    }
-
-    // After spin completes
-    setTimeout(() => {
-      setIsSpinning(false);
-
-      setLastSpinTime(accountId, Date.now());
-      setCooldown(SPIN_COOLDOWN_MS);
-
-      if (isWin) {
-        setResult("win");
-        playWinSound();
-        // Auto-show ticket after a beat
-        setTimeout(() => setShowTicket(true), 800);
-        // Generate and store ticket ID and timestamp
-        const ticketId = `TKT-${Date.now().toString(36).toUpperCase()}`;
-        const timestamp = Date.now();
-        setWinTicketId(ticketId);
-        setWinTimestamp(timestamp);
-        // Add to winner history
-        const record: WinnerRecord = { accountId, ticketId, timestamp };
-        postWinner(record).then(setWinnerHistory);
-      } else {
-        setResult("lose");
+    // Request spin outcome from server (RNG happens server-side)
+    requestSpin(accountId).then((spinRes) => {
+      if (!spinRes || spinRes.error) {
+        // Server rejected (cooldown, rate limit, error)
+        setIsSpinning(false);
+        if (spinRes?.cooldownMs) {
+          setCooldown(spinRes.cooldownMs);
+        }
+        return;
       }
-    }, 4200);
+
+      // Apply server-provided rotation to wheel (starts CSS transition)
+      const currentAngleMod = ((rotation % 360) + 360) % 360;
+      const neededRotation = ((spinRes.spinDelta - currentAngleMod) % 360 + 360) % 360;
+      const finalRotation = rotation + neededRotation;
+      setRotation(finalRotation);
+
+      // Tick sounds during spin
+      const tickCount = 30;
+      for (let i = 0; i < tickCount; i++) {
+        setTimeout(() => playTick(), 100 + i * (3500 / tickCount) * (i / tickCount));
+      }
+
+      // After spin animation completes (~4.2s), reveal the result
+      setTimeout(() => {
+        setIsSpinning(false);
+
+        // Cooldown tracking (localStorage for UX hint, server enforces truth)
+        if (accountId === ADMIN_WALLET_ID) {
+          setCooldown(0);
+          try { localStorage.removeItem(SPIN_STORAGE_KEY + accountId); } catch { /* */ }
+          setAdminSpinCount(prev => prev + 1);
+          if (spinRes.win) setAdminWinCount(prev => prev + 1);
+        } else {
+          setLastSpinTime(accountId, Date.now());
+          setCooldown(SPIN_COOLDOWN_MS);
+        }
+
+        if (spinRes.win) {
+          setResult("win");
+          playWinSound();
+          setTimeout(() => setShowTicket(true), 800);
+          setWinTicketId(spinRes.ticketId || "");
+          setWinTimestamp(spinRes.timestamp);
+          if (spinRes.winners) setWinnerHistory(spinRes.winners);
+        } else {
+          setResult("lose");
+        }
+      }, 4200);
+    });
   }, [canSpin, rotation, accountId, playTick, playWinSound, playCasinoChime]);
 
   return (
@@ -884,7 +948,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
                 <span className="flex items-center gap-2">
                   <motion.div
                     animate={{ rotate: 360 }}
-                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    transition={{ duration: 1, repeat: 9999, ease: "linear" }}
                   >
                     <Sparkles className="w-5 h-5" />
                   </motion.div>
@@ -902,7 +966,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
                 <motion.div
                   className="absolute inset-0 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 opacity-0"
                   animate={{ opacity: [0, 0.3, 0] }}
-                  transition={{ duration: 2, repeat: Infinity }}
+                  transition={{ duration: 2, repeat: 9999 }}
                 />
               )}
             </button>
@@ -1032,6 +1096,103 @@ export function SpinWheel({ accountId }: { accountId: string }) {
           />
         )}
       </AnimatePresence>
+
+      {/* ═══ ADMIN PANEL — only visible to wallet 0.0.518487 ═══ */}
+      {isAdmin && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md mx-auto"
+        >
+          {/* Admin Toggle Button */}
+          <button
+            onClick={() => setAdminPanelOpen(!adminPanelOpen)}
+            className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-gradient-to-r from-amber-900/30 to-orange-900/30 border border-amber-500/30 hover:border-amber-500/50 transition-all group"
+          >
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-amber-400" />
+              <span className="text-sm font-bold text-amber-400 tracking-wider uppercase">
+                Admin Controls
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/20 font-mono">
+                {ADMIN_WALLET_ID}
+              </span>
+            </div>
+            <Settings className={`w-4 h-4 text-amber-400 transition-transform duration-300 ${adminPanelOpen ? "rotate-90" : ""}`} />
+          </button>
+
+          {/* Admin Panel Body */}
+          <AnimatePresence>
+            {adminPanelOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-2 rounded-xl bg-slate-900/80 border border-amber-500/20 p-4 space-y-4">
+                  {/* Status Badges */}
+                  <div className="flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 font-bold">
+                      <Infinity className="w-3 h-3" />
+                      Unlimited Spins
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 font-bold">
+                      <Percent className="w-3 h-3" />
+                      1:2 Odds (50%)
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-pink-500/15 text-pink-400 border border-pink-500/20 font-bold">
+                      <Shield className="w-3 h-3" />
+                      Cooldown Bypassed
+                    </span>
+                  </div>
+
+                  {/* Session Stats */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg bg-slate-800/60 border border-slate-700/30 p-3 text-center">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Spins</div>
+                      <div className="text-lg font-bold text-amber-400 font-mono">{adminSpinCount}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-800/60 border border-slate-700/30 p-3 text-center">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Wins</div>
+                      <div className="text-lg font-bold text-emerald-400 font-mono">{adminWinCount}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-800/60 border border-slate-700/30 p-3 text-center">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Win Rate</div>
+                      <div className="text-lg font-bold text-pink-400 font-mono">
+                        {adminSpinCount > 0 ? `${((adminWinCount / adminSpinCount) * 100).toFixed(0)}%` : "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Reset Button */}
+                  <button
+                    onClick={() => {
+                      try { localStorage.removeItem(SPIN_STORAGE_KEY + accountId); } catch { /* */ }
+                      setCooldown(0);
+                      setResult(null);
+                      setShowTicket(false);
+                      setAdminSpinCount(0);
+                      setAdminWinCount(0);
+                    }}
+                    disabled={isSpinning}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-amber-600/20 to-orange-600/20 border border-amber-500/30 text-amber-400 hover:text-amber-300 hover:border-amber-500/50 transition-all text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Reset Spin & Stats
+                  </button>
+
+                  {/* Admin Info */}
+                  <div className="text-[9px] text-slate-600 text-center pt-1 border-t border-slate-700/30">
+                    Admin mode active — odds 1:2, no cooldown, session-only stats. Wallet-gated to {ADMIN_WALLET_ID}.
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      )}
     </div>
   );
 }

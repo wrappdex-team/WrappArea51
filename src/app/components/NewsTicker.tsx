@@ -1,5 +1,6 @@
 import { useTheme } from "../contexts/ThemeContext";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 interface NewsItem {
   token: string;
@@ -8,22 +9,15 @@ interface NewsItem {
   source: string;
 }
 
-const NEWS_ITEMS: NewsItem[] = [
-  { token: "BTC", headline: "Bitcoin institutional adoption continues to accelerate globally", url: "https://www.coindesk.com/markets/", source: "CoinDesk" },
-  { token: "ETH", headline: "Ethereum ecosystem expands with new L2 scaling solutions", url: "https://www.coindesk.com/tech/", source: "CoinDesk" },
-  { token: "SOL", headline: "Solana DeFi ecosystem sees growing developer activity", url: "https://www.theblock.co/", source: "The Block" },
-  { token: "HBAR", headline: "Hedera network processes record enterprise transactions", url: "https://hedera.com/blog", source: "Hedera" },
-  { token: "XRP", headline: "Ripple expands institutional payment solutions worldwide", url: "https://www.coindesk.com/business/", source: "CoinDesk" },
-  { token: "ADA", headline: "Cardano governance framework enters next development phase", url: "https://www.coindesk.com/tech/", source: "CoinDesk" },
-  { token: "AVAX", headline: "Avalanche subnet architecture attracts new use cases", url: "https://www.theblock.co/", source: "The Block" },
-  { token: "DOT", headline: "Polkadot parachain ecosystem continues to grow", url: "https://www.coindesk.com/tech/", source: "CoinDesk" },
-  { token: "LINK", headline: "Chainlink oracle network expands cross-chain coverage", url: "https://www.theblock.co/", source: "The Block" },
-  { token: "BNB", headline: "BNB Chain ecosystem sees rising transaction throughput", url: "https://www.coindesk.com/tech/", source: "CoinDesk" },
-  { token: "DOGE", headline: "Dogecoin community explores new utility and adoption paths", url: "https://www.coindesk.com/markets/", source: "CoinDesk" },
-  { token: "LTC", headline: "Litecoin maintains strong hash rate with continued mining interest", url: "https://www.coindesk.com/markets/", source: "CoinDesk" },
-  { token: "TRX", headline: "TRON stablecoin transfer volume remains elevated globally", url: "https://www.theblock.co/", source: "The Block" },
-  { token: "PAXG", headline: "Tokenized gold demand rises alongside physical bullion markets", url: "https://www.coindesk.com/markets/", source: "CoinDesk" },
+// Minimal fallback headlines shown while real data loads or if fetch fails
+const FALLBACK_ITEMS: NewsItem[] = [
+  { token: "BTC", headline: "Bitcoin continues as the leading digital asset by market capitalization", url: "https://www.coingecko.com/en/coins/bitcoin", source: "CoinGecko" },
+  { token: "HBAR", headline: "Hedera Hashgraph — enterprise-grade distributed ledger technology", url: "https://hedera.com", source: "Hedera" },
+  { token: "ETH", headline: "Ethereum ecosystem powering DeFi, NFTs, and L2 scaling solutions", url: "https://www.coingecko.com/en/coins/ethereum", source: "CoinGecko" },
 ];
+
+const NEWS_ENDPOINT = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/news`;
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes (matches server cache TTL)
 
 export function NewsTicker() {
   const { isDark } = useTheme();
@@ -31,15 +25,50 @@ export function NewsTicker() {
   const innerRef = useRef<HTMLDivElement>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [animDuration, setAnimDuration] = useState(120);
+  const [newsItems, setNewsItems] = useState<NewsItem[]>(FALLBACK_ITEMS);
+  const [lastFetch, setLastFetch] = useState(0);
 
-  useEffect(() => {
-    if (innerRef.current) {
-      const contentWidth = innerRef.current.scrollWidth / 2;
-      // ~60px per second scroll speed
-      const duration = Math.max(60, contentWidth / 60);
-      setAnimDuration(duration);
+  const fetchNews = useCallback(async () => {
+    try {
+      const resp = await fetch(NEWS_ENDPOINT, {
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!resp.ok) throw new Error(`News fetch failed: ${resp.status}`);
+      const data = await resp.json();
+      if (data?.items?.length > 0) {
+        setNewsItems(data.items);
+        setLastFetch(Date.now());
+      }
+    } catch (err) {
+      console.log("[NewsTicker] Fetch error (using fallback):", err);
+      // Keep existing items (fallback or previously fetched)
     }
   }, []);
+
+  // Fetch on mount + periodic refresh
+  useEffect(() => {
+    fetchNews();
+    const timer = setInterval(fetchNews, REFRESH_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [fetchNews]);
+
+  // Recalculate animation duration when items change
+  useEffect(() => {
+    // Small delay to allow DOM to update
+    const raf = requestAnimationFrame(() => {
+      if (innerRef.current) {
+        const contentWidth = innerRef.current.scrollWidth / 2;
+        // ~60px per second scroll speed
+        const duration = Math.max(60, contentWidth / 60);
+        setAnimDuration(duration);
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [newsItems]);
 
   const separator = (
     <span className={`mx-4 ${isDark ? "text-pink-500/60" : "text-pink-400/60"}`}>
@@ -76,12 +105,12 @@ export function NewsTicker() {
   );
 
   // Duplicate items to create seamless loop
-  const allItems = [...NEWS_ITEMS, ...NEWS_ITEMS];
+  const allItems = [...newsItems, ...newsItems];
 
   return (
     <div
       ref={tickerRef}
-      className={`w-full overflow-hidden border-b ${
+      className={`relative w-full overflow-hidden border-b ${
         isDark
           ? "bg-[#08080d] border-pink-900/15"
           : "bg-gray-50 border-gray-200"
@@ -101,6 +130,19 @@ export function NewsTicker() {
           </span>
         ))}
       </div>
+
+      {/* Live indicator — shows when data is real (not fallback) */}
+      {lastFetch > 0 && (
+        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[9px] ${
+          isDark ? "text-emerald-500/60" : "text-emerald-600/60"
+        }`}>
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+          </span>
+          LIVE
+        </div>
+      )}
 
       <style>{`
         @keyframes tickerScroll {

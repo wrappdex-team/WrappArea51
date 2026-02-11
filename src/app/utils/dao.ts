@@ -14,6 +14,36 @@
  * The HBAR.ħ token ID is configured per-network below.
  * All balance reads come from the WalletContext's `hederaAccount.tokens[]`,
  * which is populated via Mirror Node `/api/v1/accounts/{id}/tokens`.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * SECURITY AUDIT NOTES — 2026-02-11
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * [AUDIT-D01] HIGH — All proposals and votes are stored in localStorage.
+ *   Any user can open DevTools → Application → Local Storage and:
+ *   (a) Create fake proposals
+ *   (b) Modify vote counts on existing proposals
+ *   (c) Delete proposals they shouldn't have access to
+ *   RECOMMENDATION: Move proposal storage to the Supabase KV backend.
+ *   Server-side routes should enforce:
+ *     - Token balance verification via Mirror Node before accepting votes
+ *     - Admin-only proposal creation (verify wallet signature)
+ *     - Vote deduplication keyed by (proposalId, accountId)
+ *
+ * [AUDIT-D02] MEDIUM — Session vote tracking (sessionStorage) is trivially
+ *   bypassable by clearing session storage or opening a new tab. A user
+ *   can cast unlimited votes. See AUDIT-D01 for the server-side fix.
+ *
+ * [AUDIT-D03] The eligibility check (isEligible) reads from the
+ *   WalletContext's cached token list, which is populated from Mirror Node.
+ *   This is sound — Mirror Node is authoritative. However, the check
+ *   happens client-side and can be bypassed. Server-side verification
+ *   is the correct long-term solution.
+ *
+ * [AUDIT-D04] Comment IDs use Math.random() for uniqueness.
+ *   Not a security risk for display-only IDs, but noted for completeness.
+ *   Could use crypto.getRandomValues() for consistency.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 
 import type { HederaTokenBalance } from "./hedera";
