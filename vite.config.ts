@@ -1,0 +1,86 @@
+import { defineConfig } from 'vite'
+import path from 'path'
+import tailwindcss from '@tailwindcss/vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    // The React and Tailwind plugins are both required for Make, even if
+    // Tailwind is not being actively used – do not remove them
+    react(),
+    tailwindcss(),
+  ],
+  resolve: {
+    alias: {
+      // Alias @ to the src directory
+      '@': path.resolve(__dirname, './src'),
+      // Polyfill Node.js built-ins for browser compatibility
+      // Required by @hashgraph/sdk, hashconnect, and @walletconnect/sign-client
+      // MUST use absolute path — 'buffer/' alone gets externalized by Vite 6
+      buffer: path.resolve(__dirname, 'node_modules/buffer/'),
+    },
+  },
+  define: {
+    // Provide process.env for libraries that expect Node.js environment
+    'process.env': '{}',
+    'process.browser': 'true',
+    // Ensure global is available (some WalletConnect/HashConnect code references it)
+    global: 'globalThis',
+  },
+  optimizeDeps: {
+    include: ['buffer', 'process'],
+    esbuildOptions: {
+      // Define global for esbuild pre-bundling
+      define: {
+        global: 'globalThis',
+      },
+    },
+  },
+
+  build: {
+    // Production source maps for error tracking (hidden from browser devtools)
+    sourcemap: mode === 'production' ? 'hidden' : true,
+
+    // Target modern browsers for smaller output
+    target: 'es2020',
+
+    // Increase chunk size warning limit (crypto libs are large)
+    chunkSizeWarningLimit: 800,
+
+    // Minification settings
+    minify: 'esbuild',
+
+    rollupOptions: {
+      output: {
+        // Function form is safest — only called for modules Rollup has
+        // already resolved into the graph, so no risk of referencing
+        // unused or unresolvable packages.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+
+          // Radix UI primitives (statically imported across many components)
+          if (id.includes('/@radix-ui/')) return 'vendor-radix';
+
+          // Recharts (used in Dashboard, Trading, Wallet)
+          if (id.includes('/recharts/') || id.includes('/d3-')) return 'vendor-charts';
+
+          // React core
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router/')) return 'vendor-react';
+
+          // NOTE: @hashgraph/sdk, hashconnect, web3, and lightweight-charts are
+          // already dynamically imported via `await import(...)` in the
+          // source code, so Rollup automatically code-splits them into
+          // separate async chunks. No need to list them here.
+        },
+
+        // Content-hash based filenames for long-term caching
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
+
+  // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
+  assetsInclude: ['**/*.svg', '**/*.csv'],
+}))

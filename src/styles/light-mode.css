@@ -1,0 +1,505 @@
+/* Light Mode Overrides for HBAR.h */
+
+/* ===== Transition for smooth theme switching ===== */
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+html.light-mode,
+html.light-mode body {
+  background-color: #f8fafc !important;
+  color: #1e293b !important;
+}
+
+/* ===== Root container overrides ===== */
+html.light-mode .min-h-screen {
+  background-color: #f8fafc !important;
+  color: #1e293b !important;
+}
+
+/* ===== Header ===== */
+html.light-mode header {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+  border-bottom-color: rgba(236, 72, 153, 0.15) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* ===== Navigation links ===== */
+html.light-mode nav a:not(.active-nav) {
+  color: #64748b;
+}
+html.light-mode nav a:not(.active-nav):hover {
+  color: #1e293b;
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* ===== Card/Panel backgrounds ===== */
+html.light-mode [class*="bg-slate-900"],
+html.light-mode [class*="bg-slate-800"] {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+html.light-mode [class*="bg-\[#0a0a0f\]"],
+html.light-mode [class*="bg-\[#12121a\]"] {
+  background-color: #f8fafc !important;
+}
+
+/* ===== Gradient cards - lighter versions ===== */
+html.light-mode [class*="from-pink-900\/"],
+html.light-mode [class*="from-purple-900\/"],
+html.light-mode [class*="from-blue-900\/"],
+html.light-mode [class*="from-cyan-900\/"],
+html.light-mode [class*="from-orange-900\/"] {
+  --tw-gradient-from: rgba(236, 72, 153, 0.06) !important;
+  --tw-gradient-to: rgba(168, 85, 247, 0.06) !important;
+}
+
+/* ===== Border colors ===== */
+html.light-mode [class*="border-pink-500\/"],
+html.light-mode [class*="border-pink-900\/"],
+html.light-mode [class*="border-purple-500\/"],
+html.light-mode [class*="border-blue-500\/"],
+html.light-mode [class*="border-cyan-500\/"],
+html.light-mode [class*="border-orange-500\/"],
+html.light-mode [class*="border-slate-800"] {
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+html.light-mode [class*="border-pink-500\/30"],
+html.light-mode [class*="border-pink-500\/50"] {
+  border-color: rgba(236, 72, 153, 0.2) !important;
+}
+
+html.light-mode [class*="border-pink-700\/"] {
+  border-color: rgba(236, 72, 153, 0.15) !important;
+}
+
+/* ===== Text colors ===== */
+html.light-mode .text-white {
+  color: #1e293b !important;
+}
+
+html.light-mode .text-slate-400,
+html.light-mode .text-slate-500 {
+  color: #64748b !important;
+}
+
+html.light-mode .text-slate-300 {
+  color: #475569 !important;
+}
+
+/* Keep gradient text as-is (brand identity) */
+
+/* ===== Table overrides ===== */
+html.light-mode thead {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+html.light-mode tr:hover {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+html.light-mode table td,
+html.light-mode table th {
+  border-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+/* ===== Input/Form overrides ===== */
+html.light-mode input,
+html.light-mode select,
+html.light-mode textarea {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+  color: #1e293b !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+html.light-mode input::placeholder,
+html.light-mode textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* ===== Modals ===== */
+html.light-mode [class*="bg-black\/50"] {
+  background-color: rgba(0, 0, 0, 0.3) !important;
+}
+
+html.light-mode .fixed [class*="bg-slate-900"] {
+  background-color: #ffffff !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+/* ===== Warning/Info boxes ===== */
+html.light-mode [class*="bg-pink-900\/"] {
+  background-color: rgba(236, 72, 153, 0.06) !important;
+}
+
+/* ===== Scrollbar ===== */
+html.light-mode ::-webkit-scrollbar {
+  width: 8px;
+}
+
+html.light-mode ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+html.light-mode ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+html.light-mode ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* ===== Font mono in light mode ===== */
+html.light-mode .font-mono {
+  color: #334155;
+}
+
+/* ===== Shadow overrides ===== */
+html.light-mode [class*="shadow-pink-500"] {
+  --tw-shadow-color: rgba(236, 72, 153, 0.15) !important;
+}
+
+html.light-mode [class*="shadow-red-500"] {
+  --tw-shadow-color: rgba(239, 68, 68, 0.15) !important;
+}
+
+/* ===== Dropdown/Popover ===== */
+html.light-mode .absolute[class*="bg-slate-900"] {
+  background-color: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* ===== Code blocks ===== */
+html.light-mode code {
+  color: #475569;
+}
+
+/* ===== Status badges keep their colors ===== */
+
+/* ===== Wallet Connect modal in light mode ===== */
+html.light-mode [class*="bg-gradient-to-r"][class*="from-pink-600"] {
+  /* Keep brand gradient buttons */
+}
+
+/* ===== Bridge cards ===== */
+html.light-mode img {
+  /* Keep images as-is */
+}
+
+/* ===== Chart container ===== */
+html.light-mode [class*="backdrop-blur"] {
+  backdrop-filter: blur(8px);
+}
+
+/* ===== Iridescent Glow System ===== */
+
+/* Keyframes for color-shifting iridescent glow */
+@keyframes iridescent-shift {
+  0%   { background-position: 0% 50%;   filter: hue-rotate(0deg); }
+  25%  { background-position: 50% 100%; filter: hue-rotate(30deg); }
+  50%  { background-position: 100% 50%; filter: hue-rotate(60deg); }
+  75%  { background-position: 50% 0%;   filter: hue-rotate(30deg); }
+  100% { background-position: 0% 50%;   filter: hue-rotate(0deg); }
+}
+
+@keyframes iridescent-glow-pulse {
+  0%   { box-shadow: 0 0 8px rgba(236,72,153,0.4), 0 0 20px rgba(168,85,247,0.2), 0 0 40px rgba(59,130,246,0.1); }
+  33%  { box-shadow: 0 0 10px rgba(168,85,247,0.5), 0 0 25px rgba(59,130,246,0.3), 0 0 45px rgba(6,182,212,0.15); }
+  66%  { box-shadow: 0 0 10px rgba(59,130,246,0.4), 0 0 25px rgba(6,182,212,0.3), 0 0 45px rgba(236,72,153,0.15); }
+  100% { box-shadow: 0 0 8px rgba(236,72,153,0.4), 0 0 20px rgba(168,85,247,0.2), 0 0 40px rgba(59,130,246,0.1); }
+}
+
+@keyframes iridescent-border {
+  0%   { border-color: rgba(236,72,153,0.6); }
+  33%  { border-color: rgba(168,85,247,0.6); }
+  66%  { border-color: rgba(59,130,246,0.6); }
+  100% { border-color: rgba(236,72,153,0.6); }
+}
+
+@keyframes iridescent-text {
+  0%   { color: #ec4899; }
+  25%  { color: #a855f7; }
+  50%  { color: #3b82f6; }
+  75%  { color: #06b6d4; }
+  100% { color: #ec4899; }
+}
+
+@keyframes nav-glow-ring {
+  0%   { box-shadow: 0 0 0 2px rgba(236,72,153,0.0), 0 0 12px rgba(236,72,153,0.3); }
+  50%  { box-shadow: 0 0 0 3px rgba(168,85,247,0.15), 0 0 18px rgba(168,85,247,0.35); }
+  100% { box-shadow: 0 0 0 2px rgba(236,72,153,0.0), 0 0 12px rgba(236,72,153,0.3); }
+}
+
+@keyframes tab-click-flash {
+  0%   { transform: scale(1); filter: brightness(1); }
+  50%  { transform: scale(1.05); filter: brightness(1.3); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+/* Desktop active nav tab — iridescent gradient + glow */
+.nav-iridescent {
+  background: linear-gradient(135deg, #ec4899, #a855f7, #3b82f6, #06b6d4, #a855f7, #ec4899) !important;
+  background-size: 300% 300% !important;
+  animation: iridescent-shift 4s ease infinite, iridescent-glow-pulse 3s ease-in-out infinite;
+  border: 1px solid transparent;
+  position: relative;
+}
+
+.nav-iridescent::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #ec4899, #a855f7, #3b82f6, #06b6d4, #a855f7, #ec4899);
+  background-size: 300% 300%;
+  animation: iridescent-shift 4s ease infinite;
+  z-index: -1;
+  opacity: 0.5;
+  filter: blur(8px);
+}
+
+/* Mobile bottom nav active — iridescent text + glow dot */
+.nav-iridescent-mobile {
+  animation: nav-glow-ring 3s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+.nav-iridescent-mobile .nav-icon {
+  filter: drop-shadow(0 0 6px rgba(236,72,153,0.5)) drop-shadow(0 0 12px rgba(168,85,247,0.3));
+  animation: iridescent-text 4s ease infinite;
+}
+
+.nav-iridescent-mobile .nav-dot {
+  background: linear-gradient(90deg, #ec4899, #a855f7, #3b82f6);
+  background-size: 200% 100%;
+  animation: iridescent-shift 3s ease infinite;
+}
+
+/* Iridescent link hover effect */
+.link-iridescent {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.link-iridescent:hover {
+  animation: iridescent-text 2s ease infinite;
+  text-shadow: 0 0 12px rgba(168,85,247,0.4);
+}
+
+/* Primary CTA buttons — iridescent glow on hover */
+.btn-iridescent {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.btn-iridescent:hover {
+  animation: iridescent-glow-pulse 2s ease-in-out infinite;
+  background: linear-gradient(135deg, #ec4899, #a855f7, #3b82f6, #ec4899) !important;
+  background-size: 300% 300% !important;
+  animation: iridescent-shift 3s ease infinite, iridescent-glow-pulse 2s ease-in-out infinite;
+}
+
+/* Click flash */
+.tab-click-flash {
+  animation: tab-click-flash 0.25s ease-out;
+}
+
+/* Mobile dropdown active */
+.nav-iridescent-dropdown {
+  background: linear-gradient(135deg, #ec4899, #a855f7, #3b82f6, #06b6d4, #a855f7, #ec4899) !important;
+  background-size: 300% 300% !important;
+  animation: iridescent-shift 4s ease infinite, iridescent-glow-pulse 3s ease-in-out infinite;
+}
+
+/* ===== Light Mode Iridescent Adjustments ===== */
+html.light-mode .nav-iridescent {
+  box-shadow: 0 0 12px rgba(236,72,153,0.2), 0 0 24px rgba(168,85,247,0.1);
+}
+
+html.light-mode .nav-iridescent-mobile {
+  animation: none;
+  box-shadow: 0 0 8px rgba(236,72,153,0.15);
+}
+
+html.light-mode .nav-iridescent-mobile .nav-icon {
+  filter: drop-shadow(0 0 4px rgba(236,72,153,0.3));
+  animation: iridescent-text 4s ease infinite;
+}
+
+/* ===== VIP Emerald Iridescent Theme ===== */
+
+@keyframes vip-iridescent-shift {
+  0%   { background-position: 0% 50%;   filter: hue-rotate(0deg); }
+  25%  { background-position: 50% 100%; filter: hue-rotate(15deg); }
+  50%  { background-position: 100% 50%; filter: hue-rotate(30deg); }
+  75%  { background-position: 50% 0%;   filter: hue-rotate(15deg); }
+  100% { background-position: 0% 50%;   filter: hue-rotate(0deg); }
+}
+
+@keyframes vip-glow-pulse {
+  0%   { box-shadow: 0 0 8px rgba(16,185,129,0.3), 0 0 20px rgba(20,184,166,0.15), 0 0 40px rgba(6,182,212,0.08); }
+  33%  { box-shadow: 0 0 10px rgba(20,184,166,0.4), 0 0 25px rgba(6,182,212,0.2), 0 0 45px rgba(16,185,129,0.1); }
+  66%  { box-shadow: 0 0 10px rgba(6,182,212,0.35), 0 0 25px rgba(52,211,153,0.2), 0 0 45px rgba(20,184,166,0.1); }
+  100% { box-shadow: 0 0 8px rgba(16,185,129,0.3), 0 0 20px rgba(20,184,166,0.15), 0 0 40px rgba(6,182,212,0.08); }
+}
+
+@keyframes vip-bg-glow {
+  0%   { opacity: 0.03; transform: scale(1) rotate(0deg); }
+  33%  { opacity: 0.05; transform: scale(1.02) rotate(1deg); }
+  66%  { opacity: 0.04; transform: scale(0.98) rotate(-1deg); }
+  100% { opacity: 0.03; transform: scale(1) rotate(0deg); }
+}
+
+@keyframes vip-border-shift {
+  0%   { border-color: rgba(16,185,129,0.3); }
+  33%  { border-color: rgba(20,184,166,0.3); }
+  66%  { border-color: rgba(6,182,212,0.3); }
+  100% { border-color: rgba(16,185,129,0.3); }
+}
+
+/* VIP theme: override nav active tabs to green iridescent */
+html.vip-theme .nav-iridescent,
+html.vip-theme .nav-iridescent-dropdown {
+  background: linear-gradient(135deg, #10b981, #14b8a6, #06b6d4, #34d399, #14b8a6, #10b981) !important;
+  background-size: 300% 300% !important;
+  animation: vip-iridescent-shift 4s ease infinite, vip-glow-pulse 3s ease-in-out infinite !important;
+}
+
+html.vip-theme .nav-iridescent::before {
+  background: linear-gradient(135deg, #10b981, #14b8a6, #06b6d4, #34d399, #14b8a6, #10b981) !important;
+  background-size: 300% 300% !important;
+  animation: vip-iridescent-shift 4s ease infinite !important;
+}
+
+html.vip-theme .nav-iridescent-mobile .nav-icon {
+  filter: drop-shadow(0 0 6px rgba(16,185,129,0.5)) drop-shadow(0 0 12px rgba(20,184,166,0.3)) !important;
+}
+
+html.vip-theme .nav-iridescent-mobile .nav-dot {
+  background: linear-gradient(90deg, #10b981, #14b8a6, #06b6d4) !important;
+  background-size: 200% 100% !important;
+  animation: vip-iridescent-shift 3s ease infinite !important;
+}
+
+/* VIP gradient buttons */
+html.vip-theme .btn-iridescent:hover,
+html.vip-theme [class*="from-pink-600"][class*="to-purple-600"] {
+  background: linear-gradient(135deg, #10b981, #14b8a6, #06b6d4, #10b981) !important;
+  background-size: 300% 300% !important;
+}
+
+/* VIP gradient text headings */
+html.vip-theme [class*="from-pink-400"][class*="to-purple-400"] {
+  --tw-gradient-from: #34d399 !important;
+  --tw-gradient-to: #06b6d4 !important;
+}
+
+/* VIP link hover */
+html.vip-theme .link-iridescent:hover {
+  color: #34d399 !important;
+  text-shadow: 0 0 12px rgba(16,185,129,0.4) !important;
+}
+
+/* VIP border accents */
+html.vip-theme [class*="border-pink-500\/"],
+html.vip-theme [class*="border-pink-900\/"] {
+  animation: vip-border-shift 4s ease infinite !important;
+}
+
+/* VIP active nav glow ring for mobile */
+html.vip-theme .nav-iridescent-mobile {
+  animation: vip-glow-pulse 3s ease-in-out infinite !important;
+  border-radius: 8px;
+}
+
+/* ===== VIP Glowing Background ===== */
+
+html.vip-glow::before {
+  content: '';
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(ellipse at 30% 20%, rgba(16,185,129,0.06) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 80%, rgba(6,182,212,0.05) 0%, transparent 50%),
+              radial-gradient(ellipse at 50% 50%, rgba(20,184,166,0.04) 0%, transparent 60%);
+  animation: vip-bg-glow 8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Cards get subtle green border glow */
+html.vip-glow [class*="bg-slate-900\/30"] {
+  box-shadow: 0 0 0 1px rgba(16,185,129,0.08), 0 0 20px rgba(16,185,129,0.03);
+}
+
+/* Header subtle green glow */
+html.vip-glow header {
+  box-shadow: 0 1px 20px rgba(16,185,129,0.05) !important;
+}
+
+/* ===== VIP Iridescent Trade/Bridge Buttons ===== */
+
+@keyframes vip-btn-iridescent {
+  0%   { background-position: 0% 50%;   box-shadow: 0 0 12px rgba(16,185,129,0.4), 0 0 30px rgba(6,182,212,0.2); }
+  25%  { background-position: 50% 100%; box-shadow: 0 0 16px rgba(20,184,166,0.5), 0 0 35px rgba(52,211,153,0.25); }
+  50%  { background-position: 100% 50%; box-shadow: 0 0 20px rgba(6,182,212,0.5), 0 0 40px rgba(16,185,129,0.25); }
+  75%  { background-position: 50% 0%;   box-shadow: 0 0 16px rgba(52,211,153,0.5), 0 0 35px rgba(20,184,166,0.25); }
+  100% { background-position: 0% 50%;   box-shadow: 0 0 12px rgba(16,185,129,0.4), 0 0 30px rgba(6,182,212,0.2); }
+}
+
+@keyframes vip-btn-shimmer {
+  0%   { opacity: 0; transform: translateX(-100%) skewX(-15deg); }
+  50%  { opacity: 0.3; }
+  100% { opacity: 0; transform: translateX(200%) skewX(-15deg); }
+}
+
+html.vip-theme .vip-btn-trade,
+html.vip-theme .vip-btn-bridge {
+  background: linear-gradient(135deg, #10b981, #14b8a6, #06b6d4, #34d399, #0ea5e9, #10b981) !important;
+  background-size: 400% 400% !important;
+  animation: vip-btn-iridescent 4s ease infinite !important;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(52,211,153,0.3) !important;
+  color: #fff !important;
+}
+
+html.vip-theme .vip-btn-trade::after,
+html.vip-theme .vip-btn-bridge::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -80px;
+  width: 40px;
+  height: calc(100% + 4px);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  animation: vip-btn-shimmer 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+html.vip-theme .vip-btn-bridge::after {
+  animation-delay: 1.5s;
+}
+
+html.vip-theme .vip-btn-trade:hover,
+html.vip-theme .vip-btn-bridge:hover {
+  box-shadow: 0 0 24px rgba(16,185,129,0.6), 0 0 50px rgba(6,182,212,0.3), 0 0 80px rgba(52,211,153,0.15) !important;
+  transform: scale(1.03);
+  transition: transform 0.2s ease, box-shadow 0.3s ease;
+}
+
+/* ===== VIP Logo Pulse Animation ===== */
+@keyframes vip-logo-pulse {
+  0%   { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(16,185,129,0)); }
+  50%  { transform: scale(1.04); filter: drop-shadow(0 0 8px rgba(16,185,129,0.35)); }
+  100% { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(16,185,129,0)); }
+}
+
+.animate-vip-pulse {
+  animation: vip-logo-pulse 2s ease-in-out infinite;
+}
