@@ -134,6 +134,12 @@ const _EARLY_SUPPRESS_PATTERNS = [
   "socket stalled",
   "iframe-widget not found",
   "emitting session_connect",
+  "session or pairing topic doesn't exist",
+  "isValidSessionOrPairingTopic",
+  "deleteSession",
+  "onSessionDeleteRequest",
+  "User rejected",
+  "user rejected",
 ];
 
 const _EARLY_VITE_PASSTHROUGH = [
@@ -194,13 +200,27 @@ function _hasWCPinoContext(args: any[]): boolean {
       if (_WC_PINO_CONTEXTS.includes(a.context) && typeof a.level === "number" && a.level >= 40) {
         return true;
       }
-      // Also suppress if context matches and there's an error string in later args
+      // Also suppress if context matches and there's an error string/object in later args
       if (_WC_PINO_CONTEXTS.includes(a.context)) {
         for (let j = i + 1; j < Math.min(args.length, 6); j++) {
           const b = args[j];
           const s = typeof b === "string" ? b : (b instanceof Error ? b.message : "");
           if (s && (_EARLY_SUPPRESS_PATTERNS.some(p => s.includes(p)))) {
             return true;
+          }
+          // Check if subsequent arg is an Error with a WC-internal stack trace.
+          // E.g., TypeError from accessing .proposer on undefined after session deletion.
+          if (b instanceof Error && b.stack) {
+            const st = b.stack;
+            if (
+              st.includes("onSessionDeleteRequest") ||
+              st.includes("deleteSession") ||
+              st.includes("isValidSessionOrPairingTopic") ||
+              st.includes("processRequest") ||
+              st.includes("hashconnect.js")
+            ) {
+              return true;
+            }
           }
         }
       }
@@ -295,8 +315,7 @@ if (typeof window !== "undefined" && typeof console !== "undefined") {
 // We explicitly check for Vite-related error messages and let them through.
 const _WC_SUPPRESSED_PATTERNS = [
   "Missing or invalid. Record was recently deleted",
-  "No matching key. proposal",
-  "No matching key. pairing",
+  "No matching key",
   "Proposal expired",
   "Approval error",
   "WalletConnect Core is already initialized",
@@ -309,6 +328,12 @@ const _WC_SUPPRESSED_PATTERNS = [
   "Possible EventEmitter memory leak",
   "session_connect listeners",
   "emitting session_connect",
+  "session or pairing topic doesn't exist",
+  "isValidSessionOrPairingTopic",
+  "deleteSession",
+  "onSessionDeleteRequest",
+  "User rejected",
+  "user rejected",
 ];
 
 // Patterns from Vite / HMR that must NEVER be suppressed
@@ -319,7 +344,25 @@ const _VITE_PASSTHROUGH_PATTERNS = [
   "Failed to fetch dynamically imported module",
 ];
 
-function _isWCSuppressedError(msg: string): boolean {
+/**
+ * WC engine methods whose presence in a stack trace indicates
+ * the error originated from WC's internal session/pairing management.
+ * If a generic TypeError comes from one of these, it's safe to suppress.
+ */
+const _WC_STACK_MARKERS = [
+  "onSessionDeleteRequest",
+  "isValidSessionOrPairingTopic",
+  "isValidDisconnect",
+  "deleteSession",
+  "processRequest",
+  "processRequestsQueue",
+  "onRelayEventRequest",
+  "rpcPublish",
+  "getData",
+  "hashconnect.js",
+];
+
+function _isWCSuppressedError(msg: string, stack?: string): boolean {
   if (!msg) return false;
   // Never suppress Vite / HMR errors — let them propagate for proper dev UX
   for (const vp of _VITE_PASSTHROUGH_PATTERNS) {
@@ -328,11 +371,19 @@ function _isWCSuppressedError(msg: string): boolean {
   for (const pattern of _WC_SUPPRESSED_PATTERNS) {
     if (msg.includes(pattern)) return true;
   }
+  // For generic TypeErrors (e.g., Cannot read properties of undefined),
+  // check if the stack trace originates from WC internals.
+  if (stack && (msg.includes("Cannot read properties of undefined") || msg.includes("TypeError"))) {
+    for (const marker of _WC_STACK_MARKERS) {
+      if (stack.includes(marker)) return true;
+    }
+  }
   return false;
 }
 
 if (typeof window !== "undefined") {
   // Catch unhandled promise rejections from WC async internals
+  // Use capture phase to intercept before any framework error overlays.
   window.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
     // SAFETY: wrap in try-catch to prevent this handler itself from causing
     // cascading errors during Vite's module evaluation phase
@@ -341,23 +392,30 @@ if (typeof window !== "undefined") {
       const msg = typeof reason === "string"
         ? reason
         : (reason?.message || String(reason || ""));
-      if (_isWCSuppressedError(msg)) {
+      const stack = reason?.stack || "";
+      if (_isWCSuppressedError(msg, stack)) {
         event.preventDefault();
+        event.stopImmediatePropagation();
       }
     } catch {
       // Let the original error propagate
     }
-  });
+  }, true);
 
   // Catch synchronous errors from WC EventEmitter callbacks
+  // Use capture phase to intercept before Vite's error overlay or
+  // any framework error boundary can display the error.
   window.addEventListener("error", (event: ErrorEvent) => {
     try {
       const msg = event.message || event.error?.message || "";
-      if (_isWCSuppressedError(msg)) {
+      const stack = event.error?.stack || "";
+      if (_isWCSuppressedError(msg, stack)) {
         event.preventDefault();
+        event.stopImmediatePropagation();
+        return true;
       }
     } catch {
       // Let the original error propagate
     }
-  });
+  }, true);
 }

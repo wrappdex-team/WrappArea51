@@ -201,6 +201,7 @@ export function Trading() {
       ...t,
       price: prices[t.symbol]?.current_price ?? t.fallbackPrice,
       change: prices[t.symbol]?.price_change_percentage_24h ?? t.fallbackChange,
+      changeSource: prices[t.symbol]?.change_source || "fallback",
       marketCap: prices[t.symbol]?.market_cap ?? 0,
       volume: prices[t.symbol]?.total_volume ?? 0,
       logo: prices[t.symbol]?.image ?? t.logo,
@@ -576,6 +577,7 @@ export function Trading() {
                     {filteredTokens.map((token) => {
                       const tp = prices[token.symbol]?.current_price || token.fallbackPrice;
                       const tc = prices[token.symbol]?.price_change_percentage_24h || token.fallbackChange;
+                      const tcSource = prices[token.symbol]?.change_source || "fallback";
                       return (
                         <button key={token.symbol} onClick={() => { setSelectedToken(token); setShowTokenSelector(false); setTokenSearch(""); }}
                           className={`w-full flex items-center justify-between px-3 py-2 transition-colors text-xs ${selectedToken.symbol === token.symbol ? (isDark ? "bg-pink-900/20" : "bg-pink-50") : (isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-50")}`}>
@@ -588,7 +590,11 @@ export function Trading() {
                           </div>
                           <div className="text-right">
                             <div className="font-bold">{formatPrice(tp)}</div>
-                            <div className={tc >= 0 ? "text-emerald-500" : "text-red-500"}>{tc >= 0 ? "+" : ""}{tc.toFixed(2)}%</div>
+                            {tcSource === "fallback" ? (
+                              <div className={`${isDark ? "text-slate-600" : "text-gray-400"} animate-pulse`}>—</div>
+                            ) : (
+                              <div className={tc >= 0 ? "text-emerald-500" : "text-red-500"}>{tc >= 0 ? "+" : ""}{tc.toFixed(2)}%</div>
+                            )}
                           </div>
                         </button>
                       );
@@ -740,9 +746,15 @@ export function Trading() {
                   <span className="text-right w-16 font-mono tabular-nums">
                     {token.price >= 1 ? `$${token.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `$${token.price < 0.001 ? token.price.toFixed(6) : token.price.toFixed(4)}`}
                   </span>
-                  <span className={`text-right w-12 tabular-nums ${token.change >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                    {token.change >= 0 ? "+" : ""}{token.change.toFixed(1)}%
-                  </span>
+                  {token.changeSource === "fallback" ? (
+                    <span className={`text-right w-12 tabular-nums ${isDark ? "text-slate-600" : "text-gray-400"} animate-pulse`} title="Waiting for live 24h data...">
+                      —
+                    </span>
+                  ) : (
+                    <span className={`text-right w-12 tabular-nums ${token.change >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                      {token.change >= 0 ? "+" : ""}{token.change.toFixed(1)}%
+                    </span>
+                  )}
                 </button>
               );
             })}
