@@ -1,52 +1,26 @@
 /**
  * HBAR.ħ DAO — Token-Gated Governance Utilities
  *
- * Voting eligibility: Hold >= 100M HBAR.ħ display tokens OR 1+ VIP NFT (verified on-chain via Mirror Node).
- * Voting power:       1 vote per 100M display tokens (max 10) + 1 vote per 3 VIP NFTs (max 1), per governance session.
- * Max total power:    11 votes (10 from tokens at 1B cap + 1 from NFTs at 3 NFTs).
- * Session scope:      Browser session (sessionStorage). Closing the tab resets vote tracking.
+ * Eligibility: >= 100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified).
+ * Power:       1 vote per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
+ * Admin:       0.0.518487 — full proposal CRUD. Proposers edit/delete pre-vote only.
  *
- * Admin control:      Wallet 0.0.518487 has full edit/delete on any active/pending proposal (even after votes).
- * Proposer control:   Proposal creators can edit/delete their own proposals, but only before the first vote.
- *
- * All balance comparisons use the decimals-adjusted `balance` field (NOT rawBalance)
- * so thresholds represent real token counts regardless of on-chain decimal configuration.
- * The HBAR.ħ token ID is configured per-network below.
- * All balance reads come from the WalletContext's `hederaAccount.tokens[]`,
- * which is populated via Mirror Node `/api/v1/accounts/{id}/tokens`.
- *
- * ═══════════════════════════════════════════════════════════════════════
- * SECURITY AUDIT NOTES — 2026-02-11
- * ═══════════════════════════════════════════════════════════════════════
- *
- * [AUDIT-D01] HIGH — All proposals and votes are stored in localStorage.
- *   Any user can open DevTools → Application → Local Storage and:
- *   (a) Create fake proposals
- *   (b) Modify vote counts on existing proposals
- *   (c) Delete proposals they shouldn't have access to
- *   RECOMMENDATION: Move proposal storage to the Supabase KV backend.
- *   Server-side routes should enforce:
- *     - Token balance verification via Mirror Node before accepting votes
- *     - Admin-only proposal creation (verify wallet signature)
- *     - Vote deduplication keyed by (proposalId, accountId)
- *
- * [AUDIT-D02] MEDIUM — Session vote tracking (sessionStorage) is trivially
- *   bypassable by clearing session storage or opening a new tab. A user
- *   can cast unlimited votes. See AUDIT-D01 for the server-side fix.
- *
- * [AUDIT-D03] The eligibility check (isEligible) reads from the
- *   WalletContext's cached token list, which is populated from Mirror Node.
- *   This is sound — Mirror Node is authoritative. However, the check
- *   happens client-side and can be bypassed. Server-side verification
- *   is the correct long-term solution.
- *
- * [AUDIT-D04] Comment IDs use Math.random() for uniqueness.
- *   Not a security risk for display-only IDs, but noted for completeness.
- *   Could use crypto.getRandomValues() for consistency.
- * ═══════════════════════════════════════════════════════════════════════
+ * OPEN ITEMS (require human DeFi engineer):
+ *   [AUDIT-D01] HIGH — Proposals/votes in localStorage are client-manipulable.
+ *     Must migrate to server-side KV with Mirror Node balance verification.
+ *   [AUDIT-D02] MEDIUM — Session vote tracking bypassable. Fixed by D01 migration.
  */
 
 import type { HederaTokenBalance } from "./hedera";
+
+// ── CSPRNG Helper ────────────────────────────────────────────────────
+
+/** Generate a short crypto-random hex string for display-only IDs. */
+function cryptoHex(bytes = 4): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
+}
 
 // ── DAO Admin Configuration ──────────────────────────────────────────
 
@@ -327,7 +301,7 @@ export function createProposal(
   if (!isDAOAdmin(proposer)) return null;
 
   const newProp: Proposal = {
-    id: `prop-${Date.now().toString(36)}`,
+    id: `prop-${cryptoHex()}`,
     title,
     description,
     category,
@@ -429,7 +403,7 @@ export function addComment(
   if (!text.trim()) return null;
 
   const comment: ProposalComment = {
-    id: `cmt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `cmt-${Date.now().toString(36)}-${cryptoHex(3)}`,
     author,
     text: text.trim(),
     createdAt: Date.now(),

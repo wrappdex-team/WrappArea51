@@ -12,52 +12,19 @@ import {
   Sparkles,
   Trophy,
   ShieldCheck,
-  Shield,
-  RotateCcw,
-  Infinity,
-  Percent,
-  Settings,
 } from "lucide-react";
 import { HBAR_LOGO as hbarhLogo } from "../assets/brand";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // ═══════════════════════════════════════════════════════════════════════
-// SECURITY AUDIT NOTES — 2026-02-11
-// ═══════════════════════════════════════════════════════════════════════
-//
-// [AUDIT-G01] FIXED — Win outcome now determined SERVER-SIDE via
-//   POST /spin endpoint using crypto.getRandomValues(). The client
-//   only receives { win, ticketId, segmentIndex, spinDelta } and
-//   animates the wheel. No client-side RNG for outcomes.
-//
-// [AUDIT-G02] Admin wallet check (ADMIN_WALLET_ID) is used client-side
-//   for UI (panel visibility, stat tracking). Server also checks admin
-//   wallet for 50% odds and cooldown bypass. Remove for production.
-//
-// [AUDIT-G03] FIXED — Ticket IDs generated server-side with
-//   crypto.getRandomValues(). No client-side ID generation.
-//
-// [AUDIT-G04] FIXED — Cooldown enforced server-side via KV store
-//   (spin_cd_{accountId}). localStorage kept as client UX hint only.
-//
-// Remaining Math.random() calls below are COSMETIC ONLY:
-//   - Sparkle particle positions (line ~410)
-//   - Audio pitch jitter (line ~647)
-//   - Confetti positions (line ~903)
-// These have zero security impact — PRNG prediction gains nothing.
-//
+// SpinWheel — Client is display-only. All outcomes are server-authoritative.
+//   - Win/lose decided by POST /spin (CSPRNG, uniform 2% odds, 24h cooldown)
+//   - Ticket IDs generated server-side
+//   - No wallet addresses hardcoded in this file
+//   - Math.random() below is COSMETIC ONLY (sparkles, confetti, audio jitter)
 // ═══════════════════════════════════════════════════════════════════════
 
-// ── Admin Configuration ─────────────────────────────────────────────
-
-/** Wallet ID that unlocks admin controls (must be connected) */
-const ADMIN_WALLET_ID = "0.0.518487";
-
-// Odds constants removed — RNG now handled server-side in POST /spin.
-// Server uses: NORMAL_ODDS = 0.04 (4%), ADMIN_ODDS = 0.5 (50%).
-// See /supabase/functions/server/index.tsx for authoritative values.
-
-// ── Config ───────────────────────────────────────────────────────────
+// ── Config ─────────────────────────────────────────────────────────��─
 
 /** Cooldown between spins in milliseconds (24 hours). */
 const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -567,22 +534,6 @@ export function SpinWheel({ accountId }: { accountId: string }) {
   const spinAudioRef = useRef<AudioContext | null>(null);
   const [winnerHistory, setWinnerHistory] = useState<WinnerRecord[]>([]);
 
-  // ── Admin Mode ──
-  const isAdmin = accountId === ADMIN_WALLET_ID;
-  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
-  const [adminSpinCount, setAdminSpinCount] = useState(0);
-  const [adminWinCount, setAdminWinCount] = useState(0);
-
-  // Reset spin on mount for admin (clear cooldown)
-  useEffect(() => {
-    if (isAdmin) {
-      try {
-        localStorage.removeItem(SPIN_STORAGE_KEY + accountId);
-      } catch { /* non-critical */ }
-      setCooldown(0);
-    }
-  }, [isAdmin, accountId]);
-
   // Load winner history on mount
   useEffect(() => {
     fetchWinnerHistory().then(setWinnerHistory);
@@ -626,7 +577,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
     return () => clearInterval(iv);
   }, [accountId]);
 
-  const canSpin = (isAdmin || cooldown === 0) && !isSpinning;
+  const canSpin = cooldown === 0 && !isSpinning;
 
   // Helper: ensure AudioContext exists
   const getAudioCtx = useCallback(() => {
@@ -793,15 +744,8 @@ export function SpinWheel({ accountId }: { accountId: string }) {
         setIsSpinning(false);
 
         // Cooldown tracking (localStorage for UX hint, server enforces truth)
-        if (accountId === ADMIN_WALLET_ID) {
-          setCooldown(0);
-          try { localStorage.removeItem(SPIN_STORAGE_KEY + accountId); } catch { /* */ }
-          setAdminSpinCount(prev => prev + 1);
-          if (spinRes.win) setAdminWinCount(prev => prev + 1);
-        } else {
-          setLastSpinTime(accountId, Date.now());
-          setCooldown(SPIN_COOLDOWN_MS);
-        }
+        setLastSpinTime(accountId, Date.now());
+        setCooldown(SPIN_COOLDOWN_MS);
 
         if (spinRes.win) {
           setResult("win");
@@ -1096,103 +1040,6 @@ export function SpinWheel({ accountId }: { accountId: string }) {
           />
         )}
       </AnimatePresence>
-
-      {/* ═══ ADMIN PANEL — only visible to wallet 0.0.518487 ═══ */}
-      {isAdmin && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-md mx-auto"
-        >
-          {/* Admin Toggle Button */}
-          <button
-            onClick={() => setAdminPanelOpen(!adminPanelOpen)}
-            className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-gradient-to-r from-amber-900/30 to-orange-900/30 border border-amber-500/30 hover:border-amber-500/50 transition-all group"
-          >
-            <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-amber-400" />
-              <span className="text-sm font-bold text-amber-400 tracking-wider uppercase">
-                Admin Controls
-              </span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/20 font-mono">
-                {ADMIN_WALLET_ID}
-              </span>
-            </div>
-            <Settings className={`w-4 h-4 text-amber-400 transition-transform duration-300 ${adminPanelOpen ? "rotate-90" : ""}`} />
-          </button>
-
-          {/* Admin Panel Body */}
-          <AnimatePresence>
-            {adminPanelOpen && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-2 rounded-xl bg-slate-900/80 border border-amber-500/20 p-4 space-y-4">
-                  {/* Status Badges */}
-                  <div className="flex flex-wrap gap-2">
-                    <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 font-bold">
-                      <Infinity className="w-3 h-3" />
-                      Unlimited Spins
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 font-bold">
-                      <Percent className="w-3 h-3" />
-                      1:2 Odds (50%)
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full bg-pink-500/15 text-pink-400 border border-pink-500/20 font-bold">
-                      <Shield className="w-3 h-3" />
-                      Cooldown Bypassed
-                    </span>
-                  </div>
-
-                  {/* Session Stats */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-lg bg-slate-800/60 border border-slate-700/30 p-3 text-center">
-                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Spins</div>
-                      <div className="text-lg font-bold text-amber-400 font-mono">{adminSpinCount}</div>
-                    </div>
-                    <div className="rounded-lg bg-slate-800/60 border border-slate-700/30 p-3 text-center">
-                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Wins</div>
-                      <div className="text-lg font-bold text-emerald-400 font-mono">{adminWinCount}</div>
-                    </div>
-                    <div className="rounded-lg bg-slate-800/60 border border-slate-700/30 p-3 text-center">
-                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Win Rate</div>
-                      <div className="text-lg font-bold text-pink-400 font-mono">
-                        {adminSpinCount > 0 ? `${((adminWinCount / adminSpinCount) * 100).toFixed(0)}%` : "—"}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Reset Button */}
-                  <button
-                    onClick={() => {
-                      try { localStorage.removeItem(SPIN_STORAGE_KEY + accountId); } catch { /* */ }
-                      setCooldown(0);
-                      setResult(null);
-                      setShowTicket(false);
-                      setAdminSpinCount(0);
-                      setAdminWinCount(0);
-                    }}
-                    disabled={isSpinning}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-amber-600/20 to-orange-600/20 border border-amber-500/30 text-amber-400 hover:text-amber-300 hover:border-amber-500/50 transition-all text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Reset Spin & Stats
-                  </button>
-
-                  {/* Admin Info */}
-                  <div className="text-[9px] text-slate-600 text-center pt-1 border-t border-slate-700/30">
-                    Admin mode active — odds 1:2, no cooldown, session-only stats. Wallet-gated to {ADMIN_WALLET_ID}.
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      )}
     </div>
   );
 }

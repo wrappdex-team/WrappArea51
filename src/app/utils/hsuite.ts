@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import type { HederaNetwork } from "./hedera";
+import { fetchMultipleTokens } from "./hedera-mirror";
 
 // ── HSuite SmartNode Network Configuration ──────────────────────────
 
@@ -453,13 +454,90 @@ export function isNFTValidated(): boolean {
 
 /**
  * Fetch available tokens from HSuite SmartNode.
- * Falls back to SaucerSwap API + known Hedera tokens.
+ * Falls back to Mirror Node hydrated token list, then static fallback.
  */
 export async function fetchHSuiteTokens(): Promise<HSuiteTokenInfo[]> {
   try {
     return await smartNodeFetch<HSuiteTokenInfo[]>(API_PATHS.tokens);
   } catch {
-    return FALLBACK_HEDERA_TOKENS;
+    // SmartNode unavailable — hydrate fallback with real Mirror Node data
+    return hydrateTokensFromMirrorNode(FALLBACK_HEDERA_TOKENS);
+  }
+}
+
+/**
+ * Hydrate a list of HSuiteTokenInfo entries with real on-chain data
+ * from the Hedera Mirror Node (decimals, totalSupply, treasuryAccount, name).
+ * Falls back to the original data if the Mirror Node is unreachable.
+ */
+let _hydratedTokens: HSuiteTokenInfo[] | null = null;
+let _hydrationPromise: Promise<HSuiteTokenInfo[]> | null = null;
+
+async function hydrateTokensFromMirrorNode(
+  tokens: HSuiteTokenInfo[],
+): Promise<HSuiteTokenInfo[]> {
+  // Return cached hydrated list if available
+  if (_hydratedTokens) return _hydratedTokens;
+
+  // Deduplicate concurrent calls
+  if (_hydrationPromise) return _hydrationPromise;
+
+  _hydrationPromise = (async () => {
+    try {
+      const tokenIds = tokens.map((t) => t.id);
+      const mirrorData = await fetchMultipleTokens(tokenIds, "mainnet");
+
+      const hydrated = tokens.map((token) => {
+        const real = mirrorData.get(token.id);
+        if (!real) return token; // Mirror Node didn't have this token
+
+        return {
+          ...token,
+          symbol: real.symbol || token.symbol,
+          name: real.name || token.name,
+          decimals: real.decimals,
+          totalSupply: real.totalSupply,
+          treasuryAccount: real.treasuryAccountId || token.treasuryAccount,
+          verified: !real.deleted,
+        };
+      });
+
+      console.log(`[HSuite] Hydrated ${mirrorData.size}/${tokens.length} tokens from Mirror Node`);
+      _hydratedTokens = hydrated;
+      return hydrated;
+    } catch (err) {
+      console.warn("[HSuite] Mirror Node hydration failed, using static fallback:", (err as Error).message);
+      return tokens;
+    } finally {
+      _hydrationPromise = null;
+    }
+  })();
+
+  return _hydrationPromise;
+}
+
+/**
+ * Fetch multiple tokens from Hedera Mirror Node.
+ * Used as a fallback when SmartNode is unavailable.
+ */
+export async function fetchMirrorNodeTokens(
+  tokenIds: string[],
+  network: HederaNetwork
+): Promise<HSuiteTokenInfo[]> {
+  try {
+    const tokensMap = await fetchMultipleTokens(tokenIds, network);
+    return Array.from(tokensMap.values()).map((token) => ({
+      id: token.tokenId,
+      symbol: token.symbol,
+      name: token.name,
+      decimals: token.decimals,
+      priceUsd: 0, // Price data not available from Mirror Node
+      totalSupply: token.totalSupply,
+      treasuryAccount: token.treasuryAccountId,
+      verified: !token.deleted,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -681,6 +759,46 @@ export async function fetchValidators(): Promise<ValidatorNode[]> {
 }
 
 // ── Fallback Data ──────────────────────────────────────────────────
+//
+// DEVELOPER NOTES FOR AUDITORS / HSuite INTEGRATION:
+//
+// [HSUITE-01] Smart Liquidity v2 pools are now KV-backed on the server.
+//   All pool state, LP positions, and swap execution happen via the
+//   Supabase Edge Function at /make-server-54299934/pools/*.
+//   The HSuite SmartNode integration below is for FUTURE on-chain execution.
+//
+// [HSUITE-02] The HSuite SDK integration path:
+//   1. User mints HSuite NFT at portal.hsuite.app/#/subscriptions
+//   2. NFT is "activated" by sending to the smart-app operator
+//   3. SmartNode validates NFT ownership before allowing pool operations
+//   4. Transaction bytes are built by SmartNode, signed by HashPack, submitted
+//   Ref: https://github.com/HSuiteNetwork/smart-app/tree/master/src/modules
+//
+// [HSUITE-03] When HSuite SmartNode integration goes live:
+//   - Pool creation will call SmartNode /api/v1/smart-pools/create
+//   - Deposits call /api/v1/smart-pools/deposit (on-chain token transfer)
+//   - Swaps call /api/v1/swap/execute (atomic DEX aggregation)
+//   - Multi-hop swaps require SmartNode for atomic execution guarantees
+//   Ref: https://docs.hsuite.network/developers/libs/validators-types
+//
+// [HSUITE-04] Security pre-assessment for HSuite integration:
+//   - VULN: SmartNode is a trusted intermediary — verify tx bytes match quote
+//   - VULN: NFT validation bypass — always re-validate server-side, not client
+//   - VULN: Replay attacks — quote IDs must be single-use with TTL
+//   - VULN: Front-running — SmartNode mempool ordering is opaque to us
+//   - MITIGATION: All critical state (reserves, LP shares) is KV-backed
+//     server-side and NOT dependent on SmartNode availability.
+//
+// [HSUITE-05] Top 5 tokens (Tier 1, active now):
+//   WBTC (0.0.1969769), WETH (0.0.1969757), USDC (0.0.456858),
+//   USDT (0.0.4291336), LINK (0.0.1970030)
+//   Expanding to top 50 by MC via community governance vote.
+//
+// [HSUITE-06] API keys still needed (leave out for now):
+//   - SaucerSwap API key (currently using free tier)
+//   - HSuite SmartNode API key (from NFT subscription tier)
+//   - Bonzo lending protocol API key
+//   - Stargate bridge (function selector audit pending — AUDIT-B01)
 
 const FALLBACK_HEDERA_TOKENS: HSuiteTokenInfo[] = [
   { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, priceUsd: 0.20, totalSupply: "50000000000000000", treasuryAccount: "0.0.98", verified: true },
@@ -695,110 +813,17 @@ const FALLBACK_HEDERA_TOKENS: HSuiteTokenInfo[] = [
   { id: "0.0.1159928", symbol: "HST", name: "HSuite Token", decimals: 8, priceUsd: 0.018, totalSupply: "50000000000000000", treasuryAccount: "0.0.1159928", verified: true },
 ];
 
-const FALLBACK_SMART_POOLS: SmartPoolConfig[] = [
-  {
-    id: "sp-wrapped-majors",
-    name: "Wrapped Majors Index",
-    strategy: "balanced",
-    tokens: [
-      { tokenId: "0.0.1969769", symbol: "WBTC", name: "Wrapped Bitcoin", targetWeight: 30, currentWeight: 31.2, balance: "515463917", valueUsd: 500000, logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png" },
-      { tokenId: "0.0.1969757", symbol: "WETH", name: "Wrapped Ether", targetWeight: 25, currentWeight: 24.1, balance: "69444444444444444", valueUsd: 250000, logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png" },
-      { tokenId: "0.0.1970030", symbol: "LINK", name: "Chainlink", targetWeight: 15, currentWeight: 15.5, balance: "7894736842", valueUsd: 150000, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png" },
-      { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", targetWeight: 20, currentWeight: 19.7, balance: "200000000000", valueUsd: 200000, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
-      { tokenId: "0.0.3306241", symbol: "WPOL", name: "Wrapped POL", targetWeight: 10, currentWeight: 9.5, balance: "25000000000000", valueUsd: 100000, logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png" },
-    ],
-    rebalanceFrequency: "daily",
-    rebalanceThreshold: 5,
-    slippageTolerance: 0.5,
-    creator: "0.0.1234567",
-    contractId: "0.0.7654321",
-    totalValueLocked: 1200000,
-    totalShares: "1200000000000",
-    apr: 14.2,
-    performanceFee: 2,
-    managementFee: 0.5,
-    createdAt: Date.now() - 90 * 24 * 60 * 60 * 1000,
-    lastRebalance: Date.now() - 8 * 60 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "sp-btc-eth-core",
-    name: "BTC/ETH Core",
-    strategy: "balanced",
-    tokens: [
-      { tokenId: "0.0.1969769", symbol: "WBTC", name: "Wrapped Bitcoin", targetWeight: 40, currentWeight: 41.5, balance: "412371134", valueUsd: 400000, logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png" },
-      { tokenId: "0.0.1969757", symbol: "WETH", name: "Wrapped Ether", targetWeight: 40, currentWeight: 38.8, balance: "111111111111111111", valueUsd: 400000, logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png" },
-      { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", targetWeight: 20, currentWeight: 19.7, balance: "200000000000", valueUsd: 200000, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
-    ],
-    rebalanceFrequency: "threshold",
-    rebalanceThreshold: 3,
-    slippageTolerance: 0.3,
-    creator: "0.0.2345678",
-    contractId: "0.0.8765432",
-    totalValueLocked: 1000000,
-    totalShares: "1000000000000",
-    apr: 11.8,
-    performanceFee: 2,
-    managementFee: 0.5,
-    createdAt: Date.now() - 60 * 24 * 60 * 60 * 1000,
-    lastRebalance: Date.now() - 6 * 60 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "sp-stable-yield",
-    name: "Stable Yield Optimizer",
-    strategy: "stable-anchor",
-    tokens: [
-      { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", targetWeight: 50, currentWeight: 49.5, balance: "500000000000", valueUsd: 500000, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
-      { tokenId: "0.0.4291336", symbol: "USDT", name: "Tether USD", targetWeight: 50, currentWeight: 50.5, balance: "505000000000", valueUsd: 505000, logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" },
-    ],
-    rebalanceFrequency: "weekly",
-    rebalanceThreshold: 2,
-    slippageTolerance: 0.1,
-    creator: "0.0.3456789",
-    contractId: "0.0.9876543",
-    totalValueLocked: 1005000,
-    totalShares: "1005000000000",
-    apr: 8.2,
-    performanceFee: 1,
-    managementFee: 0.25,
-    createdAt: Date.now() - 120 * 24 * 60 * 60 * 1000,
-    lastRebalance: Date.now() - 2 * 24 * 60 * 60 * 1000,
-    status: "active",
-  },
-  {
-    id: "sp-defi-crosschain",
-    name: "Cross-Chain DeFi",
-    strategy: "yield-maximizer",
-    tokens: [
-      { tokenId: "0.0.1970030", symbol: "LINK", name: "Chainlink", targetWeight: 35, currentWeight: 36.2, balance: "18421052631", valueUsd: 350000, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png" },
-      { tokenId: "0.0.3306241", symbol: "WPOL", name: "Wrapped POL", targetWeight: 25, currentWeight: 23.8, balance: "62500000000000", valueUsd: 250000, logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png" },
-      { tokenId: "0.0.1969757", symbol: "WETH", name: "Wrapped Ether", targetWeight: 20, currentWeight: 20.5, balance: "55555555555555556", valueUsd: 200000, logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png" },
-      { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", targetWeight: 20, currentWeight: 19.5, balance: "200000000000", valueUsd: 200000, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
-    ],
-    rebalanceFrequency: "daily",
-    rebalanceThreshold: 4,
-    slippageTolerance: 0.8,
-    creator: "0.0.4567890",
-    contractId: "0.0.1098765",
-    totalValueLocked: 1000000,
-    totalShares: "1000000000000",
-    apr: 22.5,
-    performanceFee: 3,
-    managementFee: 0.75,
-    createdAt: Date.now() - 45 * 24 * 60 * 60 * 1000,
-    lastRebalance: Date.now() - 4 * 60 * 60 * 1000,
-    status: "active",
-  },
-];
+// FALLBACK_SMART_POOLS — emptied. All pool state is now server-side (KV-backed).
+// No mock data displayed on frontend. Pools start at 0 and are filled by users.
+const FALLBACK_SMART_POOLS: SmartPoolConfig[] = [];
 
 const FALLBACK_POOL_STATS: SmartPoolStats = {
-  totalPools: 4,
-  totalTvl: 4_205_000,
-  totalVolume24h: 1_250_000,
-  avgApr: 14.18,
-  rebalancesLast24h: 8,
-  topPerformer: { name: "Cross-Chain DeFi", apr: 22.5 },
+  totalPools: 0,
+  totalTvl: 0,
+  totalVolume24h: 0,
+  avgApr: 0,
+  rebalancesLast24h: 0,
+  topPerformer: { name: "—", apr: 0 },
 };
 
 // ── Utility Functions ──────────────────────────────────────────────

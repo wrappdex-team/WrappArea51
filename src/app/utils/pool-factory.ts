@@ -234,6 +234,14 @@ import { isVipEligible } from "./vip";
 import type { HederaTokenBalance } from "./hedera";
 import { SAUCERSWAP_TOKENS } from "./saucerswap";
 
+// ── CSPRNG Helper ───────────────────────────────────────────────────
+
+function cryptoHex(bytes = 4): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ── Constants ───────────────────────────────────────────────────────
 
 /** Treasury account for all protocol fee collection */
@@ -531,8 +539,8 @@ export async function createCustomPool(
     // For now, we simulate with realistic timing.
     await new Promise((r) => setTimeout(r, 2500));
 
-    const poolId = `pool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const txId = `0.0.${creatorAccount.split(".")[2]}-${Math.floor(Date.now() / 1000)}-${Math.floor(Math.random() * 999999999).toString().padStart(9, "0")}`;
+    const poolId = `pool-${Date.now()}-${cryptoHex(4)}`;
+    const txId = `0.0.${creatorAccount.split(".")[2]}-${Math.floor(Date.now() / 1000)}-${cryptoHex(5)}`;
     const feePaid = !eligibility.feeExempt;
     const feeAmount = feePaid ? eligibility.feeAmountTokens : 0;
 
@@ -562,7 +570,7 @@ export async function createCustomPool(
   // ── Simulation Mode ──
   await new Promise((r) => setTimeout(r, 1500));
 
-  const poolId = `sim-pool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const poolId = `sim-pool-${Date.now()}-${cryptoHex(4)}`;
   const feePaid = !eligibility.feeExempt;
   const feeAmount = feePaid ? eligibility.feeAmountTokens : 0;
 

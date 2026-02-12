@@ -2,24 +2,9 @@
  * Environment Configuration
  * Centralizes API endpoints, feature flags, and app constants.
  *
- * ═══════════════════════════════════════════════════════════════════════
- * SECURITY AUDIT NOTES — 2026-02-11
- * ═══════════════════════════════════════════════════════════════════════
- *
- * [AUDIT-E01] WALLETCONNECT_PROJECT_ID, DYNAMIC_ENVIRONMENT_ID, and
- *   CHANGENOW_AFFILIATE_ID have hardcoded fallback values. While these
- *   are considered "public" keys (they're shipped to the browser anyway),
- *   hardcoded fallbacks mean they can't be rotated without a deploy.
- *   RECOMMENDATION: Require env vars in production (throw on missing).
- *
- * [AUDIT-E02] The SUPABASE_URL and SUPABASE_ANON_KEY are imported from
- *   /utils/supabase/info.tsx elsewhere. Ensure that SUPABASE_SERVICE_ROLE_KEY
- *   is NEVER imported or referenced in any frontend file. Grep confirmed:
- *   it only appears in server-side code.
- *
- * [AUDIT-E03] No secrets, private keys, or service role keys exist in
- *   this file or any other frontend file. PASS.
- * ═══════════════════════════════════════════════════════════════════════
+ * Note: Public-facing keys (WalletConnect, ChangeNow) use hardcoded
+ * fallbacks with a runtime production warning if env vars are missing.
+ * No secrets or service role keys exist in any frontend file.
  */
 
 const IS_PROD = import.meta.env.PROD ?? false;

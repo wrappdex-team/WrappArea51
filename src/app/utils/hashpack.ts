@@ -299,117 +299,9 @@ function abortActiveConnection(): void {
 }
 
 // ── WalletConnect Console Suppression ──
-// This is the ONLY place we interfere with WC — purely at the console level.
-// No WC internals (stores, engine, event emitters) are modified.
-
-const _WC_SUPPRESS_PATTERNS = [
-  "WalletConnect Core is already initialized",
-  "Missing or invalid. Record was recently deleted",
-  "No matching key.",
-  "Proposal expired",
-  "Approval error",
-  "MaxListenersExceededWarning",
-  "MaxListeners",
-  "Possible EventEmitter memory leak",
-  "Failed to publish payload",
-  "WebSocket connection failed",
-  "publish payload",
-  "socket stalled",
-  "session_connect listeners",
-  "proposal_expire listeners",
-  "session or pairing topic doesn't exist",
-  "onSessionDeleteRequest",
-  "isValidSessionOrPairingTopic",
-  "User rejected",
-  "user rejected",
-];
-
-const _WC_PINO_CONTEXTS = ["core/publisher", "core/relayer", "core", "client"];
-
-function _isWCSuppressedMessage(args: any[]): boolean {
-  for (let i = 0; i < Math.min(args.length, 8); i++) {
-    const a = args[i];
-    let str = "";
-    if (typeof a === "string") {
-      str = a;
-    } else if (a && typeof a === "object") {
-      const parts: string[] = [];
-      if (typeof a.message === "string") parts.push(a.message);
-      if (typeof a.msg === "string") parts.push(a.msg);
-      if (typeof a.reason === "string") parts.push(a.reason);
-      if (a.reason && typeof a.reason === "object" && typeof a.reason.message === "string") {
-        parts.push(a.reason.message);
-      }
-      if (typeof a.context === "string" && _WC_PINO_CONTEXTS.includes(a.context)) {
-        if (typeof a.level === "number" && a.level >= 40) return true;
-      }
-      if (parts.length > 0) {
-        str = parts.join(" ");
-      } else {
-        try { str = JSON.stringify(a).slice(0, 500); } catch { str = ""; }
-      }
-    }
-    for (const pattern of _WC_SUPPRESS_PATTERNS) {
-      if (str.includes(pattern)) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Check if a console.log call is from HashConnect's internal logger.
- */
-function _isHashConnectSuppressedLog(args: any[]): boolean {
-  if (args.length === 0) return false;
-  const first = args[0];
-  if (typeof first !== "string") return false;
-  if (!first.toLowerCase().startsWith("hashconnect")) return false;
-  const fullMsg = args.map((a: any) => {
-    if (typeof a === "string") return a;
-    if (a instanceof Error) return a.message;
-    if (a && typeof a === "object" && typeof a.message === "string") return a.message;
-    try { return String(a); } catch { return ""; }
-  }).join(" ");
-  return (
-    fullMsg.includes("Proposal expired") ||
-    fullMsg.includes("Approval error") ||
-    fullMsg.includes("No matching key") ||
-    fullMsg.includes("Record was recently deleted") ||
-    fullMsg.includes("Missing or invalid") ||
-    fullMsg.includes("Failed to publish payload") ||
-    fullMsg.includes("WebSocket connection failed") ||
-    fullMsg.includes("socket stalled") ||
-    fullMsg.includes("session or pairing topic doesn't exist") ||
-    fullMsg.includes("onSessionDeleteRequest") ||
-    fullMsg.includes("isValidSessionOrPairingTopic") ||
-    fullMsg.includes("User rejected") ||
-    fullMsg.includes("user rejected")
-  );
-}
-
-let _wcFilterInstalled = false;
-
-function installWCInitWarningFilter(): void {
-  if (_wcFilterInstalled) return;
-  _wcFilterInstalled = true;
-
-  const origWarn = console.warn;
-  const origError = console.error;
-  const origLog = console.log;
-
-  console.warn = (...args: any[]) => {
-    if (_isWCSuppressedMessage(args)) return;
-    origWarn.apply(console, args);
-  };
-  console.error = (...args: any[]) => {
-    if (_isWCSuppressedMessage(args)) return;
-    origError.apply(console, args);
-  };
-  console.log = (...args: any[]) => {
-    if (_isHashConnectSuppressedLog(args)) return;
-    origLog.apply(console, args);
-  };
-}
+// All WC/HC console suppression is handled in polyfills.ts (the very first
+// import in App.tsx), which patches console.log/warn/error BEFORE any SDK
+// code loads. No secondary patching is needed here.
 
 // ── SDK Availability ──
 
@@ -483,8 +375,7 @@ async function doCreateAndInit(network: HederaNetwork): Promise<any> {
     );
   }
 
-  // Install console-level WC warning filter (harmless — doesn't touch WC internals)
-  installWCInitWarningFilter();
+  // Console-level WC warning filters are installed in polyfills.ts (first import).
 
   // Dynamic import to avoid top-level import issues
   const { HashConnect } = await import("hashconnect");
@@ -572,11 +463,7 @@ async function doCreateAndInit(network: HederaNetwork): Promise<any> {
     console.log("[HBAR.h] HashConnect init complete. Pairing string:", hc.pairingString ? "available" : "none");
     console.log("[HBAR.h] Connected accounts:", hc.connectedAccountIds?.map?.((a: any) => a.toString?.() ?? a) ?? []);
 
-    // ── Install global error handlers for WC relay errors ──
-    // These catch unhandled rejections/errors from WC's async internals
-    // (session_delete for stale sessions, relay disconnects, etc.)
-    // They ONLY suppress — they do NOT modify WC's behavior.
-    installGlobalWCErrorHandlers();
+    // Global error handlers for WC relay errors are installed in polyfills.ts.
 
     return hc;
   } catch (err: any) {
@@ -611,67 +498,9 @@ async function doCreateAndInit(network: HederaNetwork): Promise<any> {
 }
 
 // ── Global WC Error Handlers ──
-// Catch unhandled errors/rejections from WC's async internals.
-// These do NOT modify WC behavior — they only prevent errors from showing in console.
-
-let _globalHandlersInstalled = false;
-
-function installGlobalWCErrorHandlers(): void {
-  if (_globalHandlersInstalled) return;
-  _globalHandlersInstalled = true;
-
-  const _WC_ERROR_PATTERNS = [
-    "No matching key",
-    "session or pairing topic doesn't exist",
-    "Missing or invalid",
-    "Record was recently deleted",
-    "proposer",
-    "Cannot read properties of undefined",
-    "Proposal expired",
-    "User rejected",
-    "user rejected",
-  ];
-
-  const _WC_STACK_MARKERS = [
-    "@walletconnect",
-    "walletconnect",
-    "signClient",
-    "SignClient",
-    "hashconnect",
-    "HashConnect",
-    "deleteSession",
-    "rpcPublish",
-    "getData",
-  ];
-
-  const _isWCOrigin = (err: any): boolean => {
-    const msg = err?.message || err?.reason?.message || String(err || "");
-    for (const p of _WC_ERROR_PATTERNS) {
-      if (msg.includes(p)) return true;
-    }
-    const stack = err?.stack || err?.reason?.stack || "";
-    if (stack) {
-      for (const m of _WC_STACK_MARKERS) {
-        if (stack.includes(m)) return true;
-      }
-    }
-    return false;
-  };
-
-  window.addEventListener("unhandledrejection", (event) => {
-    if (_isWCOrigin(event.reason)) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-  }, true);
-
-  window.addEventListener("error", (event) => {
-    if (_isWCOrigin(event.error) || _isWCOrigin({ message: event.message, stack: event.error?.stack })) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-  }, true);
-}
+// All global error/rejection handlers for WC async errors are installed in
+// polyfills.ts (lines 384-421), which runs before any SDK code. The duplicate
+// installGlobalWCErrorHandlers() that was here has been removed.
 
 // ── Raise MaxListeners ──
 // Safe: only bumps a numeric limit, does not modify event listeners.
@@ -1772,7 +1601,8 @@ export function getWalletConnectUniversalLink(pairingUri: string): string {
 export function isWalletConnectConfigured(): boolean {
   return (
     WALLETCONNECT_PROJECT_ID !== "YOUR_WALLETCONNECT_PROJECT_ID" &&
-    WALLETCONNECT_PROJECT_ID.length > 0
+    WALLETCONNECT_PROJECT_ID.length >= 16 &&
+    /^[a-f0-9]+$/i.test(WALLETCONNECT_PROJECT_ID)
   );
 }
 

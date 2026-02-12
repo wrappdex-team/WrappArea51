@@ -5,7 +5,6 @@
  * - @hashgraph/sdk (uses Buffer, process)
  * - hashconnect (uses Buffer via @hashgraph/sdk and WalletConnect)
  * - @walletconnect/sign-client (uses Buffer for encoding)
- * - web3 (uses Buffer for transaction encoding)
  *
  * Vite externalizes Node.js built-in modules (buffer, process, etc.)
  * for browser compatibility. This polyfill provides browser-compatible
@@ -91,29 +90,16 @@ if (typeof globalThis.global === "undefined") {
   (globalThis as any).global = globalThis;
 }
 
-// ── Early Console Patch: HashConnect / WalletConnect Error Suppression ──
+// ── Console Patch: HashConnect / WalletConnect Error Suppression ──
 //
-// HashConnect's bundled code captures references to console.log at module
-// evaluation time (e.g., `const log = console.log.bind(console)`). Our later
-// patch in hashpack.ts (installWCInitWarningFilter) replaces console.log AFTER
-// the HashConnect module has already cached the original. This means the
-// cached reference bypasses all our filtering.
+// This is the SOLE location for all WC/HC console suppression. By patching
+// HERE — the very first module loaded — HashConnect's module evaluation
+// captures our already-patched console.log, even for cached references.
 //
-// By patching HERE — the very first module loaded in the entire app —
-// HashConnect's module evaluation will capture our already-patched console.log.
-// Even cached references point to the filtered version.
-//
-// SAFETY:
-// - Vite's HMR client is injected BEFORE any app modules evaluate, so its
-//   WebSocket and console usage is already set up by the time we get here.
-// - We explicitly pass through Vite/HMR messages to avoid interfering with
-//   hot module replacement.
-// - console.log, console.warn, and console.error ALL use the same broad
-//   pattern matching. The patterns are specific enough ("Proposal expired",
-//   "Approval error", etc.) that they won't match normal application logging.
-//   Previous versions restricted console.log to hashconnect-prefixed messages
-//   only, but WC's own internal code paths log errors WITHOUT that prefix,
-//   causing the "Proposal expired" error to leak through.
+// console.log, console.warn, and console.error ALL use the same broad
+// pattern matching. Patterns are specific enough ("Proposal expired",
+// "Approval error", etc.) that they won't match normal app logging.
+// Vite/HMR messages are explicitly passed through.
 
 const _EARLY_SUPPRESS_PATTERNS = [
   "Proposal expired",
@@ -248,14 +234,8 @@ function _isEarlySuppressedWarnError(args: any[]): boolean {
 
 /**
  * Check if console.log args match WC/HC error patterns.
- *
- * UPDATED: Now uses the SAME broad pattern matching as warn/error.
- * The previous version only checked "hashconnect"-prefixed messages,
- * but WalletConnect's internal code (SignClient engine, Pairing, Core)
- * logs errors via console.log WITHOUT the "hashconnect" prefix. For
- * example, WC's SignClient engine logs "Proposal expired" directly
- * when a proposal times out. The suppression patterns are specific
- * enough that false positives with normal app logging are not a concern.
+ * Uses the same broad pattern matching as warn/error — WC's internal code
+ * logs errors via console.log without any "hashconnect" prefix.
  */
 function _isEarlySuppressedLog(args: any[]): boolean {
   if (args.length === 0) return false;

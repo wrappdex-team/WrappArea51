@@ -1,5 +1,5 @@
 // Must be the very first import — sets up Buffer/process/global polyfills
-// before any SDK code (hashconnect, @hashgraph/sdk, web3, etc.) loads
+// before any SDK code (hashconnect, @hashgraph/sdk, WalletConnect) loads
 import "./utils/polyfills";
 
 import { useEffect } from "react";

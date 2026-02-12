@@ -1,38 +1,12 @@
 /**
  * HBAR.h VIP System — Token-Gated Premium Features
  *
- * Gate: Hold >= 100,000,000 (100 million) HBAR.h display tokens (token ID 0.0.9356476)
- *       OR hold >= 1 VIP NFT (token ID 0.0.10146181).
+ * Gate: Hold >= 100M HBAR.h display tokens (0.0.9356476) OR >= 1 VIP NFT (0.0.10146181).
  * Either one unlocks VIP — both are NOT required.
  *
- * Balance checks use the decimals-adjusted `balance` field (NOT rawBalance)
- * so that the 100M threshold means 100 million actual tokens regardless of
- * on-chain decimal configuration.
- *
- * A direct Mirror Node re-verification is performed as a double-check
- * before granting VIP access.
- *
- * Features unlock when VIP is active and the user toggles them on.
- * Preferences persist to localStorage.
- *
- * ═══════════════════════════════════════════════════════════════════════
- * SECURITY AUDIT NOTES — 2026-02-11
- * ═══════════════════════════════════════════════════════════════════════
- *
- * [AUDIT-V01] PASS — The VIP system uses a double-check architecture:
- *   1. Primary check: WalletContext cached token list (fast, UI-gating)
- *   2. Secondary check: Direct Mirror Node query (verifyVipEligibilityDirect)
- *   This is sound. The Mirror Node is the authoritative on-chain source.
- *
- * [AUDIT-V02] VIP preferences in localStorage are cosmetic-only (theme,
- *   sounds, glow). A user could manually set VIP active in localStorage,
- *   but the token-gate check in isVipEligible() is called separately
- *   from the prefs, so feature gating is still enforced at render time.
- *   No financial risk from localStorage manipulation.
- *
- * [AUDIT-V03] The GATE_THRESHOLD (100M) is imported from dao.ts which
- *   is the single source of truth. No duplication risk. PASS.
- * ═══════════════════════════════════════════════════════════════════════
+ * Architecture: Double-check — WalletContext cached list (fast) + direct Mirror Node
+ * re-verification (authoritative). VIP prefs in localStorage are cosmetic-only.
+ * GATE_THRESHOLD imported from dao.ts (single source of truth).
  */
 
 import type { HederaTokenBalance } from "./hedera";
