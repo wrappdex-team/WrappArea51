@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowRightLeft, ExternalLink, ChevronDown } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowRightLeft, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import { Link } from "react-router";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { FearGreedGauge } from "./FearGreedGauge";
 import { RSIGauge } from "./RSIGauge";
-import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, fetchHbarFastPath, type CoinPrice } from "../utils/coingecko";
+import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, fetchCoinCapHistory, type CoinPrice } from "../utils/coingecko";
 import type { GlobalMarketData, OracleSource } from "../utils/coingecko";
 import { CandlestickChart } from "./CandlestickChart";
 import { MarketDetailChart } from "./MarketDetailChart";
@@ -14,10 +14,12 @@ import { fetchHbarhPrice, formatUsdCompact, type HbarhTokenData } from "../utils
 import { TOKEN_REGISTRY, ALL_SYMBOLS } from "../utils/tokens";
 import { getOracleStats, formatOracleAge, type OracleStats } from "../utils/chainlink";
 import type { CandlestickData } from "lightweight-charts";
-import { isVipEligible, loadVipPrefs } from "../utils/vip";
+import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
 import { playVipButtonChime } from "../utils/sounds";
 import { SiteActivity } from "./SiteActivity";
 import { HBARH_LOGO_DARK, HBARH_LOGO_LIGHT } from "../assets/brand";
+import { TOKEN_LOGOS } from "../utils/coingecko";
+import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
 
 // ── Types & Helpers ────────────────────────────────────────────────
 
@@ -101,7 +103,7 @@ function OracleDot({ source, isDark }: { source?: OracleSource; isDark: boolean 
 }
 
 export function Dashboard() {
-  const { isDark } = useTheme();
+  const { isDark, isSky } = useTheme();
   const [marketFilter, setMarketFilter] = useState<"all" | "defi" | "layer1" | "stablecoin">("all");
   const [marketData, setMarketData] = useState<MarketAsset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,15 +112,30 @@ export function Dashboard() {
 
   // VIP eligibility for iridescent buttons
   const { hederaAccount, hederaNetwork } = useWallet();
+  const [vipPrefsState, setVipPrefsState] = useState(() => loadVipPrefs());
+
+  // Listen for VIP prefs changes (toggled from VIPPanel via custom event)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const prefs = (e as CustomEvent).detail;
+      if (prefs) setVipPrefsState(prefs);
+    };
+    window.addEventListener("vip-prefs-changed", handler);
+    return () => window.removeEventListener("vip-prefs-changed", handler);
+  }, []);
+
   const vipActive = useMemo(() => {
     if (!hederaAccount?.tokens) return false;
     const eligible = isVipEligible(hederaAccount.tokens, hederaNetwork);
-    const prefs = loadVipPrefs();
-    return eligible && prefs.active;
-  }, [hederaAccount?.tokens, hederaNetwork]);
+    return eligible && vipPrefsState.active;
+  }, [hederaAccount?.tokens, hederaNetwork, vipPrefsState]);
 
   // HBAR.ħ protocol token — live price from DexScreener/SaucerSwap API
   const [hbarhData, setHbarhData] = useState<HbarhTokenData | null>(null);
+
+  // Real sparkline history for BTC & HBAR ticker cards (24h hourly from CoinCap)
+  const [btcSparkHistory, setBtcSparkHistory] = useState<number[]>([]);
+  const [hbarSparkHistory, setHbarSparkHistory] = useState<number[]>([]);
 
   useEffect(() => {
     const loadHbarh = async () => {
@@ -145,22 +162,10 @@ export function Dashboard() {
 
   useEffect(() => {
     const loadPrices = async () => {
-      // Fire HBAR fast-path and full oracle pipeline in parallel.
-      // The fast-path uses CoinCap's single-asset endpoint (3s timeout)
-      // and resolves before the bulk batch requests, ensuring HBAR
-      // always has a live price even if the main oracle is slow.
-      const [prices, hbarFast] = await Promise.all([
-        fetchCoinPrices(ALL_SYMBOLS),
-        fetchHbarFastPath().catch(() => null),
-      ]);
-
-      // Patch HBAR price if main oracle returned fallback or zero
-      if (hbarFast && hbarFast.current_price > 0) {
-        const existing = prices["HBAR"];
-        if (!existing || existing.oracle_source === "fallback" || existing.current_price <= 0) {
-          prices["HBAR"] = hbarFast;
-        }
-      }
+      // HBAR fast-path is now integrated into fetchCoinPrices() itself,
+      // so ALL consumers (Dashboard, Trading, etc.) automatically get
+      // a live HBAR price via Binance/CoinCap/CoinGecko fallback chain.
+      const prices = await fetchCoinPrices(ALL_SYMBOLS);
 
       const assets = buildMarketAssets(prices);
 
@@ -185,6 +190,22 @@ export function Dashboard() {
 
     loadPrices();
     const interval = setInterval(loadPrices, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const loadSparkHistory = async () => {
+      // Fetch 7 days of hourly data for smooth sparklines
+      const [btcHistory, hbarHistory] = await Promise.all([
+        fetchCoinCapHistory("BTC", "h1", 7),
+        fetchCoinCapHistory("HBAR", "h1", 7),
+      ]);
+      if (btcHistory.length > 0) setBtcSparkHistory(btcHistory.map(p => p.priceUsd));
+      if (hbarHistory.length > 0) setHbarSparkHistory(hbarHistory.map(p => p.priceUsd));
+    };
+
+    loadSparkHistory();
+    const interval = setInterval(loadSparkHistory, 300_000); // refresh every 5 min
     return () => clearInterval(interval);
   }, []);
 
@@ -229,136 +250,298 @@ export function Dashboard() {
   // Stablecoin mode: swap pink/purple → green theme
   const isStable = marketFilter === "stablecoin";
 
+  // BTC Dominance bar segments (warm orange → cool blue)
+  const BTC_DOM_SEGMENTS = [
+    "#ea580c", "#f97316", "#fbbf24", "#fde047", "#d4d4d4",
+    "#d4d4d4", "#93c5fd", "#60a5fa", "#3b82f6", "#2563eb",
+  ];
+
+  const cardClass = isDark
+    ? "rounded-xl p-4 border border-white/[0.06] bg-[#0d0f1a]/80"
+    : "rounded-xl p-4 border border-gray-200 bg-white";
+
   return (
-    <div className="space-y-6">
-      {/* Stats Row — compact */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        {/* ── Total Market Cap ── */}
-        <div className={`rounded-xl p-3 pb-2 border ${
-          isDark
-            ? "bg-gradient-to-br from-slate-900/80 to-slate-800/40 border-slate-700/40 backdrop-blur-sm"
-            : "bg-white border-gray-200 shadow-sm"
-        }`}>
-          <div className={`text-[10px] font-bold tracking-wide uppercase mb-2 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-            Total Market Cap
-          </div>
-          <div className="flex flex-col items-center text-center">
-            <div className="text-2xl font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-              {globalData ? `$${formatMarketCap(globalData.totalMarketCap)}` : "---"}
+    <div className="space-y-4">
+      {/* ═══ Row 1: Market Stats — CoinGecko typography ═══ */}
+      <div className={cardClass}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          {/* Market Cap */}
+          <div>
+            <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
+              {globalData
+                ? <><span className="hidden sm:inline">${Math.round(globalData.totalMarketCap).toLocaleString()}</span><span className="sm:hidden">${formatMarketCap(globalData.totalMarketCap)}</span></>
+                : "---"
+              }
             </div>
-            {globalData && (
-              <div className={`text-xs mt-1.5 flex items-center justify-center gap-1 ${globalData.marketCapChange24h >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                {globalData.marketCapChange24h >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {globalData.marketCapChange24h >= 0 ? "+" : ""}{globalData.marketCapChange24h.toFixed(2)}%
-              </div>
-            )}
-            {globalData && (
-              <div className={`text-[10px] mt-2 w-full grid grid-cols-2 gap-x-2 gap-y-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                <div className="flex items-center justify-between">
-                  <span>Vol 24h</span>
-                  <span className={isDark ? "text-slate-300" : "text-gray-600"}>${formatMarketCap(globalData.totalVolume24h)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>BTC</span>
-                  <span className={isDark ? "text-orange-400/80" : "text-orange-500"}>{globalData.btcDominance.toFixed(1)}%</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>ETH</span>
-                  <span className={isDark ? "text-blue-400/80" : "text-blue-500"}>{globalData.ethDominance.toFixed(1)}%</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Coins</span>
-                  <span className={isDark ? "text-slate-300" : "text-gray-600"}>{globalData.activeCryptos.toLocaleString()}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* RSI Overbought/Oversold Gauge */}
-        <RSIGauge />
-
-        {/* Fear & Greed Gauge — compact */}
-        <FearGreedGauge />
-
-        {/* ── HBAR.ħ Price ── */}
-        <Link
-          to="/swap"
-          className={`rounded-xl p-3 pb-2 border block transition-all duration-300 hover:scale-[1.02] ${
-          isDark
-            ? "bg-gradient-to-br from-slate-900/80 to-slate-800/40 border-slate-700/40 backdrop-blur-sm hover:border-cyan-400/40"
-            : "bg-white border-gray-200 shadow-sm hover:shadow-md hover:border-cyan-300"
-        }`}>
-          <div className="flex items-center justify-between mb-1">
-            <div className={`text-[10px] font-bold tracking-wide uppercase ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              HBAR.ħ Price
-            </div>
-            <img
-              src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT}
-              alt="HBAR.ħ"
-              className="w-6 h-6 rounded-full flex-shrink-0 object-cover"
-            />
-          </div>
-          <div className="flex flex-col items-center text-center">
-            <div className="text-2xl font-bold">
-              {hbarhData ? `$${hbarhData.priceUsd < 0.01 ? hbarhData.priceUsd.toFixed(7) : hbarhData.priceUsd.toFixed(6)}` : "---"}
-            </div>
-            <div className="flex items-center justify-center gap-2 mt-1.5">
-              {hbarhData && (
-                <span className={`text-xs flex items-center gap-0.5 ${hbarhData.change24h >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                  {hbarhData.change24h >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {hbarhData.change24h >= 0 ? "+" : ""}{hbarhData.change24h.toFixed(2)}%
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Market Cap</span>
+              {globalData && (
+                <span className={`text-xs font-medium ${globalData.marketCapChange24h >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
+                  {globalData.marketCapChange24h >= 0 ? "▲" : "▼"} {Math.abs(globalData.marketCapChange24h).toFixed(1)}%
                 </span>
               )}
             </div>
-            {/* Sparkline chart — centered & wider */}
-            {hbarhData && hbarhData.priceHistory.length > 1 && (() => {
-              const pts = hbarhData.priceHistory;
-              const min = Math.min(...pts);
-              const max = Math.max(...pts);
-              const range = max - min || 1;
-              const w = 140, h = 32;
-              const polyline = pts.map((v, i) =>
-                `${(i / (pts.length - 1)) * w},${h - ((v - min) / range) * (h - 4) - 2}`
-              ).join(" ");
-              const isUp = pts[pts.length - 1] >= pts[0];
-              const gradId = "hbarh-spark-grad";
-              // Build area fill path
-              const areaPath = `M 0,${h} ` + pts.map((v, i) =>
-                `L ${(i / (pts.length - 1)) * w},${h - ((v - min) / range) * (h - 4) - 2}`
-              ).join(" ") + ` L ${w},${h} Z`;
-              return (
-                <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="mt-1.5">
-                  <defs>
-                    <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0%" stopColor={isUp ? "#22c55e" : "#ef4444"} stopOpacity="0.3" />
-                      <stop offset="100%" stopColor={isUp ? "#22c55e" : "#ef4444"} stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-                  <path d={areaPath} fill={`url(#${gradId})`} />
-                  <polyline
-                    points={polyline}
-                    fill="none"
-                    stroke={isUp ? "#22c55e" : "#ef4444"}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              );
-            })()}
-            <div className={`text-[10px] mt-1.5 w-full grid grid-cols-2 gap-x-2 gap-y-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              <div className="flex items-center justify-between">
-                <span>Vol</span>
-                <span className={isDark ? "text-slate-300" : "text-gray-600"}>{hbarhData ? formatUsdCompact(hbarhData.volume24h) : "---"}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Liq</span>
-                <span className={isDark ? "text-slate-300" : "text-gray-600"}>{hbarhData ? formatUsdCompact(hbarhData.liquidity) : "---"}</span>
-              </div>
+          </div>
+
+          {/* 24h Volume */}
+          <div className={`sm:border-l ${isDark ? "sm:border-white/[0.06]" : "sm:border-gray-200"} sm:pl-6`}>
+            <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
+              {globalData
+                ? <><span className="hidden sm:inline">${Math.round(globalData.totalVolume24h).toLocaleString()}</span><span className="sm:hidden">${formatMarketCap(globalData.totalVolume24h)}</span></>
+                : "---"
+              }
+            </div>
+            <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              24h Trading Volume
             </div>
           </div>
-        </Link>
+
+          {/* BTC / ETH / Coins stats */}
+          {globalData && (
+            <div className={`flex items-center gap-4 flex-wrap sm:border-l ${isDark ? "sm:border-white/[0.06]" : "sm:border-gray-200"} sm:pl-6`}>
+              <span className="text-xs">
+                <span className={isDark ? "text-slate-500" : "text-gray-400"}>BTC </span>
+                <span className="font-medium text-amber-400">{globalData.btcDominance.toFixed(1)}%</span>
+              </span>
+              <span className="text-xs">
+                <span className={isDark ? "text-slate-500" : "text-gray-400"}>ETH </span>
+                <span className="font-medium text-blue-400">{globalData.ethDominance.toFixed(1)}%</span>
+              </span>
+              <span className="text-xs">
+                <span className={isDark ? "text-slate-500" : "text-gray-400"}>Coins </span>
+                <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{globalData.activeCryptos.toLocaleString()}</span>
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ Row 1b: Price Tickers — BTC | HBAR | HBAR.ħ ═══ */}
+      {(() => {
+        const btcAsset = marketData.find(a => a.symbol === "BTC");
+        const hbarAsset = marketData.find(a => a.symbol === "HBAR");
+
+        const formatTickerPrice = (p: number) =>
+          p >= 1 ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${p < 0.001 ? p.toFixed(8) : p.toFixed(6)}`;
+
+        // Reusable sparkline SVG renderer
+        const renderSparkline = (pts: number[], gradId: string) => {
+          if (pts.length < 2) return null;
+          const min = Math.min(...pts);
+          const max = Math.max(...pts);
+          const range = max - min || 1;
+          const w = 200, h = 40;
+          const polyline = pts.map((v, i) =>
+            `${(i / (pts.length - 1)) * w},${h - ((v - min) / range) * (h - 4) - 2}`
+          ).join(" ");
+          const isUp = pts[pts.length - 1] >= pts[0];
+          const areaPath = `M 0,${h} ` + pts.map((v, i) =>
+            `L ${(i / (pts.length - 1)) * w},${h - ((v - min) / range) * (h - 4) - 2}`
+          ).join(" ") + ` L ${w},${h} Z`;
+          return (
+            <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="mt-3 w-full" style={{ maxWidth: w }}>
+              <defs>
+                <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor={isUp ? "#16c784" : "#ea3943"} stopOpacity="0.2" />
+                  <stop offset="100%" stopColor={isUp ? "#16c784" : "#ea3943"} stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <path d={areaPath} fill={`url(#${gradId})`} />
+              <polyline
+                points={polyline}
+                fill="none"
+                stroke={isUp ? "#16c784" : "#ea3943"}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          );
+        };
+
+        const btcPrice = btcAsset?.price ?? 97845;
+        const btcChange = btcAsset?.change ?? 0;
+        const btcChangeSource = btcAsset?.changeSource || "fallback";
+        const btcSparkline = btcSparkHistory;
+
+        const hbarPrice = hbarAsset?.price ?? 0.28;
+        const hbarChange = hbarAsset?.change ?? 0;
+        const hbarChangeSource = hbarAsset?.changeSource || "fallback";
+        const hbarSparkline = hbarSparkHistory;
+
+        const tickerCard = `${cardClass} block transition-all duration-200 ${isDark ? "hover:border-white/[0.12]" : "hover:shadow-md"}`;
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* BTC — Bitcoin */}
+            <Link to="/trading/BTC" className={tickerCard}>
+              <div className="flex items-center justify-between mb-3">
+                <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>Bitcoin</span>
+                <img
+                  src={btcAsset?.logo || TOKEN_LOGOS.BTC}
+                  alt="BTC"
+                  className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              </div>
+              <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
+                {formatTickerPrice(btcPrice)}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {btcChangeSource === "fallback" ? (
+                  <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>---</span>
+                ) : (
+                  <span className={`text-xs font-medium ${btcChange >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
+                    {btcChange >= 0 ? "▲" : "▼"} {Math.abs(btcChange).toFixed(2)}%
+                  </span>
+                )}
+              </div>
+              {renderSparkline(btcSparkline, "btc-spark-grad")}
+              <div className="flex items-center gap-4 mt-2">
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>Vol </span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{btcAsset?.volume || "---"}</span>
+                </span>
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>MCap </span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{btcAsset?.marketCap ? `$${btcAsset.marketCap}` : "---"}</span>
+                </span>
+              </div>
+            </Link>
+
+            {/* HBAR — Hedera */}
+            <Link to="/trading/HBAR" className={tickerCard}>
+              <div className="flex items-center justify-between mb-3">
+                <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>Hedera</span>
+                <img
+                  src={hbarAsset?.logo || TOKEN_LOGOS.HBAR}
+                  alt="HBAR"
+                  className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              </div>
+              <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
+                {formatTickerPrice(hbarPrice)}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {hbarChangeSource === "fallback" ? (
+                  <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>---</span>
+                ) : (
+                  <span className={`text-xs font-medium ${hbarChange >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
+                    {hbarChange >= 0 ? "▲" : "▼"} {Math.abs(hbarChange).toFixed(2)}%
+                  </span>
+                )}
+              </div>
+              {renderSparkline(hbarSparkline, "hbar-spark-grad")}
+              <div className="flex items-center gap-4 mt-2">
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>Vol </span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{hbarAsset?.volume || "---"}</span>
+                </span>
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>MCap </span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{hbarAsset?.marketCap ? `$${hbarAsset.marketCap}` : "---"}</span>
+                </span>
+              </div>
+            </Link>
+
+            {/* HBAR.ħ — Protocol Token */}
+            <Link to="/swap" className={tickerCard}>
+              <div className="flex items-center justify-between mb-3">
+                <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>HBAR.ħ</span>
+                <img
+                  src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT}
+                  alt="HBAR.ħ"
+                  className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
+                />
+              </div>
+              <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
+                {hbarhData ? `$${hbarhData.priceUsd < 0.01 ? hbarhData.priceUsd.toFixed(7) : hbarhData.priceUsd.toFixed(6)}` : "---"}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {hbarhData ? (
+                  <span className={`text-xs font-medium ${hbarhData.change24h >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
+                    {hbarhData.change24h >= 0 ? "▲" : "▼"} {Math.abs(hbarhData.change24h).toFixed(2)}%
+                  </span>
+                ) : (
+                  <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>---</span>
+                )}
+              </div>
+              {hbarhData && hbarhData.priceHistory.length > 1 && renderSparkline(hbarhData.priceHistory, "hbarh-spark-grad")}
+              <div className="flex items-center gap-4 mt-2">
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>Vol </span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{hbarhData ? formatUsdCompact(hbarhData.volume24h) : "---"}</span>
+                </span>
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>Liq </span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{hbarhData ? formatUsdCompact(hbarhData.liquidity) : "---"}</span>
+                </span>
+              </div>
+            </Link>
+          </div>
+        );
+      })()}
+
+      {/* ═══ Row 2: CoinMarketCap-style Indicators ═══ */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Fear & Greed — CMC speedometer gauge */}
+        <FearGreedGauge />
+
+        {/* BTC Dominance — CMC horizontal bar */}
+        <div className={cardClass}>
+          <div className="flex items-center gap-0.5 mb-3">
+            <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+              BTC Dominance
+            </span>
+            <ChevronRight className={`w-4 h-4 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
+          </div>
+
+          {globalData ? (
+            <>
+              <div className="flex items-baseline gap-1 mb-4">
+                <span className={`text-[32px] font-bold leading-none tracking-tight ${isDark ? "text-white" : "text-gray-900"}`}>
+                  {globalData.btcDominance.toFixed(1)}
+                </span>
+                <span className={`text-lg font-medium ${isDark ? "text-slate-500" : "text-gray-400"}`}>/100</span>
+              </div>
+
+              {/* Segmented bar */}
+              <div className="relative mb-2">
+                <div className="flex gap-[3px]">
+                  {BTC_DOM_SEGMENTS.map((color, i) => (
+                    <div
+                      key={i}
+                      className={`flex-1 h-[8px] ${i === 0 ? "rounded-l-full" : ""} ${i === BTC_DOM_SEGMENTS.length - 1 ? "rounded-r-full" : ""}`}
+                      style={{ backgroundColor: color, opacity: isDark ? 0.85 : 0.75 }}
+                    />
+                  ))}
+                </div>
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[14px] h-[14px] rounded-full z-10"
+                  style={{
+                    left: `${Math.min(Math.max(globalData.btcDominance, 3), 97)}%`,
+                    backgroundColor: isDark ? "#0f172a" : "#1e293b",
+                    border: `2.5px solid ${isDark ? "#e2e8f0" : "#ffffff"}`,
+                    boxShadow: isDark ? "0 0 0 1px rgba(255,255,255,0.1)" : "0 0 0 1px rgba(0,0,0,0.08)",
+                  }}
+                />
+              </div>
+
+              <div className="flex justify-between mt-1">
+                <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Bitcoin</span>
+                <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Altcoin</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-[72px]">
+              <div className={`animate-spin w-5 h-5 border-2 rounded-full ${isDark ? "border-white/10 border-t-white/50" : "border-gray-200 border-t-gray-500"}`} />
+            </div>
+          )}
+        </div>
+
+        {/* RSI — CMC horizontal bar */}
+        <RSIGauge />
       </div>
 
       {/* Site Activity — upgraded full-width activity feed */}
@@ -367,8 +550,8 @@ export function Dashboard() {
       {/* Market Overview */}
       <div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">
-          <h2 className={`text-xl md:text-2xl font-bold bg-gradient-to-r ${isStable ? "from-emerald-400 to-teal-400" : "from-pink-400 to-purple-400"} bg-clip-text text-transparent transition-all duration-300`}>
-            Top Markets {loading && <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>(Loading...)</span>}
+          <h2 className={`text-xl md:text-2xl font-bold ${isDark ? "text-white" : "text-gray-900"} transition-all duration-300`}>
+            Top Markets {loading && <span className={`text-sm font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>(Loading...)</span>}
           </h2>
           <div className="flex gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
             {(["all", "layer1", "stablecoin"] as const).map((f) => (
@@ -532,58 +715,34 @@ export function Dashboard() {
 
                     {/* Trade / Bridge — VIP iridescent glow */}
                     <div className="hidden sm:flex gap-1.5">
-                      {item.symbol === "HBAR.ħ" ? (
-                        <>
-                          <Link
-                            to="/swap"
-                            onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
-                            onMouseEnter={() => { if (vipActive) playVipButtonChime(); }}
-                            className="vip-btn-trade px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 shadow-sm shadow-cyan-500/20 rounded-lg flex items-center gap-1.5 transition-all duration-300 text-white text-sm"
-                          >
-                            Swap
-                            <ArrowRightLeft className="w-3.5 h-3.5" />
-                          </Link>
-                          <a
-                            href="https://www.saucerswap.finance/trade/hbar/0.0.9356476"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
-                            className={`vip-btn-bridge px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-300 text-sm ${
-                              isDark
-                                ? "bg-slate-800/50 hover:bg-slate-700 border border-cyan-500/20"
-                                : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
-                            }`}
-                          >
-                            SaucerSwap
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </a>
-                        </>
-                      ) : (
-                        <>
-                          <Link
-                            to={`/trading/${item.symbol}`}
-                            onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
-                            onMouseEnter={() => { if (vipActive) playVipButtonChime(); }}
-                            className={`vip-btn-trade px-3 py-1.5 bg-gradient-to-r ${isStable ? "from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-sm shadow-emerald-500/20" : "from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-sm shadow-pink-500/20"} rounded-lg flex items-center gap-1.5 transition-all duration-300 text-white text-sm`}
-                          >
-                            Trade
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </Link>
-                          <Link
-                            to="/bridges"
-                            onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
-                            onMouseEnter={() => { if (vipActive) playVipButtonChime(); }}
-                            className={`vip-btn-bridge px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-300 text-sm ${
-                              isDark
-                                ? `bg-slate-800/50 hover:bg-slate-700 border ${isStable ? "border-emerald-500/20" : "border-pink-500/20"}`
-                                : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
-                            }`}
-                          >
-                            Bridge
-                            <ArrowRightLeft className="w-3.5 h-3.5" />
-                          </Link>
-                        </>
-                      )}
+                      <Link
+                        to={item.symbol === "HBAR.ħ" ? "/swap" : `/trading/${item.symbol}`}
+                        onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
+                        onMouseEnter={() => { if (vipActive) playVipButtonChime(); }}
+                        className={`vip-btn-trade px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-300 text-sm font-semibold ${
+                          isStable
+                            ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-sm shadow-emerald-500/20 text-white"
+                            : isSky
+                            ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-sm shadow-sky-500/25 text-white"
+                            : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-sm shadow-pink-500/20 text-white"
+                        }`}
+                      >
+                        Trade
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </Link>
+                      <Link
+                        to="/bridges"
+                        onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
+                        onMouseEnter={() => { if (vipActive) playVipButtonChime(); }}
+                        className={`vip-btn-bridge px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-300 text-sm font-medium ${
+                          isDark
+                            ? `bg-slate-800/60 hover:bg-slate-700 border ${isStable ? "border-emerald-500/20 text-slate-200" : isSky ? "border-sky-500/25 text-sky-300 hover:text-sky-200" : "border-pink-500/20 text-slate-200"}`
+                            : `bg-gray-100 hover:bg-gray-200 border border-gray-200 ${isSky ? "text-sky-700 hover:text-sky-800" : "text-gray-700"}`
+                        }`}
+                      >
+                        Bridge
+                        <ArrowRightLeft className="w-3.5 h-3.5" />
+                      </Link>
                     </div>
 
                     {/* Expand chevron */}
@@ -659,6 +818,9 @@ export function Dashboard() {
           })}
         </div>
       </div>
+
+      {/* ═══ Top 20 Coins Heat Map — QuantifyCrypto (sandboxed iframe) ═══ */}
+      <CryptoHeatmapWidget />
     </div>
   );
 }

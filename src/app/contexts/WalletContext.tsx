@@ -7,14 +7,8 @@ import {
   useRef,
   ReactNode,
 } from "react";
-import type {
-  HederaAccountInfo,
-  HederaNetwork,
-} from "../utils/hedera";
-import {
-  fetchAccountInfo,
-  fetchHbarPrice,
-} from "../utils/hedera";
+import type { HederaAccountInfo, HederaNetwork } from "../utils/hedera";
+import { fetchAccountInfo, fetchHbarPrice } from "../utils/hedera";
 import type { MetaMaskAccountInfo } from "../utils/metamask";
 import {
   connectMetaMask as connectMM,
@@ -35,10 +29,10 @@ import type {
 import {
   isHashConnectSDKAvailable,
   connectViaHashConnect,
-  openHashConnectPairingModal,
   connectViaMirrorNode,
   disconnectHashConnect,
   restoreSession,
+  fetchHashPackProfile,
 } from "../utils/hashpack";
 import {
   connectToSmartNode,
@@ -55,17 +49,13 @@ interface Wallet {
 }
 
 interface WalletContextType {
-  // Existing wallet support (mock for SOL, real for ETH via MetaMask)
   connectedWallets: Wallet[];
-  connectWallet: (
-    type: "hedera" | "ethereum" | "solana",
-    connector: string
-  ) => void;
+  connectWallet: (type: "hedera" | "ethereum" | "solana", connector: string) => void;
   disconnectWallet: (address: string) => void;
   disconnectAll: () => void;
   primaryWallet: Wallet | null;
 
-  // Real Hedera wallet support (HashPack via HashConnect SDK / Mirror Node)
+  // Hedera wallet
   hederaAccount: HederaAccountInfo | null;
   hederaNetwork: HederaNetwork;
   hbarPrice: number;
@@ -77,20 +67,14 @@ interface WalletContextType {
   connectHashPack: (
     network: HederaNetwork,
     onPairingString?: (uri: string) => void,
-    onConnectionState?: (state: string) => void
+    onConnectionState?: (state: string) => void,
   ) => Promise<HashPackConnectionResult>;
-  connectHashPackModal: (
-    network: HederaNetwork
-  ) => Promise<HashPackConnectionResult>;
-  connectHashPackMirror: (
-    accountId: string,
-    network: HederaNetwork
-  ) => Promise<boolean>;
+  connectHashPackMirror: (accountId: string, network: HederaNetwork) => Promise<boolean>;
   disconnectHashPack: () => void;
   refreshHederaBalance: () => Promise<void>;
   setHederaNetwork: (network: HederaNetwork) => void;
 
-  // Real MetaMask / EVM wallet support
+  // MetaMask / EVM
   metaMaskAccount: MetaMaskAccountInfo | null;
   ethPrice: number;
   solPrice: number;
@@ -100,7 +84,7 @@ interface WalletContextType {
   disconnectMetaMask: () => void;
   refreshMetaMaskBalance: () => Promise<void>;
 
-  // Real HSUITE / SmartNode wallet support
+  // HSuite
   hSuiteNFTStatus: HSuiteNFTStatus | null;
   isConnectingHSuite: boolean;
   hSuiteConnectionError: string | null;
@@ -111,7 +95,6 @@ interface WalletContextType {
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
-// Default fallback for when useWallet is called outside WalletProvider (e.g. preview/HMR)
 const DEFAULT_WALLET: WalletContextType = {
   connectedWallets: [],
   connectWallet: () => {},
@@ -120,22 +103,13 @@ const DEFAULT_WALLET: WalletContextType = {
   primaryWallet: null,
   hederaAccount: null,
   hederaNetwork: "mainnet",
-  hbarPrice: 0, // Will be populated by multi-source fetchHbarPrice() on mount
+  hbarPrice: 0,
   isConnectingHedera: false,
   hederaConnectionError: null,
   hashPackSession: null,
   hashPackProfile: null,
   hashConnectSDKReady: false,
-  connectHashPack: async () => ({
-    success: false,
-    session: null,
-    error: "Not in provider",
-  }),
-  connectHashPackModal: async () => ({
-    success: false,
-    session: null,
-    error: "Not in provider",
-  }),
+  connectHashPack: async () => ({ success: false, session: null, error: "Not in provider" }),
   connectHashPackMirror: async () => false,
   disconnectHashPack: () => {},
   refreshHederaBalance: async () => {},
@@ -159,10 +133,8 @@ const DEFAULT_WALLET: WalletContextType = {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [connectedWallets, setConnectedWallets] = useState<Wallet[]>([]);
 
-  // Real Hedera state
-  const [hederaAccount, setHederaAccount] = useState<HederaAccountInfo | null>(
-    null
-  );
+  // Hedera state
+  const [hederaAccount, setHederaAccount] = useState<HederaAccountInfo | null>(null);
   const [hederaNetwork, setHederaNetwork] = useState<HederaNetwork>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("hbarh-hedera-network");
@@ -170,35 +142,26 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
     return "mainnet";
   });
-  const [hbarPrice, setHbarPrice] = useState(0); // Populated by fetchHbarPrice() — no stale default
+  const [hbarPrice, setHbarPrice] = useState(0);
   const [isConnectingHedera, setIsConnectingHedera] = useState(false);
-  const [hederaConnectionError, setHederaConnectionError] = useState<
-    string | null
-  >(null);
-  const [hashPackSession, setHashPackSession] =
-    useState<HashPackSession | null>(null);
-  const [hashPackProfile, setHashPackProfile] =
-    useState<HashPackProfile | null>(null);
+  const [hederaConnectionError, setHederaConnectionError] = useState<string | null>(null);
+  const [hashPackSession, setHashPackSession] = useState<HashPackSession | null>(null);
+  const [hashPackProfile, setHashPackProfile] = useState<HashPackProfile | null>(null);
   const [hashConnectSDKReady, setHashConnectSDKReady] = useState(false);
 
-  // Real MetaMask state
-  const [metaMaskAccount, setMetaMaskAccount] =
-    useState<MetaMaskAccountInfo | null>(null);
+  // MetaMask state
+  const [metaMaskAccount, setMetaMaskAccount] = useState<MetaMaskAccountInfo | null>(null);
   const [ethPrice, setEthPrice] = useState(3500);
   const [solPrice, setSolPrice] = useState(185);
   const [isConnectingMetaMask, setIsConnectingMetaMask] = useState(false);
   const [metaMaskError, setMetaMaskError] = useState<string | null>(null);
 
-  // Real HSUITE state
-  const [hSuiteNFTStatus, setHSuiteNFTStatus] =
-    useState<HSuiteNFTStatus | null>(null);
+  // HSuite state
+  const [hSuiteNFTStatus, setHSuiteNFTStatus] = useState<HSuiteNFTStatus | null>(null);
   const [isConnectingHSuite, setIsConnectingHSuite] = useState(false);
-  const [hSuiteConnectionError, setHSuiteConnectionError] =
-    useState<string | null>(null);
+  const [hSuiteConnectionError, setHSuiteConnectionError] = useState<string | null>(null);
 
-  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-    null
-  );
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metaMaskUnsubRef = useRef<(() => void) | null>(null);
 
   // Save network preference
@@ -206,12 +169,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("hbarh-hedera-network", hederaNetwork);
   }, [hederaNetwork]);
 
-  // Check SDK availability on mount
+  // Check WC availability on mount
   useEffect(() => {
     isHashConnectSDKAvailable().then(setHashConnectSDKReady);
   }, []);
 
-  // Restore HashPack session on mount
+  // Restore Hedera session on mount
   useEffect(() => {
     const savedSession = restoreSession();
     if (savedSession) {
@@ -220,7 +183,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setHederaNetwork(savedSession.network);
       loadHederaAccountFromSession(savedSession);
     }
-    // Fetch HBAR price on mount + every 5 minutes
     fetchHbarPrice().then(setHbarPrice);
     const hbarPriceIv = setInterval(() => {
       fetchHbarPrice().then(setHbarPrice);
@@ -229,7 +191,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Restore MetaMask connection on mount (if previously connected)
+  // Restore MetaMask connection on mount
   useEffect(() => {
     const wasConnected = localStorage.getItem("hbarh-metamask-connected");
     if (wasConnected === "true" && isMetaMaskInstalled()) {
@@ -239,7 +201,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           const chainId = await getChainId();
           const { balanceWei, balanceEth } = await getBalance(address);
           const chain = CHAIN_INFO[chainId];
-
           const info: MetaMaskAccountInfo = {
             address,
             balanceWei,
@@ -249,19 +210,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             nativeSymbol: chain?.symbol || "ETH",
             explorerUrl: chain?.explorer || "",
           };
-
           setMetaMaskAccount(info);
-
-          const mmWallet: Wallet = {
-            address,
-            type: "ethereum",
-            connector: "MetaMask",
-          };
           setConnectedWallets((prev) => {
-            const filtered = prev.filter(
-              (w) => !(w.type === "ethereum" && w.connector === "MetaMask")
-            );
-            return [...filtered, mmWallet];
+            const filtered = prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask"));
+            return [...filtered, { address, type: "ethereum", connector: "MetaMask" }];
           });
         }
       });
@@ -270,25 +222,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     fetchSolPrice().then(setSolPrice);
   }, []);
 
-  // Auto-connect to HSuite SmartNode when a HashPack session is active
+  // Auto-connect to HSuite when HashPack session is active
   useEffect(() => {
     if (hashPackSession?.accountId) {
-      connectToSmartNode(hederaNetwork).then((result) => {
-        if (result.success) {
-          // Validate NFT in background (non-blocking)
-          validateNFT(hashPackSession.accountId, hederaNetwork).then((nft) => {
-            setHSuiteNFTStatus(nft);
-          }).catch(() => {});
-        }
-      }).catch(() => {});
+      connectToSmartNode(hederaNetwork)
+        .then((result) => {
+          if (result.success) {
+            validateNFT(hashPackSession.accountId, hederaNetwork)
+              .then(setHSuiteNFTStatus)
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
     }
   }, [hashPackSession?.accountId, hederaNetwork]);
 
-  // Subscribe to MetaMask events when connected
+  // MetaMask event subscriptions
   useEffect(() => {
     if (metaMaskAccount && isMetaMaskInstalled()) {
       metaMaskUnsubRef.current?.();
-
       const unsub = subscribeToMetaMaskEvents({
         onAccountsChanged: async (accounts) => {
           if (accounts.length === 0) {
@@ -298,7 +250,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             const chainId = await getChainId();
             const { balanceWei, balanceEth } = await getBalance(address);
             const chain = CHAIN_INFO[chainId];
-
             setMetaMaskAccount({
               address,
               balanceWei,
@@ -308,23 +259,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
               nativeSymbol: chain?.symbol || "ETH",
               explorerUrl: chain?.explorer || "",
             });
-
             setConnectedWallets((prev) =>
               prev.map((w) =>
-                w.type === "ethereum" && w.connector === "MetaMask"
-                  ? { ...w, address }
-                  : w
-              )
+                w.type === "ethereum" && w.connector === "MetaMask" ? { ...w, address } : w,
+              ),
             );
           }
         },
         onChainChanged: async (chainId) => {
           if (metaMaskAccount) {
-            const { balanceWei, balanceEth } = await getBalance(
-              metaMaskAccount.address
-            );
+            const { balanceWei, balanceEth } = await getBalance(metaMaskAccount.address);
             const chain = CHAIN_INFO[chainId];
-
             setMetaMaskAccount((prev) =>
               prev
                 ? {
@@ -336,41 +281,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
                     nativeSymbol: chain?.symbol || "ETH",
                     explorerUrl: chain?.explorer || "",
                   }
-                : prev
+                : prev,
             );
           }
         },
-        onDisconnect: () => {
-          handleDisconnectMetaMask();
-        },
+        onDisconnect: () => handleDisconnectMetaMask(),
       });
-
       metaMaskUnsubRef.current = unsub;
-
-      return () => {
-        unsub();
-      };
+      return () => unsub();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metaMaskAccount?.address]);
 
-  // Auto-refresh MetaMask balance every 30 seconds
+  // Auto-refresh MetaMask balance
   useEffect(() => {
     if (metaMaskAccount) {
       const interval = setInterval(async () => {
-        const { balanceWei, balanceEth } = await getBalance(
-          metaMaskAccount.address
-        );
-        setMetaMaskAccount((prev) =>
-          prev ? { ...prev, balanceWei, balanceEth } : prev
-        );
+        const { balanceWei, balanceEth } = await getBalance(metaMaskAccount.address);
+        setMetaMaskAccount((prev) => (prev ? { ...prev, balanceWei, balanceEth } : prev));
       }, 30000);
-
       const priceInterval = setInterval(() => {
         fetchEthPrice().then(setEthPrice);
         fetchSolPrice().then(setSolPrice);
       }, 60000);
-
       return () => {
         clearInterval(interval);
         clearInterval(priceInterval);
@@ -378,95 +311,62 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [metaMaskAccount?.address]);
 
-  // Auto-refresh Hedera balance every 30 seconds
+  // Auto-refresh Hedera balance
   useEffect(() => {
     if (hederaAccount) {
-      refreshIntervalRef.current = setInterval(() => {
-        refreshHederaBalance();
-      }, 30000);
-
+      refreshIntervalRef.current = setInterval(() => refreshHederaBalance(), 30000);
       const priceInterval = setInterval(() => {
         fetchHbarPrice().then(setHbarPrice);
       }, 60000);
-
       return () => {
-        if (refreshIntervalRef.current)
-          clearInterval(refreshIntervalRef.current);
+        if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
         clearInterval(priceInterval);
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hederaAccount?.accountId, hederaAccount?.network]);
 
-  // ─── Helper: Load Hedera account from a HashPack session ───
-  const loadHederaAccountFromSession = useCallback(
-    async (session: HashPackSession) => {
-      try {
-        const accountInfo = await fetchAccountInfo(
-          session.accountId,
-          session.network
-        );
-        if (accountInfo && !accountInfo.deleted) {
-          setHederaAccount(accountInfo);
+  // ─── Helpers ────────────────────────────────────────────────
 
-          const hederaWallet: Wallet = {
-            address: session.accountId,
-            type: "hedera",
-            connector: "HashPack",
-          };
-          setConnectedWallets((prev) => {
-            const filtered = prev.filter((w) => w.type !== "hedera");
-            return [hederaWallet, ...filtered];
-          });
-        }
-      } catch {
-        console.debug("Failed to restore Hedera account from session");
+  const loadHederaAccountFromSession = useCallback(async (session: HashPackSession) => {
+    try {
+      const accountInfo = await fetchAccountInfo(session.accountId, session.network);
+      if (accountInfo && !accountInfo.deleted) {
+        setHederaAccount(accountInfo);
+        setConnectedWallets((prev) => {
+          const filtered = prev.filter((w) => w.type !== "hedera");
+          return [{ address: session.accountId, type: "hedera", connector: "WalletConnect" }, ...filtered];
+        });
       }
-    },
-    []
-  );
+    } catch {
+      console.debug("Failed to restore Hedera account from session");
+    }
+  }, []);
 
-  // ─── MetaMask connection ───
+  // ─── MetaMask ───────────────────────────────────────────────
+
   const connectMetaMask = useCallback(async (): Promise<boolean> => {
     setIsConnectingMetaMask(true);
     setMetaMaskError(null);
-
     if (!isMetaMaskInstalled()) {
-      setMetaMaskError(
-        "MetaMask is not installed. Please install the MetaMask browser extension."
-      );
+      setMetaMaskError("MetaMask is not installed. Please install the MetaMask browser extension.");
       setIsConnectingMetaMask(false);
       return false;
     }
-
     try {
       const info = await connectMM();
-
       setMetaMaskAccount(info);
       localStorage.setItem("hbarh-metamask-connected", "true");
-
-      const mmWallet: Wallet = {
-        address: info.address,
-        type: "ethereum",
-        connector: "MetaMask",
-      };
-
       setConnectedWallets((prev) => {
-        const filtered = prev.filter(
-          (w) => !(w.type === "ethereum" && w.connector === "MetaMask")
-        );
-        return [...filtered, mmWallet];
+        const filtered = prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask"));
+        return [...filtered, { address: info.address, type: "ethereum", connector: "MetaMask" }];
       });
-
       fetchEthPrice().then(setEthPrice);
       fetchSolPrice().then(setSolPrice);
-
       setIsConnectingMetaMask(false);
       return true;
     } catch (error: any) {
-      setMetaMaskError(
-        error.message || "Failed to connect to MetaMask. Please try again."
-      );
+      setMetaMaskError(error.message || "Failed to connect to MetaMask.");
       setIsConnectingMetaMask(false);
       return false;
     }
@@ -476,65 +376,46 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setMetaMaskAccount(null);
     setMetaMaskError(null);
     localStorage.removeItem("hbarh-metamask-connected");
-    setConnectedWallets((prev) =>
-      prev.filter(
-        (w) => !(w.type === "ethereum" && w.connector === "MetaMask")
-      )
-    );
+    setConnectedWallets((prev) => prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask")));
     metaMaskUnsubRef.current?.();
     metaMaskUnsubRef.current = null;
   }, []);
 
   const refreshMetaMaskBalance = useCallback(async () => {
     if (!metaMaskAccount) return;
-    const { balanceWei, balanceEth } = await getBalance(
-      metaMaskAccount.address
-    );
-    setMetaMaskAccount((prev) =>
-      prev ? { ...prev, balanceWei, balanceEth } : prev
-    );
+    const { balanceWei, balanceEth } = await getBalance(metaMaskAccount.address);
+    setMetaMaskAccount((prev) => (prev ? { ...prev, balanceWei, balanceEth } : prev));
   }, [metaMaskAccount]);
 
-  // ─── HashPack Connection (HashConnect SDK) ───
+  // ─── Hedera (WalletConnect v2) ──────────────────────────────
+
   const connectHashPack = useCallback(
     async (
       network: HederaNetwork,
       onPairingString?: (uri: string) => void,
-      onConnectionState?: (state: string) => void
+      onConnectionState?: (state: string) => void,
     ): Promise<HashPackConnectionResult> => {
       setIsConnectingHedera(true);
       setHederaConnectionError(null);
 
-      const result = await connectViaHashConnect(
-        network,
-        onPairingString,
-        onConnectionState
-      );
+      const result = await connectViaHashConnect(network, onPairingString, onConnectionState);
 
       if (result.success && result.session) {
         setHashPackSession(result.session);
         setHashPackProfile(result.session.profile || null);
         setHederaNetwork(network);
 
-        const accountInfo = await fetchAccountInfo(
-          result.session.accountId,
-          network
-        );
-
+        const accountInfo = await fetchAccountInfo(result.session.accountId, network);
         if (accountInfo) {
           setHederaAccount(accountInfo);
-
-          const hederaWallet: Wallet = {
-            address: result.session.accountId,
-            type: "hedera",
-            connector: "HashPack",
-          };
           setConnectedWallets((prev) => {
             const filtered = prev.filter((w) => w.type !== "hedera");
-            return [hederaWallet, ...filtered];
+            return [
+              { address: result.session!.accountId, type: "hedera", connector: "WalletConnect" },
+              ...filtered,
+            ];
           });
         }
-
         fetchHbarPrice().then(setHbarPrice);
       } else {
         setHederaConnectionError(result.error || "Connection failed.");
@@ -543,90 +424,34 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnectingHedera(false);
       return result;
     },
-    []
+    [],
   );
 
-  // ─── HashPack Connection via built-in modal ───
-  const connectHashPackModal = useCallback(
-    async (network: HederaNetwork): Promise<HashPackConnectionResult> => {
-      setIsConnectingHedera(true);
-      setHederaConnectionError(null);
-
-      const result = await openHashConnectPairingModal(network, "dark");
-
-      if (result.success && result.session) {
-        setHashPackSession(result.session);
-        setHashPackProfile(result.session.profile || null);
-        setHederaNetwork(network);
-
-        const accountInfo = await fetchAccountInfo(
-          result.session.accountId,
-          network
-        );
-
-        if (accountInfo) {
-          setHederaAccount(accountInfo);
-
-          const hederaWallet: Wallet = {
-            address: result.session.accountId,
-            type: "hedera",
-            connector: "HashPack",
-          };
-          setConnectedWallets((prev) => {
-            const filtered = prev.filter((w) => w.type !== "hedera");
-            return [hederaWallet, ...filtered];
-          });
-        }
-
-        fetchHbarPrice().then(setHbarPrice);
-      } else {
-        setHederaConnectionError(result.error || "Connection failed.");
-      }
-
-      setIsConnectingHedera(false);
-      return result;
-    },
-    []
-  );
-
-  // ─── HashPack Mirror Node Connection (read-only fallback) ───
   const connectHashPackMirror = useCallback(
     async (accountId: string, network: HederaNetwork): Promise<boolean> => {
       setIsConnectingHedera(true);
       setHederaConnectionError(null);
 
       const result = await connectViaMirrorNode(accountId, network);
-
       if (result.success && result.session) {
         setHashPackSession(result.session);
         setHashPackProfile(result.session.profile || null);
         setHederaNetwork(network);
-
-        const accountInfo = await fetchAccountInfo(
-          result.session.accountId,
-          network
-        );
-
+        const accountInfo = await fetchAccountInfo(result.session.accountId, network);
         if (accountInfo) {
           setHederaAccount(accountInfo);
-
-          const hederaWallet: Wallet = {
-            address: result.session.accountId,
-            type: "hedera",
-            connector: "HashPack",
-          };
           setConnectedWallets((prev) => {
             const filtered = prev.filter((w) => w.type !== "hedera");
-            return [hederaWallet, ...filtered];
+            return [
+              { address: result.session!.accountId, type: "hedera", connector: "Mirror Node" },
+              ...filtered,
+            ];
           });
-
           fetchHbarPrice().then(setHbarPrice);
           setIsConnectingHedera(false);
           return true;
         } else {
-          setHederaConnectionError(
-            `Account ${accountId} not found on ${network}.`
-          );
+          setHederaConnectionError(`Account ${accountId} not found on ${network}.`);
         }
       } else {
         setHederaConnectionError(result.error || "Connection failed.");
@@ -635,57 +460,45 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnectingHedera(false);
       return false;
     },
-    []
+    [],
   );
 
-  // ─── Disconnect HashPack ───
   const handleDisconnectHashPack = useCallback(() => {
     setHederaAccount(null);
     setHashPackSession(null);
     setHashPackProfile(null);
     setHederaConnectionError(null);
-    disconnectHashConnect(); // async but we don't need to await
+    disconnectHashConnect();
     setConnectedWallets((prev) => prev.filter((w) => w.type !== "hedera"));
     if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
   }, []);
 
   const refreshHederaBalance = useCallback(async () => {
     if (!hederaAccount) return;
-    const updated = await fetchAccountInfo(
-      hederaAccount.accountId,
-      hederaAccount.network
-    );
-    if (updated) {
-      setHederaAccount(updated);
-    }
+    const updated = await fetchAccountInfo(hederaAccount.accountId, hederaAccount.network);
+    if (updated) setHederaAccount(updated);
   }, [hederaAccount]);
 
-  // ─── HSUITE Connection ───
+  // ─── HSuite ─────────────────────────────────────────────────
+
   const connectHSuite = useCallback(async (): Promise<boolean> => {
     setIsConnectingHSuite(true);
     setHSuiteConnectionError(null);
-
     try {
       const result = await connectToSmartNode(hederaNetwork);
-
       if (!result.success) {
         setHSuiteConnectionError(result.error || "Failed to connect to HSuite SmartNode.");
         setIsConnectingHSuite(false);
         return false;
       }
-
-      // If we have a Hedera account, validate NFT access
       if (hashPackSession?.accountId) {
         const nftStatus = await validateNFT(hashPackSession.accountId, hederaNetwork);
         setHSuiteNFTStatus(nftStatus);
       }
-
       setIsConnectingHSuite(false);
       return true;
     } catch (error: any) {
-      setHSuiteConnectionError(
-        error.message || "Failed to connect to HSuite. Please try again."
-      );
+      setHSuiteConnectionError(error.message || "Failed to connect to HSuite.");
       setIsConnectingHSuite(false);
       return false;
     }
@@ -702,24 +515,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     try {
       const nftStatus = await validateNFT(hashPackSession.accountId, hederaNetwork);
       setHSuiteNFTStatus(nftStatus);
-    } catch {
-      // Non-critical
-    }
+    } catch { /* non-critical */ }
   }, [hashPackSession?.accountId, hederaNetwork]);
 
-  // ─── DEMO: Mock wallet connections for unsupported chains ───
-  // Solana/Phantom wallets use simulated (fake) addresses.
-  // Real wallet connections: Hedera (HashPack), Ethereum (MetaMask).
-  const connectWallet = (
-    type: "hedera" | "ethereum" | "solana",
-    connector: string
-  ) => {
-    if (type === "hedera") return; // HashPack flow handles it
-    if (type === "ethereum" && connector === "MetaMask") return; // Real MetaMask handles it
+  // ─── Demo wallet connections ────────────────────────────────
 
-    const generateAddress = (
-      walletType: "hedera" | "ethereum" | "solana"
-    ): string => {
+  const connectWallet = (type: "hedera" | "ethereum" | "solana", connector: string) => {
+    if (type === "hedera") return;
+    if (type === "ethereum" && connector === "MetaMask") return;
+
+    const generateAddress = (walletType: "hedera" | "ethereum" | "solana"): string => {
       if (walletType === "ethereum")
         return `0x${Math.random().toString(16).slice(2, 10)}...${Math.random().toString(16).slice(2, 6)}`;
       return `${Math.random().toString(36).slice(2, 6).toUpperCase()}...${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -732,14 +537,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       isDemo: true,
     };
 
-    const existing = connectedWallets.find((w) => w.type === type);
-    if (existing) {
-      setConnectedWallets((prev) =>
-        prev.map((w) => (w.type === type ? newWallet : w))
-      );
-    } else {
-      setConnectedWallets((prev) => [...prev, newWallet]);
-    }
+    setConnectedWallets((prev) => {
+      const existing = prev.find((w) => w.type === type);
+      if (existing) return prev.map((w) => (w.type === type ? newWallet : w));
+      return [...prev, newWallet];
+    });
   };
 
   const disconnectWallet = (address: string) => {
@@ -748,10 +550,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       handleDisconnectHashPack();
       return;
     }
-    if (
-      wallet?.type === "ethereum" &&
-      wallet.connector === "MetaMask"
-    ) {
+    if (wallet?.type === "ethereum" && wallet.connector === "MetaMask") {
       handleDisconnectMetaMask();
       return;
     }
@@ -784,7 +583,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         hashPackProfile,
         hashConnectSDKReady,
         connectHashPack,
-        connectHashPackModal,
         connectHashPackMirror,
         disconnectHashPack: handleDisconnectHashPack,
         refreshHederaBalance,

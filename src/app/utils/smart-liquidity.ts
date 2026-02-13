@@ -22,6 +22,7 @@
  */
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { getSessionToken, authHeaders } from "./auth";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ export interface PoolState {
   cumulativeVolumeUsd: number;
   swapCount: number;
   status: "active" | "paused";
+  version?: number;  // [AUDIT-AMM-02] Optimistic lock version (server-managed)
   // Enriched by server
   tvlUsd?: number;
   priceA?: number;
@@ -115,6 +117,49 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// [AUDIT-AMM-01] Authenticated fetch — includes session token for mutating endpoints.
+// Requires authenticate() to have been called first (see /src/app/utils/auth.ts).
+// [AUDIT-AMM-02] Auto-retries on 409 (version conflict) and 503 (pool busy) with backoff.
+const AUTHED_MAX_RETRIES = 3;
+const AUTHED_RETRY_BASE_MS = 200;
+
+async function authedFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getSessionToken();
+  if (!token) throw new Error("Not authenticated. Please sign the wallet challenge first.");
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= AUTHED_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff with jitter: 200ms, 500ms, 1200ms
+      const delay = AUTHED_RETRY_BASE_MS * Math.pow(2.5, attempt - 1) + Math.random() * 100;
+      console.debug(`[SmartLiquidity] Retry ${attempt}/${AUTHED_MAX_RETRIES} after ${Math.round(delay)}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: { ...authHeaders(token), ...(options?.headers as Record<string, string>) },
+      signal: options?.signal ?? AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+
+    if (res.ok) return data as T;
+
+    // [AUDIT-AMM-02] Retryable: 409 VERSION_CONFLICT or 503 POOL_BUSY
+    const code = (data as any)?.code;
+    if ((res.status === 409 || res.status === 503) && attempt < AUTHED_MAX_RETRIES) {
+      console.debug(`[SmartLiquidity] ${res.status} ${code} on ${path} — will retry`);
+      lastError = new Error(data.error || `HTTP ${res.status} (retrying)`);
+      continue;
+    }
+
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+
+  throw lastError || new Error("Max retries exceeded");
+}
+
 // ── Token Registry (client-side cache of server whitelist) ──────────
 
 export interface WrappedTokenSeed {
@@ -165,6 +210,9 @@ export async function getPoolStats(): Promise<PoolStats> {
 
 // ── Pool Creation ───────────────────────────────────────────────────
 
+// [AUDIT-AMM-01] All mutating pool functions use authedFetch (session token required).
+// Call authenticate(accountId) from /src/app/utils/auth.ts before using these.
+
 export async function createPool(
   tokenA: string,
   tokenB: string,
@@ -174,7 +222,7 @@ export async function createPool(
   description?: string,
 ): Promise<{ success: boolean; pool?: PoolState; error?: string }> {
   try {
-    return await apiFetch<{ success: boolean; pool: PoolState }>("/pools/create", {
+    return await authedFetch<{ success: boolean; pool: PoolState }>("/pools/create", {
       method: "POST",
       body: JSON.stringify({ tokenA, tokenB, feeBps, accountId, name, description }),
     });
@@ -192,7 +240,7 @@ export async function addLiquidity(
   accountId: string,
 ): Promise<{ success: boolean; sharesMinted?: string; error?: string }> {
   try {
-    return await apiFetch("/pools/liquidity/add", {
+    return await authedFetch("/pools/liquidity/add", {
       method: "POST",
       body: JSON.stringify({ poolId, amountA, amountB, accountId }),
     });
@@ -207,7 +255,7 @@ export async function removeLiquidity(
   accountId: string,
 ): Promise<{ success: boolean; amountA?: string; amountB?: string; error?: string }> {
   try {
-    return await apiFetch("/pools/liquidity/remove", {
+    return await authedFetch("/pools/liquidity/remove", {
       method: "POST",
       body: JSON.stringify({ poolId, shares, accountId }),
     });
@@ -255,7 +303,7 @@ export async function executeSwap(
   minAmountOutRaw?: string,
 ): Promise<{ success: boolean; amountOut?: string; error?: string }> {
   try {
-    return await apiFetch("/pools/swap", {
+    return await authedFetch("/pools/swap", {
       method: "POST",
       body: JSON.stringify({ accountId, poolId, tokenIn, tokenOut, amountInRaw, minAmountOutRaw }),
     });

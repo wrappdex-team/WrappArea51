@@ -41,6 +41,16 @@ export const HASHPACK_LOGO = hashpackLogoAsset;
 // MetaMask — EVM wallet (official fox logo asset)
 export const METAMASK_LOGO = metamaskLogoAsset;
 
+// Blade Wallet — Hedera native wallet
+export const BLADE_LOGO = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#0A0E17"/><path d="M20 6l10 8-4 14H14L10 14z" fill="#00E5FF" opacity="0.9"/><path d="M20 6l6 8-6 16-6-16z" fill="#00B8D4"/><path d="M14 14h12l-2 7H16z" fill="#0A0E17" opacity="0.3"/></svg>`
+)}`;
+
+// Kabila — Hedera social wallet
+export const KABILA_LOGO = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#1a1a2e"/><circle cx="20" cy="20" r="10" fill="none" stroke="#FF6B35" stroke-width="2.5"/><path d="M16 15v10l4-3 4 3V15z" fill="#FF6B35"/></svg>`
+)}`;
+
 // Dynamic — multi-chain wallet infrastructure
 // Using a simple branded SVG fallback since Dynamic doesn't have a stable public CDN logo.
 export const DYNAMIC_LOGO = `data:image/svg+xml,${encodeURIComponent(

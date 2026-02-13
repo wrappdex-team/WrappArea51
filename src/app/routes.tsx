@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate } from "react-router";
 import { Layout } from "./components/Layout";
 
 /**
@@ -51,7 +51,6 @@ const BuySell = lazy(() => retryImport(() => import("./components/BuySell")).the
 const DeFi = lazy(() => retryImport(() => import("./components/DeFi")).then(m => ({ default: m.DeFi })));
 const SmartLiquidity = lazy(() => retryImport(() => import("./components/SmartLiquidity")).then(m => ({ default: m.SmartLiquidity })));
 const Wallet = lazy(() => retryImport(() => import("./components/Wallet")).then(m => ({ default: m.Wallet })));
-const History = lazy(() => retryImport(() => import("./components/History")).then(m => ({ default: m.History })));
 const DAO = lazy(() => retryImport(() => import("./components/DAO")).then(m => ({ default: m.DAO })));
 const Bridges = lazy(() => retryImport(() => import("./components/Bridges")).then(m => ({ default: m.Bridges })));
 
@@ -66,11 +65,10 @@ export const router = createBrowserRouter([
       { path: "swap", Component: SwapPage },
       { path: "buy-sell", Component: BuySell },
       { path: "wallet", Component: Wallet },
-      { path: "history", Component: History },
       { path: "dao", Component: DAO },
       { path: "bridges", Component: Bridges },
       { path: "defi", Component: DeFi },
-      { path: "smart-liquidity", Component: SmartLiquidity },
+      { path: "smart-liquidity", element: <Navigate to="/trading" replace /> },
     ],
   },
 ]);

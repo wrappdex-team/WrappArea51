@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => ({
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
       // Polyfill Node.js built-ins for browser compatibility
-      // Required by @hashgraph/sdk, hashconnect, and @walletconnect/sign-client
+      // Required by @hashgraph/sdk and @walletconnect/sign-client
       // MUST use absolute path — 'buffer/' alone gets externalized by Vite 6
       buffer: path.resolve(__dirname, 'node_modules/buffer/'),
     },
@@ -23,6 +23,9 @@ export default defineConfig(({ mode }) => ({
   define: {
     // Provide process.env for libraries that expect Node.js environment
     'process.env': '{}',
+    // Tell Lit (used by @walletconnect/modal) to use production mode
+    // More-specific keys take precedence over 'process.env' in Vite's define
+    'process.env.NODE_ENV': JSON.stringify('production'),
     'process.browser': 'true',
     // Ensure global is available (some WalletConnect/HashConnect code references it)
     global: 'globalThis',
@@ -67,8 +70,8 @@ export default defineConfig(({ mode }) => ({
           // React core
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router/')) return 'vendor-react';
 
-          // NOTE: @hashgraph/sdk, hashconnect, web3, and lightweight-charts are
-          // already dynamically imported via `await import(...)` in the
+          // NOTE: @hashgraph/sdk, @walletconnect/sign-client, and lightweight-charts
+          // are already dynamically imported via `await import(...)` in the
           // source code, so Rollup automatically code-splits them into
           // separate async chunks. No need to list them here.
         },

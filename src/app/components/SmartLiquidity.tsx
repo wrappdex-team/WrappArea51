@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ArrowDownUp,
   ArrowRightLeft,
@@ -21,6 +21,7 @@ import {
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { isVipEligible } from "../utils/vip";
+import { authenticate, hasValidSession, clearSession } from "../utils/auth";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
 import {
   fetchPools,
@@ -78,16 +79,23 @@ function SwapPanel({ pools, isDark, accountId }: { pools: PoolState[]; isDark: b
     if (!quote || !accountId) return;
     setStatus("swapping");
     setError(null);
-    // [AUDIT-AMM-03] Always send minAmountOutRaw for slippage protection (0.5% default)
-    const minOut = (BigInt(quote.amountOutRaw) * 995n / 1000n).toString();
-    const result = await executeSwap(accountId, quote.poolId, quote.tokenIn, quote.tokenOut, quote.amountInRaw, minOut);
-    if (result.success) {
-      setStatus("success");
-      setAmount("");
-      setQuote(null);
-      setTimeout(() => setStatus("idle"), 2000);
-    } else {
-      setError(result.error || "Swap failed");
+    try {
+      // [AUDIT-AMM-01] Authenticate before mutating — prompts wallet signature if no session
+      await authenticate(accountId);
+      // [AUDIT-AMM-03] Always send minAmountOutRaw for slippage protection (0.5% default)
+      const minOut = (BigInt(quote.amountOutRaw) * 995n / 1000n).toString();
+      const result = await executeSwap(accountId, quote.poolId, quote.tokenIn, quote.tokenOut, quote.amountInRaw, minOut);
+      if (result.success) {
+        setStatus("success");
+        setAmount("");
+        setQuote(null);
+        setTimeout(() => setStatus("idle"), 2000);
+      } else {
+        setError(result.error || "Swap failed");
+        setStatus("error");
+      }
+    } catch (err: any) {
+      setError(err.message || "Authentication failed");
       setStatus("error");
     }
   };
@@ -260,10 +268,17 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
     if (tokenAIdx === tokenBIdx) { setError("Select different tokens"); return; }
     setStatus("creating");
     setError("");
-    // [LP-12] Fee is protocol-fixed at 10 bps (0.1%). Server ignores any other value.
-    const result = await createPool(tokens[tokenAIdx].symbol, tokens[tokenBIdx].symbol, 10, accountId, name || undefined);
-    if (result.success) { setStatus("done"); onCreated(); setTimeout(onClose, 1500); }
-    else { setError(result.error || "Failed"); setStatus("error"); }
+    try {
+      // [AUDIT-AMM-01] Authenticate before pool creation
+      await authenticate(accountId);
+      // [LP-12] Fee is protocol-fixed at 10 bps (0.1%). Server ignores any other value.
+      const result = await createPool(tokens[tokenAIdx].symbol, tokens[tokenBIdx].symbol, 10, accountId, name || undefined);
+      if (result.success) { setStatus("done"); onCreated(); setTimeout(onClose, 1500); }
+      else { setError(result.error || "Failed"); setStatus("error"); }
+    } catch (err: any) {
+      setError(err.message || "Authentication failed");
+      setStatus("error");
+    }
   };
 
   const inputClass = isDark ? "bg-slate-800/50 border border-pink-500/10" : "bg-gray-50 border border-gray-200";
@@ -315,7 +330,7 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
   );
 }
 
-// ── Add Liquidity Modal ────���─────────────────────────────────────────
+// ── Add Liquidity Modal ─────────────────────────────────────────────
 
 function AddLiquidityModal({ pool, isDark, accountId, onClose, onDone }: {
   pool: PoolState; isDark: boolean; accountId: string; onClose: () => void; onDone: () => void;
@@ -339,13 +354,20 @@ function AddLiquidityModal({ pool, isDark, accountId, onClose, onDone }: {
 
     setStatus("adding");
     setError("");
-    const result = await addLiquidity(pool.id, rawA, rawB, accountId);
-    if (result.success) {
-      setStatus("done");
-      onDone();
-      setTimeout(onClose, 1500);
-    } else {
-      setError(result.error || "Failed");
+    try {
+      // [AUDIT-AMM-01] Authenticate before adding liquidity
+      await authenticate(accountId);
+      const result = await addLiquidity(pool.id, rawA, rawB, accountId);
+      if (result.success) {
+        setStatus("done");
+        onDone();
+        setTimeout(onClose, 1500);
+      } else {
+        setError(result.error || "Failed");
+        setStatus("error");
+      }
+    } catch (err: any) {
+      setError(err.message || "Authentication failed");
       setStatus("error");
     }
   };
@@ -506,6 +528,15 @@ export function SmartLiquidity() {
   const [liquidityPool, setLiquidityPool] = useState<PoolState | null>(null);
 
   const accountId = hashPackSession?.accountId || null;
+
+  // [AUDIT-AMM-01] Clear auth session when wallet disconnects or account changes
+  const prevAccountRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevAccountRef.current && prevAccountRef.current !== accountId) {
+      clearSession();
+    }
+    prevAccountRef.current = accountId;
+  }, [accountId]);
 
   const isVip = useMemo(() => {
     if (!hederaAccount?.tokens) return false;

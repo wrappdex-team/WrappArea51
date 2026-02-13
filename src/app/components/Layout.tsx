@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, Suspense } from "react";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT, HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
 import { Outlet, Link, useLocation } from "react-router";
-import { TrendingUp, Wallet, History, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, X, Volume2, VolumeOff, Droplets, Layers, Crown } from "lucide-react";
+import { TrendingUp, Wallet, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, X, Volume2, VolumeOff, Droplets, Crown } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { WalletConnectModal } from "./WalletConnectModal";
@@ -24,7 +24,7 @@ import { trackRouteChange } from "../utils/performance";
 export function Layout() {
   const location = useLocation();
   const { connectedWallets, disconnectWallet, primaryWallet, hederaAccount, hbarPrice, metaMaskAccount, ethPrice, hashPackProfile, hashPackSession } = useWallet();
-  const { theme, toggleTheme, isDark } = useTheme();
+  const { theme, toggleTheme, isDark, accent, toggleAccent, isSky } = useTheme();
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showWalletMenu, setShowWalletMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -77,13 +77,11 @@ export function Layout() {
 
   const navItems = [
     { path: "/", label: "Markets", icon: TrendingUp },
-    { path: "/trading", label: "Trading", icon: BarChart3 },
+    { path: "/trading", label: "Trade", icon: BarChart3 },
     { path: "/swap", label: "Swap", icon: ArrowRightLeft },
     { path: "/buy-sell", label: "Buy/Sell", icon: DollarSign },
     { path: "/defi", label: "DeFi", icon: Droplets },
-    { path: "/smart-liquidity", label: "Smart Liquidity", shortLabel: "Liquidity", icon: Layers },
     { path: "/wallet", label: "Wallet", icon: Wallet },
-    { path: "/history", label: "History", icon: History },
     { path: "/dao", label: "DAO", icon: Vote },
   ];
 
@@ -106,7 +104,7 @@ export function Layout() {
   }, [location.pathname]);
 
   return (
-    <div className={`min-h-screen ${isDark ? "bg-[#0a0a0f] text-white" : "bg-[#f8fafc] text-slate-900"}`}>
+    <div className={`min-h-screen ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`}>
       {/* Dynamic SEO Head */}
       <SEOHead {...currentSEO} />
 
@@ -122,10 +120,10 @@ export function Layout() {
       <NewsTicker />
 
       {/* Header */}
-      <header className={`border-b sticky top-0 z-50 backdrop-blur-sm ${
+      <header className={`border-b sticky top-0 z-50 backdrop-blur-xl ${
         isDark
-          ? "border-pink-900/20 bg-[#12121a]/50"
-          : "border-gray-200 bg-white/85"
+          ? "border-white/[0.06] bg-[#080a12]/80"
+          : "border-gray-100 bg-white/90"
       }`}>
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
@@ -154,7 +152,7 @@ export function Layout() {
 
             {/* Desktop Navigation */}
             <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3">
-              <div className="flex items-center gap-px xl:gap-1">
+              <div className="flex items-center gap-1 xl:gap-1.5">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.path);
@@ -165,7 +163,7 @@ export function Layout() {
                     to={item.path}
                     onClick={() => handleTabClick(item.path)}
                     onMouseEnter={() => preloadRoute(item.path)}
-                    className={`flex items-center gap-1 px-2 xl:px-2.5 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap ${
+                    className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap ${
                       active
                         ? `text-white shadow-lg shadow-pink-500/30 active-nav nav-iridescent ${isFlashing ? "tab-click-flash" : ""}`
                         : isDark
@@ -237,6 +235,21 @@ export function Layout() {
                 ) : (
                   <Moon className="w-4 h-4 md:w-5 md:h-5" />
                 )}
+              </button>
+
+              {/* Accent Color Toggle — Sky (Blue) ↔ Pink */}
+              <button
+                onClick={toggleAccent}
+                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                  isDark
+                    ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
+                    : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
+                }`}
+                title={isSky ? "Switch to Pink accent" : "Switch to Sky accent"}
+              >
+                <span className="text-sm md:text-base leading-none select-none" role="img" aria-label={isSky ? "Sky Blue mode" : "Pink mode"}>
+                  {isSky ? "🩵" : "🩷"}
+                </span>
               </button>
 
               {/* Sound Toggle */}
@@ -350,11 +363,9 @@ export function Layout() {
                           {hashPackSession && (
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold capitalize ${
-                                hashPackSession.connectionMethod === "hashconnect"
-                                  ? "bg-emerald-500/20 text-emerald-400"
-                                  : hashPackSession.connectionMethod === "walletconnect"
-                                    ? "bg-blue-500/20 text-blue-400"
-                                    : "bg-yellow-500/20 text-yellow-400"
+                                hashPackSession.connectionMethod === "walletconnect"
+                                  ? "bg-blue-500/20 text-blue-400"
+                                  : "bg-yellow-500/20 text-yellow-400"
                               }`}>
                                 {hashPackSession.connectionMethod === "mirror-node" ? "read-only" : hashPackSession.connectionMethod}
                               </span>
@@ -518,8 +529,8 @@ export function Layout() {
       {/* Footer – Copyright */}
       <footer className={`border-t py-4 px-3 text-center mb-16 lg:mb-0 ${
         isDark
-          ? "border-pink-900/20 bg-[#0a0a0f]"
-          : "border-gray-200 bg-[#f8fafc]"
+          ? "border-white/[0.04] bg-[#060810]"
+          : "border-gray-100 bg-[#f8fafc]"
       }`}>
         <p className={`text-[10px] md:text-[11px] leading-relaxed ${isDark ? "text-slate-600" : "text-gray-400"}`}>
           &copy; {new Date().getFullYear()} Wrappdex. All rights reserved. Wrappdex is a decentralized exchange on the Hedera network. Trading crypto assets involves significant risk. This platform does not constitute financial advice.
@@ -597,7 +608,7 @@ export function Layout() {
         toastOptions={{
           style: {
             background: isDark ? "rgba(15,15,26,0.95)" : undefined,
-            border: isDark ? "1px solid rgba(236,72,153,0.2)" : undefined,
+            border: isDark ? `1px solid ${isSky ? "rgba(14,165,233,0.2)" : "rgba(236,72,153,0.2)"}` : undefined,
             backdropFilter: "blur(12px)",
           },
         }}

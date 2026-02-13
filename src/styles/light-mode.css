@@ -44,6 +44,14 @@ html.light-mode [class*="bg-\[#12121a\]"] {
   background-color: #f8fafc !important;
 }
 
+html.light-mode [class*="bg-\[#080a12\]"] {
+  background-color: #f8fafc !important;
+}
+
+html.light-mode [class*="bg-\[#0d0f1a\]"] {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
 /* ===== Gradient cards - lighter versions ===== */
 html.light-mode [class*="from-pink-900\/"],
 html.light-mode [class*="from-purple-900\/"],
@@ -327,6 +335,264 @@ html.light-mode .nav-iridescent-mobile {
 html.light-mode .nav-iridescent-mobile .nav-icon {
   filter: drop-shadow(0 0 4px rgba(236,72,153,0.3));
   animation: iridescent-text 4s ease infinite;
+}
+
+/* =========================================================================
+   ACCENT: SKY — Global color swap: pink/purple → sky/blue (with red accent)
+   This section MUST come BEFORE VIP rules so VIP overrides always win.
+   ========================================================================= */
+
+/* --- Sky Iridescent Keyframes --- */
+@keyframes sky-iridescent-shift {
+  0%   { background-position: 0% 50%;   filter: hue-rotate(0deg); }
+  25%  { background-position: 50% 100%; filter: hue-rotate(20deg); }
+  50%  { background-position: 100% 50%; filter: hue-rotate(40deg); }
+  75%  { background-position: 50% 0%;   filter: hue-rotate(20deg); }
+  100% { background-position: 0% 50%;   filter: hue-rotate(0deg); }
+}
+
+@keyframes sky-glow-pulse {
+  0%   { box-shadow: 0 0 8px rgba(14,165,233,0.4), 0 0 20px rgba(59,130,246,0.2), 0 0 40px rgba(244,63,94,0.08); }
+  33%  { box-shadow: 0 0 10px rgba(59,130,246,0.5), 0 0 25px rgba(6,182,212,0.25), 0 0 45px rgba(14,165,233,0.12); }
+  66%  { box-shadow: 0 0 10px rgba(6,182,212,0.4), 0 0 25px rgba(244,63,94,0.15), 0 0 45px rgba(59,130,246,0.12); }
+  100% { box-shadow: 0 0 8px rgba(14,165,233,0.4), 0 0 20px rgba(59,130,246,0.2), 0 0 40px rgba(244,63,94,0.08); }
+}
+
+@keyframes sky-iridescent-text {
+  0%   { color: #0ea5e9; }
+  25%  { color: #3b82f6; }
+  50%  { color: #06b6d4; }
+  75%  { color: #f43f5e; }
+  100% { color: #0ea5e9; }
+}
+
+@keyframes sky-nav-glow-ring {
+  0%   { box-shadow: 0 0 0 2px rgba(14,165,233,0.0), 0 0 12px rgba(14,165,233,0.3); }
+  50%  { box-shadow: 0 0 0 3px rgba(59,130,246,0.15), 0 0 18px rgba(59,130,246,0.35); }
+  100% { box-shadow: 0 0 0 2px rgba(14,165,233,0.0), 0 0 12px rgba(14,165,233,0.3); }
+}
+
+@keyframes sky-border-shift {
+  0%   { border-color: rgba(14,165,233,0.3); }
+  33%  { border-color: rgba(59,130,246,0.3); }
+  66%  { border-color: rgba(6,182,212,0.3); }
+  100% { border-color: rgba(14,165,233,0.3); }
+}
+
+/* --- Desktop active nav — sky iridescent gradient + glow --- */
+html.accent-sky .nav-iridescent,
+html.accent-sky .nav-iridescent-dropdown {
+  background: linear-gradient(135deg, #0ea5e9, #3b82f6, #06b6d4, #f43f5e, #3b82f6, #0ea5e9) !important;
+  background-size: 300% 300% !important;
+  animation: sky-iridescent-shift 4s ease infinite, sky-glow-pulse 3s ease-in-out infinite !important;
+}
+
+html.accent-sky .nav-iridescent::before {
+  background: linear-gradient(135deg, #0ea5e9, #3b82f6, #06b6d4, #f43f5e, #3b82f6, #0ea5e9) !important;
+  background-size: 300% 300% !important;
+  animation: sky-iridescent-shift 4s ease infinite !important;
+}
+
+/* --- Mobile bottom nav — sky iridescent --- */
+html.accent-sky .nav-iridescent-mobile {
+  animation: sky-nav-glow-ring 3s ease-in-out infinite !important;
+}
+
+html.accent-sky .nav-iridescent-mobile .nav-icon {
+  filter: drop-shadow(0 0 6px rgba(14,165,233,0.5)) drop-shadow(0 0 12px rgba(59,130,246,0.3)) !important;
+  animation: sky-iridescent-text 4s ease infinite !important;
+}
+
+html.accent-sky .nav-iridescent-mobile .nav-dot {
+  background: linear-gradient(90deg, #0ea5e9, #3b82f6, #06b6d4) !important;
+  background-size: 200% 100% !important;
+  animation: sky-iridescent-shift 3s ease infinite !important;
+}
+
+/* --- Link hover — sky iridescent --- */
+html.accent-sky .link-iridescent:hover {
+  animation: sky-iridescent-text 2s ease infinite !important;
+  text-shadow: 0 0 12px rgba(59,130,246,0.4) !important;
+}
+
+/* --- CTA button hover — sky iridescent --- */
+html.accent-sky .btn-iridescent:hover {
+  background: linear-gradient(135deg, #0ea5e9, #3b82f6, #06b6d4, #f43f5e, #0ea5e9) !important;
+  background-size: 300% 300% !important;
+  animation: sky-iridescent-shift 3s ease infinite, sky-glow-pulse 2s ease-in-out infinite !important;
+}
+
+/* --- Light mode + sky accent adjustments --- */
+html.light-mode.accent-sky .nav-iridescent {
+  box-shadow: 0 0 12px rgba(14,165,233,0.2), 0 0 24px rgba(59,130,246,0.1) !important;
+}
+html.light-mode.accent-sky .nav-iridescent-mobile {
+  box-shadow: 0 0 8px rgba(14,165,233,0.15) !important;
+}
+html.light-mode.accent-sky .nav-iridescent-mobile .nav-icon {
+  filter: drop-shadow(0 0 4px rgba(14,165,233,0.3)) !important;
+}
+html.light-mode.accent-sky header {
+  border-bottom-color: rgba(14,165,233,0.15) !important;
+}
+
+/* --- Gradient Backgrounds: pink→purple to sky→blue --- */
+html.accent-sky [class*="from-pink-600"][class*="to-purple-600"] {
+  --tw-gradient-from: #0ea5e9 !important;
+  --tw-gradient-to: #2563eb !important;
+  background-image: linear-gradient(to right, #0ea5e9, #2563eb) !important;
+}
+html.accent-sky [class*="from-pink-500"][class*="to-purple-500"] {
+  --tw-gradient-from: #38bdf8 !important;
+  --tw-gradient-to: #3b82f6 !important;
+  background-image: linear-gradient(to right, #38bdf8, #3b82f6) !important;
+}
+html.accent-sky [class*="from-pink-600"][class*="to-purple-600"]:hover {
+  --tw-gradient-from: #38bdf8 !important;
+  --tw-gradient-to: #3b82f6 !important;
+  background-image: linear-gradient(to right, #38bdf8, #3b82f6) !important;
+}
+/* Reverse gradients */
+html.accent-sky [class*="from-purple-600"][class*="to-pink-600"] {
+  background-image: linear-gradient(to right, #2563eb, #0ea5e9) !important;
+}
+html.accent-sky [class*="from-purple-500"][class*="to-pink-500"] {
+  background-image: linear-gradient(to right, #3b82f6, #0ea5e9) !important;
+}
+/* Diagonal/BR gradients */
+html.accent-sky [class*="from-pink-600/20"][class*="to-purple-600/20"] {
+  background-image: linear-gradient(to bottom right, rgba(14,165,233,0.2), rgba(37,99,235,0.2)) !important;
+}
+html.accent-sky [class*="from-pink-500/20"][class*="to-purple-500/20"] {
+  background-image: linear-gradient(to bottom right, rgba(14,165,233,0.2), rgba(59,130,246,0.2)) !important;
+}
+html.accent-sky [class*="from-pink-500/15"][class*="to-purple-500/15"] {
+  background-image: linear-gradient(to right, rgba(14,165,233,0.15), rgba(59,130,246,0.15)) !important;
+}
+html.accent-sky [class*="from-pink-900/20"][class*="to-purple-900/20"] {
+  background-image: linear-gradient(to bottom right, rgba(12,74,110,0.2), rgba(30,58,138,0.2)) !important;
+}
+html.accent-sky [class*="from-purple-900/10"][class*="to-pink-900/10"] {
+  background-image: linear-gradient(to bottom right, rgba(30,58,138,0.1), rgba(12,74,110,0.1)) !important;
+}
+html.accent-sky [class*="from-pink-900/10"][class*="to-purple-900/10"] {
+  background-image: linear-gradient(to bottom right, rgba(12,74,110,0.1), rgba(30,58,138,0.1)) !important;
+}
+html.accent-sky [class*="from-purple-50"][class*="to-pink-50"]:not([class*="from-purple-500"]):not([class*="to-pink-500"]) {
+  background-image: linear-gradient(to bottom right, #eff6ff, #e0f2fe) !important;
+}
+html.accent-sky [class*="from-pink-50"][class*="to-purple-50"]:not([class*="from-pink-500"]):not([class*="to-purple-500"]) {
+  background-image: linear-gradient(to bottom right, #e0f2fe, #eff6ff) !important;
+}
+/* Multi-stop via gradient text headers */
+html.accent-sky [class*="from-pink-400"][class*="via-purple-400"][class*="to-indigo-400"] {
+  --tw-gradient-from: #38bdf8 !important;
+  --tw-gradient-via: #60a5fa !important;
+  --tw-gradient-to: #818cf8 !important;
+}
+
+/* --- Gradient Text: pink→purple to sky→blue --- */
+html.accent-sky [class*="from-pink-400"][class*="to-purple-400"][class*="bg-clip-text"] {
+  --tw-gradient-from: #38bdf8 !important;
+  --tw-gradient-to: #60a5fa !important;
+  background-image: linear-gradient(to right, #38bdf8, #60a5fa) !important;
+}
+
+/* --- Shadow overrides --- */
+html.accent-sky [class*="shadow-pink-500/30"] { --tw-shadow-color: rgba(14,165,233,0.3) !important; box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), 0 10px 15px -3px rgba(14,165,233,0.3) !important; }
+html.accent-sky [class*="shadow-pink-500/20"] { --tw-shadow-color: rgba(14,165,233,0.2) !important; }
+html.accent-sky [class*="shadow-purple-500/20"] { --tw-shadow-color: rgba(59,130,246,0.2) !important; }
+html.accent-sky [class*="shadow-purple-500/10"] { --tw-shadow-color: rgba(59,130,246,0.1) !important; }
+
+/* --- Border overrides (all opacity variants) --- */
+html.accent-sky [class*="border-pink-500/10"] { border-color: rgba(14,165,233,0.1) !important; }
+html.accent-sky [class*="border-pink-500/15"] { border-color: rgba(14,165,233,0.15) !important; }
+html.accent-sky [class*="border-pink-500/20"] { border-color: rgba(14,165,233,0.2) !important; }
+html.accent-sky [class*="border-pink-500/25"] { border-color: rgba(14,165,233,0.25) !important; }
+html.accent-sky [class*="border-pink-500/30"] { border-color: rgba(14,165,233,0.3) !important; }
+html.accent-sky [class*="border-pink-500/40"] { border-color: rgba(14,165,233,0.4) !important; }
+html.accent-sky [class*="border-pink-500/50"] { border-color: rgba(14,165,233,0.5) !important; }
+html.accent-sky [class*="border-pink-500/60"] { border-color: rgba(14,165,233,0.6) !important; }
+html.accent-sky [class*="border-pink-900/20"] { border-color: rgba(12,74,110,0.2) !important; }
+html.accent-sky [class*="border-pink-300"] { border-color: #7dd3fc !important; }
+html.accent-sky [class*="border-pink-200"] { border-color: #bae6fd !important; }
+
+html.accent-sky [class*="border-purple-500/15"] { border-color: rgba(59,130,246,0.15) !important; }
+html.accent-sky [class*="border-purple-500/20"] { border-color: rgba(59,130,246,0.2) !important; }
+html.accent-sky [class*="border-purple-500/30"] { border-color: rgba(59,130,246,0.3) !important; }
+html.accent-sky [class*="border-purple-200"] { border-color: #bfdbfe !important; }
+html.accent-sky [class*="border-purple-700/50"] { border-color: rgba(29,78,216,0.5) !important; }
+
+/* Focus ring */
+html.accent-sky [class*="focus:ring-pink-500"] { --tw-ring-color: rgba(14,165,233,0.5) !important; }
+html.accent-sky [class*="focus:border-pink-500"] { border-color: rgba(14,165,233,0.4) !important; }
+html.accent-sky [class*="focus:border-pink-300"] { border-color: #7dd3fc !important; }
+
+/* --- Text color overrides --- */
+html.accent-sky .text-pink-400 { color: #38bdf8 !important; }
+html.accent-sky .text-pink-300 { color: #7dd3fc !important; }
+html.accent-sky .text-pink-600 { color: #0284c7 !important; }
+html.accent-sky [class*="text-pink-400"] { color: #38bdf8 !important; }
+html.accent-sky [class*="text-pink-300"] { color: #7dd3fc !important; }
+html.accent-sky [class*="text-pink-600"] { color: #0284c7 !important; }
+html.accent-sky [class*="hover:text-pink-400"]:hover { color: #38bdf8 !important; }
+html.accent-sky [class*="hover:text-pink-300"]:hover { color: #7dd3fc !important; }
+html.accent-sky [class*="hover:text-pink-600"]:hover { color: #0284c7 !important; }
+
+html.accent-sky [class*="text-purple-400"] { color: #60a5fa !important; }
+html.accent-sky [class*="text-purple-300"] { color: #93c5fd !important; }
+html.accent-sky [class*="text-purple-500"] { color: #3b82f6 !important; }
+html.accent-sky [class*="text-purple-600"] { color: #2563eb !important; }
+html.accent-sky [class*="text-purple-700"] { color: #1d4ed8 !important; }
+html.accent-sky [class*="hover:text-purple-300"]:hover { color: #93c5fd !important; }
+html.accent-sky [class*="hover:text-purple-500"]:hover { color: #3b82f6 !important; }
+
+/* --- Background color overrides --- */
+html.accent-sky [class*="bg-pink-500/5"] { background-color: rgba(14,165,233,0.05) !important; }
+html.accent-sky [class*="bg-pink-500/10"] { background-color: rgba(14,165,233,0.1) !important; }
+html.accent-sky [class*="bg-pink-500/15"] { background-color: rgba(14,165,233,0.15) !important; }
+html.accent-sky [class*="bg-pink-500/20"] { background-color: rgba(14,165,233,0.2) !important; }
+html.accent-sky [class*="bg-pink-900/10"] { background-color: rgba(12,74,110,0.1) !important; }
+html.accent-sky [class*="bg-pink-500"]:not([class*="bg-pink-500/"]) { background-color: #0ea5e9 !important; }
+html.accent-sky [class*="hover:bg-pink-500/20"]:hover { background-color: rgba(14,165,233,0.2) !important; }
+/* Light-only: bg-pink-50 → sky-50 (scoped to prevent matching bg-pink-500/* in dark mode) */
+html.light-mode.accent-sky [class*="bg-pink-50"] { background-color: #e0f2fe !important; }
+
+html.accent-sky [class*="bg-purple-500/5"] { background-color: rgba(59,130,246,0.05) !important; }
+html.accent-sky [class*="bg-purple-500/10"] { background-color: rgba(59,130,246,0.1) !important; }
+html.accent-sky [class*="bg-purple-500/15"] { background-color: rgba(59,130,246,0.15) !important; }
+html.accent-sky [class*="bg-purple-500/20"] { background-color: rgba(59,130,246,0.2) !important; }
+html.accent-sky [class*="bg-purple-500"]:not([class*="bg-purple-500/"]) { background-color: #3b82f6 !important; }
+html.accent-sky [class*="bg-purple-900/30"] { background-color: rgba(30,58,138,0.3) !important; }
+/* Light-only: bg-purple-50/100 → blue-50/100 (scoped to prevent matching bg-purple-500/* in dark mode) */
+html.light-mode.accent-sky [class*="bg-purple-50"] { background-color: #eff6ff !important; }
+html.light-mode.accent-sky [class*="bg-purple-100"] { background-color: #dbeafe !important; }
+
+/* Ring overrides */
+html.accent-sky [class*="ring-purple-500/50"] { --tw-ring-color: rgba(59,130,246,0.5) !important; }
+html.accent-sky [class*="ring-purple-500/30"] { --tw-ring-color: rgba(59,130,246,0.3) !important; }
+
+/* --- Hover border overrides --- */
+html.accent-sky [class*="hover:border-pink-500/20"]:hover { border-color: rgba(14,165,233,0.2) !important; }
+html.accent-sky [class*="hover:border-pink-500/30"]:hover { border-color: rgba(14,165,233,0.3) !important; }
+html.accent-sky [class*="hover:border-pink-200"]:hover { border-color: #bae6fd !important; }
+
+/* --- Spinner / loading --- */
+html.accent-sky [class*="border-pink-500"][class*="border-t-transparent"] {
+  border-color: #0ea5e9 !important;
+  border-top-color: transparent !important;
+}
+
+/* --- Drop shadow overrides for inline styles using pink rgba --- */
+html.accent-sky [style*="rgba(236,72,153"] {
+  filter: none; /* Reset inline pink drop-shadows */
+}
+
+/* --- Active nav shadow override (Tailwind class) --- */
+html.accent-sky [class*="shadow-pink-500/30"].active-nav,
+html.accent-sky .active-nav[class*="shadow-pink-500/30"],
+html.accent-sky [class*="shadow-pink-500/30"] {
+  --tw-shadow: 0 10px 15px -3px rgba(14,165,233,0.3), 0 4px 6px -4px rgba(14,165,233,0.3) !important;
 }
 
 /* ===== VIP Emerald Iridescent Theme ===== */

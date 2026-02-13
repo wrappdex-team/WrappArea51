@@ -41,6 +41,7 @@ export const CHAINLINK_FEEDS: Record<string, { address: string; decimals: number
   ADA:   { address: "0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e", decimals: 8, pair: "ADA / USD" },
   DOT:   { address: "0x1C07AFb8E2B827c5A4739C6d59Ae3A5035f28734", decimals: 8, pair: "DOT / USD" },
   AVAX:  { address: "0xFF3EEb22B5E3dE6e705b44749C2559d704923FD7", decimals: 8, pair: "AVAX / USD" },
+  HBAR:  { address: "0x38C5ae3ee324ee027D88c5117ee58d07c9b4699b", decimals: 8, pair: "HBAR / USD" },
   XRP:   { address: "0xCed2660c6Dd1Ffd856A5A82C67f3482d88C50b12", decimals: 8, pair: "XRP / USD" },
   LTC:   { address: "0x6AF09DF7563C363B5763b9de2B7D85283F03FA5c", decimals: 8, pair: "LTC / USD" },
   USDT:  { address: "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D", decimals: 8, pair: "USDT / USD" },

@@ -469,3 +469,82 @@ export function playConnectionSuccess(): void {
     ping.stop(now + 1.0);
   } catch { /* audio not supported */ }
 }
+
+// ── Portfolio VIP Sound Effects ──────────────────────────────────────
+
+/** Ascending emerald crystal arpeggio — plays on VIP portfolio page load */
+export function playPortfolioReveal(): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      osc.type = "sine";
+      const t = now + i * 0.065;
+      osc.frequency.setValueAtTime(freq, t);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(3500, t);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.07 - i * 0.008, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.35);
+    });
+  } catch { /* audio not supported */ }
+}
+
+/** Soft crystal ping — plays on VIP token row hover (randomized pitch) */
+export function playTokenHover(): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(2093 + Math.random() * 300, now);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.03, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  } catch { /* audio not supported */ }
+}
+
+/** Whoosh sweep — plays on VIP refresh button click */
+export function playRefreshWhoosh(): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const noise = ctx.createBufferSource();
+    const len = ctx.sampleRate * 0.25;
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * 0.15;
+    noise.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(500, now);
+    filter.frequency.exponentialRampToValueAtTime(3500, now + 0.12);
+    filter.frequency.exponentialRampToValueAtTime(800, now + 0.25);
+    filter.Q.setValueAtTime(2, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.05, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    noise.start(now);
+  } catch { /* audio not supported */ }
+}

@@ -15,7 +15,7 @@ type Timeframe = "1H" | "4H" | "1D" | "1W";
 const TIMEFRAMES: Timeframe[] = ["1H", "4H", "1D", "1W"];
 
 export function MarketDetailChart({ data: initialData, symbol }: MarketDetailChartProps) {
-  const { isDark } = useTheme();
+  const { isDark, isSky } = useTheme();
   const mainChartRef = useRef<HTMLDivElement>(null);
   const rsiChartRef = useRef<HTMLDivElement>(null);
   const mainApiRef = useRef<IChartApi | null>(null);
@@ -82,8 +82,8 @@ export function MarketDetailChart({ data: initialData, symbol }: MarketDetailCha
         timeScale: { borderColor, timeVisible: true },
         rightPriceScale: { borderColor },
         crosshair: {
-          vertLine: { color: isDark ? "rgba(236,72,153,0.3)" : "rgba(236,72,153,0.2)", labelBackgroundColor: "#ec4899" },
-          horzLine: { color: isDark ? "rgba(236,72,153,0.3)" : "rgba(236,72,153,0.2)", labelBackgroundColor: "#ec4899" },
+          vertLine: { color: isDark ? (isSky ? "rgba(14,165,233,0.3)" : "rgba(236,72,153,0.3)") : (isSky ? "rgba(14,165,233,0.2)" : "rgba(236,72,153,0.2)"), labelBackgroundColor: isSky ? "#0ea5e9" : "#ec4899" },
+          horzLine: { color: isDark ? (isSky ? "rgba(14,165,233,0.3)" : "rgba(236,72,153,0.3)") : (isSky ? "rgba(14,165,233,0.2)" : "rgba(236,72,153,0.2)"), labelBackgroundColor: isSky ? "#0ea5e9" : "#ec4899" },
         },
       });
       localChart = chart;
@@ -149,7 +149,7 @@ export function MarketDetailChart({ data: initialData, symbol }: MarketDetailCha
       }
       mainApiRef.current = null;
     };
-  }, [chartData, isDark, showSMA20, showSMA50, showEMA12]);
+  }, [chartData, isDark, isSky, showSMA20, showSMA50, showEMA12]);
 
   // Build RSI chart
   useEffect(() => {

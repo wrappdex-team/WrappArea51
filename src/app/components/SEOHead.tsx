@@ -115,11 +115,6 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
     description: "Multi-chain wallet dashboard showing Hedera HBAR, ERC-20 token balances, portfolio analytics, and transaction history.",
     path: "/wallet",
   },
-  "/history": {
-    title: "History",
-    description: "Complete swap and transaction history with Mirror Node verification and transaction diagnostics.",
-    path: "/history",
-  },
   "/dao": {
     title: "DAO",
     description: "HBAR.ħ DAO governance — create proposals, vote with token and NFT holdings, and participate in community decisions.",

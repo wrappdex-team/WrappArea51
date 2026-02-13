@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ChevronRight } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 
 interface FearGreedData {
@@ -40,35 +41,27 @@ export function FearGreedGauge() {
   const label = data?.value_classification ?? "Neutral";
 
   const getColor = (v: number) => {
-    if (v <= 25) return "#ef4444";
-    if (v <= 45) return "#f97316";
-    if (v <= 55) return "#eab308";
-    if (v <= 75) return "#22c55e";
-    return "#a855f7";
+    if (v <= 25) return "#ea3943";
+    if (v <= 45) return "#ea8c00";
+    if (v <= 55) return "#f5d100";
+    if (v <= 75) return "#16c784";
+    return "#16c784";
   };
 
-  // SVG constants
-  const W = 160;
-  const H = 96;
-  const cx = W / 2;
-  const cy = 78;
-  const R = 64;
-  const strokeW = 14;
+  const color = getColor(value);
 
-  // Needle angle: value 0 → π (left), value 100 → 0 (right)
+  // ── CoinMarketCap-style compact speedometer ──
+  const W = 120;
+  const H = 72;
+  const cx = W / 2;
+  const cy = 62;
+  const R = 48;
+  const strokeW = 10;
+
   const needleAngle = Math.PI * (1 - value / 100);
-  const needleR = R - strokeW / 2 - 2;
+  const needleR = R - 6;
   const nx = cx + needleR * Math.cos(needleAngle);
   const ny = cy - needleR * Math.sin(needleAngle);
-
-  // Build arc segments - five zones
-  const zones = [
-    { from: 0, to: 0.25, color: "#ef4444" },   // Extreme Fear
-    { from: 0.25, to: 0.45, color: "#f97316" }, // Fear
-    { from: 0.45, to: 0.55, color: "#eab308" }, // Neutral
-    { from: 0.55, to: 0.75, color: "#22c55e" }, // Greed
-    { from: 0.75, to: 1.0, color: "#a855f7" },  // Extreme Greed
-  ];
 
   const arcPath = (startFrac: number, endFrac: number) => {
     const a1 = Math.PI * (1 - startFrac);
@@ -81,157 +74,105 @@ export function FearGreedGauge() {
     return `M ${x1} ${y1} A ${R} ${R} 0 ${sweep} 1 ${x2} ${y2}`;
   };
 
+  const zones = [
+    { from: 0, to: 0.25, color: "#ea3943" },
+    { from: 0.25, to: 0.45, color: "#ea8c00" },
+    { from: 0.45, to: 0.55, color: "#f5d100" },
+    { from: 0.55, to: 0.75, color: "#16c784" },
+    { from: 0.75, to: 1.0, color: "#16c784" },
+  ];
+
+  const cardClass = isDark
+    ? "rounded-xl p-4 border border-white/[0.06] bg-[#0d0f1a]/80"
+    : "rounded-xl p-4 border border-gray-200 bg-white";
+
   return (
-    <div
-      className={`rounded-xl p-3 pb-2 border ${
-        isDark
-          ? "bg-gradient-to-br from-slate-900/80 to-slate-800/40 border-slate-700/40 backdrop-blur-sm"
-          : "bg-white border-gray-200 shadow-sm"
-      }`}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <div className={`text-[10px] font-bold tracking-wide uppercase ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+    <div className={cardClass}>
+      {/* Title row — CoinMarketCap style */}
+      <div className="flex items-center gap-0.5 mb-3">
+        <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>
           Fear & Greed
-        </div>
-        <div
-          className="text-[10px] px-1.5 py-0.5 rounded font-bold"
-          style={{
-            color: getColor(value),
-            backgroundColor: `${getColor(value)}18`,
-          }}
-        >
-          {label}
-        </div>
+        </span>
+        <ChevronRight className={`w-4 h-4 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-16">
-          <div className="animate-spin w-4 h-4 border-2 border-pink-500 border-t-transparent rounded-full" />
+        <div className="flex items-center justify-center h-[72px]">
+          <div className={`animate-spin w-5 h-5 border-2 rounded-full ${isDark ? "border-white/10 border-t-white/50" : "border-gray-200 border-t-gray-500"}`} />
         </div>
       ) : (
-        <div className="relative flex flex-col items-center">
-          <svg
-            viewBox={`0 0 ${W} ${H}`}
-            className="w-full"
-            style={{ maxWidth: 180 }}
-          >
-            {/* Background track */}
-            <path
-              d={arcPath(0, 1)}
-              fill="none"
-              stroke={isDark ? "rgba(100,116,139,0.12)" : "rgba(0,0,0,0.06)"}
-              strokeWidth={strokeW + 2}
-              strokeLinecap="round"
-            />
-
-            {/* Colored zone arcs */}
-            {zones.map((z, i) => (
+        <div className="flex items-center gap-3">
+          {/* Compact gauge */}
+          <div className="flex-shrink-0">
+            <svg viewBox={`0 0 ${W} ${H}`} width={110} height={66}>
+              {/* Background track */}
               <path
-                key={i}
-                d={arcPath(z.from, z.to)}
+                d={arcPath(0, 1)}
                 fill="none"
-                stroke={z.color}
-                strokeWidth={strokeW}
-                strokeLinecap="butt"
-                opacity={isDark ? 0.8 : 0.65}
+                stroke={isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"}
+                strokeWidth={strokeW + 2}
+                strokeLinecap="round"
               />
-            ))}
 
-            {/* Gap lines between zones */}
-            {[0.25, 0.45, 0.55, 0.75].map((frac) => {
-              const a = Math.PI * (1 - frac);
-              const gx1 = cx + (R - strokeW / 2 - 1) * Math.cos(a);
-              const gy1 = cy - (R - strokeW / 2 - 1) * Math.sin(a);
-              const gx2 = cx + (R + strokeW / 2 + 1) * Math.cos(a);
-              const gy2 = cy - (R + strokeW / 2 + 1) * Math.sin(a);
-              return (
-                <line
-                  key={frac}
-                  x1={gx1} y1={gy1} x2={gx2} y2={gy2}
-                  stroke={isDark ? "#0f172a" : "#ffffff"}
-                  strokeWidth="2"
+              {/* Colored zone arcs */}
+              {zones.map((z, i) => (
+                <path
+                  key={i}
+                  d={arcPath(z.from, z.to)}
+                  fill="none"
+                  stroke={z.color}
+                  strokeWidth={strokeW}
+                  strokeLinecap="butt"
+                  opacity={0.85}
                 />
-              );
-            })}
+              ))}
 
-            {/* End caps - round the ends */}
-            {[0, 1].map((frac) => {
-              const a = Math.PI * (1 - frac);
-              const capX = cx + R * Math.cos(a);
-              const capY = cy - R * Math.sin(a);
-              return (
-                <circle
-                  key={frac}
-                  cx={capX}
-                  cy={capY}
-                  r={strokeW / 2}
-                  fill={frac === 0 ? "#ef4444" : "#a855f7"}
-                  opacity={isDark ? 0.8 : 0.65}
-                />
-              );
-            })}
+              {/* End caps */}
+              {[0, 1].map((frac) => {
+                const a = Math.PI * (1 - frac);
+                const capX = cx + R * Math.cos(a);
+                const capY = cy - R * Math.sin(a);
+                return (
+                  <circle
+                    key={frac}
+                    cx={capX}
+                    cy={capY}
+                    r={strokeW / 2}
+                    fill={frac === 0 ? "#ea3943" : "#16c784"}
+                    opacity={0.85}
+                  />
+                );
+              })}
 
-            {/* Needle line */}
-            <line
-              x1={cx}
-              y1={cy}
-              x2={nx}
-              y2={ny}
-              stroke={isDark ? "#e2e8f0" : "#1e293b"}
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
+              {/* Needle */}
+              <line
+                x1={cx}
+                y1={cy}
+                x2={nx}
+                y2={ny}
+                stroke={isDark ? "#e2e8f0" : "#334155"}
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
 
-            {/* Needle tip dot */}
-            <circle
-              cx={nx}
-              cy={ny}
-              r="3.5"
-              fill={getColor(value)}
-              stroke={isDark ? "#0f172a" : "#ffffff"}
-              strokeWidth="1.5"
-            />
+              {/* Needle tip dot */}
+              <circle cx={nx} cy={ny} r="4" fill={color} stroke={isDark ? "#0f172a" : "#ffffff"} strokeWidth="1.5" />
 
-            {/* Center pivot */}
-            <circle cx={cx} cy={cy} r="5" fill={isDark ? "#1e293b" : "#f8fafc"} stroke={isDark ? "#334155" : "#cbd5e1"} strokeWidth="1.5" />
-            <circle cx={cx} cy={cy} r="2" fill={getColor(value)} />
+              {/* Center pivot */}
+              <circle cx={cx} cy={cy} r="4" fill={isDark ? "#1e293b" : "#f1f5f9"} stroke={isDark ? "#334155" : "#cbd5e1"} strokeWidth="1.5" />
+              <circle cx={cx} cy={cy} r="1.5" fill={color} />
+            </svg>
+          </div>
 
-            {/* Score text centered */}
-            <text
-              x={cx}
-              y={cy - 16}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill={getColor(value)}
-              fontSize="22"
-              fontWeight="800"
-              fontFamily="system-ui, sans-serif"
-            >
+          {/* Score + Classification */}
+          <div>
+            <div className={`text-[32px] font-bold leading-none tracking-tight ${isDark ? "text-white" : "text-gray-900"}`}>
               {value}
-            </text>
-
-            {/* Min / Max labels */}
-            <text
-              x={cx - R - 2}
-              y={cy + 12}
-              textAnchor="middle"
-              fill={isDark ? "rgba(148,163,184,0.5)" : "rgba(0,0,0,0.3)"}
-              fontSize="8"
-              fontWeight="600"
-            >
-              0
-            </text>
-            <text
-              x={cx + R + 2}
-              y={cy + 12}
-              textAnchor="middle"
-              fill={isDark ? "rgba(148,163,184,0.5)" : "rgba(0,0,0,0.3)"}
-              fontSize="8"
-              fontWeight="600"
-            >
-              100
-            </text>
-          </svg>
+            </div>
+            <div className="text-xs font-medium mt-1" style={{ color }}>
+              {label}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -801,7 +801,7 @@ export async function fetchValidators(): Promise<ValidatorNode[]> {
 //   - Stargate bridge (function selector audit pending — AUDIT-B01)
 
 const FALLBACK_HEDERA_TOKENS: HSuiteTokenInfo[] = [
-  { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, priceUsd: 0.20, totalSupply: "50000000000000000", treasuryAccount: "0.0.98", verified: true },
+  { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, priceUsd: 0.28, totalSupply: "50000000000000000", treasuryAccount: "0.0.98", verified: true },
   { id: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, priceUsd: 1.0, totalSupply: "1000000000000", treasuryAccount: "0.0.456858", verified: true },
   { id: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, priceUsd: 1.0, totalSupply: "500000000000", treasuryAccount: "0.0.4291336", verified: true },
   { id: "0.0.1969769", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, priceUsd: 97000, totalSupply: "2100000000000000", treasuryAccount: "0.0.1969769", verified: true },

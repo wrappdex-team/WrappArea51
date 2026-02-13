@@ -23,6 +23,7 @@ import {
   Gift,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
+import { useTheme } from "../contexts/ThemeContext";
 import {
   HBARH_TOKEN_ID,
   GATE_THRESHOLD,
@@ -117,10 +118,11 @@ export function DAO() {
     hederaAccount,
     hederaNetwork,
     hashPackSession,
-    connectHashPackModal,
+    connectHashPack,
     isConnectingHedera,
     refreshHederaBalance,
   } = useWallet();
+  const { isDark, isSky } = useTheme();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
@@ -175,8 +177,8 @@ export function DAO() {
   // ── Handlers ───────────────────────────────────────────────────────
 
   const handleConnect = useCallback(async () => {
-    await connectHashPackModal(hederaNetwork);
-  }, [connectHashPackModal, hederaNetwork]);
+    await connectHashPack(hederaNetwork);
+  }, [connectHashPack, hederaNetwork]);
 
   const handleRefreshBalance = useCallback(async () => {
     setRefreshing(true);
@@ -245,22 +247,25 @@ export function DAO() {
   if (!connected) {
     return (
       <div className="space-y-6">
-        <Header />
         <div className="flex flex-col items-center justify-center py-16 px-4">
-          <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-pink-600/20 to-purple-600/20 border border-pink-500/30 flex items-center justify-center mb-6">
-            <ShieldX className="w-10 h-10 text-pink-400" />
+          <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${isSky ? "from-sky-600/20 to-blue-600/20 border border-sky-500/30" : "from-pink-600/20 to-purple-600/20 border border-pink-500/30"} flex items-center justify-center mb-6`}>
+            <ShieldX className={`w-10 h-10 ${isSky ? "text-sky-400" : "text-pink-400"}`} />
           </div>
-          <h3 className="text-xl mb-2">Wallet Required</h3>
-          <p className="text-slate-400 text-center max-w-md mb-6">
+          <h3 className={`text-xl mb-2 ${isDark ? "text-white" : "text-gray-900"}`}>Wallet Required</h3>
+          <p className={`text-center max-w-md mb-6 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
             Connect your HashPack wallet to participate in HBAR.ħ governance.
             You need at least{" "}
-            <span className="text-pink-400">{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
-            tokens or <span className="text-pink-400">1 VIP NFT</span> to vote or create proposals.
+            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
+            tokens or <span className={isSky ? "text-sky-400" : "text-pink-400"}>1 VIP NFT</span> to vote or create proposals.
           </p>
           <button
             onClick={handleConnect}
             disabled={isConnectingHedera}
-            className="px-8 py-3 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 rounded-lg transition-all duration-200 disabled:opacity-50 flex items-center gap-2"
+            className={`px-8 py-3 rounded-lg transition-all duration-200 disabled:opacity-50 flex items-center gap-2 text-white ${
+              isSky
+                ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25"
+                : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
+            }`}
           >
             <Wallet className="w-5 h-5" />
             {isConnectingHedera ? "Connecting..." : "Connect HashPack"}
@@ -275,7 +280,6 @@ export function DAO() {
   if (!eligible) {
     return (
       <div className="space-y-6">
-        <Header />
         <EligibilityCard
           wrappBalance={wrappBalance}
           nftCount={nftCount}
@@ -288,15 +292,15 @@ export function DAO() {
           <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-4">
             <AlertTriangle className="w-8 h-8 text-amber-400" />
           </div>
-          <h3 className="text-lg mb-2">Insufficient Holdings</h3>
-          <p className="text-slate-400 text-center max-w-md">
+          <h3 className={`text-lg mb-2 ${isDark ? "text-white" : "text-gray-900"}`}>Insufficient Holdings</h3>
+          <p className={`text-center max-w-md ${isDark ? "text-slate-400" : "text-gray-500"}`}>
             You hold{" "}
-            <span className="text-white">{formatTokenCount(wrappBalance)}</span>{" "}
-            HBAR.ħ and <span className="text-white">{nftCount}</span> VIP NFTs. You need at least{" "}
-            <span className="text-pink-400">{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
-            or <span className="text-pink-400">1 VIP NFT</span>.
+            <span className={isDark ? "text-white" : "text-gray-900"}>{formatTokenCount(wrappBalance)}</span>{" "}
+            HBAR.ħ and <span className={isDark ? "text-white" : "text-gray-900"}>{nftCount}</span> VIP NFTs. You need at least{" "}
+            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
+            or <span className={isSky ? "text-sky-400" : "text-pink-400"}>1 VIP NFT</span>.
             Acquire more on the{" "}
-            <a href="/swap" className="text-pink-400 underline underline-offset-2 hover:text-pink-300">
+            <a href="/swap" className={`underline underline-offset-2 ${isSky ? "text-sky-400 hover:text-sky-300" : "text-pink-400 hover:text-pink-300"}`}>
               Swap
             </a>{" "}
             page.
@@ -333,20 +337,21 @@ export function DAO() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
-        <Header />
-        <div className="flex items-center gap-2">
-          {isAdmin && daoTab === "governance" && (
-            <button
-              onClick={() => setShowCreate(true)}
-              className="px-5 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 rounded-lg transition-all duration-200 flex items-center gap-2 w-full sm:w-auto justify-center"
-            >
-              <Plus className="w-4 h-4" />
-              New Proposal
-            </button>
-          )}
+      {isAdmin && daoTab === "governance" && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowCreate(true)}
+            className={`px-5 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-white ${
+              isSky
+                ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25"
+                : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            New Proposal
+          </button>
         </div>
-      </div>
+      )}
 
       <EligibilityCard
         wrappBalance={wrappBalance}
@@ -361,13 +366,17 @@ export function DAO() {
       />
 
       {/* ── DAO Section Tabs ── */}
-      <div className="rounded-xl p-1 flex gap-1 bg-slate-900/50 border border-white/5">
+      <div className={`rounded-xl p-1 flex gap-1 border ${isDark ? "bg-slate-900/50 border-white/5" : "bg-gray-100/80 border-gray-200"}`}>
         <button
           onClick={() => setDaoTab("governance")}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
             daoTab === "governance"
-              ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
-              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+              ? isSky
+                ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-500/25"
+                : "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
+              : isDark
+                ? "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                : "text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
           }`}
         >
           <Vote className="w-4 h-4" />
@@ -375,10 +384,14 @@ export function DAO() {
         </button>
         <button
           onClick={() => setDaoTab("spin")}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
             daoTab === "spin"
-              ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
-              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+              ? isSky
+                ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-500/25"
+                : "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
+              : isDark
+                ? "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                : "text-gray-500 hover:text-gray-900 hover:bg-gray-200/60"
           }`}
         >
           <Gift className="w-4 h-4" />
@@ -450,19 +463,6 @@ export function DAO() {
 }
 
 // ── Sub-components ───────────────────────────────────────────────────
-
-function Header() {
-  return (
-    <div>
-      <h2 className="text-2xl bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent mb-1">
-        HBAR.ħ DAO
-      </h2>
-      <p className="text-slate-400 text-sm">
-        Token-gated governance. 100M HBAR.ħ = 1 vote (max {MAX_TOKEN_VOTES}) | 3 VIP NFTs = 1 vote (max {MAX_NFT_VOTES}).
-      </p>
-    </div>
-  );
-}
 
 function EligibilityCard({
   wrappBalance,
@@ -1090,11 +1090,21 @@ function StatCard({
   value: number;
   accent: "blue" | "emerald" | "purple";
 }) {
-  const styles: Record<string, string> = {
-    blue: "bg-blue-500/5 border-blue-500/15",
-    emerald: "bg-emerald-500/5 border-emerald-500/15",
-    purple: "bg-purple-500/5 border-purple-500/15",
+  const { isDark } = useTheme();
+
+  const darkStyles: Record<string, string> = {
+    blue: "bg-blue-500/10 border-blue-500/20",
+    emerald: "bg-emerald-500/10 border-emerald-500/20",
+    purple: "bg-purple-500/10 border-purple-500/20",
   };
+
+  const lightStyles: Record<string, string> = {
+    blue: "bg-blue-50 border-blue-200",
+    emerald: "bg-emerald-50 border-emerald-200",
+    purple: "bg-purple-50 border-purple-200",
+  };
+
+  const styles = isDark ? darkStyles : lightStyles;
 
   return (
     <div
@@ -1102,9 +1112,9 @@ function StatCard({
     >
       <div className="flex items-center gap-2 mb-2">
         {icon}
-        <span className="text-xs text-slate-400">{label}</span>
+        <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{label}</span>
       </div>
-      <div className="text-xl text-white">{value}</div>
+      <div className={`text-xl font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>{value}</div>
     </div>
   );
 }

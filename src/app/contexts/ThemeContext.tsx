@@ -2,11 +2,15 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { playThemeWhistle } from "../utils/sounds";
 
 type Theme = "dark" | "light";
+type Accent = "sky" | "pink";
 
 interface ThemeContextType {
   theme: Theme;
   toggleTheme: () => void;
   isDark: boolean;
+  accent: Accent;
+  toggleAccent: () => void;
+  isSky: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -16,6 +20,9 @@ const DEFAULT_THEME: ThemeContextType = {
   theme: "dark",
   toggleTheme: () => {},
   isDark: true,
+  accent: "sky",
+  toggleAccent: () => {},
+  isSky: true,
 };
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -25,6 +32,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return (saved as Theme) || "dark";
     }
     return "dark";
+  });
+
+  const [accent, setAccent] = useState<Accent>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("hbarh-accent");
+      return (saved as Accent) || "sky";
+    }
+    return "sky";
   });
 
   useEffect(() => {
@@ -39,6 +54,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [theme]);
 
+  useEffect(() => {
+    localStorage.setItem("hbarh-accent", accent);
+    const root = document.documentElement;
+    if (accent === "sky") {
+      root.classList.add("accent-sky");
+      root.classList.remove("accent-pink");
+    } else {
+      root.classList.add("accent-pink");
+      root.classList.remove("accent-sky");
+    }
+  }, [accent]);
+
   const toggleTheme = () => {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark";
@@ -47,8 +74,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const toggleAccent = () => {
+    setAccent((prev) => (prev === "sky" ? "pink" : "sky"));
+  };
+
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === "dark" }}>
+    <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === "dark", accent, toggleAccent, isSky: accent === "sky" }}>
       {children}
     </ThemeContext.Provider>
   );

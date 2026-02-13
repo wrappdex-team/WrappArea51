@@ -157,6 +157,12 @@ export function loadVipPrefs(): VipPrefs {
 export function saveVipPrefs(prefs: VipPrefs): void {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    // Defer the custom event so it never fires inside a React state updater
+    // (synchronous dispatch inside setPrefs() would violate the
+    //  "don't setState in another component during render" rule).
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent("vip-prefs-changed", { detail: prefs }));
+    });
   } catch { /* storage full */ }
 }
 

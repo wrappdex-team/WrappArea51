@@ -1,0 +1,455 @@
+/**
+ * TradingSwapPanel — Premium AMM Swap with Glow, Sound & Motion
+ *
+ * This replaces the old CEXTradePanel in the Trading view.
+ * Uses the real KV-backed AMM engine (constant-product math).
+ * Features: animated borders, neon glow, sound effects, particle bursts.
+ */
+
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  ArrowDownUp,
+  AlertCircle,
+  Shield,
+  Zap,
+  CheckCircle2,
+  Loader2,
+  Lock,
+  Droplets,
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { toast } from "sonner";
+import { useWallet } from "../contexts/WalletContext";
+import { authenticate, hasValidSession, clearSession } from "../utils/auth";
+import { playVipCashRegister, playVipConfirm, playVipButtonChime } from "../utils/sounds";
+import {
+  getSwapQuote,
+  executeSwap,
+  formatFeeBps,
+  WRAPPED_TOKENS,
+  type SwapQuote,
+} from "../utils/smart-liquidity";
+import { useTheme } from "../contexts/ThemeContext";
+
+// ── Animated Glow Border ────────────────────────────────────────────
+
+function GlowBorder({ children, className = "", active = false }: { children: React.ReactNode; className?: string; active?: boolean }) {
+  const { isSky } = useTheme();
+  const activeGrad = isSky
+    ? "conic-gradient(from 0deg, #0ea5e9, #3b82f6, #06b6d4, #f43f5e, #0ea5e9)"
+    : "conic-gradient(from 0deg, #ec4899, #8b5cf6, #06b6d4, #ec4899)";
+  const idleGrad = isSky
+    ? "conic-gradient(from 0deg, rgba(14,165,233,0.4), rgba(59,130,246,0.2), rgba(6,182,212,0.1), rgba(14,165,233,0.4))"
+    : "conic-gradient(from 0deg, rgba(236,72,153,0.4), rgba(139,92,246,0.2), rgba(6,182,212,0.1), rgba(236,72,153,0.4))";
+  return (
+    <div className={`relative ${className}`}>
+      {/* Animated gradient border */}
+      <div className="absolute -inset-[1px] rounded-2xl overflow-hidden pointer-events-none z-0">
+        <motion.div
+          className="absolute inset-0"
+          style={{ background: active ? activeGrad : idleGrad }}
+          animate={{ rotate: 360 }}
+          transition={{ duration: 4, repeat: 9999, ease: "linear" }}
+        />
+      </div>
+      {/* Inner content with background */}
+      <div className="relative z-10 rounded-2xl">{children}</div>
+    </div>
+  );
+}
+
+// ── Particle Burst on Success ───────────────────────────────────────
+
+function ParticleBurst({ show }: { show: boolean }) {
+  if (!show) return null;
+  const particles = Array.from({ length: 20 }, (_, i) => ({
+    id: i,
+    x: (Math.random() - 0.5) * 200,
+    y: (Math.random() - 0.5) * 200,
+    scale: Math.random() * 0.6 + 0.4,
+    color: ["#ec4899", "#8b5cf6", "#06b6d4", "#22c55e", "#f59e0b"][i % 5],
+  }));
+
+  return (
+    <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden">
+      {particles.map((p) => (
+        <motion.div
+          key={p.id}
+          className="absolute left-1/2 top-1/2 w-2 h-2 rounded-full"
+          style={{ backgroundColor: p.color }}
+          initial={{ x: 0, y: 0, scale: 0, opacity: 1 }}
+          animate={{ x: p.x, y: p.y, scale: p.scale, opacity: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── Main Component ──────────────────────────────────────────────────
+
+interface TradingSwapPanelProps {
+  isDark: boolean;
+}
+
+export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
+  const { hashPackSession } = useWallet();
+  const accountId = hashPackSession?.accountId || null;
+
+  const tokens = WRAPPED_TOKENS;
+  const [tokenInIdx, setTokenInIdx] = useState(0);
+  const [tokenOutIdx, setTokenOutIdx] = useState(2);
+  const [amount, setAmount] = useState("");
+  const [quote, setQuote] = useState<SwapQuote | null>(null);
+  const [status, setStatus] = useState<"idle" | "quoting" | "swapping" | "success" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [showParticles, setShowParticles] = useState(false);
+  const [isFlipping, setIsFlipping] = useState(false);
+  const [hoverSwap, setHoverSwap] = useState(false);
+
+  const tokenIn = tokens[tokenInIdx];
+  const tokenOut = tokens[tokenOutIdx];
+  const prevAccountRef = useRef<string | null>(null);
+
+  // Clear session on wallet change
+  useEffect(() => {
+    if (prevAccountRef.current && prevAccountRef.current !== accountId) {
+      clearSession();
+    }
+    prevAccountRef.current = accountId;
+  }, [accountId]);
+
+  // Debounced quoting
+  useEffect(() => {
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0 || tokenIn.symbol === tokenOut.symbol) {
+      setQuote(null);
+      setStatus("idle");
+      return;
+    }
+    setStatus("quoting");
+    setError(null);
+    const timer = setTimeout(async () => {
+      const q = await getSwapQuote(tokenIn.symbol, tokenOut.symbol, amt);
+      setQuote(q);
+      if (!q) {
+        setStatus("error");
+        setError("No route available — pools may need liquidity");
+      } else {
+        setStatus("idle");
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [amount, tokenIn.symbol, tokenOut.symbol]);
+
+  const handleSwap = useCallback(async () => {
+    if (!quote || !accountId) return;
+    setStatus("swapping");
+    setError(null);
+    playVipCashRegister();
+
+    try {
+      await authenticate(accountId);
+      const minOut = (BigInt(quote.amountOutRaw) * 995n / 1000n).toString();
+      const result = await executeSwap(accountId, quote.poolId, quote.tokenIn, quote.tokenOut, quote.amountInRaw, minOut);
+      if (result.success) {
+        setStatus("success");
+        setShowParticles(true);
+        playVipConfirm();
+        toast.success(`Swapped ${parseFloat(amount).toFixed(4)} ${tokenIn.symbol} for ${quote.amountOut.toFixed(4)} ${tokenOut.symbol}`);
+        setTimeout(() => { setShowParticles(false); }, 1200);
+        setAmount("");
+        setQuote(null);
+        setTimeout(() => setStatus("idle"), 2500);
+      } else {
+        setError(result.error || "Swap failed");
+        setStatus("error");
+        toast.error(result.error || "Swap failed");
+      }
+    } catch (err: any) {
+      setError(err.message || "Authentication failed");
+      setStatus("error");
+      toast.error(err.message || "Swap error");
+    }
+  }, [quote, accountId, amount, tokenIn.symbol, tokenOut.symbol]);
+
+  const flipTokens = () => {
+    setIsFlipping(true);
+    playVipButtonChime();
+    setTimeout(() => {
+      setTokenInIdx(tokenOutIdx);
+      setTokenOutIdx(tokenInIdx);
+      setAmount("");
+      setQuote(null);
+      setIsFlipping(false);
+    }, 200);
+  };
+
+  const inputClass = isDark
+    ? "bg-slate-800/60 border border-pink-500/10 focus-within:border-pink-500/40"
+    : "bg-gray-50 border border-gray-200 focus-within:border-pink-300";
+
+  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success";
+
+  return (
+    <div className="h-full flex flex-col">
+      <GlowBorder active={status === "swapping" || hoverSwap} className="h-full">
+        <div className={`h-full flex flex-col rounded-2xl overflow-hidden ${isDark ? "bg-[#0a0a12]/95" : "bg-white/95"}`}>
+          {/* Header */}
+          <div className={`px-4 py-3 border-b ${isDark ? "border-pink-500/10" : "border-gray-100"}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <motion.div
+                  className="w-8 h-8 rounded-lg bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center"
+                  animate={{ boxShadow: status === "swapping" ? "0 0 20px rgba(236,72,153,0.5)" : "0 0 0px rgba(236,72,153,0)" }}
+                  transition={{ duration: 0.5, repeat: status === "swapping" ? 9999 : 0, repeatType: "reverse" }}
+                >
+                  <Zap className="w-4 h-4 text-white" />
+                </motion.div>
+                <div>
+                  <span className="text-sm font-bold">AMM Swap</span>
+                  <div className="flex items-center gap-1">
+                    <span className={`w-1.5 h-1.5 rounded-full ${quote ? "bg-emerald-400 animate-pulse" : isDark ? "bg-slate-600" : "bg-gray-300"}`} />
+                    <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                      {quote ? "Live" : "Ready"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Shield className={`w-3 h-3 ${isDark ? "text-emerald-500/50" : "text-emerald-600/50"}`} />
+                <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>x*y=k</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Swap Body */}
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 relative">
+            <ParticleBurst show={showParticles} />
+
+            {/* Token In */}
+            <div className={`rounded-xl p-3 transition-all ${inputClass}`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>You Pay</span>
+                <div className="flex items-center gap-1.5">
+                  <img src={tokenIn.logo} alt={tokenIn.symbol} className="w-4 h-4 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  <select
+                    value={tokenInIdx}
+                    onChange={(e) => {
+                      const idx = Number(e.target.value);
+                      setTokenInIdx(idx);
+                      if (idx === tokenOutIdx) setTokenOutIdx(tokenInIdx);
+                    }}
+                    className={`text-xs font-bold px-1.5 py-0.5 rounded-lg outline-none cursor-pointer ${isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"}`}
+                  >
+                    {tokens.map((t, i) => <option key={t.tokenId} value={i}>{t.symbol}</option>)}
+                  </select>
+                </div>
+              </div>
+              <input
+                type="number"
+                placeholder="0.00"
+                className="w-full bg-transparent outline-none text-xl font-bold tabular-nums"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+
+            {/* Flip Button */}
+            <div className="flex justify-center -my-0.5 relative z-10">
+              <motion.button
+                onClick={flipTokens}
+                animate={{ rotate: isFlipping ? 180 : 0 }}
+                transition={{ duration: 0.2 }}
+                className={`p-2 rounded-full border-2 transition-all ${
+                  isDark
+                    ? "bg-[#0a0a12] border-pink-500/30 hover:border-pink-500/60 text-pink-400 hover:shadow-[0_0_15px_rgba(236,72,153,0.3)]"
+                    : "bg-white border-gray-200 hover:border-pink-300 text-pink-500 shadow-sm hover:shadow-pink-200"
+                }`}
+              >
+                <ArrowDownUp className="w-3.5 h-3.5" />
+              </motion.button>
+            </div>
+
+            {/* Token Out */}
+            <div className={`rounded-xl p-3 transition-all ${inputClass}`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>You Receive</span>
+                <div className="flex items-center gap-1.5">
+                  <img src={tokenOut.logo} alt={tokenOut.symbol} className="w-4 h-4 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  <select
+                    value={tokenOutIdx}
+                    onChange={(e) => {
+                      const idx = Number(e.target.value);
+                      setTokenOutIdx(idx);
+                      if (idx === tokenInIdx) setTokenInIdx(tokenOutIdx);
+                    }}
+                    className={`text-xs font-bold px-1.5 py-0.5 rounded-lg outline-none cursor-pointer ${isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"}`}
+                  >
+                    {tokens.map((t, i) => <option key={t.tokenId} value={i}>{t.symbol}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="text-xl font-bold tabular-nums">
+                <AnimatePresence mode="wait">
+                  {status === "quoting" ? (
+                    <motion.span
+                      key="quoting"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className={`flex items-center gap-1.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin" /> Quoting...
+                    </motion.span>
+                  ) : quote ? (
+                    <motion.span
+                      key={`quote-${quote.amountOut}`}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      className="text-emerald-400"
+                    >
+                      {quote.amountOut.toFixed(quote.amountOut >= 1 ? 4 : 8)}
+                    </motion.span>
+                  ) : (
+                    <motion.span key="zero" className={isDark ? "text-slate-600" : "text-gray-300"}>0.00</motion.span>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            {/* Quote Details */}
+            <AnimatePresence>
+              {quote && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className={`rounded-xl p-3 text-xs space-y-1.5 ${isDark ? "bg-slate-800/30 border border-slate-700/30" : "bg-gray-50 border border-gray-100"}`}>
+                    <div className="flex items-center justify-between">
+                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>Route</span>
+                      <span className="text-pink-400 font-mono">{quote.route}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>Rate</span>
+                      <span className="font-mono">1 {tokenIn.symbol} = {quote.effectiveRate.toFixed(quote.effectiveRate < 0.01 ? 6 : 4)} {tokenOut.symbol}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>Impact</span>
+                      <span className={`font-mono ${quote.priceImpactBps > 100 ? "text-amber-400" : quote.priceImpactBps > 300 ? "text-red-400" : isDark ? "text-slate-300" : "text-gray-600"}`}>
+                        {(quote.priceImpactBps / 100).toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>Fee</span>
+                      <span className="font-mono">{formatFeeBps(quote.feeBps)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>Min Received</span>
+                      <span className="font-mono text-emerald-400">{quote.minAmountOut.toFixed(4)} {tokenOut.symbol}</span>
+                    </div>
+                    {(quote as any).protocolFee && (
+                      <>
+                        <div className={`border-t my-1 ${isDark ? "border-slate-700/30" : "border-gray-200"}`} />
+                        <div className="flex items-center justify-between">
+                          <span className={isDark ? "text-slate-500" : "text-gray-400"}>Protocol Fee</span>
+                          <span className="font-mono">{((quote as any).protocolFee.totalHbar).toFixed(6)} HBAR</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Error */}
+            <AnimatePresence>
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  className="rounded-xl p-2.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate">{error}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Swap Button */}
+          <div className="px-4 pb-4 pt-2">
+            <motion.button
+              onClick={handleSwap}
+              disabled={isSwapDisabled}
+              onMouseEnter={() => { setHoverSwap(true); if (!isSwapDisabled) playVipButtonChime(); }}
+              onMouseLeave={() => setHoverSwap(false)}
+              whileTap={!isSwapDisabled ? { scale: 0.97 } : undefined}
+              className={`w-full py-3 rounded-xl font-bold text-white text-sm transition-all relative overflow-hidden ${
+                status === "success"
+                  ? "bg-emerald-500 shadow-[0_0_25px_rgba(34,197,94,0.4)]"
+                  : status === "swapping"
+                  ? "bg-gradient-to-r from-pink-500 to-purple-500"
+                  : !accountId
+                  ? "bg-gray-600 cursor-not-allowed"
+                  : !quote
+                  ? "bg-gray-600 cursor-not-allowed"
+                  : "bg-gradient-to-r from-pink-500 via-purple-500 to-pink-500 bg-[length:200%_100%] hover:shadow-[0_0_30px_rgba(236,72,153,0.4)]"
+              }`}
+              animate={
+                !isSwapDisabled && status === "idle"
+                  ? { backgroundPosition: ["0% 50%", "100% 50%", "0% 50%"] }
+                  : undefined
+              }
+              transition={!isSwapDisabled ? { duration: 3, repeat: 9999, ease: "linear" } : undefined}
+            >
+              {/* Shimmer overlay */}
+              {!isSwapDisabled && status !== "swapping" && status !== "success" && (
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
+                  animate={{ x: ["-100%", "200%"] }}
+                  transition={{ duration: 2, repeat: 9999, ease: "linear", repeatDelay: 1 }}
+                />
+              )}
+
+              <span className="relative z-10 flex items-center justify-center gap-2">
+                {status === "swapping" ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Executing Swap...</>
+                ) : status === "success" ? (
+                  <><CheckCircle2 className="w-4 h-4" /> Swap Complete!</>
+                ) : !accountId ? (
+                  <><Lock className="w-4 h-4" /> Connect Wallet</>
+                ) : !quote ? (
+                  "Enter Amount"
+                ) : (
+                  <><Zap className="w-4 h-4" /> Swap</>
+                )}
+              </span>
+            </motion.button>
+
+            {/* Auth status */}
+            {accountId && (
+              <div className={`text-center mt-2 text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                {hasValidSession(accountId) ? (
+                  <span className="flex items-center justify-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Session active
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-1">
+                    <Lock className="w-2.5 h-2.5" />
+                    Will sign on first swap
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </GlowBorder>
+    </div>
+  );
+}

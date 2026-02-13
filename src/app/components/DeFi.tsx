@@ -14,10 +14,7 @@ import {
   Percent,
   BarChart3,
   Info,
-  Loader2,
   RefreshCw,
-  Wifi,
-  WifiOff,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
@@ -264,47 +261,6 @@ export function DeFi() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent mb-1">
-            DeFi
-          </h2>
-          <p className={isDark ? "text-slate-400" : "text-gray-500"}>
-            Earn yield, provide liquidity, and stake on the Hedera network
-          </p>
-          {isLive ? (
-            <div className={`inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full text-[10px] ${isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
-              <Wifi className="w-3 h-3" />
-              Live data from SaucerSwap — {poolCount} pools tracked
-              {defiStats?.lastUpdated && (
-                <span className={isDark ? "text-emerald-500/60" : "text-emerald-600/60"}>
-                  &middot; {Math.round((Date.now() - defiStats.lastUpdated) / 1000)}s ago
-                </span>
-              )}
-            </div>
-          ) : defiLoading ? (
-            <div className={`inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full text-[10px] ${isDark ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" : "bg-blue-50 text-blue-700 border border-blue-200"}`}>
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Fetching live pool data from SaucerSwap...
-            </div>
-          ) : (
-            <div className={`inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full text-[10px] ${isDark ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
-              <WifiOff className="w-3 h-3" />
-              Fallback data — SaucerSwap API unavailable, retries on refresh
-            </div>
-          )}
-        </div>
-        {!primaryWallet && (
-          <button
-            onClick={() => setShowWalletModal(true)}
-            className="px-5 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 rounded-lg font-bold transition-all duration-300 shadow-lg shadow-pink-500/30 text-white text-sm btn-iridescent"
-          >
-            Connect Wallet to Start
-          </button>
-        )}
-      </div>
-
       {/* Protocol Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         {[

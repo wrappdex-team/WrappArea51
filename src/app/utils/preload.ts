@@ -50,7 +50,6 @@ const ROUTE_IMPORTERS: Record<string, () => Promise<unknown>> = {
   "/defi": () => retryImport(() => import("../components/DeFi")),
   "/smart-liquidity": () => retryImport(() => import("../components/SmartLiquidity")),
   "/wallet": () => retryImport(() => import("../components/Wallet")),
-  "/history": () => retryImport(() => import("../components/History")),
   "/dao": () => retryImport(() => import("../components/DAO")),
   "/bridges": () => retryImport(() => import("../components/Bridges")),
 };

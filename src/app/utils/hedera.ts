@@ -271,7 +271,7 @@ export async function fetchHbarPrice(): Promise<number> {
     return _lastKnownHbarPrice;
   }
 
-  const LAST_RESORT_FALLBACK = 0.20;
+  const LAST_RESORT_FALLBACK = 0.28;
 
   // ── Fire ALL oracles in parallel — first valid result wins ──
   const price = await _raceOracles(10_000);

@@ -7,9 +7,6 @@ import {
   Lock,
   X,
   ShieldCheck,
-  Loader2,
-  RefreshCw,
-  AlertTriangle,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import {
@@ -23,7 +20,7 @@ import {
   type VipPrefs,
   type VipFeatureId,
 } from "../utils/vip";
-import { GATE_THRESHOLD, VIP_NFT_TOKEN_ID, formatTokenCount } from "../utils/dao";
+import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
 import { playVipUnlock, playVipConfirm } from "../utils/sounds";
 
 const FEATURE_ICONS: Record<VipFeatureId, React.ReactNode> = {
@@ -106,38 +103,6 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, connected, hashPackSession?.accountId]);
-
-  // ── Manual re-verify ──
-  const handleReVerify = useCallback(async () => {
-    if (!hashPackSession?.accountId) return;
-
-    setVerifying(true);
-    setVerifyError(null);
-    setVerified(false);
-
-    const result = await verifyVipEligibilityDirect(hashPackSession.accountId);
-
-    if (result.error) {
-      setVerifyError(result.error);
-      setVerified(false);
-    } else {
-      const directTokenEligible = result.balance >= GATE_THRESHOLD;
-      const nftEligible = nftCount >= 1;
-      const finalEligible = directTokenEligible || nftEligible;
-
-      setVerifiedBalance(result.balance);
-      setVerifiedEligible(finalEligible);
-      setVerified(true);
-
-      if (!finalEligible && prefs.active) {
-        const next = { ...prefs, active: false };
-        setPrefs(next);
-        saveVipPrefs(next);
-      }
-    }
-
-    setVerifying(false);
-  }, [hashPackSession?.accountId, nftCount, prefs]);
 
   // Sync prefs to parent whenever they change
   useEffect(() => {
@@ -276,37 +241,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
             </div>
           )}
 
-          {/* Verification status */}
-          {connected && (
-            <div className="flex items-center gap-2 px-1">
-              {verifying ? (
-                <div className="flex items-center gap-2 text-xs text-blue-400">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Verifying balance on-chain...
-                </div>
-              ) : verified ? (
-                <div className="flex items-center gap-2 text-xs text-emerald-400/70">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  Balance double-checked: {formatTokenCount(verifiedBalance ?? 0)} tokens
-                  {verifiedEligible ? " — eligible" : " — below threshold"}
-                </div>
-              ) : verifyError ? (
-                <div className="flex items-center gap-2 text-xs text-amber-400">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  Verification failed: {verifyError}
-                </div>
-              ) : null}
-              {connected && !verifying && (
-                <button
-                  onClick={handleReVerify}
-                  className="ml-auto p-1 rounded hover:bg-white/5 transition-colors text-slate-500 hover:text-slate-300"
-                  title="Re-verify balance from Mirror Node"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          )}
+          {/* Verification status — hidden from UI but security logic remains active */}
 
           {/* Feature list */}
           <div className="space-y-2">
@@ -362,15 +297,6 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
                 </div>
               );
             })}
-          </div>
-
-          {/* Token info footer */}
-          <div className="text-xs text-slate-500 pt-2 border-t border-white/5">
-            HBAR.ħ Token: <span className="font-mono text-slate-400">0.0.9356476</span>
-            {" | "}
-            VIP NFT: <span className="font-mono text-slate-400">{VIP_NFT_TOKEN_ID}</span>
-            {" | "}
-            Gate: {formatTokenCount(GATE_THRESHOLD)} tokens or 1 NFT
           </div>
         </div>
       </div>

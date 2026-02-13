@@ -73,7 +73,7 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
   SOL:  { id: "solana",     symbol: "sol",  name: "Solana",     current_price: 186.73,   price_change_percentage_24h: 5.67,  market_cap: 89200000000,   total_volume: 3200000000,  image: TOKEN_LOGOS.SOL },
   USDC: { id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0002,   price_change_percentage_24h: 0.01,  market_cap: 58400000000,   total_volume: 6400000000,  image: TOKEN_LOGOS.USDC },
   XRP:  { id: "ripple",     symbol: "xrp",  name: "XRP",        current_price: 2.43,     price_change_percentage_24h: -1.23, market_cap: 138500000000,  total_volume: 4500000000,  image: TOKEN_LOGOS.XRP },
-  HBAR: { id: "hedera",     symbol: "hbar", name: "Hedera",     current_price: 0.19,     price_change_percentage_24h: 2.5,   market_cap: 11200000000,   total_volume: 420000000,   image: TOKEN_LOGOS.HBAR },
+  HBAR: { id: "hedera",     symbol: "hbar", name: "Hedera",     current_price: 0.28,     price_change_percentage_24h: 2.5,   market_cap: 11200000000,   total_volume: 420000000,   image: TOKEN_LOGOS.HBAR },
   DOGE: { id: "dogecoin",   symbol: "doge", name: "Dogecoin",   current_price: 0.3421,   price_change_percentage_24h: 4.23,  market_cap: 50300000000,   total_volume: 2100000000,  image: TOKEN_LOGOS.DOGE },
   ADA:  { id: "cardano",    symbol: "ada",  name: "Cardano",    current_price: 0.9234,   price_change_percentage_24h: 2.34,  market_cap: 32400000000,   total_volume: 890000000,   image: TOKEN_LOGOS.ADA },
   AVAX: { id: "avalanche",  symbol: "avax", name: "Avalanche",  current_price: 38.67,    price_change_percentage_24h: 6.78,  market_cap: 16800000000,   total_volume: 620000000,   image: TOKEN_LOGOS.AVAX },
@@ -200,12 +200,11 @@ async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, Coi
 // ─────────────────────────────────────────────────────────────────────
 
 // ── Fast-Path HBAR Price Fetch ─────────────────────────────────────
-// Dedicated single-asset fetch from CoinCap for HBAR price.
-// Uses a 3s timeout and the lightweight single-asset endpoint to get
-// HBAR's price as fast as possible. Called by the Dashboard alongside
-// the main oracle pipeline so HBAR displays immediately even if the
-// bulk batch requests are slow. Also caches the result to prevent
-// repeated requests within the same fetch cycle.
+// Dedicated multi-source fetch for HBAR price. Tries Binance first
+// (best CORS support), then CoinCap, then CoinGecko simple price.
+// Called automatically inside fetchCoinPrices() so ALL consumers
+// (Dashboard, Trading, etc.) get a live HBAR price even when the
+// bulk batch CoinCap/CoinGecko requests are rate-limited.
 // ─────────────────────────────────────────────────────────────────────
 let _hbarFastCache: { price: CoinPrice; ts: number } | null = null;
 const HBAR_FAST_CACHE_TTL = 15_000; // 15s — short so it stays fresh
@@ -216,52 +215,112 @@ export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
     return _hbarFastCache.price;
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  // Helper: build CoinPrice from a raw numeric price + optional 24h change
+  const buildResult = (
+    price: number,
+    change24h: number,
+    source: OracleSource,
+    extra?: { marketCap?: number; volume?: number }
+  ): CoinPrice => ({
+    id: "hedera",
+    symbol: "hbar",
+    name: "Hedera",
+    current_price: price,
+    price_change_percentage_24h: change24h,
+    market_cap: extra?.marketCap ?? 0,
+    total_volume: extra?.volume ?? 0,
+    image: TOKEN_LOGOS.HBAR,
+    oracle_source: source,
+    change_source: source,
+  });
 
+  // ── Source 1: Binance (most reliable CORS, fastest) ──
   try {
-    const res = await fetch(`${COINCAP_API}/assets/hedera-hashgraph`, {
-      signal: controller.signal,
+    const ctrl1 = new AbortController();
+    const t1 = setTimeout(() => ctrl1.abort(), 3000);
+    const res = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=HBARUSDT", {
+      signal: ctrl1.signal,
     });
-    clearTimeout(timeoutId);
-    if (!res.ok) return null;
+    clearTimeout(t1);
+    if (res.ok) {
+      const data = await res.json();
+      const price = parseFloat(data?.lastPrice || "0");
+      const change = parseFloat(data?.priceChangePercent || "0");
+      const volume = parseFloat(data?.quoteVolume || "0");
+      if (price > 0.001 && price < 50) {
+        const result = buildResult(price, change, "coincap", { volume }); // label as coincap (API source)
+        _hbarFastCache = { price: result, ts: Date.now() };
+        console.debug(`[Oracle] HBAR fast-path: $${price.toFixed(4)} via Binance`);
+        return result;
+      }
+    }
+  } catch { /* Binance failed — try next */ }
 
-    const json = await res.json();
-    const asset = json?.data;
-    if (!asset) return null;
+  // ── Source 2: CoinCap single-asset endpoint ──
+  try {
+    const ctrl2 = new AbortController();
+    const t2 = setTimeout(() => ctrl2.abort(), 3000);
+    const res = await fetch(`${COINCAP_API}/assets/hedera-hashgraph`, {
+      signal: ctrl2.signal,
+    });
+    clearTimeout(t2);
+    if (res.ok) {
+      const json = await res.json();
+      const asset = json?.data;
+      if (asset) {
+        const price = parseFloat(asset.priceUsd);
+        if (price > 0) {
+          const result = buildResult(
+            price,
+            parseFloat(asset.changePercent24Hr) || 0,
+            "coincap",
+            { marketCap: parseFloat(asset.marketCapUsd) || 0, volume: parseFloat(asset.volumeUsd24Hr) || 0 }
+          );
+          _hbarFastCache = { price: result, ts: Date.now() };
+          console.debug(`[Oracle] HBAR fast-path: $${price.toFixed(4)} via CoinCap`);
+          return result;
+        }
+      }
+    }
+  } catch { /* CoinCap failed — try next */ }
 
-    const price = parseFloat(asset.priceUsd);
-    if (!price || price <= 0) return null;
+  // ── Source 3: CoinGecko simple price ──
+  try {
+    const ctrl3 = new AbortController();
+    const t3 = setTimeout(() => ctrl3.abort(), 3000);
+    const res = await fetch(
+      `${COINGECKO_API}/simple/price?ids=hedera-hashgraph&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,
+      { signal: ctrl3.signal }
+    );
+    clearTimeout(t3);
+    if (res.ok) {
+      const data = await res.json();
+      const hbar = data?.["hedera-hashgraph"];
+      if (hbar?.usd > 0) {
+        const result = buildResult(
+          hbar.usd,
+          hbar.usd_24h_change || 0,
+          "coingecko",
+          { marketCap: hbar.usd_market_cap || 0, volume: hbar.usd_24h_vol || 0 }
+        );
+        _hbarFastCache = { price: result, ts: Date.now() };
+        console.debug(`[Oracle] HBAR fast-path: $${hbar.usd.toFixed(4)} via CoinGecko`);
+        return result;
+      }
+    }
+  } catch { /* CoinGecko failed */ }
 
-    const result: CoinPrice = {
-      id: "hedera",
-      symbol: "hbar",
-      name: asset.name || "Hedera",
-      current_price: price,
-      price_change_percentage_24h: parseFloat(asset.changePercent24Hr) || 0,
-      market_cap: parseFloat(asset.marketCapUsd) || 0,
-      total_volume: parseFloat(asset.volumeUsd24Hr) || 0,
-      image: TOKEN_LOGOS.HBAR,
-      oracle_source: "coincap",
-      change_source: "coincap",
-    };
-
-    _hbarFastCache = { price: result, ts: Date.now() };
-    console.debug(`[Oracle] HBAR fast-path: $${price.toFixed(4)} via CoinCap single-asset`);
-    return result;
-  } catch {
-    clearTimeout(timeoutId);
-    return null;
-  }
+  return null;
 }
 
 export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string, CoinPrice>> => {
-  // Fire all three oracle sources in parallel
-  // All three functions handle errors internally and always return {} on failure
-  const [chainlinkRaw, coincap, coingecko] = await Promise.all([
+  // Fire all three oracle sources + HBAR fast-path in parallel
+  // All functions handle errors internally and always return {} or null on failure
+  const [chainlinkRaw, coincap, coingecko, hbarFast] = await Promise.all([
     fetchChainlinkPrices(symbols),
     fetchFromCoinCap(symbols),
     fetchFromCoinGecko(symbols),
+    symbols.includes("HBAR") ? fetchHbarFastPath().catch(() => null) : Promise.resolve(null),
   ]);
 
   // Convert Chainlink data to CoinPrice format
@@ -366,6 +425,18 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
   console.debug(
     `[Oracle] Merged ${symbols.length} tokens: ${clCount} Chainlink · ${ccCount} CoinCap · ${cgCount} CoinGecko · ${fbCount} Fallback`
   );
+
+  // ── HBAR fast-path patch ─────────────────────────────────────────
+  // If HBAR ended up on fallback or has no live price, override with
+  // the dedicated multi-source fetch (Binance → CoinCap → CoinGecko).
+  // This runs automatically for ALL consumers (Dashboard, Trading, etc.).
+  if (hbarFast && hbarFast.current_price > 0) {
+    const existing = merged["HBAR"];
+    if (!existing || existing.oracle_source === "fallback" || existing.current_price <= 0) {
+      merged["HBAR"] = hbarFast;
+      console.debug(`[Oracle] HBAR patched from fast-path: $${hbarFast.current_price.toFixed(4)}`);
+    }
+  }
 
   return merged;
 };

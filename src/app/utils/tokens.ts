@@ -25,7 +25,7 @@ export const TOKEN_REGISTRY: TokenDef[] = [
   { symbol: "EURC",  name: "EURC",       category: "stablecoin",  volatility: 0.003, fallbackPrice: 1.0856,     fallbackChange: 0.12,  logo: TOKEN_LOGOS.EURC },
   { symbol: "PAXG",  name: "PAX Gold",   category: "stablecoin",  volatility: 0.04,  fallbackPrice: 2678.45,    fallbackChange: 0.89,  logo: TOKEN_LOGOS.PAXG },
   { symbol: "XRP",   name: "XRP",        category: "layer1",      volatility: 0.04,  fallbackPrice: 2.43,       fallbackChange: -1.23, logo: TOKEN_LOGOS.XRP },
-  { symbol: "HBAR",  name: "Hedera",     category: "layer1",      volatility: 0.16,  fallbackPrice: 0.19,       fallbackChange: 2.5,   logo: TOKEN_LOGOS.HBAR },
+  { symbol: "HBAR",  name: "Hedera",     category: "layer1",      volatility: 0.16,  fallbackPrice: 0.28,       fallbackChange: 2.5,   logo: TOKEN_LOGOS.HBAR },
   { symbol: "DOGE",  name: "Dogecoin",   category: "layer1",      volatility: 0.08,  fallbackPrice: 0.3421,     fallbackChange: 4.23,  logo: TOKEN_LOGOS.DOGE },
   { symbol: "ADA",   name: "Cardano",    category: "layer1",      volatility: 0.04,  fallbackPrice: 0.9234,     fallbackChange: 2.34,  logo: TOKEN_LOGOS.ADA },
   { symbol: "AVAX",  name: "Avalanche",  category: "layer1",      volatility: 0.12,  fallbackPrice: 38.67,      fallbackChange: 6.78,  logo: TOKEN_LOGOS.AVAX },

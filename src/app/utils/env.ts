@@ -18,7 +18,7 @@ const COINGECKO_API = "https://api.coingecko.com/api/v3";
 const BONZO_APP_URL = "https://app.bonzo.finance/lend";
 
 const WALLETCONNECT_PROJECT_ID =
-  import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "f75d45e689e3a0a33c52e6a8a30bbf7a";
+  import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "44b5b74e402af9f8e3c14ce8e4d2d2a0";
 const DYNAMIC_ENVIRONMENT_ID =
   import.meta.env.VITE_DYNAMIC_ENV_ID || "7e0e9ad0-5717-40f4-8aa4-5a2bdc7f062e";
 const CHANGENOW_AFFILIATE_ID =
@@ -56,7 +56,7 @@ const RATE_LIMITS = {
 
 const TIMEOUTS = {
   API_DEFAULT_MS: 10_000,
-  HASHCONNECT_PAIRING_MS: 120_000,
+  WALLETCONNECT_PAIRING_MS: 120_000,
   EXTENSION_DETECT_MS: 3_000,
   SWAP_TX_MS: 60_000,
   MIRROR_VERIFY_MS: 15_000,

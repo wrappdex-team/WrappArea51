@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { HBAR_LOGO as hbarhLogo } from "../assets/brand";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { getSessionToken } from "../utils/auth";
 
 // ═══════════════════════════════════════════════════════════════════════
 // SpinWheel — Client is display-only. All outcomes are server-authoritative.
@@ -24,7 +25,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 //   - Math.random() below is COSMETIC ONLY (sparkles, confetti, audio jitter)
 // ═══════════════════════════════════════════════════════════════════════
 
-// ── Config ─────────────────────────────────────────────────────────��─
+// ── Config ──────────────────────────────────────────────────────────
 
 /** Cooldown between spins in milliseconds (24 hours). */
 const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -142,12 +143,18 @@ interface SpinResult {
 
 async function requestSpin(accountId: string): Promise<SpinResult | null> {
   try {
+    // [AUDIT-SPIN-01] Include session token — server now authenticates the spin
+    // to prevent spoofing spins for other accounts
+    const sessionToken = getSessionToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${publicAnonKey}`,
+    };
+    if (sessionToken) headers["X-Session-Token"] = sessionToken;
+
     const res = await fetch(`${API_BASE}/spin`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${publicAnonKey}`,
-      },
+      headers,
       body: JSON.stringify({ accountId }),
     });
     const data = await res.json();

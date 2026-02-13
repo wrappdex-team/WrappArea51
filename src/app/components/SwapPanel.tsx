@@ -376,49 +376,6 @@ export function SwapPanel() {
 
   return (
     <div className="space-y-4">
-      {/* ═══ HEADER ═══ */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent font-bold">
-            Swap
-          </h2>
-          <div className="flex items-center gap-2">
-            <p className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              Trade tokens via SaucerSwap pool routes
-            </p>
-            <span className={`text-[9px] px-1.5 py-0.5 rounded-full flex items-center gap-1 ${
-              Object.keys(livePrices).length > 0
-                ? isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-600 border border-emerald-200"
-                : isDark ? "bg-slate-700/50 text-slate-400 border border-slate-600" : "bg-gray-100 text-gray-400 border border-gray-200"
-            }`}>
-              {priceLoading ? <Loader2 className="w-2 h-2 animate-spin" /> : <CheckCircle2 className="w-2 h-2" />}
-              {Object.keys(livePrices).length > 0 ? "Oracle Live" : "Loading..."}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={fetchPrices} disabled={priceLoading}
-            className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800 text-slate-500" : "hover:bg-gray-100 text-gray-400"}`}
-            title="Refresh prices">
-            <RefreshCw className={`w-3.5 h-3.5 ${priceLoading ? "animate-spin" : ""}`} />
-          </button>
-          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
-            isDark ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-          }`}>
-            <Zap className="w-3 h-3" />
-            Live
-          </div>
-          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
-            isWalletConnected
-              ? isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-600 border border-emerald-200"
-              : isDark ? "bg-slate-800/50 text-slate-500 border border-slate-700/50" : "bg-gray-100 text-gray-400 border border-gray-200"
-          }`}>
-            <Wallet className="w-3 h-3" />
-            {isWalletConnected ? "HashPack" : "Not connected"}
-          </div>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* ═══ SWAP INTERFACE ═══ */}
         <div className="lg:col-span-5">

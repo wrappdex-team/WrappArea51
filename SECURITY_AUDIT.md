@@ -17,98 +17,76 @@ The Wrappdex AMM engine implements a standard constant-product (x*y=k) market ma
 
 ## Section 1 — Critical Findings
 
-### AUDIT-AMM-01 | CRITICAL | Unauthenticated LP Position Mutation
+### AUDIT-AMM-01 | CRITICAL | Unauthenticated LP Position Mutation — RESOLVED
 
-**File:** `/supabase/functions/server/index.tsx` lines 837-873
-**Affected Routes:** `POST /pools/liquidity/remove`, `POST /pools/swap`
+**Status:** RESOLVED in this audit cycle
+**Files Modified:**
+- `/supabase/functions/server/index.tsx` — Challenge-response auth system + `requireAuth()` on all mutating routes
+- `/src/app/utils/auth.ts` — NEW: Client-side challenge → sign → session flow
+- `/src/app/utils/smart-liquidity.ts` — `authedFetch()` sends `X-Session-Token` on all mutating calls
+- `/src/app/components/SmartLiquidity.tsx` — `authenticate(accountId)` called before every swap/LP/pool action
 
-The `removeLiquidity` endpoint accepts `accountId` as a plain string in the request body with no cryptographic proof of ownership. Any caller who knows (or guesses) another user's Hedera account ID can burn their LP shares and withdraw their proportional reserves.
+**Implementation:**
+1. Server issues CSPRNG challenge nonces: `GET /auth/challenge/:accountId` (5-min expiry, single-use)
+2. Server verifies account public key exists on Hedera Mirror Node (ED25519 only, DER-aware)
+3. Client signs challenge via HashConnect `signMessages()` (HashPack wallet prompt)
+4. Server verifies ED25519 signature against Mirror Node public key via `crypto.subtle.verify`
+5. Server issues 30-minute session token (32-byte CSPRNG, KV-backed)
+6. All mutating routes (`/pools/create`, `/pools/liquidity/add`, `/pools/liquidity/remove`, `/pools/swap`) call `requireAuth()` which validates the `X-Session-Token` header and extracts `accountId` from the verified session — NOT from the request body
+7. Session cleared on wallet disconnect or account change
 
-```
-// Current: accountId is trusted from request body — NO SIGNATURE CHECK
-const { poolId, shares, accountId } = body;
-const position = await getLPPosition(poolId, accountId);
-// ...attacker passes victim's accountId, burns their shares
-```
-
-**Impact:** Complete LP position theft. Hedera account IDs are public (visible on HashScan), so this is trivially exploitable.
-
-**Remediation:** Require HSuite SmartNode or HashConnect-signed proof of account ownership. At minimum, require the user to sign a challenge nonce with their ED25519 key and verify server-side via Mirror Node public key lookup:
-```
-GET https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/{accountId}
-→ response.key.key (ED25519 public key)
-→ verify signature against challenge nonce
-```
+**Security Tags:** `[AUTH-01]` through `[AUTH-07]` — grep-searchable in server source.
 
 ---
 
-### AUDIT-AMM-02 | CRITICAL | TOCTOU Race Condition in Swap Reserve Updates
+### AUDIT-AMM-02 | CRITICAL | TOCTOU Race Condition in Swap Reserve Updates — RESOLVED
 
-**File:** `/supabase/functions/server/index.tsx` lines 1009-1093
-**Affected Route:** `POST /pools/swap`
+**Status:** RESOLVED in this audit cycle
+**Files Modified:**
+- `/supabase/functions/server/index.tsx` — Two-layer concurrency control on all 3 mutating pool routes
+- `/src/app/utils/smart-liquidity.ts` — Client-side retry-on-conflict with exponential backoff
 
-The swap execution follows a read-compute-write pattern with no locking:
+**Vulnerability (original):** The swap execution followed an unguarded read-compute-write pattern.
+Two concurrent swaps against the same pool would both read identical reserves, both compute full output,
+and both write independently — the second write overwrites the first, draining more tokens than reserves allow.
 
-```
-Step 1: const pool = await getPool(poolId);        // READ reserves
-Step 2: const rawOut = getAmountOut(rawIn, rIn, rOut, pool.swapFeeBps);  // COMPUTE
-Step 3: pool.reserveA = (resA + rawIn).toString();  // WRITE new reserves
-        await savePool(pool);
-```
+**Implementation — Two-Layer Defense:**
 
-Two concurrent swaps against the same pool will both read identical reserves at Step 1, both compute full output at Step 2, and both write independently at Step 3. The second write overwrites the first, resulting in **more tokens leaving the pool than reserves allow**.
+**Layer 1: Per-Pool Pessimistic Lock (KV-backed)**
+- Each pool gets a distributed lock key (`sl_plock_{poolId}`) with a unique holder UUID
+- `acquirePoolLock()` spins with jittered backoff (40-80ms intervals) up to 3s timeout
+- After writing the lock, a read-after-write verification confirms ownership (mitigates KV race)
+- 5-second TTL safety valve auto-releases locks from crashed holders
+- `releasePoolLock()` only releases if the holder UUID still matches (prevents releasing re-acquired locks)
+- `withPoolLock()` wrapper ensures lock is always released via try/finally
 
-**Impact:** Pool draining via concurrent request flooding. An attacker sending 50 simultaneous swap requests could extract multiples of the actual reserve.
+**Layer 2: Optimistic Version Counter (CAS)**
+- `PoolState.version` field incremented on every mutating write (initialized to 1 on pool creation, backfilled to 0 for pre-existing pools)
+- `compareAndSavePool(pool, expectedVersion)` re-reads the pool from KV, verifies the version matches, bumps version, and writes
+- Returns `false` on mismatch → route returns HTTP 409 with `code: "VERSION_CONFLICT"`
+- Even if two requests slip past the lock (e.g., TTL expiry edge case), only one CAS succeeds
 
-**Remediation:** Implement optimistic locking with a version counter:
-```typescript
-interface PoolState {
-  // ...existing fields
-  version: number;  // incremented on every write
-}
+**Protected Routes:**
+- `POST /pools/swap` — `withPoolLock` + `compareAndSavePool`
+- `POST /pools/liquidity/add` — `withPoolLock` + `compareAndSavePool`
+- `POST /pools/liquidity/remove` — `withPoolLock` + `compareAndSavePool`
 
-// In swap handler:
-const pool = await getPool(poolId);
-const expectedVersion = pool.version;
-// ...compute swap...
-pool.version = expectedVersion + 1;
-const success = await compareAndSwapPool(pool, expectedVersion);
-if (!success) return c.json({ error: "Pool state changed, retry" }, 409);
-```
+**Client-Side Retry (smart-liquidity.ts):**
+- `authedFetch()` retries up to 3 times on HTTP 409 (VERSION_CONFLICT) or 503 (POOL_BUSY)
+- Exponential backoff with jitter: ~200ms, ~500ms, ~1200ms
+- Transparent to the UI — users see seamless execution
 
-Or use KV atomic operations if available, or a distributed lock via a separate KV key.
+**HTTP Status Codes:**
+- `409 Conflict` — Version mismatch (CAS failure); client should retry
+- `503 Service Unavailable` — Pool lock timeout (too many concurrent ops); client should retry
+
+**Security Tags:** `[AUDIT-AMM-02]` — grep-searchable across server source and client code.
 
 ---
 
-### AUDIT-AMM-03 | CRITICAL | Slippage Protection Disabled by Default
+### AUDIT-AMM-03 | CRITICAL | Slippage Protection Disabled by Default — RESOLVED
 
-**File:** `/src/app/components/SmartLiquidity.tsx` line 81
-**File:** `/supabase/functions/server/index.tsx` line 1041
-
-The frontend sends `undefined` as `minAmountOutRaw`:
-```typescript
-// Frontend — no slippage protection sent
-const result = await executeSwap(accountId, quote.poolId, quote.tokenIn, 
-  quote.tokenOut, quote.amountInRaw, undefined);  // ← always undefined
-```
-
-The server treats missing `minAmountOutRaw` as no-check:
-```typescript
-if (minAmountOutRaw && rawOut < BigInt(minAmountOutRaw)) 
-  return c.json({ error: "Slippage exceeded" }, 400);
-// ← if minAmountOutRaw is undefined, this check never runs
-```
-
-Combined with AUDIT-AMM-02, this means users have zero slippage protection.
-
-**Impact:** Users can receive arbitrarily bad exchange rates. In production with HSuite on-chain execution, this enables classic sandwich attacks.
-
-**Remediation:** Frontend must compute and send `minAmountOutRaw`:
-```typescript
-const minOut = BigInt(quote.amountOutRaw) * 995n / 1000n; // 0.5% slippage
-const result = await executeSwap(accountId, quote.poolId, quote.tokenIn, 
-  quote.tokenOut, quote.amountInRaw, minOut.toString());
-```
+**Status:** RESOLVED. Frontend now sends `minAmountOutRaw = quote.amountOutRaw * 995 / 1000` (0.5% slippage) on every swap.
 
 ---
 
@@ -183,19 +161,9 @@ If SaucerSwap API returns inflated prices, TVL appears higher, allowing larger s
 
 ---
 
-### AUDIT-AMM-06 | MEDIUM | No K-Invariant Verification Post-Swap
+### AUDIT-AMM-06 | MEDIUM | No K-Invariant Verification Post-Swap — RESOLVED
 
-**File:** `/supabase/functions/server/index.tsx` lines 1054-1060
-
-After updating reserves, there is no assertion that `k_new >= k_old`. While the constant-product formula mathematically guarantees this, a bug in the BigInt arithmetic or a future code change could silently violate the invariant.
-
-**Remediation:** Add a post-swap assertion:
-```typescript
-const kOld = resA * resB;
-// ...update reserves...
-const kNew = BigInt(pool.reserveA) * BigInt(pool.reserveB);
-if (kNew < kOld) throw new Error("K-invariant violated — swap aborted");
-```
+**Status:** RESOLVED. Post-swap assertion added: `if (kNew < kOld)` aborts the swap with a logged `[CRITICAL]` alert.
 
 ---
 
@@ -574,15 +542,15 @@ The protocol fee is fixed at $0.0007 USD, converted to tinybar at swap time usin
 
 | ID | Severity | Effort | Priority | Description |
 |---|---|---|---|---|
-| AUDIT-AMM-01 | CRITICAL | HIGH | P0 | Add account ownership proof (signature verification) |
-| AUDIT-AMM-02 | CRITICAL | MEDIUM | P0 | Implement optimistic locking on pool state writes |
-| AUDIT-AMM-03 | CRITICAL | LOW | P0 | Frontend must send `minAmountOutRaw` with every swap |
+| AUDIT-AMM-01 | ~~CRITICAL~~ | ~~HIGH~~ | ~~P0~~ | ~~Add account ownership proof~~ RESOLVED — ED25519 challenge-response auth system |
+| AUDIT-AMM-02 | ~~CRITICAL~~ | ~~MEDIUM~~ | ~~P0~~ | ~~Implement optimistic locking on pool state writes~~ RESOLVED — Two-layer: pessimistic KV lock + optimistic CAS versioning |
+| AUDIT-AMM-03 | ~~CRITICAL~~ | ~~LOW~~ | ~~P0~~ | ~~Frontend must send minAmountOutRaw~~ RESOLVED — 0.5% slippage default |
 | AUDIT-B01 | CRITICAL | LOW | P0 | Fix Stargate function selector collision |
 | AUDIT-AMM-04 | HIGH | MEDIUM | P1 | Per-user swap index to avoid full scan |
 | AUDIT-D01 | HIGH | HIGH | P1 | Migrate DAO proposals to server-side KV |
 | AUDIT-F06 | HIGH | HIGH | P1 | Implement HTS token approval flow for Bonzo |
 | AUDIT-AMM-05 | MEDIUM | MEDIUM | P2 | TWAP comparison for oracle manipulation defense |
-| AUDIT-AMM-06 | MEDIUM | LOW | P2 | Post-swap k-invariant assertion |
+| AUDIT-AMM-06 | ~~MEDIUM~~ | ~~LOW~~ | ~~P2~~ | ~~Post-swap k-invariant assertion~~ RESOLVED — k assertion added |
 | AUDIT-AMM-07 | MEDIUM | LOW | P2 | Filter multi-hop quotes or label as preview |
 | AUDIT-AMM-08 | MEDIUM | LOW | P2 | Pool index compaction |
 | AUDIT-LP-06 | MEDIUM | HIGH | P2 | MEV protection plan for HSuite migration |
@@ -606,6 +574,7 @@ The protocol fee is fixed at $0.0007 USD, converted to tinybar at swap time usin
 | `/src/app/utils/pool-factory.ts` | ~300 | Solidity pool factory documentation | A-01 through A-12 |
 | `/src/app/utils/stargate.ts` | ~200 | Stargate V2 cross-chain bridge | B01 |
 | `/src/app/utils/polyfills.ts` | 401 | WC/HC error suppression, Buffer/process polyfills | Clean |
+| `/src/app/utils/auth.ts` | ~250 | Challenge-response auth client utility | AUTH-01 through AUTH-07 |
 
 ---
 

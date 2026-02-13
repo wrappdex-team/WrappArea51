@@ -22,7 +22,7 @@ import {
 import type { IChartApi, CandlestickData, ISeriesApi } from "lightweight-charts";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
-import { useParams, Link } from "react-router";
+import { useParams } from "react-router";
 import { fetchCoinPrices, formatVolume, type CoinPrice, type OracleSource } from "../utils/coingecko";
 import { fetchRealCandlesWithSource, CANDLE_COLORS, invalidateChartCache, type ChartDataSource } from "../utils/chartData";
 import { formatOracleAge, getFeedInfo } from "../utils/chainlink";
@@ -31,7 +31,9 @@ import { TOKEN_REGISTRY, TRADING_TOKENS, type TokenDef } from "../utils/tokens";
 import { computeSMA, computeEMA, computeRSI, computeMACD, computeBollingerBands } from "../utils/indicators";
 import { isVipEligible } from "../utils/vip";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
-import { CEXTradePanel } from "./CEXTradePanel";
+import { TradingSwapPanel } from "./TradingSwapPanel";
+import { TradingPoolsSection } from "./TradingPoolsSection";
+import { VipChatBox } from "./VipChatBox";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -860,22 +862,9 @@ export function Trading() {
             )}
           </div>
 
-          {/* Smart Liquidity link bar */}
+          {/* Chart status bar */}
           <div className={`px-3 py-2 border-t ${isDark ? "border-pink-500/10" : "border-gray-100"}`}>
             <div className="flex items-center gap-2 flex-wrap">
-              <Link
-                to="/smart-liquidity"
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
-                  isDark
-                    ? "bg-purple-900/15 border border-purple-500/20 text-purple-400 hover:border-purple-500/40"
-                    : "bg-purple-50 border border-purple-200 text-purple-700 hover:border-purple-300"
-                }`}
-              >
-                <Zap className="w-3 h-3" />
-                Smart Liquidity Pools
-                <ExternalLink className="w-3 h-3" />
-              </Link>
-
               {/* Chart data source badge */}
               <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] ${
                 chartLoading
@@ -934,16 +923,21 @@ export function Trading() {
           </div>
         </div>
 
-        {/* Right Column — Trade Panel */}
+        {/* Right Column — AMM Swap Panel */}
         <div className="lg:w-72 xl:w-80 flex-shrink-0 lg:rounded-br-xl overflow-hidden">
-          <CEXTradePanel
-            selectedSymbol={selectedToken.symbol}
-            currentPrice={currentPrice}
-            prices={prices}
-            isDark={isDark}
-          />
+          <TradingSwapPanel isDark={isDark} />
         </div>
       </div>
+
+      {/* Liquidity Pools Section */}
+      <TradingPoolsSection isDark={isDark} />
+
+      {/* VIP Chat — only for authenticated VIP holders */}
+      {isVip && hederaAccount && (
+        <div className="mt-4">
+          <VipChatBox isDark={isDark} accountId={hederaAccount.accountId} />
+        </div>
+      )}
 
       {/* Click-outside overlay for token selector */}
       {showTokenSelector && <div className="fixed inset-0 z-20" onClick={() => setShowTokenSelector(false)} />}

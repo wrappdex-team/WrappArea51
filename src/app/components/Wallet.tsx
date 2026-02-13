@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ArrowUpRight,
   ArrowDownLeft,
@@ -15,11 +15,16 @@ import {
   Search,
   Unplug,
   Vote,
+  Crown,
+  Sparkles,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import { motion } from "motion/react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { copyToClipboard as copyText } from "../utils/clipboard";
+import { isVipEligible, loadVipPrefs } from "../utils/vip";
+import { playPortfolioReveal, playTokenHover, playRefreshWhoosh } from "../utils/sounds";
 import {
   formatAddress,
   getExplorerAddressUrl,
@@ -81,13 +86,15 @@ const CHART_COLORS = [
   "#f43f5e", "#8b5cf6", "#06b6d4", "#f97316", "#14b8a6",
 ];
 
-// ── Donut Chart Component ──────────────────────────────────────────────
+// ── Donut Chart Component (VIP-enhanced) ──────────────────────────────
 function AllocationDonut({
   data,
   isDark,
+  isVip = false,
 }: {
   data: Array<{ name: string; value: number; color: string }>;
   isDark: boolean;
+  isVip?: boolean;
 }) {
   if (data.length === 0 || data.every((d) => d.value === 0)) {
     return (
@@ -99,36 +106,77 @@ function AllocationDonut({
     );
   }
 
+  const total = data.reduce((s, d) => s + d.value, 0);
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <PieChart>
-        <Pie
-          data={data}
-          cx="50%"
-          cy="50%"
-          innerRadius="55%"
-          outerRadius="85%"
-          paddingAngle={2}
-          dataKey="value"
-          stroke="none"
-        >
-          {data.map((entry, i) => (
-            <Cell key={entry.name} fill={entry.color || CHART_COLORS[i % CHART_COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip
-          contentStyle={{
-            background: isDark ? "#0f0f1a" : "#fff",
-            border: isDark ? "1px solid rgba(236,72,153,0.2)" : "1px solid #e5e7eb",
-            borderRadius: 8,
-            fontSize: 12,
-            padding: "6px 10px",
-          }}
-          formatter={(value: number) => [`$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`, ""]}
-          labelStyle={{ fontWeight: 700 }}
+    <div className="relative w-full h-full">
+      {/* VIP: emerald glow pulse behind donut */}
+      {isVip && (
+        <motion.div
+          className="absolute inset-2 rounded-full pointer-events-none"
+          style={{ background: "radial-gradient(circle, rgba(16,185,129,0.12), transparent 70%)" }}
+          animate={{ scale: [1, 1.08, 1], opacity: [0.5, 0.9, 0.5] }}
+          transition={{ duration: 3, repeat: 9999, ease: "easeInOut" }}
         />
-      </PieChart>
-    </ResponsiveContainer>
+      )}
+      {/* VIP: slowly rotating donut */}
+      <motion.div
+        className="w-full h-full"
+        animate={isVip ? { rotate: 360 } : undefined}
+        transition={isVip ? { duration: 60, repeat: 9999, ease: "linear" } : undefined}
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius="55%"
+              outerRadius="85%"
+              paddingAngle={isVip ? 3 : 2}
+              dataKey="value"
+              stroke="none"
+              animationBegin={0}
+              animationDuration={isVip ? 1200 : 800}
+            >
+              {data.map((entry, i) => (
+                <Cell key={entry.name} fill={entry.color || CHART_COLORS[i % CHART_COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={{
+                background: isDark ? "rgba(15,15,26,0.95)" : "#fff",
+                border: isDark ? `1px solid ${isVip ? "rgba(16,185,129,0.25)" : "rgba(236,72,153,0.2)"}` : "1px solid #e5e7eb",
+                borderRadius: 10,
+                fontSize: 12,
+                padding: "8px 12px",
+                backdropFilter: "blur(8px)",
+              }}
+              formatter={(value: number) => {
+                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : "0";
+                return isVip
+                  ? [`$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} · ${pct}%`, ""]
+                  : [`$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`, ""];
+              }}
+              labelStyle={{ fontWeight: 700 }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </motion.div>
+      {/* VIP: center VIP badge */}
+      {isVip && total > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <motion.div
+            className="text-center"
+            animate={{ opacity: [0.4, 0.8, 0.4] }}
+            transition={{ duration: 3, repeat: 9999 }}
+          >
+            <Sparkles className="w-3 h-3 text-emerald-400/60 mx-auto mb-0.5" />
+            <div className="text-[9px] uppercase tracking-widest text-emerald-400/50 font-bold">VIP</div>
+          </motion.div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -203,6 +251,44 @@ export function Wallet() {
     if (!hederaAccount) return 0;
     return maxVotesForBalance(hederaAccount.tokens, hederaNetwork);
   }, [hederaAccount, hederaNetwork]);
+
+  // ── VIP State (100M HBAR.ħ threshold) ──────────────────────────────
+  const [vipPrefs, setVipPrefs] = useState(() => loadVipPrefs());
+
+  // Listen for VIP prefs changes (toggled from VIPPanel via custom event)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const prefs = (e as CustomEvent).detail;
+      if (prefs) setVipPrefs(prefs);
+    };
+    window.addEventListener("vip-prefs-changed", handler);
+    return () => window.removeEventListener("vip-prefs-changed", handler);
+  }, []);
+
+  const isVip = useMemo(() => {
+    if (!hederaAccount) return false;
+    return isVipEligible(hederaAccount.tokens, hederaNetwork) && vipPrefs.active;
+  }, [hederaAccount, hederaNetwork, vipPrefs]);
+  const hoverThrottleRef = useRef(0);
+  const revealPlayedRef = useRef(false);
+
+  // VIP: play portfolio reveal chime once on load
+  useEffect(() => {
+    if (isVip && !revealPlayedRef.current && hederaAccount) {
+      revealPlayedRef.current = true;
+      const timer = setTimeout(() => playPortfolioReveal(), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [isVip, hederaAccount]);
+
+  const handleVipTokenHover = useCallback(() => {
+    if (!isVip) return;
+    const now = Date.now();
+    if (now - hoverThrottleRef.current > 180) {
+      hoverThrottleRef.current = now;
+      playTokenHover();
+    }
+  }, [isVip]);
 
   // Fetch HBAR.ħ price from SaucerSwap on mount + every 60s
   useEffect(() => {
@@ -412,9 +498,11 @@ export function Wallet() {
     return items.map((h, i) => ({
       name: h.symbol,
       value: h.value > 0 ? h.value : 0.01, // minimal sentinel for unpriced LP tokens so they appear
-      color: h.isNative ? "#a855f7" : h.isHbarh ? "#ec4899" : h.isLp ? "#06b6d4" : CHART_COLORS[i % CHART_COLORS.length],
+      color: isVip
+        ? (h.isNative ? "#10b981" : h.isHbarh ? "#34d399" : h.isLp ? "#06b6d4" : CHART_COLORS[i % CHART_COLORS.length])
+        : (h.isNative ? "#a855f7" : h.isHbarh ? "#ec4899" : h.isLp ? "#06b6d4" : CHART_COLORS[i % CHART_COLORS.length]),
     }));
-  }, [holdings]);
+  }, [holdings, isVip]);
 
   // EVM donut data
   const STABLECOINS = useMemo(() => new Set(["USDC", "USDT", "DAI"]), []);
@@ -449,6 +537,7 @@ export function Wallet() {
   }, []);
 
   const handleRefresh = useCallback(async () => {
+    if (isVip) playRefreshWhoosh();
     setIsRefreshing(true);
     await refreshHederaBalance();
     if (hederaAccount) {
@@ -462,9 +551,10 @@ export function Wallet() {
       setLpDirect(lpBal);
     }
     setIsRefreshing(false);
-  }, [refreshHederaBalance, hederaAccount]);
+  }, [refreshHederaBalance, hederaAccount, isVip]);
 
   const handleRefreshMM = useCallback(async () => {
+    if (isVip) playRefreshWhoosh();
     setIsRefreshingMM(true);
     await refreshMetaMaskBalance();
     if (metaMaskAccount) {
@@ -478,7 +568,7 @@ export function Wallet() {
       } catch { /* non-critical */ }
     }
     setIsRefreshingMM(false);
-  }, [refreshMetaMaskBalance, metaMaskAccount]);
+  }, [refreshMetaMaskBalance, metaMaskAccount, isVip]);
 
   // Format unix timestamp (seconds) to relative time
   const formatUnixTs = useCallback((unixSeconds: number) => {
@@ -542,66 +632,157 @@ export function Wallet() {
 
   return (
     <div className="space-y-4">
-      {/* ═══ TOP SUMMARY BAR ═══ */}
-      <div className={`rounded-xl p-4 ${isDark ? "bg-gradient-to-r from-purple-900/30 via-pink-900/20 to-slate-900/30 border border-pink-500/20" : "bg-gradient-to-r from-purple-50 via-pink-50 to-white border border-pink-200"}`}>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          {/* Total Portfolio */}
-          <div>
-            <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>Portfolio</div>
-            <div className="text-2xl font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-              {formatUsd(totalPortfolioUsd)}
-            </div>
-          </div>
-          <div className={`w-px h-10 ${isDark ? "bg-pink-500/15" : "bg-gray-200"} hidden sm:block`} />
-          {/* HBAR Price */}
-          <div>
-            <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR</div>
-            <div className="font-bold">${hbarPrice.toFixed(4)}</div>
-          </div>
-          {/* HBAR.ħ Price */}
-          <div>
-            <div className="flex items-center gap-1">
-              <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
-              <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
-            </div>
-            <div className="font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-              {hbarhPrice > 0 ? `$${hbarhPrice < 0.01 ? hbarhPrice.toFixed(6) : hbarhPrice.toFixed(4)}` : "..."}
-            </div>
-          </div>
-          {/* HBAR.ħ Balance if connected to Hedera */}
-          {hbarhToken && (
-            <>
-              <div className={`w-px h-10 ${isDark ? "bg-pink-500/15" : "bg-gray-200"} hidden sm:block`} />
-              <div>
-                <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ Bal</div>
-                <div className="font-bold">{formatBal(hbarhToken.balance)}</div>
-              </div>
-            </>
+      {/* ═══ TOP SUMMARY BAR (VIP-enhanced) ═══ */}
+      <div className={`relative rounded-xl overflow-hidden ${isVip ? "" : ""}`}>
+        {/* VIP: animated emerald border glow */}
+        {isVip && isDark && (
+          <>
+            <motion.div
+              className="absolute -inset-[1px] rounded-xl pointer-events-none"
+              style={{ background: "linear-gradient(90deg, rgba(16,185,129,0.25), rgba(6,182,212,0.15), rgba(16,185,129,0.25))", backgroundSize: "200% 100%" }}
+              animate={{ backgroundPosition: ["0% 0%", "200% 0%"] }}
+              transition={{ duration: 4, repeat: 9999, ease: "linear" }}
+            />
+            <motion.div
+              className="absolute -inset-[1px] rounded-xl pointer-events-none blur-md"
+              style={{ background: "linear-gradient(90deg, rgba(16,185,129,0.08), rgba(6,182,212,0.04), rgba(16,185,129,0.08))", backgroundSize: "200% 100%" }}
+              animate={{ backgroundPosition: ["200% 0%", "0% 0%"] }}
+              transition={{ duration: 5, repeat: 9999, ease: "linear" }}
+            />
+          </>
+        )}
+        <div className={`relative rounded-xl p-4 ${isDark
+          ? isVip
+            ? "bg-gradient-to-r from-emerald-950/40 via-slate-900/60 to-teal-950/40 border border-emerald-500/20"
+            : "bg-gradient-to-r from-purple-900/30 via-pink-900/20 to-slate-900/30 border border-pink-500/20"
+          : isVip
+            ? "bg-gradient-to-r from-emerald-50 via-teal-50/50 to-white border border-emerald-200"
+            : "bg-gradient-to-r from-purple-50 via-pink-50 to-white border border-pink-200"
+        }`}>
+          {/* VIP: shimmer pass */}
+          {isVip && isDark && (
+            <motion.div
+              className="absolute inset-0 pointer-events-none -skew-x-12 overflow-hidden rounded-xl"
+            >
+              <motion.div
+                className="h-full"
+                style={{ width: "15%", background: "linear-gradient(90deg, transparent, rgba(16,185,129,0.06), transparent)" }}
+                animate={{ x: ["-20%", "800%"] }}
+                transition={{ duration: 3.5, repeat: 9999, repeatDelay: 5, ease: "easeInOut" }}
+              />
+            </motion.div>
           )}
-          {/* DAO Voting Power */}
-          {daoVotingPower > 0 && (
-            <>
-              <div className={`w-px h-10 ${isDark ? "bg-pink-500/15" : "bg-gray-200"} hidden sm:block`} />
+          <div className="relative flex flex-wrap items-center gap-x-6 gap-y-2">
+            {/* VIP badge */}
+            {isVip && (
+              <motion.div
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20"
+                animate={{ borderColor: ["rgba(16,185,129,0.2)", "rgba(16,185,129,0.5)", "rgba(16,185,129,0.2)"] }}
+                transition={{ duration: 2.5, repeat: 9999 }}
+              >
+                <Crown className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">VIP</span>
+              </motion.div>
+            )}
+            {/* Total Portfolio */}
+            <div>
+              <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>Portfolio</div>
+              <div className={`text-2xl font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-pink-400 to-purple-400"}`}>
+                {formatUsd(totalPortfolioUsd)}
+              </div>
+            </div>
+            {/* VIP: % dominance of HBAR.ħ in portfolio */}
+            {isVip && hbarhToken && hbarhToken.value > 0 && totalPortfolioUsd > 0 && (
               <div>
-                <div className="flex items-center gap-1">
-                  <Vote className={`w-3 h-3 ${isDark ? "text-purple-400" : "text-purple-500"}`} />
-                  <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>DAO Power</span>
+                <div className="text-[10px] uppercase tracking-wider text-emerald-500/60">HBAR.ħ Dom.</div>
+                <div className="font-bold text-emerald-400">{((hbarhToken.value / totalPortfolioUsd) * 100).toFixed(1)}%</div>
+              </div>
+            )}
+            <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-pink-500/15") : "bg-gray-200"} hidden sm:block`} />
+            {/* HBAR Price */}
+            <div>
+              <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR</div>
+              <div className="font-bold">${hbarPrice.toFixed(4)}</div>
+            </div>
+            {/* HBAR.ħ Price */}
+            <div>
+              <div className="flex items-center gap-1">
+                <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
+                <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
+              </div>
+              <div className={`font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-purple-400 to-pink-400"}`}>
+                {hbarhPrice > 0 ? `$${hbarhPrice < 0.01 ? hbarhPrice.toFixed(6) : hbarhPrice.toFixed(4)}` : "..."}
+              </div>
+            </div>
+            {/* HBAR.ħ Balance if connected to Hedera */}
+            {hbarhToken && (
+              <>
+                <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-pink-500/15") : "bg-gray-200"} hidden sm:block`} />
+                <div>
+                  <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ Bal</div>
+                  <div className="font-bold">{formatBal(hbarhToken.balance)}</div>
+                  {/* VIP: show USD value inline */}
+                  {isVip && hbarhToken.value > 0 && (
+                    <div className="text-[10px] text-emerald-400/60">{formatUsd(hbarhToken.value)}</div>
+                  )}
                 </div>
-                <div className="font-bold text-purple-400">{daoVotingPower}x</div>
+              </>
+            )}
+            {/* DAO Voting Power */}
+            {daoVotingPower > 0 && (
+              <>
+                <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-pink-500/15") : "bg-gray-200"} hidden sm:block`} />
+                <div>
+                  <div className="flex items-center gap-1">
+                    <Vote className={`w-3 h-3 ${isDark ? (isVip ? "text-emerald-400" : "text-purple-400") : "text-purple-500"}`} />
+                    <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>DAO Power</span>
+                  </div>
+                  <div className={`font-bold ${isVip ? "text-emerald-400" : "text-purple-400"}`}>{daoVotingPower}x</div>
+                </div>
+              </>
+            )}
+            {/* VIP: token count */}
+            {isVip && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-emerald-500/60">Assets</div>
+                <div className="font-bold text-emerald-400/80">{holdings.length}</div>
               </div>
-            </>
-          )}
-          {/* Auto-refresh indicator */}
-          <div className="ml-auto flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>Live</span>
+            )}
+            {/* Auto-refresh indicator */}
+            <div className="ml-auto flex items-center gap-1.5">
+              {isVip ? (
+                <motion.span
+                  className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+                  animate={{ scale: [1, 1.6, 1], opacity: [0.6, 1, 0.6] }}
+                  transition={{ duration: 2, repeat: 9999 }}
+                />
+              ) : (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+              <span className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>Live</span>
+            </div>
           </div>
         </div>
       </div>
 
       {/* ═══ HEDERA WALLET ═══ */}
       {hederaAccount && (
-        <div className={isDark ? "bg-slate-900/40 border border-pink-500/20 rounded-xl" : "bg-white border border-gray-200 rounded-xl shadow-sm"}>
+        <div className={`relative rounded-xl overflow-hidden ${isVip && isDark ? "" : ""}`}>
+          {/* VIP: emerald glow border */}
+          {isVip && isDark && (
+            <motion.div
+              className="absolute -inset-[1px] rounded-xl pointer-events-none opacity-30"
+              style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.3), rgba(6,182,212,0.15), rgba(16,185,129,0.3))", backgroundSize: "200% 200%" }}
+              animate={{ backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
+              transition={{ duration: 6, repeat: 9999, ease: "linear" }}
+            />
+          )}
+        <div className={isDark
+          ? isVip
+            ? "relative bg-slate-900/50 border border-emerald-500/15 rounded-xl backdrop-blur-sm"
+            : "relative bg-slate-900/40 border border-pink-500/20 rounded-xl"
+          : "relative bg-white border border-gray-200 rounded-xl shadow-sm"
+        }>
           <div className="p-5">
             <div className="flex flex-col lg:flex-row gap-5">
               {/* LEFT: Account + Token list */}
@@ -630,18 +811,23 @@ export function Wallet() {
                         <button onClick={() => copyToClipboard(hederaAccount.accountId, "account")} className="p-0.5 hover:bg-white/10 rounded">
                           {copied === "account" ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 opacity-40" />}
                         </button>
-                        <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-300">
+                        <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className={isVip ? "text-emerald-400 hover:text-emerald-300" : "text-pink-400 hover:text-pink-300"}>
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button onClick={() => setShowDeposit(true)} className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${isDark ? "bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20" : "bg-pink-50 text-pink-600 hover:bg-pink-100 border border-pink-200"}`}>
+                    <button onClick={() => setShowDeposit(true)} className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${isDark
+                      ? isVip
+                        ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
+                        : "bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20"
+                      : "bg-pink-50 text-pink-600 hover:bg-pink-100 border border-pink-200"
+                    }`}>
                       Deposit
                     </button>
                     <button onClick={handleRefresh} disabled={isRefreshing} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`} title="Refresh">
-                      <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-pink-400" : ""}`} />
+                      <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? (isVip ? "animate-spin text-emerald-400" : "animate-spin text-pink-400") : ""}`} />
                     </button>
                   </div>
                 </div>
@@ -692,35 +878,71 @@ export function Wallet() {
                   </div>
                 </div>
 
-                {/* Token list */}
+                {/* Token list (VIP-enhanced) */}
                 <div className="space-y-1.5">
                   {primaryHoldings.map((h) => {
                     const logo = getTokenLogo(h.symbol, h.tokenId, isDark);
+                    const pctOfPortfolio = hederaTotalUsd > 0 && h.value > 0 ? ((h.value / hederaTotalUsd) * 100) : 0;
                     return (
-                      <div key={h.tokenId || h.symbol} className={`flex items-center justify-between p-2.5 rounded-lg transition-colors ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-50"}`}>
+                      <div
+                        key={h.tokenId || h.symbol}
+                        onMouseEnter={handleVipTokenHover}
+                        className={`flex items-center justify-between p-2.5 rounded-lg transition-all duration-200 ${isDark
+                          ? isVip
+                            ? "hover:bg-emerald-500/[0.04] hover:shadow-[0_0_12px_rgba(16,185,129,0.04)]"
+                            : "hover:bg-white/[0.03]"
+                          : "hover:bg-gray-50"
+                        }`}
+                      >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          {logo ? (
-                            <img src={logo} alt={h.symbol} className="w-8 h-8 rounded-full flex-shrink-0 object-cover" />
-                          ) : (
-                            <div className="w-8 h-8 bg-gradient-to-br from-pink-500/20 to-purple-500/20 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">{h.symbol.slice(0, 2)}</div>
-                          )}
+                          <div className="relative">
+                            {logo ? (
+                              <img src={logo} alt={h.symbol} className="w-8 h-8 rounded-full flex-shrink-0 object-cover" />
+                            ) : (
+                              <div className={`w-8 h-8 bg-gradient-to-br rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isVip ? "from-emerald-500/20 to-teal-500/20" : "from-pink-500/20 to-purple-500/20"}`}>{h.symbol.slice(0, 2)}</div>
+                            )}
+                            {/* VIP: emerald ring on primary tokens */}
+                            {isVip && h.isPrimary && isDark && (
+                              <motion.div
+                                className="absolute -inset-0.5 rounded-full border border-emerald-500/20 pointer-events-none"
+                                animate={{ borderColor: ["rgba(16,185,129,0.15)", "rgba(16,185,129,0.35)", "rgba(16,185,129,0.15)"] }}
+                                transition={{ duration: 3, repeat: 9999 }}
+                              />
+                            )}
+                          </div>
                           <div className="min-w-0">
                             <span className="font-bold text-sm">{h.symbol}</span>
                             {h.tokenId && (
                               <div className="flex items-center gap-1">
                                 <span className={`text-[10px] font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>{h.tokenId}</span>
-                                <a href={`https://hashscan.io/${hederaAccount.network}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-300">
+                                <a href={`https://hashscan.io/${hederaAccount.network}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className={`${isVip ? "text-emerald-400 hover:text-emerald-300" : "text-pink-400 hover:text-pink-300"}`}>
                                   <ExternalLink className="w-2.5 h-2.5" />
                                 </a>
                               </div>
                             )}
                           </div>
                         </div>
-                        <div className="text-right flex-shrink-0 ml-2">
-                          <div className="font-bold text-sm">{formatBal(h.balance)}</div>
-                          {h.value > 0 && (
-                            <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(h.value)}</div>
+                        <div className="flex items-center gap-3 flex-shrink-0 ml-2">
+                          {/* VIP: % allocation bar */}
+                          {isVip && pctOfPortfolio > 0 && (
+                            <div className="hidden sm:flex items-center gap-1.5 min-w-[60px]">
+                              <div className={`h-1 flex-1 rounded-full overflow-hidden ${isDark ? "bg-white/[0.04]" : "bg-gray-100"}`}>
+                                <motion.div
+                                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500"
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${Math.min(pctOfPortfolio, 100)}%` }}
+                                  transition={{ duration: 1, delay: 0.3 }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-emerald-400/60 font-mono w-8 text-right">{pctOfPortfolio.toFixed(0)}%</span>
+                            </div>
                           )}
+                          <div className="text-right">
+                            <div className="font-bold text-sm">{formatBal(h.balance)}</div>
+                            {h.value > 0 && (
+                              <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(h.value)}</div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -759,21 +981,30 @@ export function Wallet() {
                 )}
               </div>
 
-              {/* RIGHT: Donut Chart */}
-              <div className="lg:w-52 flex-shrink-0 flex flex-col items-center justify-center">
-                <div className={`text-[10px] uppercase tracking-wider mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Allocation</div>
-                <div className="w-36 h-36 lg:w-44 lg:h-44">
-                  <AllocationDonut data={hederaDonutData} isDark={isDark} />
+              {/* RIGHT: Donut Chart (VIP-enhanced) */}
+              <div className={`flex-shrink-0 flex flex-col items-center justify-center ${isVip ? "lg:w-56" : "lg:w-52"}`}>
+                <div className={`text-[10px] uppercase tracking-wider mb-1 ${isDark ? (isVip ? "text-emerald-500/50 font-bold tracking-widest" : "text-slate-500") : "text-gray-400"}`}>
+                  {isVip ? "VIP Allocation" : "Allocation"}
+                </div>
+                <div className={isVip ? "w-40 h-40 lg:w-48 lg:h-48" : "w-36 h-36 lg:w-44 lg:h-44"}>
+                  <AllocationDonut data={hederaDonutData} isDark={isDark} isVip={isVip} />
                 </div>
                 <div className="text-center mt-1">
-                  <div className="font-bold text-lg bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
+                  <div className={`font-bold text-lg bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-pink-400 to-purple-400"}`}>
                     {formatUsd(hederaTotalUsd)}
                   </div>
+                  {/* VIP: priced vs unpriced count */}
+                  {isVip && (
+                    <div className="text-[10px] text-emerald-400/40 mt-0.5">
+                      {hederaDonutData.length} priced · {holdings.length - hederaDonutData.length} unpriced
+                    </div>
+                  )}
                 </div>
                 <ChartLegend data={hederaDonutData} isDark={isDark} />
               </div>
             </div>
           </div>
+        </div>
         </div>
       )}
 
@@ -875,7 +1106,7 @@ export function Wallet() {
               <div className="lg:w-52 flex-shrink-0 flex flex-col items-center justify-center">
                 <div className={`text-[10px] uppercase tracking-wider mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Allocation</div>
                 <div className="w-36 h-36 lg:w-44 lg:h-44">
-                  <AllocationDonut data={evmDonutData} isDark={isDark} />
+                  <AllocationDonut data={evmDonutData} isDark={isDark} isVip={isVip} />
                 </div>
                 <div className="text-center mt-1">
                   <div className="font-bold text-lg bg-gradient-to-r from-orange-400 to-amber-400 bg-clip-text text-transparent">
@@ -889,14 +1120,25 @@ export function Wallet() {
         </div>
       )}
 
-      {/* ═══ TRANSACTION HISTORY (unified, below all wallets) ═══ */}
+      {/* ═══ TRANSACTION HISTORY (unified, VIP-enhanced) ═══ */}
       {(hederaAccount || metaMaskAccount) && (
-        <div className={`${isDark ? "bg-slate-900/40 border border-pink-500/15 rounded-xl" : "bg-white border border-gray-200 rounded-xl shadow-sm"}`}>
+        <div className={`${isDark
+          ? isVip
+            ? "bg-slate-900/50 border border-emerald-500/10 rounded-xl"
+            : "bg-slate-900/40 border border-pink-500/15 rounded-xl"
+          : "bg-white border border-gray-200 rounded-xl shadow-sm"
+        }`}>
           <div className="p-5">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <Clock className={`w-4 h-4 ${isDark ? "text-pink-400" : "text-pink-500"}`} />
+                <Clock className={`w-4 h-4 ${isDark ? (isVip ? "text-emerald-400" : "text-pink-400") : "text-pink-500"}`} />
                 <h3 className="font-bold">Transaction History</h3>
+                {/* VIP: tx count badge */}
+                {isVip && (recentTxns.length + evmTxns.length) > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400/70 font-bold">
+                    {recentTxns.length + evmTxns.length}
+                  </span>
+                )}
               </div>
               {hederaAccount && (
                 <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className="text-xs text-pink-400 flex items-center gap-1 hover:underline">
@@ -1049,23 +1291,32 @@ export function Wallet() {
         </div>
       )}
 
-      {/* ═══ DEPOSIT MODAL ═══ */}
+      {/* ═══ DEPOSIT MODAL (VIP-enhanced) ═══ */}
       {showDeposit && hederaAccount && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDeposit(false)}>
-          <div className={`rounded-xl p-6 max-w-sm w-full ${isDark ? "bg-slate-900 border border-pink-500/30" : "bg-white border border-gray-200 shadow-2xl"}`} onClick={(e) => e.stopPropagation()}>
+          <div className={`rounded-xl p-6 max-w-sm w-full ${isDark
+            ? isVip ? "bg-slate-900 border border-emerald-500/30" : "bg-slate-900 border border-pink-500/30"
+            : "bg-white border border-gray-200 shadow-2xl"
+          }`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-lg">Deposit</h3>
               <button onClick={() => setShowDeposit(false)} className={`p-1 rounded-lg ${isDark ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}>
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className={`rounded-lg px-4 py-3 font-mono text-center ${isDark ? "bg-black/30 border border-pink-500/15" : "bg-gray-50 border border-gray-200"}`}>
+            <div className={`rounded-lg px-4 py-3 font-mono text-center ${isDark
+              ? isVip ? "bg-black/30 border border-emerald-500/15" : "bg-black/30 border border-pink-500/15"
+              : "bg-gray-50 border border-gray-200"
+            }`}>
               {hederaAccount.accountId}
             </div>
             <p className={`text-xs mt-3 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
               Send HBAR or HTS tokens to this Account ID. Hedera confirms in 3-5 seconds.
             </p>
-            <button onClick={() => copyToClipboard(hederaAccount.accountId, "deposit")} className="w-full mt-4 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 rounded-lg text-white flex items-center justify-center gap-2 text-sm">
+            <button onClick={() => copyToClipboard(hederaAccount.accountId, "deposit")} className={`w-full mt-4 py-2.5 rounded-lg text-white flex items-center justify-center gap-2 text-sm ${isVip
+              ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500"
+              : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
+            }`}>
               {copied === "deposit" ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy Account ID</>}
             </button>
           </div>

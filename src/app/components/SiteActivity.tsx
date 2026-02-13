@@ -145,8 +145,8 @@ export function SiteActivity() {
     : trades.filter(t => t.status === activityFilter);
 
   const cardClass = isDark
-    ? "bg-gradient-to-br from-slate-900/50 to-slate-900/30 border border-pink-500/20 backdrop-blur-sm"
-    : "bg-white border border-gray-200 shadow-sm";
+    ? "bg-[#0d0f1a]/80 border border-white/[0.06] backdrop-blur-xl"
+    : "bg-white border border-gray-100 shadow-[0_1px_3px_rgba(0,0,0,0.04)]";
 
   const isEmpty = trades.length === 0 && (!stats || stats.totalTrades === 0);
 

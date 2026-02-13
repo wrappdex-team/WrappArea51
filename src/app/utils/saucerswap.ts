@@ -649,7 +649,7 @@ async function fetchRouterQuote(
 // "All quote strategies failed — using minOutput=1" error for every swap
 // involving HBAR whenever live prices were stale or not yet fetched.
 const FALLBACK_TOKEN_PRICES_USD: Record<string, number> = {
-  HBAR: 0.20, WHBAR: 0.20, USDC: 1.0, USDT: 1.0, WBTC: 97000, WETH: 3600,
+  HBAR: 0.28, WHBAR: 0.28, USDC: 1.0, USDT: 1.0, WBTC: 97000, WETH: 3600,
   LINK: 19.0, WPOL: 0.40, SAUCE: 0.045, HBARX: 0.30, KARATE: 0.0003,
   PACK: 0.015, DOVU: 0.002, HST: 0.018, "HBAR.ħ": 0.008,
 };
