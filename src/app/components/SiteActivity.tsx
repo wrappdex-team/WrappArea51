@@ -16,15 +16,12 @@ import {
   Trash2,
   Download,
   ChevronDown,
-  ChevronUp,
   Database,
   Wifi,
   Clock,
   Shield,
   BarChart3,
-  X,
 } from "lucide-react";
-import { Link } from "react-router";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import {
@@ -50,11 +47,6 @@ function timeSince(ts: number): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function truncateWallet(wallet: string): string {
-  if (wallet.length <= 12) return wallet;
-  return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
 }
 
 function formatVol(v: number): string {
@@ -85,7 +77,6 @@ export function SiteActivity() {
   );
   const [storageInfo, setStorageInfo] = useState(getStorageInfo());
   const [confirmReset, setConfirmReset] = useState<"network" | "all" | null>(null);
-  const [showAllTrades, setShowAllTrades] = useState(false);
   const [activityFilter, setActivityFilter] = useState<"all" | "confirmed" | "pending" | "failed">("all");
 
   // Sync orderbook network with Hedera network
@@ -97,11 +88,11 @@ export function SiteActivity() {
 
   // Poll orderbook data
   const refreshData = useCallback(() => {
-    const limit = showAllTrades ? 50 : 15;
-    setTrades(getOrderbook(limit));
+    // [AUDIT-AMM-04] Cap to 10 trades max for data minimization
+    setTrades(getOrderbook(10));
     setStats(getOrderbookStats());
     setStorageInfo(getStorageInfo());
-  }, [showAllTrades]);
+  }, []);
 
   useEffect(() => {
     refreshData();
@@ -426,22 +417,10 @@ export function SiteActivity() {
                     )}
                   </div>
                   <div className={`text-[10px] flex items-center gap-2 mt-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    <span className="font-mono">{truncateWallet(trade.wallet)}</span>
+                    {/* [AUDIT-AMM-04] Wallet is anonymized — show truncated form */}
+                    <span className="font-mono">{trade.wallet}</span>
                     <span>&middot;</span>
                     <span>{timeSince(trade.timestamp)}</span>
-                    {trade.transactionId && (
-                      <>
-                        <span>&middot;</span>
-                        <a
-                          href={`https://hashscan.io/${adminNetwork}/transaction/${trade.transactionId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`hover:underline ${isDark ? "text-pink-400/60 hover:text-pink-400" : "text-pink-500/60 hover:text-pink-500"}`}
-                        >
-                          Tx
-                        </a>
-                      </>
-                    )}
                   </div>
                 </div>
 
@@ -464,27 +443,15 @@ export function SiteActivity() {
         </div>
       )}
 
-      {/* Footer — Show More / Stats */}
+      {/* Footer — Stats */}
       {!isEmpty && (
-        <div className={`px-4 py-2.5 border-t flex items-center justify-between ${isDark ? "border-pink-500/10" : "border-gray-100"}`}>
-          <button
-            onClick={() => setShowAllTrades(!showAllTrades)}
-            className={`flex items-center gap-1 text-xs transition-colors ${
-              isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"
-            }`}
-          >
-            {showAllTrades ? (
-              <><ChevronUp className="w-3 h-3" /> Show Less</>
-            ) : (
-              <><ChevronDown className="w-3 h-3" /> Show More</>
-            )}
-          </button>
+        <div className={`px-4 py-2.5 border-t flex items-center justify-end ${isDark ? "border-pink-500/10" : "border-gray-100"}`}>
           <div className={`flex items-center gap-3 text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
             <span className="flex items-center gap-1">
               <BarChart3 className="w-3 h-3" />
               {adminNetwork}
             </span>
-            <span>Auto-refresh 3s</span>
+            <span>Last 10 trades · Auto-refresh 3s</span>
           </div>
         </div>
       )}

@@ -1,78 +1,75 @@
 /**
- * HBAR.ħ DAO — Token-Gated Governance Utilities
+ * HBAR.ħ DAO — Server-Authoritative Governance Client
  *
- * Eligibility: >= 100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified).
+ * [AUDIT-D01] REMEDIATED — All proposals, votes, and comments are now
+ * stored server-side in KV with ED25519 session authentication.
+ *
+ * Eligibility: >= 100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified SERVER-SIDE).
  * Power:       1 vote per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
- * Admin:       0.0.518487 — full proposal CRUD. Proposers edit/delete pre-vote only.
+ * Admin:       0.0.518487 — full proposal CRUD (verified server-side via session).
  *
- * OPEN ITEMS (require human DeFi engineer):
- *   [AUDIT-D01] HIGH — Proposals/votes in localStorage are client-manipulable.
- *     Must migrate to server-side KV with Mirror Node balance verification.
- *   [AUDIT-D02] MEDIUM — Session vote tracking bypassable. Fixed by D01 migration.
+ * Security Properties:
+ *   [DAO-01] Proposals stored in server KV — cannot be manipulated via DevTools
+ *   [DAO-02] Admin-only proposal CRUD verified server-side (session accountId)
+ *   [DAO-03] Vote weight calculated SERVER-SIDE from Mirror Node balance
+ *   [DAO-04] Vote deduplication enforced SERVER-SIDE via voterLog
+ *   [DAO-05] Comments require authenticated session + eligibility check
  */
 
 import type { HederaTokenBalance } from "./hedera";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { getSessionToken, authHeaders, authenticate, clearSession } from "./auth";
 
-// ── CSPRNG Helper ────────────────────────────────────────────────────
+// ── API Base ────────────────────────────────────────────────────────
 
-/** Generate a short crypto-random hex string for display-only IDs. */
-function cryptoHex(bytes = 4): string {
-  const buf = new Uint8Array(bytes);
-  crypto.getRandomValues(buf);
-  return Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
-}
+const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
+
+const publicHeaders = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${publicAnonKey}`,
+};
 
 // ── DAO Admin Configuration ──────────────────────────────────────────
 
-/**
- * The sole wallet authorized to create, edit, and delete DAO proposals.
- * All other eligible wallets can vote and comment only.
- */
-export const DAO_ADMIN_ACCOUNT = "0.0.518487";
+export const DAO_FOUNDER_ACCOUNT = "0.0.518487";
 
 /**
- * Check whether the given account ID is the DAO admin.
+ * Client-side admin check. Uses the cached admin list when available,
+ * falls back to founder-only check. Authoritative check is always server-side.
  */
+let _adminListCache: string[] = [DAO_FOUNDER_ACCOUNT];
+
 export function isDAOAdmin(accountId: string): boolean {
-  return accountId === DAO_ADMIN_ACCOUNT;
+  return _adminListCache.includes(accountId);
+}
+
+/** Update the client-side admin cache (called after fetchDaoAdmins) */
+export function setAdminListCache(admins: string[]): void {
+  _adminListCache = admins.length > 0 ? admins : [DAO_FOUNDER_ACCOUNT];
 }
 
 // ── HBAR.ħ Protocol Token Configuration ──────────────────────────────
 
-/** Hedera token IDs for the HBAR.ħ protocol token per network. */
 export const HBARH_TOKEN_ID: Record<string, string> = {
   testnet: "0.0.9356476",
   mainnet: "0.0.9356476",
 };
 
 export const HBARH_DECIMALS = 8;
-
-/** Minimum decimals-adjusted token balance required to participate (100 million tokens). */
 export const GATE_THRESHOLD = 100_000_000;
-
-/** Tokens per vote. Every 100M display tokens = 1 vote. */
 export const TOKENS_PER_VOTE = 100_000_000;
 
 // ── VIP NFT Configuration ────────────────────────────────────────────
 
-/** NFT collection token ID that gates VIP features and grants voting power. */
 export const VIP_NFT_TOKEN_ID = "0.0.10146181";
-
-/** Number of VIP NFTs required per 1 governance vote. */
 export const NFTS_PER_VOTE = 3;
-
-/** Maximum votes from tokens (10 × 100M = 1B token cap). */
 export const MAX_TOKEN_VOTES = 10;
-
-/** Maximum votes from NFTs (3 NFTs = 1 vote, hard cap). */
 export const MAX_NFT_VOTES = 1;
 
-// ── Balance & Voting Power ───────────────────────────────────────────
+// ── Balance & Voting Power (client-side for UI display) ─────────────
+// NOTE: These are used for fast UI rendering. Authoritative voting power
+// is ALWAYS calculated server-side from Mirror Node data.
 
-/**
- * Locate the HBAR.ħ token in a user's on-chain token list.
- * Returns the HederaTokenBalance entry or null if the user has no association.
- */
 export function findWrappBalance(
   tokens: HederaTokenBalance[],
   network: string
@@ -82,14 +79,6 @@ export function findWrappBalance(
   return tokens.find((t) => t.tokenId === id) ?? null;
 }
 
-/**
- * Decimals-adjusted HBAR.ħ balance (display tokens, NOT raw chain units).
- *
- * A return value of 100_000_000 means the user holds 100 million tokens.
- * Uses `balance` (rawBalance / 10^decimals) so every gate comparison
- * and voting-power calculation works against real token counts,
- * regardless of the on-chain decimal configuration.
- */
 export function getWrappBalance(
   tokens: HederaTokenBalance[],
   network: string
@@ -99,29 +88,15 @@ export function getWrappBalance(
   return entry.balance;
 }
 
-/**
- * Count of VIP NFTs (token ID 0.0.10146181) owned by the wallet.
- * NFTs on Hedera show up in the token balance list with rawBalance = serial count.
- */
 export function getNftCount(tokens: HederaTokenBalance[]): number {
   const entry = tokens.find((t) => t.tokenId === VIP_NFT_TOKEN_ID);
   return entry?.rawBalance ?? 0;
 }
 
-/**
- * Whether the user meets the minimum threshold to participate in governance.
- * Either: 100M HBAR.ħ tokens OR 1+ VIP NFT.
- */
 export function isEligible(tokens: HederaTokenBalance[], network: string): boolean {
   return getWrappBalance(tokens, network) >= GATE_THRESHOLD || getNftCount(tokens) >= 1;
 }
 
-/**
- * Maximum votes this wallet is entitled to per session.
- * Token votes: min(floor(rawBalance / 100M), 10)  — capped at 1B tokens
- * NFT votes:   min(floor(nftCount / 3), 1)        — capped at 1 vote from NFTs
- * Total = capped token votes + capped NFT votes    — max possible: 11
- */
 export function maxVotesForBalance(tokens: HederaTokenBalance[], network: string): number {
   const balance = getWrappBalance(tokens, network);
   const tokenVotes = Math.min(Math.floor(balance / TOKENS_PER_VOTE), MAX_TOKEN_VOTES);
@@ -133,9 +108,9 @@ export function maxVotesForBalance(tokens: HederaTokenBalance[], network: string
 
 export interface ProposalComment {
   id: string;
-  author: string;           // Hedera account ID
+  author: string;
   text: string;
-  createdAt: number;         // epoch ms
+  createdAt: number;
 }
 
 // ── Proposal Types ───────────────────────────────────────────────────
@@ -156,308 +131,206 @@ export interface Proposal {
   title: string;
   description: string;
   category: ProposalCategory;
-  proposer: string;          // Hedera account ID of creator
+  proposer: string;
   status: ProposalStatus;
   votesFor: number;
   votesAgainst: number;
   quorum: number;
-  createdAt: number;         // epoch ms
-  endsAt: number;            // epoch ms
+  createdAt: number;
+  endsAt: number;
   voterLog: Record<string, { direction: "for" | "against"; weight: number }>;
   comments: ProposalComment[];
 }
 
-// ── Session Vote Tracking ────────────────────────────────────────────
+// ── Helper: ensure session for mutating operations ──────────────────
 
-const SESSION_KEY = "hbarh-dao-session-votes";
-
-interface SessionVoteMap {
-  /** proposalId -> number of votes the user has already cast on this proposal */
-  [proposalId: string]: number;
+async function ensureAuth(accountId: string): Promise<string> {
+  const existing = getSessionToken();
+  if (existing) return existing;
+  return await authenticate(accountId);
 }
 
-function loadSessionVotes(): SessionVoteMap {
+// ── Server API Functions ────────────────────────────────────────────
+// All CRUD operations go through the server. No localStorage.
+
+/**
+ * Load all proposals from the server.
+ * Public endpoint — no auth required.
+ */
+export async function loadProposals(): Promise<Proposal[]> {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveSessionVotes(map: SessionVoteMap): void {
-  try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(map));
-  } catch {
-    // sessionStorage full — non-critical
-  }
-}
-
-/**
- * How many votes the user has already cast on a specific proposal this session.
- */
-export function votesSpentOnProposal(proposalId: string): number {
-  return loadSessionVotes()[proposalId] ?? 0;
-}
-
-/**
- * Total number of proposals the user has voted on this session.
- */
-export function totalProposalsVotedThisSession(): number {
-  return Object.keys(loadSessionVotes()).length;
-}
-
-/**
- * Whether the user has voted on a specific proposal this session.
- * (Used as a quick client-side check; authoritative check is voterLog in the proposal.)
- */
-export function hasVotedOnProposalThisSession(proposalId: string): boolean {
-  return (loadSessionVotes()[proposalId] ?? 0) > 0;
-}
-
-/**
- * Record that the user cast `weight` votes on `proposalId`.
- */
-export function recordVote(proposalId: string, weight: number): void {
-  const map = loadSessionVotes();
-  map[proposalId] = (map[proposalId] ?? 0) + weight;
-  saveSessionVotes(map);
-}
-
-// ── Proposal Persistence (localStorage) ─────────────────────────────
-
-const PROPOSALS_KEY = "hbarh-dao-proposals";
-
-/** Seed proposals — shown when localStorage is empty. */
-const SEED_PROPOSALS: Proposal[] = [];
-
-export function loadProposals(): Proposal[] {
-  try {
-    const raw = localStorage.getItem(PROPOSALS_KEY);
-    if (raw) {
-      const parsed: Proposal[] = JSON.parse(raw);
-      // Purge legacy mock proposals seeded with fake wallet addresses
-      const cleaned = parsed.filter(
-        (p) => !p.id.startsWith("prop-00")
-      );
-      // Migrate old proposals that don't have comments array
-      const migrated = cleaned.map((p) => ({
-        ...p,
-        comments: p.comments ?? [],
-      }));
-      // Auto-resolve expired proposals
-      const resolved = migrated.map(resolveIfExpired);
-      // If we purged any mocks, persist the cleaned list
-      if (cleaned.length !== parsed.length) {
-        saveProposals(resolved);
-      }
-      return resolved;
+    const res = await fetch(`${API_BASE}/dao/proposals`, {
+      headers: publicHeaders,
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`[DAO] Failed to load proposals: ${data.error || res.status}`);
+      return [];
     }
-  } catch {
-    // corrupt — fall through to seed
-  }
-  // First visit: seed (now empty)
-  const seeded = SEED_PROPOSALS.map(resolveIfExpired);
-  saveProposals(seeded);
-  return seeded;
-}
-
-export function saveProposals(proposals: Proposal[]): void {
-  try {
-    localStorage.setItem(PROPOSALS_KEY, JSON.stringify(proposals));
-  } catch {
-    // localStorage full — non-critical
+    return (data.proposals ?? []) as Proposal[];
+  } catch (err) {
+    console.error("[DAO] Error loading proposals:", err);
+    return [];
   }
 }
 
 /**
- * If a proposal is past its `endsAt` and still "active" or "pending",
- * resolve it to "passed" or "rejected" based on votes & quorum.
+ * Create a new proposal. Admin-only (server-enforced).
+ * Returns the updated proposals list from the server.
  */
-function resolveIfExpired(p: Proposal): Proposal {
-  if (p.status !== "active" && p.status !== "pending") return p;
-  if (Date.now() < p.endsAt) return p;
-
-  const totalVotes = p.votesFor + p.votesAgainst;
-  const quorumMet = totalVotes >= p.quorum;
-  const passed = quorumMet && p.votesFor > p.votesAgainst;
-
-  return { ...p, status: passed ? "passed" : "rejected" };
-}
-
-/**
- * Create a new proposal. Returns the updated list.
- * Only the DAO admin (0.0.518487) can create proposals.
- */
-export function createProposal(
-  proposals: Proposal[],
+export async function createProposal(
+  accountId: string,
   title: string,
   description: string,
   category: ProposalCategory,
-  proposer: string,
   durationDays: number,
   quorum: number
-): Proposal[] | null {
-  if (!isDAOAdmin(proposer)) return null;
-
-  const newProp: Proposal = {
-    id: `prop-${cryptoHex()}`,
-    title,
-    description,
-    category,
-    proposer,
-    status: "active",
-    votesFor: 0,
-    votesAgainst: 0,
-    quorum,
-    createdAt: Date.now(),
-    endsAt: Date.now() + durationDays * 86_400_000,
-    voterLog: {},
-    comments: [],
-  };
-
-  const updated = [newProp, ...proposals];
-  saveProposals(updated);
-  return updated;
+): Promise<{ proposals: Proposal[]; error?: string }> {
+  try {
+    const token = await ensureAuth(accountId);
+    const res = await fetch(`${API_BASE}/dao/proposals`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title, description, category, durationDays, quorum }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`[DAO] Create proposal failed: ${data.error}`);
+      return { proposals: [], error: data.error || "Failed to create proposal" };
+    }
+    return { proposals: data.proposals as Proposal[] };
+  } catch (err: any) {
+    console.error("[DAO] Error creating proposal:", err);
+    return { proposals: [], error: err?.message || "Network error" };
+  }
 }
 
 /**
- * Whether a proposal can be edited/deleted by the given account.
- *
- * Admin (0.0.518487): full control on any active/pending proposal, even after votes.
- * Proposer (original creator): can edit/delete only before any votes have been cast.
+ * Edit a proposal. Admin or proposer (server-enforced).
+ */
+export async function editProposal(
+  accountId: string,
+  proposalId: string,
+  updates: { title?: string; description?: string; category?: ProposalCategory }
+): Promise<{ proposals: Proposal[]; error?: string }> {
+  try {
+    const token = await ensureAuth(accountId);
+    const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify(updates),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`[DAO] Edit proposal failed: ${data.error}`);
+      return { proposals: [], error: data.error || "Failed to edit proposal" };
+    }
+    return { proposals: data.proposals as Proposal[] };
+  } catch (err: any) {
+    console.error("[DAO] Error editing proposal:", err);
+    return { proposals: [], error: err?.message || "Network error" };
+  }
+}
+
+/**
+ * Delete a proposal. Admin or proposer (server-enforced).
+ */
+export async function deleteProposal(
+  accountId: string,
+  proposalId: string
+): Promise<{ proposals: Proposal[]; error?: string }> {
+  try {
+    const token = await ensureAuth(accountId);
+    const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`[DAO] Delete proposal failed: ${data.error}`);
+      return { proposals: [], error: data.error || "Failed to delete proposal" };
+    }
+    return { proposals: data.proposals as Proposal[] };
+  } catch (err: any) {
+    console.error("[DAO] Error deleting proposal:", err);
+    return { proposals: [], error: err?.message || "Network error" };
+  }
+}
+
+/**
+ * Cast a vote on a proposal. Authenticated + eligible (server-enforced).
+ * Vote weight is calculated SERVER-SIDE from Mirror Node balance.
+ */
+export async function castVote(
+  accountId: string,
+  proposalId: string,
+  direction: "for" | "against"
+): Promise<{ success: boolean; proposal?: Proposal; votingPower?: number; error?: string }> {
+  try {
+    const token = await ensureAuth(accountId);
+    const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}/vote`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ direction }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`[DAO] Vote failed: ${data.error}`);
+      return { success: false, error: data.error || "Failed to cast vote" };
+    }
+    return {
+      success: true,
+      proposal: data.proposal as Proposal,
+      votingPower: data.votingPower,
+    };
+  } catch (err: any) {
+    console.error("[DAO] Error casting vote:", err);
+    return { success: false, error: err?.message || "Network error" };
+  }
+}
+
+/**
+ * Add a comment to a proposal. Authenticated + eligible (server-enforced).
+ */
+export async function addComment(
+  accountId: string,
+  proposalId: string,
+  text: string
+): Promise<{ success: boolean; proposal?: Proposal; error?: string }> {
+  try {
+    const token = await ensureAuth(accountId);
+    const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}/comment`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error(`[DAO] Comment failed: ${data.error}`);
+      return { success: false, error: data.error || "Failed to add comment" };
+    }
+    return { success: true, proposal: data.proposal as Proposal };
+  } catch (err: any) {
+    console.error("[DAO] Error adding comment:", err);
+    return { success: false, error: err?.message || "Network error" };
+  }
+}
+
+/**
+ * Check if a proposal can be modified by the given account.
+ * Client-side helper for UI rendering — server enforces the real check.
  */
 export function canModifyProposal(proposal: Proposal, accountId: string): boolean {
-  // Must be active or pending
   if (proposal.status !== "active" && proposal.status !== "pending") return false;
-
-  // Admin has unconditional control over active/pending proposals
   if (isDAOAdmin(accountId)) return true;
-
-  // Proposer can modify only before the first vote is cast
   if (proposal.proposer === accountId && Object.keys(proposal.voterLog).length === 0) return true;
-
   return false;
-}
-
-/**
- * Edit a proposal's title, description, and category.
- * Admin can edit at any time while active/pending.
- * Proposer can edit only before the first vote is cast.
- */
-export function editProposal(
-  proposals: Proposal[],
-  proposalId: string,
-  accountId: string,
-  updates: { title?: string; description?: string; category?: ProposalCategory }
-): Proposal[] | null {
-  const idx = proposals.findIndex((p) => p.id === proposalId);
-  if (idx === -1) return null;
-
-  const proposal = proposals[idx];
-  if (!canModifyProposal(proposal, accountId)) return null;
-
-  const updated = [...proposals];
-  updated[idx] = {
-    ...proposal,
-    title: updates.title?.trim() || proposal.title,
-    description: updates.description?.trim() || proposal.description,
-    category: updates.category || proposal.category,
-  };
-  saveProposals(updated);
-  return updated;
-}
-
-/**
- * Delete a proposal.
- * Admin can delete at any time while active/pending.
- * Proposer can delete only before the first vote is cast.
- */
-export function deleteProposal(
-  proposals: Proposal[],
-  proposalId: string,
-  accountId: string
-): Proposal[] | null {
-  const idx = proposals.findIndex((p) => p.id === proposalId);
-  if (idx === -1) return null;
-
-  const proposal = proposals[idx];
-  if (!canModifyProposal(proposal, accountId)) return null;
-
-  const updated = proposals.filter((p) => p.id !== proposalId);
-  saveProposals(updated);
-  return updated;
-}
-
-/**
- * Add a comment to a proposal. Any eligible wallet can comment.
- */
-export function addComment(
-  proposals: Proposal[],
-  proposalId: string,
-  author: string,
-  text: string
-): Proposal[] | null {
-  const idx = proposals.findIndex((p) => p.id === proposalId);
-  if (idx === -1) return null;
-  if (!text.trim()) return null;
-
-  const comment: ProposalComment = {
-    id: `cmt-${Date.now().toString(36)}-${cryptoHex(3)}`,
-    author,
-    text: text.trim(),
-    createdAt: Date.now(),
-  };
-
-  const updated = [...proposals];
-  updated[idx] = {
-    ...proposals[idx],
-    comments: [...(proposals[idx].comments ?? []), comment],
-  };
-  saveProposals(updated);
-  return updated;
-}
-
-/**
- * Cast a vote on a proposal. Mutates proposal in the list and persists.
- * Returns updated proposals list, or null if the vote was invalid.
- */
-export function castVote(
-  proposals: Proposal[],
-  proposalId: string,
-  voter: string,
-  direction: "for" | "against",
-  weight: number
-): Proposal[] | null {
-  const idx = proposals.findIndex((p) => p.id === proposalId);
-  if (idx === -1) return null;
-
-  const proposal = proposals[idx];
-
-  // Can't vote on resolved proposals
-  if (proposal.status !== "active" && proposal.status !== "pending") return null;
-
-  // Can't vote if expired
-  if (Date.now() >= proposal.endsAt) return null;
-
-  // Check if already voted on this proposal (on-chain style: one direction per proposal)
-  if (proposal.voterLog[voter]) return null;
-
-  const updated = [...proposals];
-  const updatedProposal = { ...proposal, voterLog: { ...proposal.voterLog } };
-
-  updatedProposal.voterLog[voter] = { direction, weight };
-
-  if (direction === "for") {
-    updatedProposal.votesFor += weight;
-  } else {
-    updatedProposal.votesAgainst += weight;
-  }
-
-  updated[idx] = updatedProposal;
-  saveProposals(updated);
-  recordVote(proposalId, weight);
-  return updated;
 }
 
 // ── Formatting Helpers ───────────────────────────────────────────────
@@ -490,4 +363,121 @@ export function formatCommentTime(createdAt: number): string {
   if (hrs < 24) return `${hrs}h ago`;
   if (days < 30) return `${days}d ago`;
   return new Date(createdAt).toLocaleDateString();
+}
+
+// ── Admin Management API ────────────────────────────────────────────
+// [DAO-08] Dynamic admin list — only existing admins can add/remove.
+// [DAO-10] Add/remove require a FRESH wallet signature (re-sign flow).
+
+/**
+ * Fetch the current admin list from the server.
+ * PASSIVE: Only uses an existing session — never triggers a wallet signing prompt.
+ * If no session exists, returns the client-side cache (founder-only by default).
+ * Admin status is fully discovered once the user authenticates for their first
+ * mutating action (vote, create proposal, etc.), which is the correct UX flow.
+ * Also updates the client-side admin cache when a valid session is available.
+ */
+export async function fetchDaoAdmins(
+  accountId: string
+): Promise<{ admins: string[]; founder: string; maxAdmins: number; error?: string }> {
+  const defaultResult = { admins: [..._adminListCache], founder: DAO_FOUNDER_ACCOUNT, maxAdmins: 10 };
+  try {
+    // Passive check — only use existing session, never trigger wallet signing
+    const token = getSessionToken();
+    if (!token) {
+      // No active session — skip server call, rely on client cache.
+      // User will authenticate naturally on their first action.
+      return { ...defaultResult, error: "no_session" };
+    }
+    const res = await fetch(`${API_BASE}/dao/admins`, {
+      headers: authHeaders(token),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { ...defaultResult, error: data.error };
+    }
+    // Update client-side cache
+    setAdminListCache(data.admins);
+    return { admins: data.admins, founder: data.founder, maxAdmins: data.maxAdmins };
+  } catch (err: any) {
+    console.error("[DAO] Error fetching admin list:", err);
+    return { ...defaultResult, error: err?.message };
+  }
+}
+
+/**
+ * Add a new DAO admin. Requires:
+ * 1. Caller is already an admin (server-verified from session)
+ * 2. A FRESH wallet signature (session <2 min old)
+ *
+ * The caller must use forceReauthenticate() first to get a fresh session,
+ * which triggers a new HashPack signing prompt as confirmation.
+ */
+export async function addDaoAdmin(
+  accountId: string,
+  newAdminAccountId: string
+): Promise<{ admins: string[]; error?: string }> {
+  try {
+    const token = getSessionToken();
+    if (!token) {
+      return { admins: [], error: "No session — please re-sign in wallet first" };
+    }
+    const res = await fetch(`${API_BASE}/dao/admins`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ newAdminAccountId }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { admins: data.admins || [], error: data.error || "Failed to add admin" };
+    }
+    setAdminListCache(data.admins);
+    return { admins: data.admins };
+  } catch (err: any) {
+    console.error("[DAO] Error adding admin:", err);
+    return { admins: [], error: err?.message || "Network error" };
+  }
+}
+
+/**
+ * Remove a DAO admin. Same fresh-session requirement as add.
+ * Founder (0.0.518487) can never be removed (server-enforced).
+ */
+export async function removeDaoAdmin(
+  accountId: string,
+  targetAccountId: string
+): Promise<{ admins: string[]; error?: string }> {
+  try {
+    const token = getSessionToken();
+    if (!token) {
+      return { admins: [], error: "No session — please re-sign in wallet first" };
+    }
+    const res = await fetch(`${API_BASE}/dao/admins/${targetAccountId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { admins: data.admins || [], error: data.error || "Failed to remove admin" };
+    }
+    setAdminListCache(data.admins);
+    return { admins: data.admins };
+  } catch (err: any) {
+    console.error("[DAO] Error removing admin:", err);
+    return { admins: [], error: err?.message || "Network error" };
+  }
+}
+
+/**
+ * Force a fresh wallet re-authentication.
+ * Clears the existing session, then triggers a new ED25519 challenge-response
+ * cycle requiring the user to sign in their HashPack wallet.
+ * Returns the fresh session token (< 2 min old, satisfying server freshness check).
+ */
+export async function forceReauthenticate(accountId: string): Promise<string> {
+  clearSession();
+  return await authenticate(accountId);
 }

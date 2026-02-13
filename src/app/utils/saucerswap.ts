@@ -2816,12 +2816,12 @@ async function executeSaucerSwapV2Direct(
     }
 
     // ── Gas sufficiency check ──
+    // Hedera gas fees are sub-cent for typical swaps. Reserve 1 HBAR total
+    // to cover gas + network fees — good for dozens of transactions.
+    // SWAP_GAS / APPROVE_GAS are gas LIMITS for the EVM call, NOT the HBAR cost.
     const SWAP_GAS = 1_500_000;
     const APPROVE_GAS = 800_000;
-    const GAS_RATE = 0.00000852;
-    const needsApprove = !isInputNative;
-    const estimatedMaxGasHbar = (SWAP_GAS * GAS_RATE) + (needsApprove ? APPROVE_GAS * GAS_RATE : 0);
-    const gasReserveNeeded = estimatedMaxGasHbar + 2;
+    const gasReserveNeeded = 1; // 1 HBAR covers gas + network fees with plenty of margin
 
     if (isInputNative) {
       const hbarBalanceTinybar = await getNativeHbarBalance(accountId, network);
@@ -2832,7 +2832,7 @@ async function executeSaucerSwapV2Direct(
         const shortfall = totalNeeded - hbarBalance;
         return {
           success: false,
-          error: `Insufficient HBAR: have ${hbarBalance.toFixed(2)}, need ~${totalNeeded.toFixed(1)} HBAR (${inputHbar} swap + ~${gasReserveNeeded.toFixed(1)} gas). Short by ${shortfall.toFixed(1)} HBAR.`,
+          error: `Insufficient HBAR: you have ${hbarBalance.toFixed(2)} HBAR but need ${totalNeeded.toFixed(2)} HBAR (${inputHbar} for swap + ${gasReserveNeeded} for fees). Short by ${shortfall.toFixed(2)} HBAR.`,
           executionVenue: "saucerswap-v2",
         };
       }
@@ -2842,7 +2842,7 @@ async function executeSaucerSwapV2Direct(
       if (hbarBalance < gasReserveNeeded) {
         return {
           success: false,
-          error: `Insufficient HBAR for gas: have ${hbarBalance.toFixed(2)}, need ~${gasReserveNeeded.toFixed(1)} HBAR. Deposit more HBAR first.`,
+          error: `Insufficient HBAR for fees: you have ${hbarBalance.toFixed(2)} HBAR but need at least ${gasReserveNeeded} HBAR. Deposit more HBAR first.`,
           executionVenue: "saucerswap-v2",
         };
       }
@@ -3522,26 +3522,18 @@ async function executeSaucerSwapDirect(
       }
     }
 
-    // Gas limits — reduced from 3M/1.2M to limit gas fee exposure.
-    // SaucerSwap V1 swaps typically use 300K-800K gas.  On CONTRACT_REVERT,
-    // Hedera charges the FULL gas limit as the fee, so keeping it lower
-    // protects users from losing 15-20 HBAR on failed swaps.
+    // Gas limits for EVM calls — these are gas LIMITS passed to setGas(),
+    // NOT the HBAR cost. Hedera gas fees are sub-cent for typical swaps.
     const SWAP_GAS = 1_500_000;
     const APPROVE_GAS = 800_000;
 
     // ══════════════════════════════════════════════════════════════════
     // ── GAS SUFFICIENCY CHECK ──
-    // Before spending gas on approve + swap, verify the user has enough
-    // HBAR to cover worst-case gas fees. On CONTRACT_REVERT, Hedera
-    // charges the FULL gas limit, so we need to ensure the account
-    // won't run out of HBAR mid-execution.
+    // Hedera gas fees are sub-cent. Reserve 1 HBAR total to cover gas +
+    // network fees — good for dozens of transactions. The old 15 HBAR
+    // reserve was overly conservative and blocked users unnecessarily.
     // ══════════════════════════════════════════════════════════════════
-    const GAS_RATE_HBAR = 0.00000852; // ~852 tinybar per gas unit (conservative)
-    const needsApprove = !isInputNative; // Native HBAR doesn't need approve
-    const estimatedMaxGasHbar = (SWAP_GAS * GAS_RATE_HBAR)
-      + (needsApprove ? APPROVE_GAS * GAS_RATE_HBAR : 0);
-    // Add 2 HBAR buffer for network fees, association, etc.
-    const gasReserveNeeded = estimatedMaxGasHbar + 2;
+    const gasReserveNeeded = 1; // 1 HBAR covers gas + network fees with plenty of margin
 
     // For HBAR input, check that balance covers input + gas
     if (isInputNative) {
@@ -3551,10 +3543,10 @@ async function executeSaucerSwapDirect(
       const totalNeeded = inputHbar + gasReserveNeeded;
       if (hbarBalance < totalNeeded) {
         const shortfall = totalNeeded - hbarBalance;
-        console.error(`[HBAR.h] Insufficient HBAR for swap + gas: balance=${hbarBalance.toFixed(2)}, needed=${totalNeeded.toFixed(2)} (input=${inputHbar}, gas reserve=${gasReserveNeeded.toFixed(1)})`);
+        console.error(`[HBAR.h] Insufficient HBAR for swap + gas: balance=${hbarBalance.toFixed(2)}, needed=${totalNeeded.toFixed(2)} (input=${inputHbar}, gas reserve=${gasReserveNeeded})`);
         return {
           success: false,
-          error: `Insufficient HBAR: you have ${hbarBalance.toFixed(2)} HBAR but need ~${totalNeeded.toFixed(1)} HBAR (${inputHbar} for swap + ~${gasReserveNeeded.toFixed(1)} for gas fees). Reduce the swap amount by at least ${shortfall.toFixed(1)} HBAR.`,
+          error: `Insufficient HBAR: you have ${hbarBalance.toFixed(2)} HBAR but need ${totalNeeded.toFixed(2)} HBAR (${inputHbar} for swap + ${gasReserveNeeded} for fees). Reduce the swap amount by at least ${shortfall.toFixed(2)} HBAR.`,
           executionVenue: "saucerswap-v1",
         };
       }
@@ -3563,10 +3555,10 @@ async function executeSaucerSwapDirect(
       const hbarBalanceTinybar = await getNativeHbarBalance(accountId, network);
       const hbarBalance = hbarBalanceTinybar / 1e8;
       if (hbarBalance < gasReserveNeeded) {
-        console.error(`[HBAR.h] Insufficient HBAR for gas: balance=${hbarBalance.toFixed(2)}, needed=${gasReserveNeeded.toFixed(1)}`);
+        console.error(`[HBAR.h] Insufficient HBAR for gas: balance=${hbarBalance.toFixed(2)}, needed=${gasReserveNeeded}`);
         return {
           success: false,
-          error: `Insufficient HBAR for gas fees: you have ${hbarBalance.toFixed(2)} HBAR but need at least ~${gasReserveNeeded.toFixed(1)} HBAR for transaction fees. Deposit more HBAR before swapping.`,
+          error: `Insufficient HBAR for fees: you have ${hbarBalance.toFixed(2)} HBAR but need at least ${gasReserveNeeded} HBAR. Deposit more HBAR first.`,
           executionVenue: "saucerswap-v1",
         };
       }
@@ -3594,7 +3586,7 @@ async function executeSaucerSwapDirect(
       console.error("[HBAR.h] Dry run details:", JSON.stringify(dryRunResult));
       return {
         success: false,
-        error: `Pre-swap simulation failed: ${dryRunResult.reason}. The swap would revert on-chain and waste gas fees (~5-8 HBAR). Fix the issue and try again.`,
+        error: `Pre-swap simulation failed: ${dryRunResult.reason}. The swap would revert on-chain and waste gas fees. Fix the issue and try again.`,
         executionVenue: "saucerswap-v1",
       };
     }

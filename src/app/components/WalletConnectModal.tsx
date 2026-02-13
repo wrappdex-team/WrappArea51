@@ -26,7 +26,41 @@ import {
 import {
   HASHPACK_LOGO,
   METAMASK_LOGO,
+  DYNAMIC_LOGO,
 } from "../assets/brand";
+import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
+import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
+
+/**
+ * Safe Dynamic SDK hooks — the module IS in the Vite bundle (static
+ * dependency), so the import always works. But the hooks require
+ * DynamicContextProvider in the tree. When the SDK failed to init
+ * and there's no provider, we skip the hooks and return defaults.
+ *
+ * `isDynamicSDKAvailable` is set by DynamicSDKWrapper when the
+ * lazy initialization succeeds. It's a stable boolean (false→true,
+ * never reverts), so the conditional hook call is safe: once the
+ * component renders with Dynamic available, it stays that way.
+ */
+function useSafeDynamicHooks() {
+  if (isDynamicSDKAvailable) {
+    // SDK is available and DynamicContextProvider is in the tree — safe to call hooks
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const { setShowAuthFlow } = useDynamicContext();
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const isLoggedIn = useIsLoggedIn();
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const { setShowLinkNewWalletModal } = useDynamicModals();
+    return { setShowAuthFlow, isLoggedIn, setShowLinkNewWalletModal, available: true };
+  }
+  // SDK not available — return safe no-op defaults
+  return {
+    setShowAuthFlow: (() => {}) as (show: boolean) => void,
+    isLoggedIn: false,
+    setShowLinkNewWalletModal: (() => {}) as (show: boolean) => void,
+    available: false,
+  };
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -34,7 +68,7 @@ interface WalletConnectModalProps {
   onClose: () => void;
 }
 
-type WalletId = "hashpack" | "metamask";
+type WalletId = "hashpack" | "metamask" | "dynamic";
 
 type ConnectionStep =
   | "list"
@@ -42,7 +76,8 @@ type ConnectionStep =
   | "wc-qr"
   | "wc-success"
   | "metamask-connect"
-  | "metamask-success";
+  | "metamask-success"
+  | "dynamic-connect";
 
 interface WalletOption {
   id: WalletId;
@@ -71,6 +106,15 @@ const WALLET_OPTIONS: WalletOption[] = [
     badge: "EVM",
     badgeColor: "orange",
     description: "Browser extension",
+    isWC: false,
+  },
+  {
+    id: "dynamic",
+    name: "Dynamic",
+    logo: DYNAMIC_LOGO,
+    badge: "Multi-chain",
+    badgeColor: "blue",
+    description: "Email, social, or 300+ wallets",
     isWC: false,
   },
 ];
@@ -164,6 +208,11 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     metaMaskAccount,
   } = useWallet();
 
+  // Dynamic Labs — programmatic auth flow trigger
+  // Use useIsLoggedIn + useDynamicModals to avoid the
+  // "Use setShowLinkNewWalletModal" warning when already authenticated
+  const { setShowAuthFlow, isLoggedIn: isLoggedInDynamic, setShowLinkNewWalletModal } = useSafeDynamicHooks();
+
   const [step, setStep] = useState<ConnectionStep>("list");
   const [selectedWallet, setSelectedWallet] = useState<WalletOption | null>(null);
   const [localSession, setLocalSession] = useState<HashPackSession | null>(null);
@@ -179,6 +228,29 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   useEffect(() => {
     setExtensionDetected(isHashPackExtensionInstalled());
   }, []);
+
+  // ── Dynamic Connect ──────────────────────────────────────────────
+  //
+  // Opens the Dynamic Labs auth modal (email, social, 300+ wallets).
+  // Our modal closes and hands off to Dynamic's UI (themed via
+  // dynamic-theme.css). The DynamicWalletBridge syncs the resulting
+  // wallet back into WalletContext automatically.
+  //
+  // When the user is already logged in via Dynamic, we show the
+  // "link new wallet" modal instead of the auth flow to avoid the
+  // SDK deprecation warning.
+
+  const handleDynamicConnect = useCallback(() => {
+    // Close our wallet modal — Dynamic opens its own themed overlay
+    onClose();
+    if (isLoggedInDynamic) {
+      // Already authenticated → show the "link additional wallet" modal
+      setShowLinkNewWalletModal(true);
+    } else {
+      // Not authenticated → show the full auth/connect flow
+      setShowAuthFlow(true);
+    }
+  }, [onClose, isLoggedInDynamic, setShowAuthFlow, setShowLinkNewWalletModal]);
 
   // ── WalletConnect Connect ────────────────────────────────────
   //
@@ -538,7 +610,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     );
   }
 
-  // ═════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   // MAIN WALLET LIST
   // ═════════════════════════════════════════════════════════════
   return (
@@ -607,6 +679,32 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           </div>
           <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-orange-500/10 transition-colors">
             <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-orange-400 transition-colors" />
+          </div>
+        </button>
+
+        {/* Multi-chain Divider */}
+        <div className="flex items-center gap-3 my-4">
+          <span className="text-[10px] text-white/20 tracking-widest uppercase">Multi-chain</span>
+          <div className="flex-1 h-px bg-white/[0.06]" />
+        </div>
+
+        {/* Dynamic */}
+        <button
+          onClick={handleDynamicConnect}
+          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-blue-500/30 hover:bg-white/[0.02] text-left mb-2"
+        >
+          <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
+            <img src={DYNAMIC_LOGO} alt="Dynamic" className="w-11 h-11 object-cover" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-sm text-white/90">Dynamic</span>
+              <Badge color="blue">Multi-chain</Badge>
+            </div>
+            <p className="text-xs text-white/30">Email, social, or 300+ wallets</p>
+          </div>
+          <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-blue-500/10 transition-colors">
+            <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-blue-400 transition-colors" />
           </div>
         </button>
 

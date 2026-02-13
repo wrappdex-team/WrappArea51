@@ -47,9 +47,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     if (theme === "light") {
       root.classList.add("light-mode");
-      root.classList.remove("dark-mode");
+      root.classList.remove("dark");
     } else {
-      root.classList.add("dark-mode");
+      root.classList.add("dark");
       root.classList.remove("light-mode");
     }
   }, [theme]);

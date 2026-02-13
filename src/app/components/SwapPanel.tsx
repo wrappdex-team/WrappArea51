@@ -65,7 +65,7 @@ import {
 import { OneInchWidget } from "./OneInchWidget";
 
 const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
-const GAS_RESERVE = 3; // HBAR reserved for gas
+const GAS_RESERVE = 1; // HBAR reserved for gas — Hedera fees are sub-cent, 1 HBAR covers dozens of txns
 
 function isUserCancelled(r: SwapResult | null): boolean {
   if (!r) return false;

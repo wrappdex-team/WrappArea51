@@ -8,9 +8,9 @@
 
 // ── Wrappdex main logos (light & dark mode) ──────────────────────────
 // Light mode logo (dark text, for light backgrounds)
-import wrappdexLogoLight from "figma:asset/223816e04d625491d254d68760fc0c00ebfa9486.png";
+import wrappdexLogoLight from "figma:asset/c6c302ce31a9e8fa54acb2e857abd8073dfbcfa6.png";
 // Dark mode logo (light text, for dark backgrounds)
-import wrappdexLogoDark from "figma:asset/fe19cbf1f950c1e1b1b71e9484e67c0892845f47.png";
+import wrappdexLogoDark from "figma:asset/6b6744b10bc6c8265e179367058c60874f7766e0.png";
 
 // Official HashPack wallet logo (provided asset)
 import hashpackLogoAsset from "figma:asset/4a7cffb754ec2cfe15d1ebcf6d922e8a988f553a.png";

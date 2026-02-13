@@ -23,6 +23,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { isVipEligible } from "../utils/vip";
 import { authenticate, hasValidSession, clearSession } from "../utils/auth";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
+import { VIPAccessGate } from "./VIPAccessGate";
 import {
   fetchPools,
   getPoolStats,
@@ -574,21 +575,7 @@ export function SmartLiquidity() {
 
   // VIP Gate
   if (!isVip) {
-    return (
-      <div className="min-h-[calc(100vh-140px)] flex items-center justify-center p-4">
-        <div className={`max-w-lg w-full rounded-2xl p-8 text-center ${cardClass}`}>
-          <div className={`w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center ${isDark ? "bg-gradient-to-br from-pink-500/20 to-purple-500/20 border border-pink-500/30" : "bg-gradient-to-br from-pink-50 to-purple-50 border border-pink-200"}`}>
-            <Lock className={`w-10 h-10 ${isDark ? "text-pink-400" : "text-pink-500"}`} />
-          </div>
-          <h1 className="text-2xl font-bold mb-2 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">VIP Access Required</h1>
-          <p className={`mb-4 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Smart Liquidity pools require VIP status.</p>
-          <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm ${isDark ? "bg-slate-800/50 border border-pink-500/10 text-slate-300" : "bg-gray-50 border border-gray-200 text-gray-600"}`}>
-            <Crown className={`w-4 h-4 ${isDark ? "text-pink-400" : "text-pink-500"}`} />
-            Hold {formatTokenCount(GATE_THRESHOLD)} HBAR.h tokens
-          </div>
-        </div>
-      </div>
-    );
+    return <VIPAccessGate featureName="Smart Liquidity" />;
   }
 
   return (

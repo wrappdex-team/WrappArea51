@@ -112,7 +112,7 @@ export function NewsTicker() {
       ref={tickerRef}
       className={`relative w-full overflow-hidden border-b ${
         isDark
-          ? "bg-[#060810] border-white/[0.04]"
+          ? "bg-[#080a12] border-white/[0.04]"
           : "bg-gray-50 border-gray-100"
       }`}
       onMouseEnter={() => setIsPaused(true)}

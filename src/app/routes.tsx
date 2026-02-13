@@ -53,6 +53,7 @@ const SmartLiquidity = lazy(() => retryImport(() => import("./components/SmartLi
 const Wallet = lazy(() => retryImport(() => import("./components/Wallet")).then(m => ({ default: m.Wallet })));
 const DAO = lazy(() => retryImport(() => import("./components/DAO")).then(m => ({ default: m.DAO })));
 const Bridges = lazy(() => retryImport(() => import("./components/Bridges")).then(m => ({ default: m.Bridges })));
+const Audit = lazy(() => retryImport(() => import("./components/Audit")).then(m => ({ default: m.Audit })));
 
 export const router = createBrowserRouter([
   {
@@ -68,6 +69,7 @@ export const router = createBrowserRouter([
       { path: "dao", Component: DAO },
       { path: "bridges", Component: Bridges },
       { path: "defi", Component: DeFi },
+      { path: "audit", Component: Audit },
       { path: "smart-liquidity", element: <Navigate to="/trading" replace /> },
     ],
   },

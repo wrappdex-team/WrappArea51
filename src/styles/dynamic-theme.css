@@ -1,0 +1,230 @@
+/**
+ * Dynamic Labs SDK — Dark Glass-Morphism Theme Override
+ *
+ * Matches Wrappdex's #080a12 base bg, #0d0f1a/80 card bg,
+ * border-white/[0.06], with purple/pink accent gradients.
+ *
+ * Reference: https://docs.dynamic.xyz/react-sdk/customization/css
+ */
+
+/* ── Dynamic Modal Root Variables ──────────────────────────────────── */
+:root {
+  /* Primary backgrounds */
+  --dynamic-base-1: #080a12;
+  --dynamic-base-2: #0d0f1a;
+  --dynamic-base-3: #12141f;
+  --dynamic-base-4: #181b28;
+  --dynamic-base-5: #1e2233;
+
+  /* Text colors */
+  --dynamic-text-primary: rgba(255, 255, 255, 0.9);
+  --dynamic-text-secondary: rgba(255, 255, 255, 0.5);
+  --dynamic-text-tertiary: rgba(255, 255, 255, 0.25);
+  --dynamic-text-link: #a855f7;
+
+  /* Brand / accent */
+  --dynamic-brand-primary-color: #a855f7;
+  --dynamic-brand-hover-color: #9333ea;
+  --dynamic-badge-primary-background: rgba(168, 85, 247, 0.15);
+  --dynamic-badge-primary-color: #c084fc;
+
+  /* Borders */
+  --dynamic-border: rgba(255, 255, 255, 0.06);
+  --dynamic-border-hover: rgba(168, 85, 247, 0.3);
+
+  /* Shadows */
+  --dynamic-shadow-down-1: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  --dynamic-shadow-down-2: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+  --dynamic-shadow-down-3: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+
+  /* Overlay */
+  --dynamic-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Wallet list item hover */
+  --dynamic-hover: rgba(255, 255, 255, 0.03);
+
+  /* Connection status */
+  --dynamic-connection-green: #34d399;
+  --dynamic-connection-red: #f87171;
+
+  /* Radii — match Wrappdex rounded-2xl cards */
+  --dynamic-radius: 16px;
+  --dynamic-radius-button: 12px;
+
+  /* Font */
+  --dynamic-font-family: inherit;
+  --dynamic-font-size-body: 14px;
+  --dynamic-font-size-small: 12px;
+  --dynamic-font-size-title: 18px;
+
+  /* Button sizes */
+  --dynamic-button-padding: 10px 20px;
+
+  /* Connect button */
+  --dynamic-connect-button-background: linear-gradient(135deg, #ec4899, #9333ea);
+  --dynamic-connect-button-color: #ffffff;
+  --dynamic-connect-button-border: none;
+  --dynamic-connect-button-border-radius: 12px;
+  --dynamic-connect-button-padding: 8px 20px;
+  --dynamic-connect-button-shadow: 0 4px 15px rgba(236, 72, 153, 0.3);
+}
+
+/* ── Dynamic Modal Overrides ───────────────────────────────────────── */
+
+/* ── Z-Index & Centering — keep modal above ALL app layers ───────── */
+
+/*
+ * Dynamic SDK renders its modal through a React portal into a
+ * shadow-DOM host.  We MUST NOT override display, position, or inset
+ * on these containers — the SDK manages their visibility lifecycle.
+ * Forcing position:fixed / display:flex with !important on always-
+ * present shadow-DOM elements creates a permanent fullscreen overlay
+ * that blocks the entire app.
+ *
+ * We only set z-index so that when the SDK does show the modal,
+ * it renders above all app layers.
+ */
+
+/* Portal root — only z-index promotion */
+#dynamic-modal,
+[data-dynamic-modal],
+.dynamic-modal-container,
+.dynamic-shadow-dom-content,
+.dynamic-shadow-dom {
+  z-index: 99999 !important;
+}
+
+/* Modal backdrop — cosmetic styling only (no display/position overrides) */
+.dynamic-modal-overlay {
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  background: rgba(0, 0, 0, 0.7) !important;
+}
+
+/* Modal container — glass-morphism card visuals only.
+   The outer #dynamic-modal / .dynamic-modal div sits in the light DOM
+   permanently.  Its sole purpose is to anchor the shadow-DOM portal.
+   Visual styling (background, border, box-shadow) for the actual modal
+   card is handled INSIDE the shadow DOM via cssOverrides passed to
+   DynamicContextProvider.  If we set border/background here the
+   always-present empty div shows a phantom dark line across the page. */
+.dynamic-modal {
+  z-index: 100000 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Wallet list items — hover with subtle purple glow */
+.dynamic-widget-inline-controls,
+.dynamic-wallet-list__tile {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 12px !important;
+  transition: all 0.2s ease !important;
+}
+
+.dynamic-wallet-list__tile:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(168, 85, 247, 0.3) !important;
+}
+
+/* Search input */
+.dynamic-search-bar__input {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  border-radius: 12px !important;
+}
+
+.dynamic-search-bar__input::placeholder {
+  color: rgba(255, 255, 255, 0.25) !important;
+}
+
+.dynamic-search-bar__input:focus {
+  border-color: rgba(168, 85, 247, 0.4) !important;
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.1) !important;
+}
+
+/* Primary buttons — gradient matching Wrappdex CTA */
+.dynamic-button--primary {
+  background: linear-gradient(135deg, #ec4899, #9333ea) !important;
+  border: none !important;
+  color: white !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 15px rgba(236, 72, 153, 0.3) !important;
+  transition: all 0.2s ease !important;
+}
+
+.dynamic-button--primary:hover {
+  background: linear-gradient(135deg, #f472b6, #a855f7) !important;
+  box-shadow: 0 4px 20px rgba(236, 72, 153, 0.4) !important;
+}
+
+/* Secondary / ghost buttons */
+.dynamic-button--secondary {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+  border-radius: 12px !important;
+}
+
+.dynamic-button--secondary:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Footer / powered-by text */
+.dynamic-footer,
+.dynamic-widget__powered-by {
+  opacity: 0.3 !important;
+}
+
+/* Dividers */
+.dynamic-divider {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Scrollbar inside Dynamic modal */
+.dynamic-modal ::-webkit-scrollbar {
+  width: 4px;
+}
+
+.dynamic-modal ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dynamic-modal ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.dynamic-modal ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Tab navigation inside Dynamic */
+.dynamic-tab-option--is-active {
+  color: #a855f7 !important;
+  border-color: #a855f7 !important;
+}
+
+/* QR code container */
+.dynamic-qr-code-container {
+  background: white !important;
+  border-radius: 16px !important;
+  padding: 16px !important;
+}
+
+/* Pending connection spinner */
+.dynamic-pending-connection__spinner {
+  color: #a855f7 !important;
+}
+
+/* User profile widget (post-login) */
+.dynamic-user-profile {
+  background: rgba(13, 15, 26, 0.8) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 12px !important;
+}

@@ -3,8 +3,41 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+/**
+ * Custom Vite plugin to fix @dynamic-labs/ethereum internal import resolution.
+ *
+ * The package's `exports` field only exposes `"."` and `"./package.json"`, but
+ * its internal `EthereumWalletConnectors.js` (re-exported from the barrel) does
+ * a relative import to `./walletConnect/utils/getWalletConnectConnector.js`.
+ * Vite 6's strict exports-map enforcement rejects this as a missing subpath,
+ * even though the file physically exists on disk. This plugin intercepts that
+ * specific resolution and returns the real file path.
+ */
+function dynamicLabsResolverPlugin() {
+  return {
+    name: 'fix-dynamic-labs-internal-imports',
+    enforce: 'pre' as const,
+    resolveId(source: string, importer: string | undefined) {
+      // Only intercept relative imports originating from within @dynamic-labs/ethereum
+      if (
+        importer &&
+        importer.includes('@dynamic-labs/ethereum') &&
+        source.includes('walletConnect/utils/getWalletConnectConnector')
+      ) {
+        return path.resolve(
+          __dirname,
+          'node_modules/@dynamic-labs/ethereum/src/walletConnect/utils/getWalletConnectConnector.js',
+        );
+      }
+      return null;
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => ({
   plugins: [
+    // Fix @dynamic-labs/ethereum internal resolution BEFORE other plugins process it
+    dynamicLabsResolverPlugin(),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),

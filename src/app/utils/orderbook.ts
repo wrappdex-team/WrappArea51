@@ -52,8 +52,24 @@ export type NetworkMode = "mainnet" | "testnet";
 // ── Network-Aware Storage ───────────────────────────────────────────
 
 const STORAGE_PREFIX = "hbarh-orderbook";
-const MAX_ENTRIES = 500;
+// [AUDIT-AMM-04] Reduced from 500 — only keep recent trades, data minimization
+const MAX_ENTRIES = 50;
 let _activeNetwork: NetworkMode = "mainnet";
+
+/** Anonymize a wallet address — keep realm.shard prefix + last 3 digits only. */
+function anonymizeWallet(wallet: string): string {
+  // "0.0.518487" → "0.0.•••487"
+  if (/^0\.0\.\d+$/.test(wallet)) {
+    const num = wallet.split(".")[2];
+    if (num.length <= 3) return wallet; // Short IDs stay readable
+    return `0.0.${"•".repeat(Math.min(num.length - 3, 4))}${num.slice(-3)}`;
+  }
+  // EVM addresses: "0xAbC...dEf" → "0x••••dEf"
+  if (wallet.startsWith("0x") && wallet.length > 8) {
+    return `0x${"•".repeat(4)}${wallet.slice(-4)}`;
+  }
+  return "•••";
+}
 
 /** Set the active Hedera network for orderbook operations. */
 export function setActiveNetwork(network: NetworkMode): void {
@@ -103,6 +119,10 @@ function saveEntries(entries: OrderbookEntry[], network?: NetworkMode): void {
 export function recordTrade(trade: Omit<OrderbookEntry, "id" | "timestamp" | "network">): OrderbookEntry {
   const entry: OrderbookEntry = {
     ...trade,
+    // [AUDIT-AMM-04] Anonymize wallet — don't store full account IDs in localStorage
+    wallet: anonymizeWallet(trade.wallet),
+    // [AUDIT-AMM-04] Strip transaction ID from localStorage — view on HashScan only during session
+    transactionId: null,
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now(),
     network: _activeNetwork,
@@ -138,11 +158,14 @@ export function getOrderbook(limit: number = 100): OrderbookEntry[] {
 }
 
 /**
- * Get trades for a specific wallet.
+ * Get trades for a specific wallet (matches against anonymized wallet pattern).
+ * [AUDIT-AMM-04] Since wallets are now anonymized, this matches against the
+ * anonymized form. For exact per-user history, use the SwapHistory localStorage.
  */
 export function getWalletTrades(wallet: string, limit: number = 50): OrderbookEntry[] {
+  const anon = anonymizeWallet(wallet);
   return loadEntries()
-    .filter((e) => e.wallet === wallet)
+    .filter((e) => e.wallet === anon || e.wallet === wallet)
     .reverse()
     .slice(0, limit);
 }
@@ -170,7 +193,7 @@ export function getOrderbookStats(): OrderbookStats {
 
   const recent = entries.filter((e) => e.timestamp > dayAgo);
 
-  // Count unique wallets
+  // Count unique wallets (anonymized — approximate count only)
   const wallets = new Set(entries.map((e) => e.wallet));
 
   // Compute 24h volume

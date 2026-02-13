@@ -34,6 +34,7 @@ import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
 import { TradingSwapPanel } from "./TradingSwapPanel";
 import { TradingPoolsSection } from "./TradingPoolsSection";
 import { VipChatBox } from "./VipChatBox";
+import { VIPAccessGate } from "./VIPAccessGate";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -463,88 +464,7 @@ export function Trading() {
 
   // ── VIP Gate ──
   if (!isVip) {
-    return (
-      <div className="min-h-[calc(100vh-140px)] flex items-center justify-center p-4">
-        <div className={`max-w-lg w-full rounded-2xl p-8 text-center ${cardClass}`}>
-          <div className={`w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center ${
-            isDark ? "bg-gradient-to-br from-pink-500/20 to-purple-500/20 border border-pink-500/30" : "bg-gradient-to-br from-pink-50 to-purple-50 border border-pink-200"
-          }`}>
-            <Lock className={`w-10 h-10 ${isDark ? "text-pink-400" : "text-pink-500"}`} />
-          </div>
-
-          <h1 className="text-2xl font-bold mb-2 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-            VIP Access Required
-          </h1>
-          <p className={`mb-6 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            The CEX Trading Terminal is an exclusive feature for HBAR.ħ VIP members.
-            Hold <span className="font-bold text-pink-400">{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span> tokens or <span className="font-bold text-pink-400">1 VIP NFT</span> to unlock access.
-          </p>
-
-          <div className={`rounded-xl p-4 mb-6 ${isDark ? "bg-slate-800/50 border border-slate-700/50" : "bg-gray-50 border border-gray-200"}`}>
-            <div className="flex items-center justify-between mb-3">
-              <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Required Balance</span>
-              <span className="font-bold text-pink-400">{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>
-            </div>
-            <div className="flex items-center justify-between mb-3">
-              <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Your Balance</span>
-              <span className={`font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-                {hederaAccount?.tokens
-                  ? (() => {
-                      const hbarhToken = hederaAccount.tokens.find(
-                        t => t.tokenId === "0.0.9356476"
-                      );
-                      return hbarhToken
-                        ? hbarhToken.rawBalance.toLocaleString()
-                        : "0";
-                    })()
-                  : primaryWallet
-                    ? "Loading..."
-                    : "Not connected"
-                }
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Verification</span>
-              <span className={`flex items-center gap-1.5 text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                <ShieldCheck className="w-3.5 h-3.5" />
-                On-chain via Mirror Node
-              </span>
-            </div>
-          </div>
-
-          {!primaryWallet && (
-            <p className={`text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              Connect your HashPack wallet to verify your HBAR.ħ balance.
-            </p>
-          )}
-
-          <div className={`mt-6 pt-6 border-t ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
-            <div className="flex items-center justify-center gap-2 mb-3">
-              <Crown className={`w-4 h-4 ${isDark ? "text-amber-400" : "text-amber-500"}`} />
-              <span className={`text-sm font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>VIP Benefits</span>
-            </div>
-            <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r from-pink-500/5 to-purple-500/5">
-                <BarChart2 className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-                <span>CEX Trading Terminal</span>
-              </div>
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r from-pink-500/5 to-purple-500/5">
-                <Waves className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                <span>HSuite Smart Execution</span>
-              </div>
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r from-pink-500/5 to-purple-500/5">
-                <ArrowRightLeft className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-                <span>Multi-DEX Aggregation</span>
-              </div>
-              <div className="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r from-pink-500/5 to-purple-500/5">
-                <ShieldCheck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                <span>DAO Governance Access</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <VIPAccessGate featureName="CEX Trading Terminal" />;
   }
 
   // ── Main CEX Trading Terminal ──

@@ -57,7 +57,10 @@ const STORAGE_KEY = "hbarh-swap-history";
 export function loadSwapHistory(): SwapHistoryEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed: SwapHistoryEntry[] = JSON.parse(raw);
+    // [AUDIT-AMM-04] Enforce 10-entry cap on read (auto-trims legacy larger histories)
+    return Array.isArray(parsed) ? parsed.slice(0, 10) : [];
   } catch {
     return [];
   }
@@ -67,8 +70,8 @@ export function saveSwapToHistory(entry: SwapHistoryEntry): void {
   try {
     const history = loadSwapHistory();
     history.unshift(entry);
-    // Keep last 50 entries
-    const trimmed = history.slice(0, 50);
+    // [AUDIT-AMM-04] Keep last 10 entries only — data minimization
+    const trimmed = history.slice(0, 10);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   } catch { /* ignore */ }
 }
@@ -164,10 +167,10 @@ function classifyRootCause(diag: TransactionDiagnosis, userAccountId: string): {
       };
     }
     return {
-      rootCause: "Swap completed successfully",
-      severity: "info",
-      actions: ["Output tokens should be visible in HashPack", "Refresh wallet balance if not visible"],
-    };
+        rootCause: "Swap completed successfully",
+        severity: "info",
+        actions: ["Output tokens should be visible in HashPack", "Refresh wallet balance if not visible"],
+      };
   }
 
   return {
@@ -337,8 +340,8 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
 
       {expanded && (
         <div className={`border-t ${isDark ? "border-slate-800/30" : "border-gray-100"}`}>
-          <div className="max-h-[480px] overflow-y-auto">
-            {history.map((entry) => {
+          <div className="max-h-[400px] overflow-y-auto">
+            {history.slice(0, 10).map((entry) => {
               const isShowingDiagnosis = diagnosingId === entry.id && (diagnosisLoading || diagnosisResult?.entryId === entry.id);
               const diag = diagnosisResult?.entryId === entry.id ? diagnosisResult.diag : null;
 
@@ -499,7 +502,7 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
                             <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
                               <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Gas Fee</div>
                               <div className={`text-[11px] font-bold ${
-                                (diag.chargedFeeHbar || 0) > 5 ? "text-red-400" : isDark ? "text-slate-200" : "text-gray-700"
+                                (diag.chargedFeeHbar || 0) > 1 ? "text-red-400" : isDark ? "text-slate-200" : "text-gray-700"
                               }`}>
                                 {diag.chargedFeeHbar?.toFixed(4) || "0"} ℏ
                               </div>

@@ -52,6 +52,7 @@ const ROUTE_IMPORTERS: Record<string, () => Promise<unknown>> = {
   "/wallet": () => retryImport(() => import("../components/Wallet")),
   "/dao": () => retryImport(() => import("../components/DAO")),
   "/bridges": () => retryImport(() => import("../components/Bridges")),
+  "/audit": () => retryImport(() => import("../components/Audit")),
 };
 
 // Track which routes have already been preloaded

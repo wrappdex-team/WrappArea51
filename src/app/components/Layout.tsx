@@ -104,7 +104,7 @@ export function Layout() {
   }, [location.pathname]);
 
   return (
-    <div className={`min-h-screen ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`}>
+    <div className={`min-h-screen ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`} style={{ border: 'none', outline: 'none' }}>
       {/* Dynamic SEO Head */}
       <SEOHead {...currentSEO} />
 
@@ -131,19 +131,19 @@ export function Layout() {
             <Link to="/" className="flex items-center group flex-shrink-0 ml-1">
               <div className={`relative flex-shrink-0 transition-transform duration-300 ${vipActive ? "animate-vip-pulse" : ""}`}>
                 {isDark ? (
-                  <div className="h-[60px] md:h-[70px] lg:h-[60px] xl:h-[70px] flex items-center">
+                  <div className="h-[90px] md:h-[105px] lg:h-[90px] xl:h-[105px] flex items-center">
                     <img
                       src={HBARH_BRANDING_DARK}
                       alt="Wrappdex Decentralized Exchange"
-                      className="h-[54px] md:h-[64px] lg:h-[54px] xl:h-[64px] w-auto object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.4)]"
+                      className="h-[81px] md:h-[96px] lg:h-[81px] xl:h-[96px] w-auto object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.4)]"
                     />
                   </div>
                 ) : (
-                  <div className="h-[70px] md:h-[85px] lg:h-[70px] xl:h-[80px] flex items-center">
+                  <div className="h-[105px] md:h-[128px] lg:h-[105px] xl:h-[120px] flex items-center">
                     <img
                       src={HBARH_BRANDING_LIGHT}
                       alt="Wrappdex Decentralized Exchange"
-                      className="h-[64px] md:h-[78px] lg:h-[64px] xl:h-[74px] w-auto object-contain"
+                      className="h-[96px] md:h-[117px] lg:h-[96px] xl:h-[111px] w-auto object-contain"
                     />
                   </div>
                 )}
@@ -509,7 +509,7 @@ export function Layout() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content">
+      <main className="container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content" style={{ border: 'none', outline: 'none', boxShadow: 'none' }}>
         <ErrorBoundary isDark={isDark}>
           <Suspense
             fallback={
@@ -527,11 +527,11 @@ export function Layout() {
       </main>
 
       {/* Footer – Copyright */}
-      <footer className={`border-t py-4 px-3 text-center mb-16 lg:mb-0 ${
+      <footer className={`py-4 px-3 text-center mb-16 lg:mb-0 ${
         isDark
-          ? "border-white/[0.04] bg-[#060810]"
-          : "border-gray-100 bg-[#f8fafc]"
-      }`}>
+          ? "bg-[#080a12]"
+          : "bg-[#f8fafc]"
+      }`} style={{ border: 'none', borderTop: 'none', outline: 'none', boxShadow: 'none' }}>
         <p className={`text-[10px] md:text-[11px] leading-relaxed ${isDark ? "text-slate-600" : "text-gray-400"}`}>
           &copy; {new Date().getFullYear()} Wrappdex. All rights reserved. Wrappdex is a decentralized exchange on the Hedera network. Trading crypto assets involves significant risk. This platform does not constitute financial advice.
         </p>

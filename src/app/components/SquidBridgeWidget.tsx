@@ -234,7 +234,7 @@ export function SquidBridgeWidget({ onClose, isDark }: SquidBridgeWidgetProps) {
         className="relative w-full rounded-2xl overflow-hidden"
         style={{
           backgroundColor: "#17191C",
-          minHeight: "680px",
+          height: "700px",
         }}
       >
         {/* Loading state */}
@@ -295,12 +295,14 @@ export function SquidBridgeWidget({ onClose, isDark }: SquidBridgeWidgetProps) {
           onError={handleIframeError}
           allow="clipboard-write; clipboard-read"
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-top-navigation-by-user-activation"
-          className="w-full border-0"
+          scrolling="no"
+          className="w-full border-0 overflow-hidden"
           style={{
-            height: "680px",
+            height: "700px",
             opacity: iframeLoaded && !loadError ? 1 : 0,
             transition: "opacity 0.4s ease",
             colorScheme: "dark",
+            backgroundColor: "#17191C",
           }}
         />
       </div>

@@ -357,8 +357,9 @@ export function DeFi() {
             </div>
 
             {/* Pool Rows */}
-            {filteredPools.map((pool) => {
+            {filteredPools.map((pool, poolIndex) => {
               const expanded = expandedPool === pool.id;
+              const isLast = poolIndex === filteredPools.length - 1;
               return (
                 <div key={pool.id}>
                   <div
@@ -367,7 +368,7 @@ export function DeFi() {
                       expanded
                         ? isDark ? "bg-pink-500/5" : "bg-pink-50"
                         : isDark ? "hover:bg-slate-800/30" : "hover:bg-gray-50"
-                    } ${isDark ? "border-b border-pink-500/5" : "border-b border-gray-50"}`}
+                    } ${isLast && !expanded ? "" : isDark ? "border-b border-pink-500/5" : "border-b border-gray-50"}`}
                   >
                     {/* Favorite */}
                     <div className="hidden md:flex col-span-1 items-center">

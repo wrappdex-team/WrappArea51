@@ -21,9 +21,16 @@ import {
   ImageIcon,
   Crown,
   Gift,
+  Loader2,
+  Settings,
+  UserPlus,
+  Shield,
+  X,
+  KeyRound,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { toast } from "sonner";
 import {
   HBARH_TOKEN_ID,
   GATE_THRESHOLD,
@@ -36,7 +43,6 @@ import {
   getNftCount,
   isEligible,
   maxVotesForBalance,
-  totalProposalsVotedThisSession,
   loadProposals,
   createProposal,
   castVote,
@@ -45,6 +51,12 @@ import {
   addComment,
   canModifyProposal,
   isDAOAdmin,
+  setAdminListCache,
+  DAO_FOUNDER_ACCOUNT,
+  fetchDaoAdmins,
+  addDaoAdmin,
+  removeDaoAdmin,
+  forceReauthenticate,
   formatTokenCount,
   formatCommentTime,
   timeRemaining,
@@ -136,29 +148,67 @@ export function DAO() {
   } | null>(null);
   const [editingProposal, setEditingProposal] = useState<Proposal | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminList, setAdminList] = useState<string[]>([DAO_FOUNDER_ACCOUNT]);
 
-  // Load proposals on mount
-  useEffect(() => {
-    setProposals(loadProposals());
-  }, []);
-
-  // Re-resolve proposals every 60s (catch expired ones)
-  useEffect(() => {
-    const iv = setInterval(() => setProposals(loadProposals()), 60_000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // ── Derived state ─────────────────────────────────────────────────
+  // ── Derived state (must be above useEffects that reference them) ───
 
   const tokens = hederaAccount?.tokens ?? [];
   const wrappBalance = getWrappBalance(tokens, hederaNetwork);
   const nftCount = getNftCount(tokens);
   const eligible = isEligible(tokens, hederaNetwork);
   const maxVotes = maxVotesForBalance(tokens, hederaNetwork);
-  const spent = totalProposalsVotedThisSession();
   const connected = !!hashPackSession?.accountId;
   const accountId = hashPackSession?.accountId ?? "";
-  const isAdmin = isDAOAdmin(accountId);
+  // isAdmin derived from server-populated admin cache (updated via fetchDaoAdmins)
+  const [isAdmin, setIsAdmin] = useState(() => isDAOAdmin(accountId));
+
+  // Load proposals from server on mount
+  useEffect(() => {
+    loadProposals().then((p) => {
+      setProposals(p);
+      setLoading(false);
+    });
+  }, []);
+
+  // Discover admin status from server on wallet connect
+  // PASSIVE: Uses existing session only — never triggers a signing prompt.
+  // Admin status discovered either from client cache (covers founder) or
+  // from server when a session already exists (covers dynamically added admins).
+  // If no session, admin status will be discovered after the user's first action.
+  useEffect(() => {
+    if (!accountId) { setIsAdmin(false); return; }
+    // Quick client-side check first (covers founder instantly)
+    if (isDAOAdmin(accountId)) {
+      setIsAdmin(true);
+    }
+    // Passive server check — fetchDaoAdmins will return cache if no session
+    fetchDaoAdmins(accountId).then((result) => {
+      if (result.error === "no_session") {
+        // No session — rely on client cache only. No signing prompt.
+        return;
+      }
+      if (!result.error && result.admins.includes(accountId)) {
+        setIsAdmin(true);
+        setAdminList(result.admins);
+      } else if (!result.error) {
+        // Server responded but user not in admin list
+        setIsAdmin(isDAOAdmin(accountId)); // fall back to cache (founder check)
+        setAdminList(result.admins);
+      }
+    });
+  }, [accountId]);
+
+  // Re-fetch proposals every 60s (catch expired ones, new votes, etc.)
+  useEffect(() => {
+    const iv = setInterval(async () => {
+      const p = await loadProposals();
+      setProposals(p);
+    }, 60_000);
+    return () => clearInterval(iv);
+  }, []);
 
   const filtered = useMemo(() => {
     if (filter === "all") return proposals;
@@ -174,7 +224,21 @@ export function DAO() {
     return { active, passed, totalVoters, total: proposals.length };
   }, [proposals]);
 
-  // ── Handlers ───────────────────────────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────────
+
+  // After any successful authenticated action, try to discover admin status
+  // since we now have a valid session. This is fire-and-forget.
+  const refreshAdminStatus = useCallback(() => {
+    if (!accountId) return;
+    fetchDaoAdmins(accountId).then((result) => {
+      if (!result.error) {
+        setAdminList(result.admins);
+        setIsAdmin(result.admins.includes(accountId));
+      }
+    });
+  }, [accountId]);
+
+  // ── Handlers (all async — server-authoritative) ───────────────────
 
   const handleConnect = useCallback(async () => {
     await connectHashPack(hederaNetwork);
@@ -183,23 +247,41 @@ export function DAO() {
   const handleRefreshBalance = useCallback(async () => {
     setRefreshing(true);
     await refreshHederaBalance();
+    // Also refresh proposals from server
+    const p = await loadProposals();
+    setProposals(p);
     setRefreshing(false);
   }, [refreshHederaBalance]);
 
   const handleVote = useCallback(
-    (proposalId: string, direction: "for" | "against") => {
-      if (!connected || !eligible || maxVotes <= 0) return;
+    async (proposalId: string, direction: "for" | "against") => {
+      if (!connected || !eligible || maxVotes <= 0 || actionLoading) return;
 
-      // Weight = user's full voting power from on-chain balance check
-      // 1 vote per 100M HBAR.ħ (max 10) + 1 vote per 3 NFTs (max 1)
-      const weight = maxVotes;
-      const updated = castVote(proposals, proposalId, accountId, direction, weight);
-      if (updated) {
-        setProposals(updated);
-        setVoteConfirm(null);
+      setActionLoading(true);
+      try {
+        const result = await castVote(accountId, proposalId, direction);
+        if (result.success && result.proposal) {
+          // Update the specific proposal in state
+          setProposals((prev) =>
+            prev.map((p) => (p.id === proposalId ? result.proposal! : p))
+          );
+          setVoteConfirm(null);
+          toast.success(
+            `Vote cast ${direction} with ${result.votingPower}x power`,
+            { duration: 4000 }
+          );
+          // Session now exists — discover admin status if not yet known
+          refreshAdminStatus();
+        } else {
+          toast.error(result.error || "Vote failed", { duration: 5000 });
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Vote failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
       }
     },
-    [proposals, connected, eligible, maxVotes, accountId]
+    [connected, eligible, maxVotes, accountId, actionLoading, refreshAdminStatus]
   );
 
   const hasVotedOn = useCallback(
@@ -210,36 +292,97 @@ export function DAO() {
   );
 
   const handleDelete = useCallback(
-    (proposalId: string) => {
-      const updated = deleteProposal(proposals, proposalId, accountId);
-      if (updated) {
-        setProposals(updated);
-        setDeleteConfirmId(null);
-        if (expandedId === proposalId) setExpandedId(null);
+    async (proposalId: string) => {
+      if (actionLoading) return;
+      setActionLoading(true);
+      try {
+        const result = await deleteProposal(accountId, proposalId);
+        if (result.error) {
+          toast.error(result.error, { duration: 5000 });
+        } else {
+          setProposals(result.proposals);
+          setDeleteConfirmId(null);
+          if (expandedId === proposalId) setExpandedId(null);
+          toast.success("Proposal deleted", { duration: 3000 });
+          refreshAdminStatus();
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Delete failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
       }
     },
-    [proposals, accountId, expandedId]
+    [accountId, expandedId, actionLoading, refreshAdminStatus]
   );
 
   const handleEdit = useCallback(
-    (proposalId: string, updates: { title?: string; description?: string; category?: ProposalCategory }) => {
-      const updated = editProposal(proposals, proposalId, accountId, updates);
-      if (updated) {
-        setProposals(updated);
-        setEditingProposal(null);
+    async (proposalId: string, updates: { title?: string; description?: string; category?: ProposalCategory }) => {
+      if (actionLoading) return;
+      setActionLoading(true);
+      try {
+        const result = await editProposal(accountId, proposalId, updates);
+        if (result.error) {
+          toast.error(result.error, { duration: 5000 });
+        } else {
+          setProposals(result.proposals);
+          setEditingProposal(null);
+          toast.success("Proposal updated", { duration: 3000 });
+          refreshAdminStatus();
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Edit failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
       }
     },
-    [proposals, accountId]
+    [accountId, actionLoading, refreshAdminStatus]
   );
 
   const handleAddComment = useCallback(
-    (proposalId: string, text: string) => {
-      const updated = addComment(proposals, proposalId, accountId, text);
-      if (updated) {
-        setProposals(updated);
+    async (proposalId: string, text: string) => {
+      if (actionLoading) return;
+      setActionLoading(true);
+      try {
+        const result = await addComment(accountId, proposalId, text);
+        if (result.success && result.proposal) {
+          setProposals((prev) =>
+            prev.map((p) => (p.id === proposalId ? result.proposal! : p))
+          );
+          toast.success("Comment added", { duration: 2000 });
+          refreshAdminStatus();
+        } else {
+          toast.error(result.error || "Comment failed", { duration: 5000 });
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Comment failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
       }
     },
-    [proposals, accountId]
+    [accountId, actionLoading, refreshAdminStatus]
+  );
+
+  const handleCreate = useCallback(
+    async (title: string, desc: string, cat: ProposalCategory, days: number, quorum: number) => {
+      if (actionLoading) return;
+      setActionLoading(true);
+      try {
+        const result = await createProposal(accountId, title, desc, cat, days, quorum);
+        if (result.error) {
+          toast.error(result.error, { duration: 5000 });
+        } else {
+          setProposals(result.proposals);
+          toast.success("Proposal created", { duration: 3000 });
+          refreshAdminStatus();
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Create failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
+        setShowCreate(false);
+      }
+    },
+    [accountId, actionLoading, refreshAdminStatus]
   );
 
   // ── Render: Not connected ──────────────────────────────────────────
@@ -271,6 +414,32 @@ export function DAO() {
             {isConnectingHedera ? "Connecting..." : "Connect HashPack"}
           </button>
         </div>
+        {/* Show proposals read-only even when not connected */}
+        {!loading && proposals.length > 0 && (
+          <ProposalList
+            proposals={proposals}
+            filter={filter}
+            filtered={filtered}
+            stats={stats}
+            setFilter={setFilter}
+            expandedId={expandedId}
+            setExpandedId={setExpandedId}
+            canVote={false}
+            onVote={async () => {}}
+            hasVotedOn={() => null}
+            voteConfirm={voteConfirm}
+            setVoteConfirm={setVoteConfirm}
+            votingPower={0}
+            accountId=""
+            onDelete={async () => {}}
+            onEdit={() => {}}
+            deleteConfirmId={null}
+            setDeleteConfirmId={() => {}}
+            onAddComment={async () => {}}
+            canComment={false}
+            actionLoading={false}
+          />
+        )}
       </div>
     );
   }
@@ -316,18 +485,19 @@ export function DAO() {
           expandedId={expandedId}
           setExpandedId={setExpandedId}
           canVote={false}
-          onVote={() => {}}
+          onVote={async () => {}}
           hasVotedOn={() => null}
           voteConfirm={voteConfirm}
           setVoteConfirm={setVoteConfirm}
           votingPower={0}
           accountId=""
-          onDelete={() => {}}
+          onDelete={async () => {}}
           onEdit={() => {}}
           deleteConfirmId={null}
           setDeleteConfirmId={() => {}}
-          onAddComment={() => {}}
+          onAddComment={async () => {}}
           canComment={false}
+          actionLoading={false}
         />
       </div>
     );
@@ -338,10 +508,24 @@ export function DAO() {
   return (
     <div className="space-y-6">
       {isAdmin && daoTab === "governance" && (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setShowAdminPanel((v) => !v)}
+            className={`px-3 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-xs border disabled:opacity-50 ${
+              showAdminPanel
+                ? "bg-amber-500/15 border-amber-500/30 text-amber-400"
+                : isDark
+                  ? "bg-slate-800/50 border-white/5 text-slate-400 hover:text-white hover:border-white/10"
+                  : "bg-gray-100 border-gray-200 text-gray-500 hover:text-gray-900"
+            }`}
+          >
+            <Settings className="w-3.5 h-3.5" />
+            Admin
+          </button>
           <button
             onClick={() => setShowCreate(true)}
-            className={`px-5 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-white ${
+            disabled={actionLoading}
+            className={`px-5 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-white disabled:opacity-50 ${
               isSky
                 ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25"
                 : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
@@ -353,6 +537,17 @@ export function DAO() {
         </div>
       )}
 
+      {/* ── Admin Management Panel (toggle-hidden) ── */}
+      {isAdmin && showAdminPanel && (
+        <AdminManagementPanel
+          accountId={accountId}
+          adminList={adminList}
+          setAdminList={setAdminList}
+          actionLoading={actionLoading}
+          setActionLoading={setActionLoading}
+        />
+      )}
+
       <EligibilityCard
         wrappBalance={wrappBalance}
         nftCount={nftCount}
@@ -361,7 +556,6 @@ export function DAO() {
         onRefresh={handleRefreshBalance}
         refreshing={refreshing}
         maxVotes={maxVotes}
-        spent={spent}
         isAdmin={isAdmin}
       />
 
@@ -401,28 +595,38 @@ export function DAO() {
 
       {/* ── Tab Content ── */}
       {daoTab === "governance" && (
-        <ProposalList
-          proposals={proposals}
-          filter={filter}
-          filtered={filtered}
-          stats={stats}
-          setFilter={setFilter}
-          expandedId={expandedId}
-          setExpandedId={setExpandedId}
-          canVote={maxVotes > 0}
-          onVote={handleVote}
-          hasVotedOn={hasVotedOn}
-          voteConfirm={voteConfirm}
-          setVoteConfirm={setVoteConfirm}
-          votingPower={maxVotes}
-          accountId={accountId}
-          onDelete={handleDelete}
-          onEdit={(p) => setEditingProposal(p)}
-          deleteConfirmId={deleteConfirmId}
-          setDeleteConfirmId={setDeleteConfirmId}
-          onAddComment={handleAddComment}
-          canComment={true}
-        />
+        <>
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+              <span className="ml-2 text-slate-500">Loading proposals...</span>
+            </div>
+          ) : (
+            <ProposalList
+              proposals={proposals}
+              filter={filter}
+              filtered={filtered}
+              stats={stats}
+              setFilter={setFilter}
+              expandedId={expandedId}
+              setExpandedId={setExpandedId}
+              canVote={maxVotes > 0}
+              onVote={handleVote}
+              hasVotedOn={hasVotedOn}
+              voteConfirm={voteConfirm}
+              setVoteConfirm={setVoteConfirm}
+              votingPower={maxVotes}
+              accountId={accountId}
+              onDelete={handleDelete}
+              onEdit={(p) => setEditingProposal(p)}
+              deleteConfirmId={deleteConfirmId}
+              setDeleteConfirmId={setDeleteConfirmId}
+              onAddComment={handleAddComment}
+              canComment={true}
+              actionLoading={actionLoading}
+            />
+          )}
+        </>
       )}
 
       {daoTab === "spin" && (
@@ -433,21 +637,8 @@ export function DAO() {
         <CreateProposalModal
           accountId={accountId}
           onClose={() => setShowCreate(false)}
-          onCreate={(title, desc, cat, days, quorum) => {
-            const updated = createProposal(
-              proposals,
-              title,
-              desc,
-              cat,
-              accountId,
-              days,
-              quorum
-            );
-            if (updated) {
-              setProposals(updated);
-            }
-            setShowCreate(false);
-          }}
+          onCreate={handleCreate}
+          actionLoading={actionLoading}
         />
       )}
 
@@ -456,6 +647,7 @@ export function DAO() {
           proposal={editingProposal}
           onClose={() => setEditingProposal(null)}
           onSave={(updates) => handleEdit(editingProposal.id, updates)}
+          actionLoading={actionLoading}
         />
       )}
     </div>
@@ -472,7 +664,6 @@ function EligibilityCard({
   onRefresh,
   refreshing,
   maxVotes,
-  spent,
   isAdmin,
 }: {
   wrappBalance: number;
@@ -482,9 +673,9 @@ function EligibilityCard({
   onRefresh: () => void;
   refreshing: boolean;
   maxVotes?: number;
-  spent?: number;
   isAdmin?: boolean;
 }) {
+  const { isDark } = useTheme();
   const eligible = wrappBalance >= GATE_THRESHOLD || nftCount >= 1;
   const tokenId = HBARH_TOKEN_ID[network] ?? "\u2014";
   const tokenVotes = Math.floor(wrappBalance / TOKENS_PER_VOTE);
@@ -494,8 +685,12 @@ function EligibilityCard({
     <div
       className={`rounded-xl p-4 md:p-5 border backdrop-blur-sm ${
         eligible
-          ? "bg-gradient-to-br from-pink-900/20 to-purple-900/20 border-pink-500/25"
-          : "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border-amber-500/20"
+          ? isDark
+            ? "bg-gradient-to-br from-pink-900/20 to-purple-900/20 border-pink-500/25"
+            : "bg-gradient-to-br from-pink-50 to-purple-50 border-pink-200"
+          : isDark
+            ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border-amber-500/20"
+            : "bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200"
       }`}
     >
       <div className="flex items-start justify-between mb-3">
@@ -505,11 +700,11 @@ function EligibilityCard({
           ) : (
             <ShieldX className="w-5 h-5 text-amber-400" />
           )}
-          <span className="text-sm text-slate-300">
+          <span className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
             {eligible ? "Governance Eligible" : "Not Eligible"}
           </span>
           {isAdmin && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-gradient-to-r from-pink-500/15 to-purple-500/15 border border-pink-500/30 text-pink-300">
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-gradient-to-r from-pink-500/15 to-purple-500/15 border ${isDark ? "border-pink-500/30 text-pink-300" : "border-pink-400/40 text-pink-600"}`}>
               <Crown className="w-3 h-3" />
               DAO Admin
             </span>
@@ -518,7 +713,7 @@ function EligibilityCard({
         <button
           onClick={onRefresh}
           disabled={refreshing}
-          className="text-slate-400 hover:text-white transition-colors p-1"
+          className={`transition-colors p-1 ${isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}
           title="Refresh balance from Mirror Node"
         >
           <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -527,40 +722,41 @@ function EligibilityCard({
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div>
-          <div className="text-xs text-slate-500 mb-1">HBAR.ħ Balance</div>
-          <div className="text-lg text-white">{formatTokenCount(wrappBalance)}</div>
-          <div className="text-[10px] text-slate-500">{Math.min(tokenVotes, MAX_TOKEN_VOTES)} vote{Math.min(tokenVotes, MAX_TOKEN_VOTES) !== 1 ? "s" : ""} from tokens{tokenVotes > MAX_TOKEN_VOTES ? ` (capped from ${tokenVotes})` : ""}</div>
+          <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>HBAR.ħ Balance</div>
+          <div className={`text-lg ${isDark ? "text-white" : "text-gray-900"}`}>{formatTokenCount(wrappBalance)}</div>
+          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(tokenVotes, MAX_TOKEN_VOTES)} vote{Math.min(tokenVotes, MAX_TOKEN_VOTES) !== 1 ? "s" : ""} from tokens{tokenVotes > MAX_TOKEN_VOTES ? ` (capped from ${tokenVotes})` : ""}</div>
         </div>
         <div>
-          <div className="text-xs text-slate-500 mb-1">VIP NFTs Held</div>
-          <div className="text-lg text-white flex items-center gap-1.5">
+          <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>VIP NFTs Held</div>
+          <div className={`text-lg flex items-center gap-1.5 ${isDark ? "text-white" : "text-gray-900"}`}>
             <ImageIcon className="w-4 h-4 text-purple-400" />
             {nftCount}
           </div>
-          <div className="text-[10px] text-slate-500">{Math.min(nftVotes, MAX_NFT_VOTES)} vote{Math.min(nftVotes, MAX_NFT_VOTES) !== 1 ? "s" : ""} from NFTs{nftVotes > MAX_NFT_VOTES ? ` (capped from ${nftVotes})` : ""}</div>
+          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(nftVotes, MAX_NFT_VOTES)} vote{Math.min(nftVotes, MAX_NFT_VOTES) !== 1 ? "s" : ""} from NFTs{nftVotes > MAX_NFT_VOTES ? ` (capped from ${nftVotes})` : ""}</div>
         </div>
         {maxVotes !== undefined && (
           <div>
-            <div className="text-xs text-slate-500 mb-1">Voting Power</div>
+            <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>Voting Power</div>
             <div className="text-lg text-pink-400">{maxVotes}x</div>
-            <div className="text-[10px] text-slate-500">per proposal</div>
+            <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>per proposal</div>
           </div>
         )}
-        {spent !== undefined && spent > 0 && (
-          <div>
-            <div className="text-xs text-slate-500 mb-1">Proposals Voted</div>
-            <div className="text-lg text-emerald-400">{spent}</div>
-            <div className="text-[10px] text-slate-500">this session</div>
+        <div>
+          <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>Security</div>
+          <div className="text-[10px] text-emerald-400 flex items-center gap-1">
+            <ShieldCheck className="w-3 h-3" />
+            Server-verified
           </div>
-        )}
+          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>Votes verified on-chain</div>
+        </div>
       </div>
 
-      <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2 text-xs text-slate-500">
+      <div className={`mt-3 pt-3 border-t flex items-center gap-2 text-xs ${isDark ? "border-white/5 text-slate-500" : "border-gray-200 text-slate-600"}`}>
         <Info className="w-3 h-3 shrink-0" />
         <span>
-          Account: <span className="font-mono text-slate-400">{accountId}</span> |{" "}
-          Token: <span className="font-mono text-slate-400">{tokenId}</span> |{" "}
-          NFT: <span className="font-mono text-slate-400">{VIP_NFT_TOKEN_ID}</span> |{" "}
+          Account: <span className={`font-mono ${isDark ? "text-slate-400" : "text-slate-700"}`}>{accountId}</span> |{" "}
+          Token: <span className={`font-mono ${isDark ? "text-slate-400" : "text-slate-700"}`}>{tokenId}</span> |{" "}
+          NFT: <span className={`font-mono ${isDark ? "text-slate-400" : "text-slate-700"}`}>{VIP_NFT_TOKEN_ID}</span> |{" "}
           Gate: {formatTokenCount(GATE_THRESHOLD)} HBAR.ħ or 1 NFT |{" "}
           Max: {MAX_TOKEN_VOTES} token votes + {MAX_NFT_VOTES} NFT vote |{" "}
           {NFTS_PER_VOTE} NFTs = 1 vote
@@ -591,6 +787,7 @@ function ProposalList({
   setDeleteConfirmId,
   onAddComment,
   canComment,
+  actionLoading,
 }: {
   proposals: Proposal[];
   filter: FilterKey;
@@ -612,6 +809,7 @@ function ProposalList({
   setDeleteConfirmId: (id: string | null) => void;
   onAddComment: (proposalId: string, text: string) => void;
   canComment: boolean;
+  actionLoading: boolean;
 }) {
   return (
     <>
@@ -683,7 +881,6 @@ function ProposalList({
           const canModify = accountId && canModifyProposal(p, accountId);
           const isDeleting = deleteConfirmId === p.id;
           const commentCount = (p.comments ?? []).length;
-          const hasVotes = Object.keys(p.voterLog).length > 0;
           const modifyIsAdmin = isDAOAdmin(accountId);
 
           return (
@@ -778,7 +975,8 @@ function ProposalList({
                     <div className="flex items-center gap-2 mt-4 mb-3">
                       <button
                         onClick={() => onEdit(p)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20 transition-colors"
+                        disabled={actionLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50"
                       >
                         <Pencil className="w-3 h-3" />
                         Edit Proposal
@@ -788,8 +986,10 @@ function ProposalList({
                           <span className="text-xs text-red-400">Delete permanently?</span>
                           <button
                             onClick={() => onDelete(p.id)}
-                            className="px-3 py-1.5 rounded-lg text-xs bg-red-600 text-white hover:bg-red-500 transition-colors"
+                            disabled={actionLoading}
+                            className="px-3 py-1.5 rounded-lg text-xs bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center gap-1"
                           >
+                            {actionLoading && <Loader2 className="w-3 h-3 animate-spin" />}
                             Confirm
                           </button>
                           <button
@@ -802,7 +1002,8 @@ function ProposalList({
                       ) : (
                         <button
                           onClick={() => setDeleteConfirmId(p.id)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
+                          disabled={actionLoading}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50"
                         >
                           <Trash2 className="w-3 h-3" />
                           Delete
@@ -871,7 +1072,7 @@ function ProposalList({
                             </span>{" "}
                             this proposal?
                             <span className="text-slate-500 text-xs ml-1">
-                              (power from {formatTokenCount(votingPower * TOKENS_PER_VOTE)} HBAR.ħ balance)
+                              (weight verified server-side via Mirror Node)
                             </span>
                           </p>
                           <div className="flex gap-2">
@@ -879,8 +1080,10 @@ function ProposalList({
                               onClick={() =>
                                 onVote(voteConfirm.id, voteConfirm.direction)
                               }
-                              className="px-4 py-2 bg-gradient-to-r from-pink-600 to-purple-600 rounded-lg text-sm transition-all hover:from-pink-500 hover:to-purple-500"
+                              disabled={actionLoading}
+                              className="px-4 py-2 bg-gradient-to-r from-pink-600 to-purple-600 rounded-lg text-sm transition-all hover:from-pink-500 hover:to-purple-500 disabled:opacity-50 flex items-center gap-2"
                             >
+                              {actionLoading && <Loader2 className="w-3 h-3 animate-spin" />}
                               Confirm Vote ({votingPower}x)
                             </button>
                             <button
@@ -897,7 +1100,8 @@ function ProposalList({
                             onClick={() =>
                               setVoteConfirm({ id: p.id, direction: "for" })
                             }
-                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
+                            disabled={actionLoading}
+                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 disabled:opacity-50"
                           >
                             <CheckCircle className="w-4 h-4" />
                             Vote For
@@ -906,7 +1110,8 @@ function ProposalList({
                             onClick={() =>
                               setVoteConfirm({ id: p.id, direction: "against" })
                             }
-                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-red-600/80 hover:bg-red-500/80"
+                            disabled={actionLoading}
+                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-red-600/80 hover:bg-red-500/80 disabled:opacity-50"
                           >
                             <XCircle className="w-4 h-4" />
                             Vote Against
@@ -951,6 +1156,7 @@ function ProposalList({
                     accountId={accountId}
                     canComment={canComment}
                     onAddComment={onAddComment}
+                    actionLoading={actionLoading}
                   />
                 </div>
               )}
@@ -969,11 +1175,13 @@ function CommentsSection({
   accountId,
   canComment,
   onAddComment,
+  actionLoading,
 }: {
   proposal: Proposal;
   accountId: string;
   canComment: boolean;
   onAddComment: (proposalId: string, text: string) => void;
+  actionLoading: boolean;
 }) {
   const [commentText, setCommentText] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -981,7 +1189,7 @@ function CommentsSection({
   const displayComments = showAll ? comments : comments.slice(-5);
 
   const handleSubmit = () => {
-    if (!commentText.trim() || !accountId) return;
+    if (!commentText.trim() || !accountId || actionLoading) return;
     onAddComment(proposal.id, commentText);
     setCommentText("");
   };
@@ -1060,14 +1268,14 @@ function CommentsSection({
           />
           <button
             onClick={handleSubmit}
-            disabled={!commentText.trim()}
+            disabled={!commentText.trim() || actionLoading}
             className={`px-3 py-2 rounded-lg text-sm transition-all flex items-center gap-1.5 ${
-              commentText.trim()
+              commentText.trim() && !actionLoading
                 ? "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white"
                 : "bg-slate-800 text-slate-600 cursor-not-allowed"
             }`}
           >
-            <Send className="w-3.5 h-3.5" />
+            {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         </div>
       ) : !canComment ? (
@@ -1125,6 +1333,7 @@ function CreateProposalModal({
   accountId,
   onClose,
   onCreate,
+  actionLoading,
 }: {
   accountId: string;
   onClose: () => void;
@@ -1135,6 +1344,7 @@ function CreateProposalModal({
     days: number,
     quorum: number
   ) => void;
+  actionLoading: boolean;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -1221,7 +1431,10 @@ function CreateProposalModal({
             <div>Proposer: <span className="font-mono text-slate-400">{accountId}</span></div>
             <div>Voting opens immediately and closes after {duration} days.</div>
             <div>Quorum: {quorum} total votes required for result to be valid.</div>
-            <div className="text-amber-400/70">You can edit or delete this proposal before the first vote is cast.</div>
+            <div className="text-emerald-400/70 flex items-center gap-1">
+              <ShieldCheck className="w-3 h-3" />
+              Server-authoritative: proposal stored securely on server, not in browser.
+            </div>
           </div>
         </div>
 
@@ -1236,13 +1449,14 @@ function CreateProposalModal({
             onClick={() => {
               if (valid) onCreate(title.trim(), description.trim(), category, duration, quorum);
             }}
-            disabled={!valid}
-            className={`flex-1 px-4 py-2.5 rounded-lg text-sm transition-all ${
-              valid
+            disabled={!valid || actionLoading}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 ${
+              valid && !actionLoading
                 ? "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
                 : "bg-slate-700 text-slate-500 cursor-not-allowed"
             }`}
           >
+            {actionLoading && <Loader2 className="w-3 h-3 animate-spin" />}
             Submit Proposal
           </button>
         </div>
@@ -1257,10 +1471,12 @@ function EditProposalModal({
   proposal,
   onClose,
   onSave,
+  actionLoading,
 }: {
   proposal: Proposal;
   onClose: () => void;
   onSave: (updates: { title?: string; description?: string; category?: ProposalCategory }) => void;
+  actionLoading: boolean;
 }) {
   const { hashPackSession } = useWallet();
   const editAccountId = hashPackSession?.accountId ?? "";
@@ -1344,13 +1560,14 @@ function EditProposalModal({
               if (valid && hasChanges)
                 onSave({ title: title.trim(), description: description.trim(), category });
             }}
-            disabled={!valid || !hasChanges}
-            className={`flex-1 px-4 py-2.5 rounded-lg text-sm transition-all ${
-              valid && hasChanges
+            disabled={!valid || !hasChanges || actionLoading}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 ${
+              valid && hasChanges && !actionLoading
                 ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white"
                 : "bg-slate-700 text-slate-500 cursor-not-allowed"
             }`}
           >
+            {actionLoading && <Loader2 className="w-3 h-3 animate-spin" />}
             Save Changes
           </button>
         </div>
@@ -1375,6 +1592,300 @@ function Field({
         {required && <span className="text-pink-400 ml-0.5">*</span>}
       </label>
       {children}
+    </div>
+  );
+}
+
+// ── Admin Management Panel ──────────────────────────────────────────
+// [DAO-08] Toggle-hidden panel for managing DAO admins.
+// Add/remove require wallet re-signing (forced re-authentication).
+
+function AdminManagementPanel({
+  accountId,
+  adminList,
+  setAdminList,
+  actionLoading,
+  setActionLoading,
+}: {
+  accountId: string;
+  adminList: string[];
+  setAdminList: (a: string[]) => void;
+  actionLoading: boolean;
+  setActionLoading: (v: boolean) => void;
+}) {
+  const { isDark } = useTheme();
+  const [newAdminId, setNewAdminId] = useState("");
+  const [step, setStep] = useState<"idle" | "confirm-add" | "signing" | "confirm-remove">("idle");
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const isValidFormat = /^0\.0\.\d{1,10}$/.test(newAdminId.trim());
+  const alreadyAdmin = adminList.includes(newAdminId.trim());
+  const isAtLimit = adminList.length >= 10;
+
+  // ── Add Admin Flow: idle → confirm-add → signing (wallet prompt) → API call
+  const handleStartAdd = () => {
+    if (!isValidFormat || alreadyAdmin || isAtLimit) return;
+    setError(null);
+    setStep("confirm-add");
+  };
+
+  const handleConfirmAdd = async () => {
+    setStep("signing");
+    setError(null);
+    setActionLoading(true);
+    try {
+      // [DAO-10] Force fresh wallet signature as confirmation
+      await forceReauthenticate(accountId);
+      // Now make the API call with the fresh session
+      const result = await addDaoAdmin(accountId, newAdminId.trim());
+      if (result.error) {
+        setError(result.error);
+        setStep("idle");
+      } else {
+        setAdminList(result.admins);
+        setNewAdminId("");
+        setStep("idle");
+        toast.success(`Admin added: ${newAdminId.trim()}`, { duration: 4000 });
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to add admin");
+      setStep("idle");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── Remove Admin Flow: confirm-remove → signing → API call
+  const handleStartRemove = (target: string) => {
+    setError(null);
+    setRemoveTarget(target);
+    setStep("confirm-remove");
+  };
+
+  const handleConfirmRemove = async () => {
+    if (!removeTarget) return;
+    setStep("signing");
+    setError(null);
+    setActionLoading(true);
+    try {
+      await forceReauthenticate(accountId);
+      const result = await removeDaoAdmin(accountId, removeTarget);
+      if (result.error) {
+        setError(result.error);
+        setStep("idle");
+      } else {
+        setAdminList(result.admins);
+        setRemoveTarget(null);
+        setStep("idle");
+        toast.success(`Admin removed: ${removeTarget}`, { duration: 4000 });
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to remove admin");
+      setStep("idle");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setStep("idle");
+    setRemoveTarget(null);
+    setError(null);
+  };
+
+  return (
+    <div className={`rounded-xl border p-5 space-y-4 ${
+      isDark
+        ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border-amber-500/20"
+        : "bg-amber-50/50 border-amber-200"
+    }`}>
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-lg bg-amber-500/15 border border-amber-500/25 flex items-center justify-center">
+          <Shield className="w-4.5 h-4.5 text-amber-400" />
+        </div>
+        <div>
+          <h4 className={`text-sm font-medium ${isDark ? "text-white" : "text-gray-900"}`}>
+            DAO Admin Management
+          </h4>
+          <p className="text-[10px] text-slate-500">
+            {adminList.length}/10 admins &middot; Founder 0.0.518487 is permanent
+          </p>
+        </div>
+      </div>
+
+      {/* Security notice */}
+      <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/15 rounded-lg p-3">
+        <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-amber-400/80 leading-relaxed">
+          Adding or removing admins requires a <strong className="text-amber-300">fresh wallet signature</strong> for
+          security confirmation. Your HashPack wallet will prompt you to sign before the change is applied.
+        </p>
+      </div>
+
+      {/* Current admin list */}
+      <div className="space-y-1.5">
+        <div className="text-xs text-slate-500 mb-2">Current Admins</div>
+        {adminList.map((admin) => {
+          const isFounder = admin === DAO_FOUNDER_ACCOUNT;
+          const isSelf = admin === accountId;
+          const isRemoving = step === "confirm-remove" && removeTarget === admin;
+
+          return (
+            <div
+              key={admin}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+                isRemoving
+                  ? "bg-red-500/10 border-red-500/25"
+                  : isDark
+                    ? "bg-slate-800/40 border-white/5"
+                    : "bg-white border-gray-200"
+              }`}
+            >
+              <span className={`font-mono text-xs flex-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                {admin}
+              </span>
+              {isFounder && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                  Founder
+                </span>
+              )}
+              {isSelf && !isFounder && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                  You
+                </span>
+              )}
+              {!isFounder && !isRemoving && (
+                <button
+                  onClick={() => handleStartRemove(admin)}
+                  disabled={actionLoading || step !== "idle"}
+                  className="text-slate-500 hover:text-red-400 transition-colors disabled:opacity-30 p-0.5"
+                  title="Remove admin"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {isRemoving && step === "confirm-remove" && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleConfirmRemove}
+                    disabled={actionLoading}
+                    className="px-2 py-1 rounded text-[10px] bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {actionLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <KeyRound className="w-2.5 h-2.5" />}
+                    Sign & Remove
+                  </button>
+                  <button
+                    onClick={handleCancel}
+                    className="px-2 py-1 rounded text-[10px] bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Add new admin */}
+      {step === "idle" && (
+        <div className="space-y-2">
+          <div className="text-xs text-slate-500">Add New Admin</div>
+          <div className="flex gap-2">
+            <input
+              value={newAdminId}
+              onChange={(e) => { setNewAdminId(e.target.value); setError(null); }}
+              placeholder="0.0.xxxxxx"
+              className={`flex-1 bg-slate-800/50 border rounded-lg px-3 py-2 text-sm font-mono outline-none transition-colors ${
+                newAdminId && !isValidFormat
+                  ? "border-red-500/40 focus:ring-1 focus:ring-red-500/50"
+                  : "border-white/5 focus:ring-1 focus:ring-amber-500/50"
+              } placeholder:text-slate-600`}
+              maxLength={20}
+            />
+            <button
+              onClick={handleStartAdd}
+              disabled={!isValidFormat || alreadyAdmin || isAtLimit || actionLoading}
+              className={`px-4 py-2 rounded-lg text-sm transition-all flex items-center gap-1.5 ${
+                isValidFormat && !alreadyAdmin && !isAtLimit
+                  ? "bg-amber-500/20 border border-amber-500/30 text-amber-400 hover:bg-amber-500/30"
+                  : "bg-slate-800 text-slate-600 cursor-not-allowed border border-white/5"
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              Add
+            </button>
+          </div>
+          {newAdminId && !isValidFormat && (
+            <p className="text-[10px] text-red-400">Enter a valid Hedera account ID (0.0.xxxxx)</p>
+          )}
+          {alreadyAdmin && isValidFormat && (
+            <p className="text-[10px] text-amber-400">This account is already an admin</p>
+          )}
+          {isAtLimit && (
+            <p className="text-[10px] text-amber-400">Maximum 10 admins reached</p>
+          )}
+        </div>
+      )}
+
+      {/* Confirm add step */}
+      {step === "confirm-add" && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-amber-400" />
+            <span className="text-sm text-white">Confirm Admin Addition</span>
+          </div>
+          <p className="text-xs text-slate-400">
+            You are about to grant DAO admin privileges to:
+          </p>
+          <div className="font-mono text-sm text-amber-300 bg-slate-900/50 rounded px-3 py-2 border border-amber-500/15">
+            {newAdminId.trim()}
+          </div>
+          <p className="text-[11px] text-slate-500">
+            This will give them full proposal create/edit/delete rights and admin management access.
+            Your wallet will prompt you to sign for confirmation.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleConfirmAdd}
+              disabled={actionLoading}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white disabled:opacity-50"
+            >
+              {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
+              Sign & Confirm
+            </button>
+            <button
+              onClick={handleCancel}
+              className="px-4 py-2.5 bg-slate-800 border border-white/5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Signing in progress */}
+      {step === "signing" && (
+        <div className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+          <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+          <div>
+            <p className="text-sm text-blue-300">Waiting for wallet signature...</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Check your HashPack wallet for the signing prompt
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Error display */}
+      {error && (
+        <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-red-400">{error}</p>
+        </div>
+      )}
     </div>
   );
 }

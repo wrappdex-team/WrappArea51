@@ -41,7 +41,7 @@ import {
   subscribeWCModal,
 } from "./wallet-core";
 
-// ── Mirror Node Endpoints ──────────────────────────────────────────────
+// ── Mirror Node Endpoints ────────────────────────���─────────────────────
 
 const MIRROR_NODES: Record<HederaNetwork, string> = {
   mainnet: "https://mainnet-public.mirrornode.hedera.com",
@@ -375,11 +375,33 @@ export function getCurrentHashConnect(): { topic: string | null } {
 
 /** Resolve the WC topic for signing (state → persisted → WC client scan) */
 function _resolveTopic(accountId: string): string | null {
-  if (_activeWcTopic) return _activeWcTopic;
-  const saved = restoreSession();
-  if (saved?.wcTopic) { _activeWcTopic = saved.wcTopic; return saved.wcTopic; }
+  // [AUDIT-WC-02] Validate that the resolved topic actually exists in the WC client.
+  // A stale topic (session deleted remotely) would cause signing to fail with opaque errors.
+  if (_activeWcTopic) {
+    // Quick check: does this topic belong to a session with our account?
+    const wc = findSessionForAccount(accountId);
+    if (wc && wc.topic === _activeWcTopic) return _activeWcTopic;
+    // Topic is stale — clear and try other sources
+    if (!wc) {
+      console.warn("[HBAR.\u0127] Active topic stale — clearing");
+      _activeWcTopic = null;
+    }
+  }
+  // Try WC client scan first (most authoritative)
   const wc = findSessionForAccount(accountId);
   if (wc) { _activeWcTopic = wc.topic; return wc.topic; }
+  // Fall back to persisted session
+  const saved = restoreSession();
+  if (saved?.wcTopic) {
+    // Verify this topic exists in the WC client
+    const wcCheck = findSessionForAccount(accountId);
+    if (wcCheck && wcCheck.topic === saved.wcTopic) {
+      _activeWcTopic = saved.wcTopic;
+      return saved.wcTopic;
+    }
+    // Persisted topic is stale — don't use it
+    console.warn("[HBAR.\u0127] Persisted WC topic not found in client — session may have expired");
+  }
   return null;
 }
 

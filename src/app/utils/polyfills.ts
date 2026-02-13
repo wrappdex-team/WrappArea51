@@ -10,6 +10,15 @@
 
 import { Buffer } from "buffer";
 
+// ── Suppress Lit dev-mode warning ───────────────────────────────────
+// The @walletconnect/modal uses Lit web-components internally.
+// Lit checks `globalThis.litIssuedWarnings` (a Set) before logging.
+// Pre-populating the exact warning string prevents the console message.
+if (typeof globalThis !== "undefined") {
+  const lw: Set<string> = (globalThis as any).litIssuedWarnings ??= new Set();
+  lw.add("Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.");
+}
+
 // Make Buffer available globally — many crypto libraries expect this
 if (typeof globalThis.Buffer === "undefined") {
   (globalThis as any).Buffer = Buffer;

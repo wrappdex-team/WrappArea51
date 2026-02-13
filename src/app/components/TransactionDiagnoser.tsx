@@ -429,7 +429,7 @@ export function TransactionDiagnoser({ prefillTxId, onPrefillConsumed, autoRunOn
             <div className={`p-2.5 rounded-lg ${isDark ? "bg-slate-800/30 border border-slate-700/30" : "bg-gray-50 border border-gray-200"}`}>
               <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Gas Fee</div>
               <div className={`text-sm font-bold ${
-                (diagnosis.chargedFeeHbar || 0) > 5 ? "text-red-400" : isDark ? "text-slate-200" : "text-gray-700"
+                (diagnosis.chargedFeeHbar || 0) > 1 ? "text-red-400" : isDark ? "text-slate-200" : "text-gray-700"
               }`}>
                 {diagnosis.chargedFeeHbar?.toFixed(4) || "0"} HBAR
               </div>

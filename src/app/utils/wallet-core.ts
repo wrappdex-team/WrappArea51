@@ -161,9 +161,10 @@ export interface WCConnectResult {
 /**
  * Create a new WalletConnect session proposal for Hedera.
  *
- * Uses `requiredNamespaces` so the wallet MUST include Hedera accounts
- * in the approval response (using optionalNamespaces allows wallets to
- * omit them entirely).
+ * Uses `optionalNamespaces` (WC v2.x deprecated `requiredNamespaces` and
+ * auto-assigns them to optional).  The downstream `getAccountsFromSession`
+ * check already rejects sessions that return zero Hedera accounts, so
+ * the wallet is still expected to include them.
  *
  * Returns:
  *   - uri      — pairing URI for QR code / deep link
@@ -174,7 +175,7 @@ export async function proposeSession(network: HederaNetwork): Promise<WCConnectR
   const chainId = getHederaChainId(network);
 
   const { uri, approval } = await client.connect({
-    requiredNamespaces: {
+    optionalNamespaces: {
       hedera: {
         methods: [...HEDERA_METHODS],
         chains: [chainId],
@@ -229,6 +230,71 @@ export function getAccountsFromSession(session: any): string[] {
 
 // ── Transaction Signing (HIP-820) ──────────────────────────────────────
 
+/**
+ * [AUDIT-WC-01] Validate session health before any client.request() call.
+ *
+ * Root cause analysis: When a WC session expires, is deleted remotely, or the
+ * relay disconnects, client.request() can fail in opaque ways — including
+ * triggering deep-link navigation (the redirect bug). This guard ensures we
+ * catch stale sessions BEFORE they hit WC internals.
+ *
+ * Throws a descriptive error that callers can surface to the user.
+ */
+async function _validateSessionBeforeRequest(client: any, topic: string): Promise<void> {
+  // 1. Session must exist in the client's store
+  let session: any;
+  try {
+    session = client.session?.get?.(topic);
+  } catch {
+    session = null;
+  }
+
+  if (!session) {
+    // Check if it's in the list at all
+    const allSessions = client.session?.getAll?.() ?? [];
+    const found = allSessions.some((s: any) => s.topic === topic);
+    if (!found) {
+      throw new Error(
+        "Wallet session expired or was disconnected remotely. " +
+        "Please reconnect your wallet from the wallet menu."
+      );
+    }
+  }
+
+  // 2. Session must not be expired (WC sessions have an expiry timestamp)
+  if (session?.expiry) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (nowSec > session.expiry) {
+      // Clean up the expired session
+      try { await client.disconnect({ topic, reason: { code: 6000, message: "Session expired" } }); } catch { /* */ }
+      throw new Error(
+        "Wallet session has expired. Please reconnect your wallet."
+      );
+    }
+  }
+
+  // 3. Relay should be connected (best-effort — don't block if relay is reconnecting)
+  const relayConnected = !!client.core?.relayer?.connected;
+  if (!relayConnected) {
+    console.warn("[WC] Relay disconnected before signing — attempting reconnect...");
+    // Give relay a brief window to reconnect
+    try {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          const poll = setInterval(() => {
+            if (client.core?.relayer?.connected) { clearInterval(poll); resolve(); }
+          }, 200);
+          setTimeout(() => { clearInterval(poll); resolve(); }, 3000);
+        }),
+      ]);
+    } catch { /* proceed anyway — relay may reconnect during the request */ }
+
+    if (!client.core?.relayer?.connected) {
+      console.warn("[WC] Relay still disconnected — signing may fail");
+    }
+  }
+}
+
 export async function signAndExecuteTransaction(
   topic: string,
   network: HederaNetwork,
@@ -236,6 +302,7 @@ export async function signAndExecuteTransaction(
   transactionBytes: Uint8Array,
 ): Promise<any> {
   const client = await getSignClient();
+  await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
 
   return client.request({
@@ -258,6 +325,7 @@ export async function signTransactionViaWC(
   transactionBytes: Uint8Array,
 ): Promise<Uint8Array | null> {
   const client = await getSignClient();
+  await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
 
   try {
@@ -293,6 +361,7 @@ export async function signMessageViaWC(
   message: string,
 ): Promise<{ signatures: any[] } | null> {
   const client = await getSignClient();
+  await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
 
   try {
