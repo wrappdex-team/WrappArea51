@@ -1,30 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────
-// QuantifyCrypto Widgets — VIP Token-Gated, Sandboxed Iframe Containers
-// ─────────────────────────────────────────────────────────────────────
-//
-// ACCESS CONTROL — 3-Layer VIP Verification:
-//   [LAYER-1] Fast: WalletContext cached token list → isVipEligible()
-//   [LAYER-2] Authoritative: Direct Mirror Node re-verification (client)
-//   [LAYER-3] Server: GET /vip/status (session-authenticated, Mirror Node)
-//
-//   Gate: Hold ≥100M HBAR.ħ tokens (0.0.9356476) OR ≥1 VIP NFT (0.0.10146181)
-//   Either one unlocks — both NOT required.
-//
-//   Fail-CLOSED: If verification fails, widgets stay locked.
-//   Non-VIP users see a locked overlay — no widget iframes are rendered.
-//
-// IFRAME SECURITY:
-//   - sandbox="allow-scripts allow-same-origin" (minimum for widget API calls)
-//   - No CSP meta tag — sandbox is the security boundary
-//   - Widgets are purely read-only price displays
-//   - Zero interaction with wallet state, AMM engine, KV store, or auth
-// ─────────────────────────────────────────────────────────────────────
-
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Crown, Lock, ShieldCheck, AlertTriangle } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
-import { isVipEligible, verifyVipEligibilityDirect } from "../utils/vip";
+import { isVipEligible, verifyVipEligibilityDirect, getVipNftCount } from "../utils/vip";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
 import { getSessionToken } from "../utils/auth";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -77,6 +55,11 @@ function baseStyles(bg: string): string {
     body { -ms-overflow-style: none; scrollbar-width: none; }
   `;
 }
+
+// ── Stable heatmap grid lightness values (pre-computed, no Math.random per render) ──
+const GRID_LIGHTNESS_DARK = [27, 31, 24, 29, 33, 26, 22, 30, 28, 25, 32, 23, 34, 27, 31, 29, 26, 33, 24, 28, 30, 22, 35, 27, 25, 31, 29, 23, 34, 28, 26, 32];
+const GRID_LIGHTNESS_LIGHT = [78, 82, 73, 80, 85, 75, 71, 81, 77, 74, 83, 72, 84, 78, 82, 79, 75, 83, 73, 77, 80, 71, 85, 76, 74, 81, 79, 72, 84, 77, 75, 82];
+const GRID_HUES = [140, 0, 350, 140, 0, 140, 350, 0, 140, 0, 350, 140, 0, 140, 0, 350, 140, 350, 0, 140, 350, 0, 140, 350, 0, 140, 0, 350, 140, 0, 350, 140];
 
 // ── Server-side VIP verification ────────────────────────────────────
 
@@ -142,107 +125,114 @@ export function CryptoHeatmapWidget() {
   const [heatmapLoaded, setHeatmapLoaded] = useState(false);
   const [tickerError, setTickerError] = useState(false);
   const [heatmapError, setHeatmapError] = useState(false);
-  const mountedRef = useRef(true);
 
-  // Stable primitive values for dependency arrays (no new object refs per render)
-  const accountId = hashPackSession?.accountId ?? null;
-  const tokens = hederaAccount?.tokens;
+  // Extract stable primitive for the effect dependency.
+  // hashPackSession?.accountId is a string | undefined — coerce to string | null.
+  const accountId: string | null = hashPackSession?.accountId ?? null;
 
-  // Refs for values accessed inside the async verification callback.
-  // Using refs avoids including unstable array/object references in
-  // useCallback deps, which was causing infinite re-render loops.
-  const tokensRef = useRef(tokens);
+  // Refs for values that the async verification reads but should NOT
+  // appear in any dependency array (they are objects/arrays whose
+  // identity changes on every WalletProvider re-render).
+  const tokensRef = useRef(hederaAccount?.tokens);
   const networkRef = useRef(hederaNetwork);
-  tokensRef.current = tokens;
+  tokensRef.current = hederaAccount?.tokens;
   networkRef.current = hederaNetwork;
 
-  // ── 3-layer VIP verification ───────────────────────────────────
-  // Deps: only the stable accountId string. Token/network reads go
-  // through refs so the callback identity stays stable across renders.
-  const runVerification = useCallback(async () => {
-    if (!accountId) {
-      setVip((prev) =>
-        prev.state === "no_wallet" ? prev : { ...INITIAL_VERIFICATION, state: "no_wallet" },
-      );
-      return;
-    }
-
-    setVip((prev) => (prev.state === "checking" ? prev : { ...prev, state: "checking" }));
-
-    const currentTokens = tokensRef.current ?? [];
-    const currentNetwork = networkRef.current;
-
-    // Layer 1: Fast cached check from WalletContext
-    const cachedEligible = isVipEligible(currentTokens, currentNetwork);
-
-    // Layer 2: Direct Mirror Node re-verification (authoritative client-side)
-    let directResult = { eligible: false, balance: 0, nftCount: 0, error: null as string | null };
-    try {
-      directResult = await verifyVipEligibilityDirect(accountId);
-    } catch (err: any) {
-      directResult.error = err?.message || "Mirror Node check failed";
-    }
-
-    if (!mountedRef.current) return;
-
-    // Combine Layer 1 + Layer 2: Layer 2 overrides if it completed successfully
-    const clientEligible = directResult.error
-      ? cachedEligible // Fallback to cache if Mirror Node failed
-      : directResult.eligible || directResult.nftCount >= 1;
-
-    // Layer 3: Server-side verification (session-authenticated, authoritative)
-    let serverResult = { eligible: false, tokenBalance: 0, nftCount: 0, error: null as string | null };
-    const sessionToken = getSessionToken();
-    if (sessionToken) {
-      serverResult = await verifyVipOnServer();
-    }
-
-    if (!mountedRef.current) return;
-
-    // Final decision: server is authoritative when available.
-    // Fail-CLOSED: if server says no and client says yes, deny.
-    let finalEligible: boolean;
-    let serverVerified = false;
-
-    if (serverResult.error === "no_session") {
-      // No session — rely on client-side verification only.
-      // Acceptable because widget content is publicly available data;
-      // the VIP gate is about user experience, not protecting secrets.
-      finalEligible = clientEligible;
-    } else if (serverResult.error) {
-      // Server error — log warning, fall back to client check
-      console.warn("[VIP-GATE] Server verification error, using client-side check:", serverResult.error);
-      finalEligible = clientEligible;
-    } else {
-      // Server responded — source of truth
-      finalEligible = serverResult.eligible;
-      serverVerified = true;
-    }
-
-    setVip({
-      state: finalEligible ? "eligible" : "not_eligible",
-      tokenBalance: serverVerified ? serverResult.tokenBalance : directResult.balance,
-      nftCount: serverVerified ? serverResult.nftCount : directResult.nftCount,
-      verifiedAt: Date.now(),
-      serverVerified,
-      error: serverResult.error && directResult.error
-        ? `Client: ${directResult.error}; Server: ${serverResult.error}`
-        : null,
-    });
-  }, [accountId]); // Only stable primitive — refs used for tokens/network
-
-  // Run verification on mount, on wallet change, and every 5 minutes
+  // ── Single effect: 3-layer VIP verification ────────────────────
+  // Depends ONLY on `accountId` (a primitive string or null).
+  // Reads tokens/network from refs → no unstable deps → no loop.
   useEffect(() => {
-    mountedRef.current = true;
-    runVerification();
+    // When no wallet is connected, do NOTHING.
+    // The initial state is already "no_wallet" — calling setState here
+    // (even with bail-out) can trigger re-render cascades in some
+    // React environments (strict mode / Figma preview).
+    if (!accountId) return;
 
-    const timer = setInterval(runVerification, SERVER_VERIFY_INTERVAL_MS);
+    let cancelled = false;
+
+    async function verify() {
+      if (!cancelled) {
+        setVip((prev) => (prev.state === "checking" ? prev : { ...prev, state: "checking" }));
+      }
+
+      const currentTokens = tokensRef.current ?? [];
+      const currentNetwork = networkRef.current;
+
+      // Layer 1: Fast cached check from WalletContext
+      const cachedEligible = isVipEligible(currentTokens, currentNetwork);
+
+      // Layer 2: Direct Mirror Node re-verification (authoritative client-side)
+      let directResult = { eligible: false, balance: 0, nftCount: 0, error: null as string | null };
+      try {
+        directResult = await verifyVipEligibilityDirect(accountId);
+      } catch (err: any) {
+        directResult.error = err?.message || "Mirror Node check failed";
+      }
+
+      if (cancelled) return;
+
+      // Combine Layer 1 + Layer 2: Layer 2 overrides if it completed successfully.
+      // verifyVipEligibilityDirect only checks fungible token balance (nftCount is
+      // always 0), so we also check the cached NFT count from the WalletContext
+      // token list to preserve NFT-based VIP eligibility.
+      const cachedNftCount = getVipNftCount(currentTokens);
+      const clientEligible = directResult.error
+        ? cachedEligible
+        : directResult.eligible || cachedNftCount >= 1;
+
+      // Layer 3: Server-side verification (session-authenticated, authoritative)
+      let serverResult = { eligible: false, tokenBalance: 0, nftCount: 0, error: null as string | null };
+      const sessionToken = getSessionToken();
+      if (sessionToken) {
+        serverResult = await verifyVipOnServer();
+      } else {
+        // No session token → mark as "no_session" so the decision logic
+        // correctly falls back to client-side checks instead of treating
+        // the initial { eligible: false } as an authoritative server response.
+        serverResult.error = "no_session";
+      }
+
+      if (cancelled) return;
+
+      // Final decision: server is authoritative when available.
+      // Fail-CLOSED: if server says no and client says yes, deny.
+      let finalEligible: boolean;
+      let serverVerified = false;
+
+      if (serverResult.error === "no_session") {
+        finalEligible = clientEligible;
+      } else if (serverResult.error) {
+        console.warn("[VIP-GATE] Server verification error, using client-side check:", serverResult.error);
+        finalEligible = clientEligible;
+      } else {
+        finalEligible = serverResult.eligible;
+        serverVerified = true;
+      }
+
+      if (!cancelled) {
+        setVip({
+          state: finalEligible ? "eligible" : "not_eligible",
+          tokenBalance: serverVerified ? serverResult.tokenBalance : directResult.balance,
+          nftCount: serverVerified ? serverResult.nftCount : directResult.nftCount,
+          verifiedAt: Date.now(),
+          serverVerified,
+          error: serverResult.error && directResult.error
+            ? `Client: ${directResult.error}; Server: ${serverResult.error}`
+            : null,
+        });
+      }
+    }
+
+    verify();
+    const timer = setInterval(verify, SERVER_VERIFY_INTERVAL_MS);
 
     return () => {
-      mountedRef.current = false;
+      cancelled = true;
       clearInterval(timer);
     };
-  }, [runVerification]);
+    // accountId is the ONLY dependency — a primitive string or null.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId]);
 
   // ── Iframe srcdocs (only built if VIP) ─────────────────────────
 
@@ -346,8 +336,8 @@ export function CryptoHeatmapWidget() {
                   className="rounded-sm"
                   style={{
                     background: isDark
-                      ? `hsl(${[140, 0, 350, 140, 0, 140, 350, 0, 140, 0, 350, 140, 0, 140, 0, 350, 140, 350, 0, 140, 350, 0, 140, 350, 0, 140, 0, 350, 140, 0, 350, 140][i]}, 60%, ${20 + Math.random() * 15}%)`
-                      : `hsl(${[140, 0, 350, 140, 0, 140, 350, 0, 140, 0, 350, 140, 0, 140, 0, 350, 140, 350, 0, 140, 350, 0, 140, 350, 0, 140, 0, 350, 140, 0, 350, 140][i]}, 50%, ${70 + Math.random() * 15}%)`,
+                      ? `hsl(${GRID_HUES[i]}, 60%, ${GRID_LIGHTNESS_DARK[i]}%)`
+                      : `hsl(${GRID_HUES[i]}, 50%, ${GRID_LIGHTNESS_LIGHT[i]}%)`,
                   }}
                 />
               ))}

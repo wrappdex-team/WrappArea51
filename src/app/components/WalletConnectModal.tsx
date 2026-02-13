@@ -10,8 +10,6 @@ import {
   CheckCircle2,
   RefreshCw,
   Shield,
-  Search,
-  Eye,
   Copy,
   Check,
   Smartphone,
@@ -36,7 +34,7 @@ interface WalletConnectModalProps {
   onClose: () => void;
 }
 
-type WalletId = "hashpack" | "metamask" | "mirror";
+type WalletId = "hashpack" | "metamask";
 
 type ConnectionStep =
   | "list"
@@ -44,8 +42,7 @@ type ConnectionStep =
   | "wc-qr"
   | "wc-success"
   | "metamask-connect"
-  | "metamask-success"
-  | "mirror-connect";
+  | "metamask-success";
 
 interface WalletOption {
   id: WalletId;
@@ -152,7 +149,7 @@ function SuccessScreen({ label, accountId, onClose }: { label: string; accountId
   );
 }
 
-// ── Main Modal ────────────────────────────────────────────────────��────
+// ── Main Modal ────────────────────────────────────────────────────────
 
 export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   const {
@@ -165,15 +162,11 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     isConnectingMetaMask,
     metaMaskError,
     metaMaskAccount,
-    connectHashPackMirror,
   } = useWallet();
 
   const [step, setStep] = useState<ConnectionStep>("list");
   const [selectedWallet, setSelectedWallet] = useState<WalletOption | null>(null);
   const [localSession, setLocalSession] = useState<HashPackSession | null>(null);
-  const [mirrorAccountId, setMirrorAccountId] = useState("");
-  const [mirrorError, setMirrorError] = useState<string | null>(null);
-  const [isMirrorConnecting, setIsMirrorConnecting] = useState(false);
   const [extensionDetected, setExtensionDetected] = useState(false);
   const [wcError, setWcError] = useState<string | null>(null);
 
@@ -252,28 +245,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     }
   };
 
-  // ── Mirror Node Connect ─────────────────────────────────────────
-
-  const handleMirrorConnect = async () => {
-    const id = mirrorAccountId.trim();
-    if (!/^0\.0\.\d+$/.test(id)) {
-      setMirrorError("Enter a valid account ID (0.0.xxxxx)");
-      return;
-    }
-    setIsMirrorConnecting(true);
-    setMirrorError(null);
-
-    const success = await connectHashPackMirror(id, "mainnet");
-    if (success) {
-      setStep("wc-success");
-      setLocalSession({ accountId: id } as any);
-      playConnectionSuccess();
-    } else {
-      setMirrorError("Account not found or connection failed.");
-    }
-    setIsMirrorConnecting(false);
-  };
-
   const handleClearAndRetry = async () => {
     clearWCStorage(false);
     try { localStorage.removeItem("hbarh-hashpack-session"); } catch { /* */ }
@@ -294,7 +265,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     } catch { /* clipboard not available */ }
   };
 
-  // ═════════════════════════════════���═══════════════════════════
+  // ════════════════════════════════════════════════════════════
   // METAMASK CONNECTING
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-connect") {
@@ -568,64 +539,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   }
 
   // ═════════════════════════════════════════════════════════════
-  // MIRROR NODE (Account Lookup)
-  // ═════════════════════════════════════════════════════════════
-  if (step === "mirror-connect") {
-    return (
-      <ModalShell>
-        <div className="p-6">
-          <div className="flex items-center gap-3 mb-8">
-            <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
-              <ArrowLeft className="w-4 h-4 text-white/50" />
-            </button>
-            <Eye className="w-5 h-5 text-white/50" />
-            <span className="text-white/90">Account Lookup</span>
-            <Badge color="amber">Read Only</Badge>
-          </div>
-
-          <p className="text-white/30 text-sm mb-4">
-            Enter your Hedera account ID to view balances and activity. No signing capability — transactions require a wallet connection.
-          </p>
-
-          <div className="flex gap-2 mb-4">
-            <input
-              type="text"
-              value={mirrorAccountId}
-              onChange={(e) => {
-                setMirrorAccountId(e.target.value);
-                setMirrorError(null);
-              }}
-              placeholder="0.0.12345"
-              className="flex-1 px-4 py-3 rounded-xl text-sm font-mono outline-none bg-white/[0.03] border border-white/[0.06] focus:border-purple-500/40 text-white/80 placeholder:text-white/20 transition-colors"
-            />
-            <button
-              onClick={handleMirrorConnect}
-              disabled={isMirrorConnecting || !mirrorAccountId.trim()}
-              className="px-5 py-3 rounded-xl bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-sm"
-            >
-              {isMirrorConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            </button>
-          </div>
-
-          {mirrorError && (
-            <div className="flex items-start gap-2 text-xs text-red-400 mb-4">
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              {mirrorError}
-            </div>
-          )}
-
-          <div className="rounded-xl bg-amber-500/5 border border-amber-500/10 p-3 flex items-start gap-3">
-            <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-white/30">
-              Mirror Node lookup is read-only. To sign transactions, use HashPack or MetaMask above.
-            </p>
-          </div>
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ═════════════════════════════════════════════════════════════
   // MAIN WALLET LIST
   // ═════════════════════════════════════════════════════════════
   return (
@@ -694,32 +607,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           </div>
           <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-orange-500/10 transition-colors">
             <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-orange-400 transition-colors" />
-          </div>
-        </button>
-
-        {/* Read-Only Divider */}
-        <div className="flex items-center gap-3 my-4">
-          <span className="text-[10px] text-white/20 tracking-widest uppercase">Read Only</span>
-          <div className="flex-1 h-px bg-white/[0.06]" />
-        </div>
-
-        {/* Mirror Node Lookup */}
-        <button
-          onClick={() => setStep("mirror-connect")}
-          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-amber-500/30 hover:bg-white/[0.02] text-left mb-2"
-        >
-          <div className="w-11 h-11 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
-            <Eye className="w-5 h-5 text-amber-400" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-sm text-white/90">Account Lookup</span>
-              <Badge color="amber">Mirror Node</Badge>
-            </div>
-            <p className="text-xs text-white/30">Enter account ID (no signing)</p>
-          </div>
-          <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-amber-500/10 transition-colors">
-            <Search className="w-4 h-4 text-white/15 group-hover:text-amber-400 transition-colors" />
           </div>
         </button>
 

@@ -97,6 +97,10 @@ const _SUPPRESS_PATTERNS = [
   // WC metadata URL mismatch warning (harmless in sandboxed previews)
   "differs from the actual page url",
   "configured WalletConnect",
+  // Lit (WalletConnect modal web component framework) dev-mode warning
+  "Lit is in dev mode",
+  "Not recommended for production",
+  "https://lit.dev/msg/dev-mode",
 ];
 
 const _VITE_PASSTHROUGH = [

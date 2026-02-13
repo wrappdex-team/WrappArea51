@@ -367,7 +367,7 @@ export function Layout() {
                                   ? "bg-blue-500/20 text-blue-400"
                                   : "bg-yellow-500/20 text-yellow-400"
                               }`}>
-                                {hashPackSession.connectionMethod === "mirror-node" ? "read-only" : hashPackSession.connectionMethod}
+                                {hashPackSession.connectionMethod}
                               </span>
                               {hashPackSession.isVerified && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">
