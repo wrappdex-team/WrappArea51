@@ -24,7 +24,7 @@ const DYNAMIC_ENVIRONMENT_ID =
 const CHANGENOW_AFFILIATE_ID =
   import.meta.env.VITE_CHANGENOW_AFFILIATE_ID || "4de8efb2ccff7a";
 
-// [AUDIT-E01] Runtime check — warn once in production if env vars are missing
+// Warn once in production if env vars are missing (forces hardcoded fallback rotation awareness)
 if (IS_PROD) {
   const missing: string[] = [];
   if (!import.meta.env.VITE_WALLETCONNECT_PROJECT_ID) missing.push("VITE_WALLETCONNECT_PROJECT_ID");

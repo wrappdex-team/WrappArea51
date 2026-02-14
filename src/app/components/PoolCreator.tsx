@@ -24,27 +24,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { formatTokenCount } from "../utils/dao";
 import { toast } from "sonner";
 import { fetchHbarhTokenPrice } from "../utils/saucerswap";
-import {
-  POOLABLE_TOKENS,
-  MIN_POOL_TOKENS,
-  MAX_POOL_TOKENS,
-  MIN_WEIGHT_BPS,
-  MAX_WEIGHT_BPS,
-  WEIGHT_SUM_BPS,
-  CREATION_FEE_USD,
-  FREE_CREATION_THRESHOLD,
-  TREASURY_ACCOUNT_ID,
-  checkCreationEligibility,
-  validatePoolConfig,
-  createCustomPool,
-  loadCustomPools,
-  deleteCustomPool,
-  type PoolableToken,
-  type PoolTokenConfig,
-  type CustomPoolConfig,
-  type CreatedPool,
-  type CreationEligibility,
-} from "../utils/pool-factory";
+import { Tip } from "./Tip";
 
 // ── Weight Colors ────────────────────────────────────────────────────
 
@@ -598,19 +578,20 @@ export function PoolCreator() {
           <div className="mb-5">
             <div className="flex rounded-full h-3 overflow-hidden">
               {selectedTokens.map((tc, i) => (
+                <Tip key={tc.token.tokenId} content={`${tc.token.symbol}: ${(tc.weightBps / 100).toFixed(1)}%`} side="top">
                 <div
-                  key={tc.token.tokenId}
                   className={`${WEIGHT_COLORS[i % WEIGHT_COLORS.length].bg} transition-all duration-300`}
                   style={{ width: `${tc.weightBps / 100}%` }}
-                  title={`${tc.token.symbol}: ${(tc.weightBps / 100).toFixed(1)}%`}
                 />
+                </Tip>
               ))}
               {weightSum < WEIGHT_SUM_BPS && (
+                <Tip content={`Unallocated: ${((WEIGHT_SUM_BPS - weightSum) / 100).toFixed(1)}%`} side="top">
                 <div
                   className={`${isDark ? "bg-slate-700/50" : "bg-gray-200"} transition-all duration-300`}
                   style={{ width: `${(WEIGHT_SUM_BPS - weightSum) / 100}%` }}
-                  title={`Unallocated: ${((WEIGHT_SUM_BPS - weightSum) / 100).toFixed(1)}%`}
                 />
+                </Tip>
               )}
             </div>
             <div className="flex items-center justify-between mt-1.5">

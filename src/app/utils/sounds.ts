@@ -1,31 +1,92 @@
 let audioCtx: AudioContext | null = null;
+let masterGain: GainNode | null = null;
 
-// Mute state persisted to localStorage
-const MUTE_KEY = "hbarh-sound-muted";
-let _muted: boolean | null = null;
+// ── Volume System ────────────────────────────────────────────────────
+// Replaces the old binary mute with 4-level presets: off / low / medium / high.
+// Backward compatible: getSoundMuted() still works (returns true when off).
 
-function isMuted(): boolean {
-  if (_muted === null) {
-    _muted = typeof window !== "undefined" && localStorage.getItem(MUTE_KEY) === "1";
+export type SoundVolume = "off" | "low" | "medium" | "high";
+
+const VOLUME_KEY = "hbarh-sound-volume";
+const MUTE_KEY = "hbarh-sound-muted"; // legacy — read for migration
+
+const VOLUME_MULTIPLIERS: Record<SoundVolume, number> = {
+  off: 0,
+  low: 0.3,
+  medium: 0.65,
+  high: 1.0,
+};
+
+const VOLUME_CYCLE: SoundVolume[] = ["off", "low", "medium", "high"];
+
+let _volume: SoundVolume | null = null;
+
+function resolveVolume(): SoundVolume {
+  if (_volume !== null) return _volume;
+  if (typeof window === "undefined") { _volume = "high"; return _volume; }
+  // Try new key first
+  const stored = localStorage.getItem(VOLUME_KEY) as SoundVolume | null;
+  if (stored && VOLUME_MULTIPLIERS[stored] !== undefined) {
+    _volume = stored;
+    return _volume;
   }
-  return _muted;
+  // Migrate from legacy boolean mute key
+  const legacyMuted = localStorage.getItem(MUTE_KEY);
+  if (legacyMuted === "1") { _volume = "off"; }
+  else { _volume = "high"; }
+  localStorage.setItem(VOLUME_KEY, _volume);
+  return _volume;
 }
 
-export function setSoundMuted(muted: boolean): void {
-  _muted = muted;
+export function getSoundVolume(): SoundVolume {
+  return resolveVolume();
+}
+
+export function setSoundVolume(vol: SoundVolume): void {
+  _volume = vol;
   if (typeof window !== "undefined") {
-    localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
+    localStorage.setItem(VOLUME_KEY, vol);
+  }
+  // Update live master gain if audio context exists
+  if (masterGain) {
+    masterGain.gain.setTargetAtTime(VOLUME_MULTIPLIERS[vol], audioCtx!.currentTime, 0.03);
   }
 }
 
-export function getSoundMuted(): boolean {
-  return isMuted();
+/** Cycle to the next volume level and return it */
+export function cycleSoundVolume(): SoundVolume {
+  const current = resolveVolume();
+  const idx = VOLUME_CYCLE.indexOf(current);
+  const next = VOLUME_CYCLE[(idx + 1) % VOLUME_CYCLE.length];
+  setSoundVolume(next);
+  return next;
 }
+
+export function getVolumeMultiplier(): number {
+  return VOLUME_MULTIPLIERS[resolveVolume()];
+}
+
+// Backward compat — still used by some callers
+function isMuted(): boolean { return resolveVolume() === "off"; }
+export function setSoundMuted(muted: boolean): void { setSoundVolume(muted ? "off" : "high"); }
+export function getSoundMuted(): boolean { return isMuted(); }
 
 function getAudioContext(): AudioContext {
   if (!audioCtx) audioCtx = new AudioContext();
   if (audioCtx.state === "suspended") audioCtx.resume();
+  // Create / reconnect master gain
+  if (!masterGain) {
+    masterGain = audioCtx.createGain();
+    masterGain.gain.setValueAtTime(VOLUME_MULTIPLIERS[resolveVolume()], audioCtx.currentTime);
+    masterGain.connect(audioCtx.destination);
+  }
   return audioCtx;
+}
+
+/** Central output node — all sounds connect here instead of ctx.destination */
+function getMasterOutput(): GainNode {
+  getAudioContext(); // ensures masterGain exists
+  return masterGain!;
 }
 
 interface ChimeConfig {
@@ -73,7 +134,7 @@ function playNote(
 
   osc.connect(filter);
   filter.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(getMasterOutput());
   osc.start(startTime);
   osc.stop(startTime + duration + 0.05);
 }
@@ -109,7 +170,7 @@ export function playThemeWhistle(direction: "up" | "down"): void {
       gain1.gain.linearRampToValueAtTime(0.13, now + 0.015);
       gain1.gain.setValueAtTime(0.12, now + 0.06);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-      osc1.connect(gain1); gain1.connect(ctx.destination);
+      osc1.connect(gain1); gain1.connect(getMasterOutput());
       osc1.start(now); osc1.stop(now + 0.16);
 
       // Main ascending glide
@@ -123,7 +184,7 @@ export function playThemeWhistle(direction: "up" | "down"): void {
       gain2.gain.linearRampToValueAtTime(0.15, now + 0.2);
       gain2.gain.setValueAtTime(0.14, now + 0.36);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
-      osc2.connect(gain2); gain2.connect(ctx.destination);
+      osc2.connect(gain2); gain2.connect(getMasterOutput());
       osc2.start(now + 0.18); osc2.stop(now + 0.62);
 
       // Breathy overtone
@@ -139,7 +200,7 @@ export function playThemeWhistle(direction: "up" | "down"): void {
       gain3.gain.setValueAtTime(0, now + 0.18);
       gain3.gain.linearRampToValueAtTime(0.03, now + 0.22);
       gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
-      osc3.connect(filter3); filter3.connect(gain3); gain3.connect(ctx.destination);
+      osc3.connect(filter3); filter3.connect(gain3); gain3.connect(getMasterOutput());
       osc3.start(now + 0.18); osc3.stop(now + 0.6);
     } else {
       // Descending glide
@@ -153,7 +214,7 @@ export function playThemeWhistle(direction: "up" | "down"): void {
       gain1.gain.linearRampToValueAtTime(0.14, now + 0.02);
       gain1.gain.setValueAtTime(0.13, now + 0.15);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.44);
-      osc1.connect(gain1); gain1.connect(ctx.destination);
+      osc1.connect(gain1); gain1.connect(getMasterOutput());
       osc1.start(now); osc1.stop(now + 0.48);
 
       // Warm overtone
@@ -168,7 +229,7 @@ export function playThemeWhistle(direction: "up" | "down"): void {
       gain2.gain.setValueAtTime(0, now);
       gain2.gain.linearRampToValueAtTime(0.025, now + 0.03);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
-      osc2.connect(filter2); filter2.connect(gain2); gain2.connect(ctx.destination);
+      osc2.connect(filter2); filter2.connect(gain2); gain2.connect(getMasterOutput());
       osc2.start(now); osc2.stop(now + 0.45);
     }
   } catch { /* audio not supported */ }
@@ -197,7 +258,7 @@ export function playVipCashRegister(): void {
     hitGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
     hit.connect(hitFilter);
     hitFilter.connect(hitGain);
-    hitGain.connect(ctx.destination);
+    hitGain.connect(getMasterOutput());
     hit.start(now);
     hit.stop(now + 0.08);
 
@@ -210,7 +271,7 @@ export function playVipCashRegister(): void {
     bell1Gain.gain.linearRampToValueAtTime(0.15, now + 0.06);
     bell1Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
     bell1.connect(bell1Gain);
-    bell1Gain.connect(ctx.destination);
+    bell1Gain.connect(getMasterOutput());
     bell1.start(now + 0.05);
     bell1.stop(now + 0.5);
 
@@ -223,7 +284,7 @@ export function playVipCashRegister(): void {
     bell2Gain.gain.linearRampToValueAtTime(0.06, now + 0.06);
     bell2Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
     bell2.connect(bell2Gain);
-    bell2Gain.connect(ctx.destination);
+    bell2Gain.connect(getMasterOutput());
     bell2.start(now + 0.05);
     bell2.stop(now + 0.4);
 
@@ -242,7 +303,7 @@ export function playVipCashRegister(): void {
     noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
     noise.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
-    noiseGain.connect(ctx.destination);
+    noiseGain.connect(getMasterOutput());
     noise.start(now);
   } catch { /* audio not supported */ }
 }
@@ -264,7 +325,7 @@ export function playVipConfirm(): void {
       gain.gain.linearRampToValueAtTime(0.1, t + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(getMasterOutput());
       osc.start(t);
       osc.stop(t + 0.25);
     });
@@ -292,7 +353,7 @@ export function playVipButtonChime(): void {
     sub33Gain.gain.setValueAtTime(0.14, now + 0.1);
     sub33Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
     sub33.connect(sub33Gain);
-    sub33Gain.connect(ctx.destination);
+    sub33Gain.connect(getMasterOutput());
     sub33.start(now);
     sub33.stop(now + 0.65);
 
@@ -306,7 +367,7 @@ export function playVipButtonChime(): void {
     sub44Gain.gain.setValueAtTime(0.11, now + 0.12);
     sub44Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
     sub44.connect(sub44Gain);
-    sub44Gain.connect(ctx.destination);
+    sub44Gain.connect(getMasterOutput());
     sub44.start(now);
     sub44.stop(now + 0.6);
 
@@ -325,7 +386,7 @@ export function playVipButtonChime(): void {
     harm5Gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
     harm5.connect(harm5Filter);
     harm5Filter.connect(harm5Gain);
-    harm5Gain.connect(ctx.destination);
+    harm5Gain.connect(getMasterOutput());
     harm5.start(now + 0.02);
     harm5.stop(now + 0.55);
 
@@ -339,7 +400,7 @@ export function playVipButtonChime(): void {
     bellGain.gain.linearRampToValueAtTime(0.06, now + 0.07);
     bellGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
     bell.connect(bellGain);
-    bellGain.connect(ctx.destination);
+    bellGain.connect(getMasterOutput());
     bell.start(now + 0.05);
     bell.stop(now + 0.5);
 
@@ -352,7 +413,7 @@ export function playVipButtonChime(): void {
     shimGain.gain.linearRampToValueAtTime(0.02, now + 0.1);
     shimGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
     shim.connect(shimGain);
-    shimGain.connect(ctx.destination);
+    shimGain.connect(getMasterOutput());
     shim.start(now + 0.08);
     shim.stop(now + 0.4);
   } catch { /* audio not supported */ }
@@ -378,7 +439,7 @@ export function playVipUnlock(): void {
       gain.gain.setValueAtTime(0.1, t + 0.15);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(getMasterOutput());
       osc.start(t);
       osc.stop(t + 0.65);
     });
@@ -393,7 +454,7 @@ export function playVipUnlock(): void {
     shimGain.gain.linearRampToValueAtTime(0.04, now + 0.35);
     shimGain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
     shimmer.connect(shimGain);
-    shimGain.connect(ctx.destination);
+    shimGain.connect(getMasterOutput());
     shimmer.start(now + 0.3);
     shimmer.stop(now + 0.85);
   } catch { /* audio not supported */ }
@@ -417,7 +478,7 @@ export function playConnectionSuccess(): void {
     master.gain.linearRampToValueAtTime(0.22, now + 0.08);
     master.gain.setValueAtTime(0.22, now + duration * 0.5);
     master.gain.exponentialRampToValueAtTime(0.001, now + duration);
-    master.connect(ctx.destination);
+    master.connect(getMasterOutput());
 
     // 40Hz sine — the body
     const osc40 = ctx.createOscillator();
@@ -493,7 +554,7 @@ export function playPortfolioReveal(): void {
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(getMasterOutput());
       osc.start(t);
       osc.stop(t + 0.35);
     });
@@ -514,7 +575,7 @@ export function playTokenHover(): void {
     gain.gain.linearRampToValueAtTime(0.03, now + 0.005);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(getMasterOutput());
     osc.start(now);
     osc.stop(now + 0.12);
   } catch { /* audio not supported */ }
@@ -544,7 +605,7 @@ export function playRefreshWhoosh(): void {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
     noise.connect(filter);
     filter.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(getMasterOutput());
     noise.start(now);
   } catch { /* audio not supported */ }
 }

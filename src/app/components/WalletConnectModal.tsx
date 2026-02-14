@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { QRCodeSVG } from "qrcode.react";
 import {
   X,
   ExternalLink,
@@ -10,16 +9,12 @@ import {
   CheckCircle2,
   RefreshCw,
   Shield,
-  Copy,
-  Check,
-  Smartphone,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { playConnectionSuccess } from "../utils/sounds";
 import { isMetaMaskInstalled, formatAddress } from "../utils/metamask";
 import type { HashPackSession } from "../utils/hashpack";
 import {
-  isHashPackExtensionInstalled,
   clearWCStorage,
   forceResetHashConnect,
 } from "../utils/hashpack";
@@ -73,7 +68,6 @@ type WalletId = "hashpack" | "metamask" | "dynamic";
 type ConnectionStep =
   | "list"
   | "wc-connecting"
-  | "wc-qr"
   | "wc-success"
   | "metamask-connect"
   | "metamask-success"
@@ -123,7 +117,12 @@ const WALLET_OPTIONS: WalletOption[] = [
 
 function ModalShell({ children, maxW = "max-w-md" }: { children: ReactNode; maxW?: string }) {
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md p-4">
+    <div
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Connect wallet"
+    >
       <div className={`${maxW} w-full rounded-2xl bg-[#0c0c14] border border-white/[0.06] shadow-2xl shadow-black/50 overflow-hidden`}>
         {children}
       </div>
@@ -216,18 +215,11 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   const [step, setStep] = useState<ConnectionStep>("list");
   const [selectedWallet, setSelectedWallet] = useState<WalletOption | null>(null);
   const [localSession, setLocalSession] = useState<HashPackSession | null>(null);
-  const [extensionDetected, setExtensionDetected] = useState(false);
   const [wcError, setWcError] = useState<string | null>(null);
 
-  // QR / Pairing state
+  // Connection state
   const [pairingUri, setPairingUri] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<string>("Initializing...");
-  const [copied, setCopied] = useState(false);
-  const connectPromiseRef = useRef<Promise<any> | null>(null);
-
-  useEffect(() => {
-    setExtensionDetected(isHashPackExtensionInstalled());
-  }, []);
 
   // ── Dynamic Connect ──────────────────────────────────────────────
   //
@@ -285,7 +277,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
       },
     );
 
-    connectPromiseRef.current = resultPromise;
     const result = await resultPromise;
 
     if (result.success && result.session) {
@@ -328,16 +319,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     }
   };
 
-  const handleCopyUri = () => {
-    if (!pairingUri) return;
-    try {
-      navigator.clipboard.writeText(pairingUri);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch { /* clipboard not available */ }
-  };
-
-  // ════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
   // METAMASK CONNECTING
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-connect") {
@@ -391,7 +373,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     );
   }
 
-  // ═════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   // METAMASK SUCCESS
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-success" && metaMaskAccount) {
@@ -462,143 +444,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   }
 
   // ═════════════════════════════════════════════════════════════
-  // WC QR CODE (Pairing URI is ready — show QR + instructions)
-  // ═════════════════════════════════════════════════════════════
-  if (step === "wc-qr" && pairingUri) {
-    const hasError = wcError || (!isConnectingHedera && hederaConnectionError);
-    const errorMsg = wcError || hederaConnectionError;
-
-    return (
-      <ModalShell>
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center gap-3 mb-5">
-            <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
-              <ArrowLeft className="w-4 h-4 text-white/50" />
-            </button>
-            {selectedWallet && (
-              <img src={selectedWallet.logo} alt={selectedWallet.name} className="w-7 h-7 rounded-lg object-cover" />
-            )}
-            <span className="text-white/90">{selectedWallet?.name || "Connect Wallet"}</span>
-            <Badge color="purple">WalletConnect</Badge>
-          </div>
-
-          {hasError ? (
-            /* ── Error State ── */
-            <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
-                <AlertCircle className="w-8 h-8 text-red-400" />
-              </div>
-              <p className="text-white/90 mb-2">Connection Failed</p>
-              <p className="text-white/30 text-sm mb-6 max-w-xs mx-auto">{errorMsg}</p>
-              <div className="flex gap-2 justify-center flex-wrap">
-                <button
-                  onClick={() => selectedWallet && handleWCConnect(selectedWallet)}
-                  className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
-                >
-                  Try Again
-                </button>
-                <button
-                  onClick={handleClearAndRetry}
-                  className="px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-sm flex items-center gap-2 transition-colors"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Reset
-                </button>
-              </div>
-            </div>
-          ) : (
-            /* ── QR Code + Status ── */
-            <>
-              {/* Extension detected banner */}
-              {extensionDetected && (
-                <motion.div
-                  initial={{ opacity: 0, y: -8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 flex items-center gap-3"
-                >
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <p className="text-xs text-emerald-300">
-                    HashPack extension detected — check your extension for the approval prompt.
-                  </p>
-                </motion.div>
-              )}
-
-              {/* QR Code */}
-              <div className="flex justify-center mb-4">
-                <div className="bg-white rounded-2xl p-4">
-                  <QRCodeSVG
-                    value={pairingUri}
-                    size={220}
-                    level="M"
-                    includeMargin={false}
-                    bgColor="#ffffff"
-                    fgColor="#0c0c14"
-                  />
-                </div>
-              </div>
-
-              {/* Status */}
-              <div className="text-center mb-4">
-                <div className="inline-flex items-center gap-2 text-sm text-white/60">
-                  <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />
-                  <span>{connectionState}</span>
-                </div>
-              </div>
-
-              {/* Instructions */}
-              <div className="space-y-2 mb-4">
-                <p className="text-xs text-white/30 text-center">
-                  Scan this QR code with HashPack mobile, or{" "}
-                  {extensionDetected
-                    ? "approve in your browser extension."
-                    : "paste the pairing code in Settings \u2192 Connect DApp."}
-                </p>
-              </div>
-
-              {/* Action buttons */}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCopyUri}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.06] text-white/70 text-sm transition-colors"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copy Link</span>
-                    </>
-                  )}
-                </button>
-                <a
-                  href={`https://www.hashpack.app/wc?uri=${encodeURIComponent(pairingUri)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm transition-colors"
-                >
-                  <Smartphone className="w-3.5 h-3.5" />
-                  <span>Open HashPack</span>
-                </a>
-              </div>
-
-              {/* Security note */}
-              <div className="mt-4 flex items-center gap-2 justify-center">
-                <Shield className="w-3 h-3 text-white/15" />
-                <p className="text-[10px] text-white/20">
-                  End-to-end encrypted via WalletConnect v2
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ═════════════════════════════════════════════════════════════
   // WC SUCCESS
   // ═════════════════════════════════════════════════════════════
   const sessionForSuccess = localSession || hashPackSession;
@@ -643,9 +488,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-sm text-white/90">{wallet.name}</span>
-                {wallet.id === "hashpack" && extensionDetected && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                )}
                 <Badge color={wallet.badgeColor}>{wallet.badge}</Badge>
               </div>
               <p className="text-xs text-white/30">{wallet.description}</p>

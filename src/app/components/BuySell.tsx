@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Info,
 } from "lucide-react";
+import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { playVipCashRegister } from "../utils/sounds";
@@ -429,13 +430,14 @@ export function BuySell() {
               </div>
             </div>
           </div>
+          <Tip content="Refresh price">
           <button
             onClick={refreshPrice}
             className={`p-2.5 rounded-xl transition-all ${isDark ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20" : "bg-gray-100 hover:bg-gray-200 border border-gray-200"}`}
-            title="Refresh price"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""} ${isDark ? "text-slate-400" : "text-gray-500"}`} />
           </button>
+          </Tip>
         </div>
 
         {/* Tab Navigation */}
@@ -1059,6 +1061,7 @@ export function BuySell() {
 
 function ChangeNowBadge({ isDark }: { isDark: boolean }) {
   return (
+    <Tip content="Powered by ChangeNOW">
     <a
       href="https://changenow.io/"
       target="_blank"
@@ -1068,7 +1071,6 @@ function ChangeNowBadge({ isDark }: { isDark: boolean }) {
           ? "bg-slate-800/60 border border-pink-500/10 text-slate-400 hover:text-pink-300 hover:border-pink-500/30"
           : "bg-gray-50 border border-gray-200 text-gray-500 hover:text-pink-600 hover:border-pink-200"
       }`}
-      title="Powered by ChangeNOW"
     >
       <img
         src={CHANGENOW_LOGO}
@@ -1078,6 +1080,7 @@ function ChangeNowBadge({ isDark }: { isDark: boolean }) {
       />
       <span>Powered by ChangeNOW</span>
     </a>
+    </Tip>
   );
 }
 

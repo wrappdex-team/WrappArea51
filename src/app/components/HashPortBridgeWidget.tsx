@@ -14,9 +14,13 @@ import { AnimatePresence } from "motion/react";
 import {
   X,
   ExternalLink,
-  AlertTriangle,
+  Maximize2,
+  Minimize2,
+  AlertCircle,
+  Loader2,
   RefreshCw,
 } from "lucide-react";
+import { Tip } from "./Tip";
 
 interface HashPortBridgeWidgetProps {
   onClose: () => void;
@@ -83,6 +87,7 @@ export function HashPortBridgeWidget({ onClose, isDark }: HashPortBridgeWidgetPr
           </span>
         </div>
         <div className="flex items-center gap-1">
+          <Tip content="Open in new tab">
           <a
             href={HASHPORT_APP_URL}
             target="_blank"
@@ -92,10 +97,11 @@ export function HashPortBridgeWidget({ onClose, isDark }: HashPortBridgeWidgetPr
                 ? "hover:bg-white/[0.06] text-slate-500 hover:text-slate-300"
                 : "hover:bg-gray-100 text-gray-400 hover:text-gray-600"
             }`}
-            title="Open in new tab"
           >
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
+          </Tip>
+          <Tip content="Close">
           <button
             onClick={onClose}
             className={`p-1.5 rounded-lg transition-colors ${
@@ -103,10 +109,10 @@ export function HashPortBridgeWidget({ onClose, isDark }: HashPortBridgeWidgetPr
                 ? "hover:bg-white/[0.06] text-slate-500 hover:text-slate-300"
                 : "hover:bg-gray-100 text-gray-400 hover:text-gray-600"
             }`}
-            title="Close"
           >
             <X className="w-3.5 h-3.5" />
           </button>
+          </Tip>
         </div>
       </div>
 
@@ -140,7 +146,7 @@ export function HashPortBridgeWidget({ onClose, isDark }: HashPortBridgeWidgetPr
             style={{ backgroundColor: "#0d1117" }}
           >
             <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center">
-              <AlertTriangle className="w-7 h-7 text-red-400" />
+              <AlertCircle className="w-7 h-7 text-red-400" />
             </div>
             <div>
               <h4 className="text-slate-200 mb-1">Widget Failed to Load</h4>

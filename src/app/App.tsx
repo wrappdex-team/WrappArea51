@@ -9,6 +9,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { WalletProvider } from "./contexts/WalletContext";
 import { DynamicSDKWrapper, isDynamicSDKAvailable } from "./components/DynamicSDKWrapper";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { SigningProvider } from "./contexts/SigningContext";
 import { initPerformanceMonitoring } from "./utils/performance";
 import { runHealthChecks } from "./utils/health";
 import { preloadCriticalRoutes } from "./utils/preload";
@@ -82,8 +83,10 @@ export default function App() {
       <DynamicSDKWrapper>
         <ThemeProvider>
           <WalletProvider>
-            <LazyDynamicBridge />
-            <RouterProvider router={router} />
+            <SigningProvider>
+              <LazyDynamicBridge />
+              <RouterProvider router={router} />
+            </SigningProvider>
           </WalletProvider>
         </ThemeProvider>
       </DynamicSDKWrapper>

@@ -55,7 +55,7 @@ export interface PoolState {
   cumulativeVolumeUsd: number;
   swapCount: number;
   status: "active" | "paused";
-  version?: number;  // [AUDIT-AMM-02] Optimistic lock version (server-managed)
+  version?: number;  // Optimistic lock version (server-managed)
   // Enriched by server
   tvlUsd?: number;
   priceA?: number;
@@ -117,9 +117,8 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
-// [AUDIT-AMM-01] Authenticated fetch — includes session token for mutating endpoints.
-// Requires authenticate() to have been called first (see /src/app/utils/auth.ts).
-// [AUDIT-AMM-02] Auto-retries on 409 (version conflict) and 503 (pool busy) with backoff.
+// Authenticated fetch with session token. Auto-retries on 409 (version conflict)
+// and 503 (pool busy) with exponential backoff + jitter.
 const AUTHED_MAX_RETRIES = 3;
 const AUTHED_RETRY_BASE_MS = 200;
 
@@ -146,7 +145,7 @@ async function authedFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
     if (res.ok) return data as T;
 
-    // [AUDIT-AMM-02] Retryable: 409 VERSION_CONFLICT or 503 POOL_BUSY
+    // Retryable: 409 VERSION_CONFLICT or 503 POOL_BUSY
     const code = (data as any)?.code;
     if ((res.status === 409 || res.status === 503) && attempt < AUTHED_MAX_RETRIES) {
       console.debug(`[SmartLiquidity] ${res.status} ${code} on ${path} — will retry`);
@@ -210,8 +209,8 @@ export async function getPoolStats(): Promise<PoolStats> {
 
 // ── Pool Creation ───────────────────────────────────────────────────
 
-// [AUDIT-AMM-01] All mutating pool functions use authedFetch (session token required).
-// Call authenticate(accountId) from /src/app/utils/auth.ts before using these.
+// All mutating pool functions use authedFetch (session token required).
+// Call authenticate(accountId) before using these.
 
 export async function createPool(
   tokenA: string,

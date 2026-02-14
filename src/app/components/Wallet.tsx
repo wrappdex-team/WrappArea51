@@ -21,6 +21,7 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { motion } from "motion/react";
 import { useTheme } from "../contexts/ThemeContext";
+import { Tip } from "./Tip";
 import { useWallet } from "../contexts/WalletContext";
 import { copyToClipboard as copyText } from "../utils/clipboard";
 import { isVipEligible, loadVipPrefs } from "../utils/vip";
@@ -82,8 +83,8 @@ const CONNECTOR_LOGOS: Record<string, string> = {
 
 // Donut chart colors
 const CHART_COLORS = [
-  "#ec4899", "#a855f7", "#3b82f6", "#f59e0b", "#10b981",
-  "#f43f5e", "#8b5cf6", "#06b6d4", "#f97316", "#14b8a6",
+  "#06b6d4", "#a855f7", "#3b82f6", "#f59e0b", "#10b981",
+  "#f43f5e", "#8b5cf6", "#ec4899", "#f97316", "#14b8a6",
 ];
 
 // ── Donut Chart Component (VIP-enhanced) ──────────────────────────────
@@ -146,7 +147,7 @@ function AllocationDonut({
             <Tooltip
               contentStyle={{
                 background: isDark ? "rgba(15,15,26,0.95)" : "#fff",
-                border: isDark ? `1px solid ${isVip ? "rgba(16,185,129,0.25)" : "rgba(236,72,153,0.2)"}` : "1px solid #e5e7eb",
+                border: isDark ? `1px solid ${isVip ? "rgba(16,185,129,0.25)" : "rgba(6,182,212,0.25)"}` : "1px solid #e5e7eb",
                 borderRadius: 10,
                 fontSize: 12,
                 padding: "8px 12px",
@@ -611,10 +612,10 @@ export function Wallet() {
   if (!hasAnyWallet) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
-        <div className="w-16 h-16 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-2xl flex items-center justify-center mb-5">
+        <div className="w-16 h-16 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-2xl flex items-center justify-center mb-5">
           <WalletIcon className={`w-8 h-8 ${isDark ? "text-purple-400" : "text-purple-500"}`} />
         </div>
-        <h3 className="text-xl font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent mb-2">
+        <h3 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent mb-2">
           Connect a Wallet
         </h3>
         <p className={`text-sm max-w-sm text-center ${isDark ? "text-slate-500" : "text-gray-400"}`}>
@@ -654,10 +655,10 @@ export function Wallet() {
         <div className={`relative rounded-xl p-4 ${isDark
           ? isVip
             ? "bg-gradient-to-r from-emerald-950/40 via-slate-900/60 to-teal-950/40 border border-emerald-500/20"
-            : "bg-gradient-to-r from-purple-900/30 via-pink-900/20 to-slate-900/30 border border-pink-500/20"
+            : "bg-gradient-to-r from-blue-900/30 via-cyan-900/20 to-slate-900/30 border border-cyan-500/20"
           : isVip
             ? "bg-gradient-to-r from-emerald-50 via-teal-50/50 to-white border border-emerald-200"
-            : "bg-gradient-to-r from-purple-50 via-pink-50 to-white border border-pink-200"
+            : "bg-gradient-to-r from-blue-50 via-cyan-50 to-white border border-cyan-200"
         }`}>
           {/* VIP: shimmer pass */}
           {isVip && isDark && (
@@ -687,7 +688,7 @@ export function Wallet() {
             {/* Total Portfolio */}
             <div>
               <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>Portfolio</div>
-              <div className={`text-2xl font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-pink-400 to-purple-400"}`}>
+              <div className={`text-2xl font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-cyan-400 to-blue-400"}`}>
                 {formatUsd(totalPortfolioUsd)}
               </div>
             </div>
@@ -698,7 +699,7 @@ export function Wallet() {
                 <div className="font-bold text-emerald-400">{((hbarhToken.value / totalPortfolioUsd) * 100).toFixed(1)}%</div>
               </div>
             )}
-            <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-pink-500/15") : "bg-gray-200"} hidden sm:block`} />
+            <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-cyan-500/15") : "bg-gray-200"} hidden sm:block`} />
             {/* HBAR Price */}
             <div>
               <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR</div>
@@ -710,14 +711,14 @@ export function Wallet() {
                 <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
                 <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
               </div>
-              <div className={`font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-purple-400 to-pink-400"}`}>
+              <div className={`font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-blue-400 to-cyan-400"}`}>
                 {hbarhPrice > 0 ? `$${hbarhPrice < 0.01 ? hbarhPrice.toFixed(6) : hbarhPrice.toFixed(4)}` : "..."}
               </div>
             </div>
             {/* HBAR.ħ Balance if connected to Hedera */}
             {hbarhToken && (
               <>
-                <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-pink-500/15") : "bg-gray-200"} hidden sm:block`} />
+                <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-cyan-500/15") : "bg-gray-200"} hidden sm:block`} />
                 <div>
                   <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ Bal</div>
                   <div className="font-bold">{formatBal(hbarhToken.balance)}</div>
@@ -731,7 +732,7 @@ export function Wallet() {
             {/* DAO Voting Power */}
             {daoVotingPower > 0 && (
               <>
-                <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-pink-500/15") : "bg-gray-200"} hidden sm:block`} />
+                <div className={`w-px h-10 ${isDark ? (isVip ? "bg-emerald-500/15" : "bg-cyan-500/15") : "bg-gray-200"} hidden sm:block`} />
                 <div>
                   <div className="flex items-center gap-1">
                     <Vote className={`w-3 h-3 ${isDark ? (isVip ? "text-emerald-400" : "text-purple-400") : "text-purple-500"}`} />
@@ -780,7 +781,7 @@ export function Wallet() {
         <div className={isDark
           ? isVip
             ? "relative bg-slate-900/50 border border-emerald-500/15 rounded-xl backdrop-blur-sm"
-            : "relative bg-slate-900/40 border border-pink-500/20 rounded-xl"
+            : "relative bg-slate-900/40 border border-cyan-500/20 rounded-xl"
           : "relative bg-white border border-gray-200 rounded-xl shadow-sm"
         }>
           <div className="p-5">
@@ -811,7 +812,7 @@ export function Wallet() {
                         <button onClick={() => copyToClipboard(hederaAccount.accountId, "account")} className="p-0.5 hover:bg-white/10 rounded">
                           {copied === "account" ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 opacity-40" />}
                         </button>
-                        <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className={isVip ? "text-emerald-400 hover:text-emerald-300" : "text-pink-400 hover:text-pink-300"}>
+                        <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className={isVip ? "text-emerald-400 hover:text-emerald-300" : "text-cyan-400 hover:text-cyan-300"}>
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       </div>
@@ -821,13 +822,13 @@ export function Wallet() {
                     <button onClick={() => setShowDeposit(true)} className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${isDark
                       ? isVip
                         ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
-                        : "bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20"
-                      : "bg-pink-50 text-pink-600 hover:bg-pink-100 border border-pink-200"
+                        : "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20"
+                      : "bg-cyan-50 text-cyan-600 hover:bg-cyan-100 border border-cyan-200"
                     }`}>
                       Deposit
                     </button>
-                    <button onClick={handleRefresh} disabled={isRefreshing} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`} title="Refresh">
-                      <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? (isVip ? "animate-spin text-emerald-400" : "animate-spin text-pink-400") : ""}`} />
+                    <button onClick={handleRefresh} disabled={isRefreshing} aria-label="Refresh wallet balances" className={`p-1.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`}>
+                      <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? (isVip ? "animate-spin text-emerald-400" : "animate-spin text-cyan-400") : ""}`} />
                     </button>
                   </div>
                 </div>
@@ -862,7 +863,7 @@ export function Wallet() {
                             ? "Not associated"
                             : hbarhDirect
                               ? HBARH_TOKEN_ID
-                              : "Loading..."}
+                              : "Fetching..."}
                     </div>
                   </div>
                   <div className={`p-3 rounded-lg ${isDark ? "bg-black/20" : "bg-gray-50"}`}>
@@ -899,7 +900,7 @@ export function Wallet() {
                             {logo ? (
                               <img src={logo} alt={h.symbol} className="w-8 h-8 rounded-full flex-shrink-0 object-cover" />
                             ) : (
-                              <div className={`w-8 h-8 bg-gradient-to-br rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isVip ? "from-emerald-500/20 to-teal-500/20" : "from-pink-500/20 to-purple-500/20"}`}>{h.symbol.slice(0, 2)}</div>
+                              <div className={`w-8 h-8 bg-gradient-to-br rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isVip ? "from-emerald-500/20 to-teal-500/20" : "from-cyan-500/20 to-blue-500/20"}`}>{h.symbol.slice(0, 2)}</div>
                             )}
                             {/* VIP: emerald ring on primary tokens */}
                             {isVip && h.isPrimary && isDark && (
@@ -915,7 +916,7 @@ export function Wallet() {
                             {h.tokenId && (
                               <div className="flex items-center gap-1">
                                 <span className={`text-[10px] font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>{h.tokenId}</span>
-                                <a href={`https://hashscan.io/${hederaAccount.network}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className={`${isVip ? "text-emerald-400 hover:text-emerald-300" : "text-pink-400 hover:text-pink-300"}`}>
+                                <a href={`https://hashscan.io/${hederaAccount.network}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className={`${isVip ? "text-emerald-400 hover:text-emerald-300" : "text-cyan-400 hover:text-cyan-300"}`}>
                                   <ExternalLink className="w-2.5 h-2.5" />
                                 </a>
                               </div>
@@ -960,13 +961,13 @@ export function Wallet() {
                         {hiddenHoldings.length > 5 && (
                           <div className="relative mb-2">
                             <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 ${isDark ? "text-slate-600" : "text-gray-400"}`} />
-                            <input type="text" value={tokenFilter} onChange={(e) => setTokenFilter(e.target.value)} placeholder="Filter..." className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-xs outline-none ${isDark ? "bg-black/20 border border-pink-500/10 placeholder:text-slate-700" : "bg-gray-50 border border-gray-200 placeholder:text-gray-400"}`} />
+                            <input type="text" value={tokenFilter} onChange={(e) => setTokenFilter(e.target.value)} placeholder="Filter..." className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-xs outline-none ${isDark ? "bg-black/20 border border-cyan-500/10 placeholder:text-slate-700" : "bg-gray-50 border border-gray-200 placeholder:text-gray-400"}`} />
                           </div>
                         )}
                         {hiddenHoldings.map((h) => (
                           <div key={h.tokenId || h.symbol} className={`flex items-center justify-between p-2 rounded-lg ${isDark ? "hover:bg-white/[0.02]" : "hover:bg-gray-50"}`}>
                             <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-6 h-6 bg-gradient-to-br from-pink-500/15 to-purple-500/15 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">{h.symbol.slice(0, 2)}</div>
+                              <div className="w-6 h-6 bg-gradient-to-br from-cyan-500/15 to-blue-500/15 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">{h.symbol.slice(0, 2)}</div>
                               <div className="min-w-0">
                                 <span className="font-bold text-xs">{h.symbol}</span>
                                 <span className={`text-[10px] ml-1.5 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>{h.tokenId}</span>
@@ -990,7 +991,7 @@ export function Wallet() {
                   <AllocationDonut data={hederaDonutData} isDark={isDark} isVip={isVip} />
                 </div>
                 <div className="text-center mt-1">
-                  <div className={`font-bold text-lg bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-pink-400 to-purple-400"}`}>
+                  <div className={`font-bold text-lg bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-cyan-400 to-blue-400"}`}>
                     {formatUsd(hederaTotalUsd)}
                   </div>
                   {/* VIP: priced vs unpriced count */}
@@ -1042,12 +1043,16 @@ export function Wallet() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button onClick={handleRefreshMM} disabled={isRefreshingMM} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`} title="Refresh">
+                    <Tip content="Refresh">
+                    <button onClick={handleRefreshMM} disabled={isRefreshingMM} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`}>
                       <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingMM ? "animate-spin text-orange-400" : ""}`} />
                     </button>
-                    <button onClick={disconnectMetaMask} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-red-900/30 text-red-400" : "hover:bg-red-50 text-red-500"}`} title="Disconnect">
+                    </Tip>
+                    <Tip content="Disconnect">
+                    <button onClick={disconnectMetaMask} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-red-900/30 text-red-400" : "hover:bg-red-50 text-red-500"}`}>
                       <Unplug className="w-3.5 h-3.5" />
                     </button>
+                    </Tip>
                   </div>
                 </div>
 
@@ -1073,9 +1078,20 @@ export function Wallet() {
 
                 {/* ERC-20 tokens */}
                 {loadingErc20 ? (
-                  <div className="flex items-center gap-2 py-3">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" />
-                    <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Fetching ERC-20 balances...</span>
+                  <div className="space-y-2 py-2" role="status" aria-label="Loading ERC-20 balances">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex items-center justify-between py-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-7 h-7 rounded-full ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                          <div>
+                            <div className={`h-3.5 w-14 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden mb-1`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                            <div className={`h-2.5 w-10 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                          </div>
+                        </div>
+                        <div className={`h-3.5 w-16 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                      </div>
+                    ))}
+                    <span className="sr-only">Loading ERC-20 balances...</span>
                   </div>
                 ) : erc20Balances.length > 0 ? (
                   <div className="space-y-1.5">
@@ -1125,13 +1141,13 @@ export function Wallet() {
         <div className={`${isDark
           ? isVip
             ? "bg-slate-900/50 border border-emerald-500/10 rounded-xl"
-            : "bg-slate-900/40 border border-pink-500/15 rounded-xl"
+            : "bg-slate-900/40 border border-cyan-500/15 rounded-xl"
           : "bg-white border border-gray-200 rounded-xl shadow-sm"
         }`}>
           <div className="p-5">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <Clock className={`w-4 h-4 ${isDark ? (isVip ? "text-emerald-400" : "text-pink-400") : "text-pink-500"}`} />
+                <Clock className={`w-4 h-4 ${isDark ? (isVip ? "text-emerald-400" : "text-cyan-400") : "text-cyan-500"}`} />
                 <h3 className="font-bold">Transaction History</h3>
                 {/* VIP: tx count badge */}
                 {isVip && (recentTxns.length + evmTxns.length) > 0 && (
@@ -1141,7 +1157,7 @@ export function Wallet() {
                 )}
               </div>
               {hederaAccount && (
-                <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className="text-xs text-pink-400 flex items-center gap-1 hover:underline">
+                <a href={getHashScanAccountUrl(hederaAccount.accountId, hederaAccount.network)} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 flex items-center gap-1 hover:underline">
                   HashScan <ExternalLink className="w-3 h-3" />
                 </a>
               )}
@@ -1158,9 +1174,20 @@ export function Wallet() {
                   </span>
                 </div>
                 {loadingTxns ? (
-                  <div className="flex items-center justify-center py-6">
-                    <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
-                    <span className={`ml-2 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>Loading...</span>
+                  <div className="space-y-2 py-2" role="status" aria-label="Loading transactions">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className={`flex items-center justify-between py-2 ${isDark ? "border-b border-white/[0.04]" : "border-b border-gray-100"}`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-6 h-6 rounded-full ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                          <div>
+                            <div className={`h-3 w-20 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden mb-1`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                            <div className={`h-2.5 w-28 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                          </div>
+                        </div>
+                        <div className={`h-3 w-16 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                      </div>
+                    ))}
+                    <span className="sr-only">Loading transactions...</span>
                   </div>
                 ) : recentTxns.length === 0 ? (
                   <div className={`text-center py-6 text-sm ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -1174,26 +1201,28 @@ export function Wallet() {
                       return (
                         <div key={`h-${tx.transactionId}-${i}`} className={`flex items-center justify-between p-2.5 rounded-lg transition-colors ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-50"}`}>
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isIncoming ? "bg-emerald-500/15" : "bg-pink-500/15"}`}>
-                              {isIncoming ? <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-400" /> : <ArrowUpRight className="w-3.5 h-3.5 text-pink-400" />}
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isIncoming ? "bg-emerald-500/15" : "bg-cyan-500/15"}`}>
+                              {isIncoming ? <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-400" /> : <ArrowUpRight className="w-3.5 h-3.5 text-cyan-400" />}
                             </div>
                             <div className="min-w-0">
                               <div className="text-sm font-bold truncate">{tx.name}</div>
-                              <div className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`} title={formatFullTimestamp(tx.consensusTimestamp)}>
+                              <Tip content={formatFullTimestamp(tx.consensusTimestamp)} side="right">
+                              <div className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                                 {formatTimestamp(tx.consensusTimestamp)}
                               </div>
+                              </Tip>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                             {myTransfer && (
-                              <span className={`text-sm font-bold ${isIncoming ? "text-emerald-400" : "text-pink-400"}`}>
+                              <span className={`text-sm font-bold ${isIncoming ? "text-emerald-400" : "text-cyan-400"}`}>
                                 {isIncoming ? "+" : ""}{Math.abs(myTransfer.amount) >= 0.01 ? myTransfer.amount.toFixed(4) : myTransfer.amount.toFixed(8)} <span className="hidden sm:inline text-xs">HBAR</span>
                               </span>
                             )}
                             <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${tx.result === "SUCCESS" ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
                               {tx.result === "SUCCESS" ? "OK" : tx.result}
                             </span>
-                            <a href={`https://hashscan.io/${hederaAccount.network}/transaction/${tx.transactionId}`} target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-300">
+                            <a href={`https://hashscan.io/${hederaAccount.network}/transaction/${tx.transactionId}`} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">
                               <ExternalLink className="w-3 h-3" />
                             </a>
                           </div>
@@ -1203,7 +1232,7 @@ export function Wallet() {
                   </div>
                 )}
                 {recentTxns.length > 8 && (
-                  <button onClick={() => setShowAllTxns(!showAllTxns)} className={`w-full mt-2 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors ${isDark ? "text-pink-400/70 hover:text-pink-400 hover:bg-white/[0.03]" : "text-pink-500 hover:bg-gray-50"}`}>
+                  <button onClick={() => setShowAllTxns(!showAllTxns)} className={`w-full mt-2 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors ${isDark ? "text-cyan-400/70 hover:text-cyan-400 hover:bg-white/[0.03]" : "text-cyan-500 hover:bg-gray-50"}`}>
                     {showAllTxns ? <>Show less <ChevronUp className="w-3 h-3" /></> : <>All {recentTxns.length} <ChevronDown className="w-3 h-3" /></>}
                   </button>
                 )}
@@ -1212,7 +1241,7 @@ export function Wallet() {
 
             {/* ── Divider between chains ── */}
             {hederaAccount && metaMaskAccount && (
-              <div className={`my-4 border-t ${isDark ? "border-pink-500/10" : "border-gray-100"}`} />
+              <div className={`my-4 border-t ${isDark ? "border-cyan-500/10" : "border-gray-100"}`} />
             )}
 
             {/* ── MetaMask / EVM Transactions ── */}
@@ -1233,9 +1262,20 @@ export function Wallet() {
                   )}
                 </div>
                 {loadingEvmTxns ? (
-                  <div className="flex items-center justify-center py-6">
-                    <Loader2 className="w-4 h-4 animate-spin text-orange-400" />
-                    <span className={`ml-2 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>Loading...</span>
+                  <div className="space-y-2 py-2" role="status" aria-label="Loading EVM transactions">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className={`flex items-center justify-between py-2 ${isDark ? "border-b border-white/[0.04]" : "border-b border-gray-100"}`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-6 h-6 rounded-full ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                          <div>
+                            <div className={`h-3 w-20 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden mb-1`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                            <div className={`h-2.5 w-28 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                          </div>
+                        </div>
+                        <div className={`h-3 w-16 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                      </div>
+                    ))}
+                    <span className="sr-only">Loading EVM transactions...</span>
                   </div>
                 ) : evmTxns.length === 0 ? (
                   <div className={`text-center py-6 text-sm ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -1257,9 +1297,11 @@ export function Wallet() {
                             </div>
                             <div className="min-w-0">
                               <div className="text-sm font-bold truncate">{txLabel}</div>
-                              <div className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`} title={new Date(tx.timestamp * 1000).toLocaleString()}>
+                              <Tip content={new Date(tx.timestamp * 1000).toLocaleString()} side="right">
+                              <div className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                                 {formatUnixTs(tx.timestamp)}
                               </div>
+                              </Tip>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0 ml-2">
@@ -1295,7 +1337,7 @@ export function Wallet() {
       {showDeposit && hederaAccount && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDeposit(false)}>
           <div className={`rounded-xl p-6 max-w-sm w-full ${isDark
-            ? isVip ? "bg-slate-900 border border-emerald-500/30" : "bg-slate-900 border border-pink-500/30"
+            ? isVip ? "bg-slate-900 border border-emerald-500/30" : "bg-slate-900 border border-cyan-500/30"
             : "bg-white border border-gray-200 shadow-2xl"
           }`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -1305,7 +1347,7 @@ export function Wallet() {
               </button>
             </div>
             <div className={`rounded-lg px-4 py-3 font-mono text-center ${isDark
-              ? isVip ? "bg-black/30 border border-emerald-500/15" : "bg-black/30 border border-pink-500/15"
+              ? isVip ? "bg-black/30 border border-emerald-500/15" : "bg-black/30 border border-cyan-500/15"
               : "bg-gray-50 border border-gray-200"
             }`}>
               {hederaAccount.accountId}
@@ -1315,7 +1357,7 @@ export function Wallet() {
             </p>
             <button onClick={() => copyToClipboard(hederaAccount.accountId, "deposit")} className={`w-full mt-4 py-2.5 rounded-lg text-white flex items-center justify-center gap-2 text-sm ${isVip
               ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500"
-              : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
+              : "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500"
             }`}>
               {copied === "deposit" ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy Account ID</>}
             </button>

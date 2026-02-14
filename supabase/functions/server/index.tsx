@@ -26,6 +26,9 @@ app.use("*", async (c, next) => {
   c.header("X-Frame-Options", "DENY");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
   c.header("X-XSS-Protection", "0");
+  c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  c.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+  c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()");
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -111,8 +114,15 @@ function getClientIp(c: any): string {
 
 function sanitizeString(input: string, maxLength: number): string {
   return input
+    .normalize("NFC")
     .replace(/[<>"'&]/g, "")
     .replace(/[\x00-\x1F\x7F]/g, "")
+    // Strip zero-width and invisible Unicode characters
+    .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "")
+    // Strip bidirectional override/control characters (text direction spoofing)
+    .replace(/[\u202A-\u202E\u2066-\u2069\u061C\u200E\u200F]/g, "")
+    // Strip combining diacritical marks beyond the first per base char (homoglyph stacking)
+    .replace(/([\u0300-\u036F]){2,}/g, "$1")
     .trim()
     .slice(0, maxLength);
 }
@@ -158,8 +168,8 @@ app.get("/make-server-54299934/winners", async (c) => {
   }
 });
 
-// POST /spin — Authenticated, server-determined outcome via CSPRNG.
-// accountId derived from session token (not body). Client only animates.
+// POST /spin — Server-determined outcome via CSPRNG.
+// accountId from session token (preferred) OR from body with Mirror Node VIP gate.
 
 app.post("/make-server-54299934/spin", async (c) => {
   try {
@@ -168,10 +178,39 @@ app.post("/make-server-54299934/spin", async (c) => {
       return c.json({ error: "Rate limited — try again in a minute" }, 429);
     }
 
-    // Authenticate: accountId comes from verified session, not body.
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
-    const accountId = auth.accountId;
+    // ── Identify the account ──
+    // Prefer authenticated session; fall back to body.accountId + Mirror Node VIP check.
+    let accountId: string;
+
+    const session = await validateSession(c);
+    if (session) {
+      accountId = session.accountId;
+      console.log(`[Spin] Authenticated via session: ${accountId}`);
+    } else {
+      // No session — accept accountId from body and verify VIP via Mirror Node
+      let body: any;
+      try { body = await c.req.json(); } catch { body = {}; }
+      const rawId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+      if (!rawId || !/^0\.0\.\d+$/.test(rawId)) {
+        return c.json({ error: "Valid Hedera account ID required (e.g. 0.0.12345)", code: "INVALID_ACCOUNT" }, 400);
+      }
+      accountId = sanitizeString(rawId, 20);
+
+      // ── Mirror Node VIP gate ──
+      // Must hold >= 100M HBAR.ħ OR >= 1 VIP NFT to spin.
+      console.log(`[Spin] No session — verifying VIP via Mirror Node for ${accountId}`);
+      const vipStatus = await verifyVipEligibilityFull(accountId);
+      if (!vipStatus.eligible) {
+        console.log(`[Spin] VIP FAILED: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
+        return c.json({
+          error: "VIP access required — hold 100M+ HBAR.ħ tokens or a VIP NFT to spin",
+          code: "VIP_REQUIRED",
+          tokenBalance: vipStatus.tokenBalance,
+          nftCount: vipStatus.nftCount,
+        }, 403);
+      }
+      console.log(`[Spin] VIP verified: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
+    }
 
     const now = Date.now();
 
@@ -300,6 +339,35 @@ app.get("/make-server-54299934/spin/cooldown/:accountId", async (c) => {
     console.log("Error checking cooldown:", err);
     // Fail closed — if KV is down, deny spins to prevent cooldown bypass
     return c.json({ canSpin: false, cooldownMs: SPIN_COOLDOWN_MS, error: "Service temporarily unavailable" }, 503);
+  }
+});
+
+// DELETE /spin/cooldown — Dev reset: clears spin cooldown
+app.delete("/make-server-54299934/spin/cooldown", async (c) => {
+  try {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) {
+      return c.json({ error: "Rate limited" }, 429);
+    }
+    // Session auth preferred; fall back to query param ?accountId=
+    let accountId: string;
+    const session = await validateSession(c);
+    if (session) {
+      accountId = session.accountId;
+    } else {
+      const qid = c.req.query("accountId") || "";
+      if (!qid || !/^0\.0\.\d+$/.test(qid.trim())) {
+        return c.json({ error: "Account ID required" }, 400);
+      }
+      accountId = sanitizeString(qid.trim(), 20);
+    }
+    const cdKey = COOLDOWN_PREFIX + accountId;
+    await kv.del(cdKey);
+    console.log(`[Spin] Cooldown reset for ${accountId} (dev reset from IP: ${ip})`);
+    return c.json({ success: true, accountId, message: "Spin cooldown cleared" });
+  } catch (err) {
+    console.log("Error resetting spin cooldown:", err);
+    return c.json({ error: "Failed to reset cooldown" }, 500);
   }
 });
 
@@ -489,6 +557,31 @@ const POOL_LOCK_TTL_MS = 5_000;            // Max lock hold time (safety valve)
 const POOL_LOCK_WAIT_MS = 3_000;           // Max wait for lock acquisition
 const POOL_LOCK_RETRY_INTERVAL_MS = 40;    // Spin-wait interval
 
+// ── Typed records for swap history and treasury fee accumulator ──────
+interface SwapRecord {
+  poolId: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  amountOut: string;
+  protocolFeeTinybar?: number;
+  timestamp: number;
+}
+
+interface TreasuryFeeAccumulator {
+  totalTinybar: number;
+  swapCount: number;
+  treasuryAccount: string;
+  lastUpdated: number;
+}
+
+interface PoolApiResponse {
+  tvlUsd: number;
+  priceA: number;
+  priceB: number;
+  [key: string]: unknown;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // AUTHENTICATION — ED25519 Challenge-Response Sessions
 // ═══════════════════════════════════════════════════════════════════════
@@ -507,6 +600,7 @@ const POOL_LOCK_RETRY_INTERVAL_MS = 40;    // Spin-wait interval
 const AUTH_CHALLENGE_PREFIX = "auth_ch_";
 const AUTH_SESSION_PREFIX = "auth_sess_";
 const AUTH_PUBKEY_CACHE_PREFIX = "auth_pk_";
+const AUTH_ACCT_SESSION_PREFIX = "auth_as_";  // Per-account session index (ATK-002)
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_SESSION_TTL_MS = 30 * 60 * 1000;
 const AUTH_PUBKEY_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -671,6 +765,24 @@ app.get("/make-server-54299934/auth/challenge/:accountId", async (c) => {
 });
 
 // POST /auth/session — Verify signature and create session token
+//
+// Nonce consumption strategy: DELETE-BEFORE-VERIFY
+//   The challenge is deleted from KV immediately after reading, BEFORE
+//   signature verification. This closes the race window that existed
+//   when we used a mark-as-used (read → set used=true) pattern — two
+//   concurrent requests could both read used=false in that window.
+//
+//   With delete-first, the second request gets null from kv.get and fails.
+//   Trade-off: if verification fails (bad sig, Mirror Node down), the
+//   challenge is already consumed — the user must request a new one.
+//   This is the correct security posture: one attempt per nonce.
+//
+//   Residual race: KV read + delete is not atomic, so two requests
+//   arriving within ~1ms could both read the challenge before either
+//   deletes it. In a wallet-signing flow (user clicks "Sign"), this
+//   is practically unreachable. Both sessions would bind to the same
+//   accountId with no privilege escalation.
+
 app.post("/make-server-54299934/auth/session", async (c) => {
   try {
     const ip = getClientIp(c);
@@ -680,21 +792,29 @@ app.post("/make-server-54299934/auth/session", async (c) => {
     if (!challengeId || !signature || !accountId) return c.json({ error: "Missing: challengeId, signature, accountId" }, 400);
     if (!isValidHederaAccountId(accountId)) return c.json({ error: "Invalid Hedera account ID" }, 400);
 
-    // Retrieve and validate challenge
-    const challenge: AuthChallenge | null = await kv.get(AUTH_CHALLENGE_PREFIX + challengeId);
-    if (!challenge) return c.json({ error: "Challenge not found or already used", code: "CHALLENGE_INVALID" }, 400);
-    if (challenge.used) return c.json({ error: "Challenge already used (replay rejected)", code: "CHALLENGE_USED" }, 400);
+    // ── Retrieve challenge ──
+    const challengeKey = AUTH_CHALLENGE_PREFIX + challengeId;
+    const challenge: AuthChallenge | null = await kv.get(challengeKey);
+    if (!challenge) return c.json({ error: "Challenge not found or already consumed", code: "CHALLENGE_INVALID" }, 400);
+
+    // ── Consume nonce immediately — delete from KV before any further work ──
+    // A concurrent request arriving after this point will get null and fail.
+    await kv.del(challengeKey);
+
+    // ── Validate challenge fields (operating on in-memory copy) ──
+    if (challenge.used) {
+      // Belt-and-suspenders: should not occur with delete-first pattern,
+      // but guards against legacy challenge objects still flagged as used.
+      return c.json({ error: "Challenge already consumed (replay rejected)", code: "CHALLENGE_USED" }, 400);
+    }
     if (Date.now() > challenge.expiresAt) {
-      kv.del(AUTH_CHALLENGE_PREFIX + challengeId).catch(() => {});
       return c.json({ error: "Challenge expired. Request a new one.", code: "CHALLENGE_EXPIRED" }, 400);
     }
-    if (challenge.accountId !== accountId) return c.json({ error: "Challenge was issued for a different account", code: "CHALLENGE_ACCOUNT_MISMATCH" }, 403);
+    if (challenge.accountId !== accountId) {
+      return c.json({ error: "Challenge was issued for a different account", code: "CHALLENGE_ACCOUNT_MISMATCH" }, 403);
+    }
 
-    // Mark as used immediately (prevent race condition)
-    challenge.used = true;
-    await kv.set(AUTH_CHALLENGE_PREFIX + challengeId, challenge);
-
-    // Fetch public key and verify signature
+    // ── Fetch public key and verify ED25519 signature ──
     const keyResult = await fetchAccountPublicKey(accountId);
     if (keyResult.error) return c.json({ error: `Cannot verify: ${keyResult.error}`, code: "KEY_FETCH_FAILED" }, 400);
 
@@ -707,14 +827,25 @@ app.post("/make-server-54299934/auth/session", async (c) => {
       return c.json({ error: "Signature verification failed. Ensure you signed the exact challenge message.", code: "SIGNATURE_INVALID" }, 401);
     }
 
-    // Delete consumed challenge
-    kv.del(AUTH_CHALLENGE_PREFIX + challengeId).catch(() => {});
+    // ── Revoke existing session for this account (ATK-002) ──
+    // Ensures only one active session per account. Prevents the scenario
+    // where a privilege escalation (e.g., addAdmin) completes with a stale
+    // token that wasn't properly revoked by the client-side DELETE.
+    try {
+      const oldToken: string | null = await kv.get(AUTH_ACCT_SESSION_PREFIX + accountId);
+      if (oldToken) {
+        await kv.del(AUTH_SESSION_PREFIX + oldToken);
+        console.log(`[AUTH] Revoked previous session for ${accountId} (ATK-002)`);
+      }
+    } catch { /* best-effort — new session is still safe to create */ }
 
-    // Create session
+    // ── Create session (challenge already consumed by kv.del above) ──
     const token = generateSessionToken();
     const now = Date.now();
     const session: AuthSession = { token, accountId, createdAt: now, expiresAt: now + AUTH_SESSION_TTL_MS };
     await kv.set(AUTH_SESSION_PREFIX + token, session);
+    // Update per-account index so future logins can revoke this session
+    await kv.set(AUTH_ACCT_SESSION_PREFIX + accountId, token);
     console.log(`[AUTH] Session created for ${accountId} (expires ${AUTH_SESSION_TTL_MS / 60000}min)`);
     return c.json({ sessionToken: token, accountId, expiresAt: session.expiresAt, ttlMs: AUTH_SESSION_TTL_MS });
   } catch (err) {
@@ -733,7 +864,19 @@ app.get("/make-server-54299934/auth/session/validate", async (c) => {
 // DELETE /auth/session — Revoke session (logout)
 app.delete("/make-server-54299934/auth/session", async (c) => {
   const token = c.req.header("x-session-token") || "";
-  if (token) { kv.del(AUTH_SESSION_PREFIX + token).catch(() => {}); }
+  if (token) {
+    // Read session to get accountId for index cleanup (ATK-002)
+    try {
+      const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
+      if (session?.accountId) {
+        const indexed: string | null = await kv.get(AUTH_ACCT_SESSION_PREFIX + session.accountId);
+        if (indexed === token) {
+          kv.del(AUTH_ACCT_SESSION_PREFIX + session.accountId).catch(() => {});
+        }
+      }
+    } catch { /* best-effort — token deletion below is the critical op */ }
+    kv.del(AUTH_SESSION_PREFIX + token).catch(() => {});
+  }
   return c.json({ success: true });
 });
 
@@ -746,7 +889,14 @@ app.delete("/make-server-54299934/auth/session", async (c) => {
 
 const PROTOCOL_FEE_USD = 0.0007;            // $0.0007 per swap = 0.07 cents
 const PROTOCOL_TREASURY_ACCOUNT = "0.0.9695738";
-const HBAR_FALLBACK_PRICE_USD = 0.28;       // Fallback if oracle unavailable
+// Fallback HBAR price — used ONLY when SaucerSwap oracle is unreachable.
+// Updated: 2026-02-13. Must be refreshed if HBAR moves ±50% from this value.
+// The fee clamp below ensures we never overcharge even if this goes stale.
+const HBAR_FALLBACK_PRICE_USD = 0.28;
+const HBAR_FALLBACK_UPDATED_AT = 1739404800000; // 2026-02-13T00:00:00Z
+const HBAR_FALLBACK_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+// Max protocol fee in tinybar — safety ceiling if oracle + fallback are both stale
+const MAX_PROTOCOL_FEE_TINYBAR = 500; // ~$0.0014 at $0.28/HBAR — 2× normal fee
 const HBAR_DECIMALS = 8;                    // 1 HBAR = 100_000_000 tinybar
 
 // Swap fee: 0.1% (10 bps) — protocol-fixed, non-adjustable by pool creators.
@@ -796,10 +946,23 @@ interface PoolState {
   swapFeeBps: number;
   creator: string;
   createdAt: number;
-  cumulativeVolumeUsd: number;
+  cumulativeVolumeUsd: string;  // Micro-USD string (1e6 = $1.00) — lossless integer accumulation
   swapCount: number;
   status: "active" | "paused";
   version: number;  // Optimistic lock counter — incremented on every mutating write
+}
+
+// Volume stored as micro-USD integer string to avoid IEEE 754 drift.
+// Individual swap USD values are small (sub-cent precision fine), but the running
+// total would lose precision after ~2^53 / value ≈ millions of additions as a float.
+const VOLUME_MICRO_SCALE = 1_000_000;   // 1 micro-USD = $0.000001
+
+/** Convert internal pool state to API-safe format (micro-USD string → USD float). */
+function poolToApi(pool: PoolState): Record<string, unknown> {
+  return {
+    ...pool,
+    cumulativeVolumeUsd: parseInt(pool.cumulativeVolumeUsd || "0", 10) / VOLUME_MICRO_SCALE,
+  };
 }
 
 interface LPPosition {
@@ -898,8 +1061,15 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
     } catch { continue; }
   }
 
+  let usedFallback = false;
   for (const t of TOKEN_WHITELIST) {
-    if (!prices[t.tokenId]) prices[t.tokenId] = t.fallbackPrice;
+    if (!prices[t.tokenId]) {
+      prices[t.tokenId] = t.fallbackPrice;
+      usedFallback = true;
+    }
+  }
+  if (usedFallback && (Date.now() - HBAR_FALLBACK_UPDATED_AT) > HBAR_FALLBACK_MAX_AGE_MS) {
+    console.log("[Oracle] WARNING: Fallback prices are stale (>90 days). Update HBAR_FALLBACK_PRICE_USD and TOKEN_WHITELIST fallbackPrice values.");
   }
 
   try { await kv.set(ORACLE_CACHE_KEY, { prices, ts: Date.now() }); } catch { /* non-critical */ }
@@ -914,8 +1084,14 @@ async function getPoolIndex(): Promise<string[]> {
 
 async function getPool(id: string): Promise<PoolState | null> {
   const pool: PoolState | null = await kv.get(POOL_PREFIX + id);
-  // Backfill version for pools created before versioning was added
-  if (pool && typeof pool.version !== "number") pool.version = 0;
+  if (pool) {
+    // Backfill version for pools created before versioning was added
+    if (typeof pool.version !== "number") pool.version = 0;
+    // Backfill legacy float USD → micro-USD string
+    if (typeof (pool as any).cumulativeVolumeUsd === "number") {
+      pool.cumulativeVolumeUsd = Math.round((pool as any).cumulativeVolumeUsd * VOLUME_MICRO_SCALE).toString();
+    }
+  }
   return pool;
 }
 
@@ -940,65 +1116,101 @@ async function compareAndSavePool(pool: PoolState, expectedVersion: number): Pro
   return true;
 }
 
-// ── Per-Pool Distributed Lock ───────────────────────────────────────
-// Pessimistic KV lock serializes mutating operations per pool.
+// ── KV-Based Distributed Lock ───────────────────────────────────────
+// Pessimistic lock using KV with write-verify-retry pattern + double-check.
 // TTL safety valve ensures release even if holder crashes.
+//
+// H-1 improvement: Double-verify pattern. After the initial write-then-read
+// confirms our holder, we wait a brief grace period and re-read. This catches
+// the edge case where two concurrent writers both wrote within the same KV
+// propagation window and both passed the first verify. The second verify
+// (after the grace delay) sees the final settled state.
+//
+// Remaining limitation: KV does not support atomic SETNX, so a sub-millisecond
+// race is still theoretically possible. The CAS layer on pool state
+// (compareAndSavePool) is the authoritative guard — it will reject any
+// write that arrives with a stale version. For production at scale,
+// migrate to Redis SETNX or Postgres advisory locks.
 
-interface PoolLock {
-  holder: string;      // Random ID identifying the lock holder
+interface KvLock {
+  holder: string;      // Random UUID identifying the lock holder
   acquiredAt: number;
   expiresAt: number;
+  epoch: number;       // Monotonic counter — tiebreaker for concurrent writes
 }
 
+/** Monotonic epoch counter for lock fencing (H-1) */
+let _lockEpoch = 0;
+
+interface KvLockConfig {
+  key: string;         // Full KV key for this lock
+  ttlMs: number;       // Max hold time before TTL expiry (safety valve)
+  waitMs: number;      // Max time to wait for acquisition
+  retryMs: number;     // Base retry interval (jittered)
+}
+
+/** Grace period between first and second verify (H-1 double-check) */
+const LOCK_GRACE_MS = 15;
+
 /**
- * Acquire a per-pool pessimistic lock.
- * Spins with jittered backoff until the lock is free or timeout.
- * Returns the holder ID on success, null on timeout.
+ * Acquire a KV-backed pessimistic lock with double-verify pattern.
+ * 1. Write lock with unique holder + epoch
+ * 2. First verify: read-after-write confirms our holder
+ * 3. Grace wait: allows any concurrent writer's set to propagate
+ * 4. Second verify: re-read confirms we still own it
+ *
+ * Returns the holder UUID on success, null on timeout.
  */
-async function acquirePoolLock(poolId: string): Promise<string | null> {
-  const lockKey = POOL_LOCK_PREFIX + poolId;
+async function acquireKvLock(cfg: KvLockConfig): Promise<string | null> {
   const holderId = crypto.randomUUID();
-  const deadline = Date.now() + POOL_LOCK_WAIT_MS;
+  const deadline = Date.now() + cfg.waitMs;
 
   while (Date.now() < deadline) {
-    const existing: PoolLock | null = await kv.get(lockKey);
+    const existing: KvLock | null = await kv.get(cfg.key);
 
     // Lock is free or expired → try to acquire
     if (!existing || Date.now() > existing.expiresAt) {
-      const lock: PoolLock = {
+      const epoch = ++_lockEpoch;
+      const lock: KvLock = {
         holder: holderId,
         acquiredAt: Date.now(),
-        expiresAt: Date.now() + POOL_LOCK_TTL_MS,
+        expiresAt: Date.now() + cfg.ttlMs,
+        epoch,
       };
-      await kv.set(lockKey, lock);
+      await kv.set(cfg.key, lock);
 
-      // Verify we won the race (read-after-write check)
-      const verify: PoolLock | null = await kv.get(lockKey);
-      if (verify?.holder === holderId) {
-        return holderId; // Lock acquired
+      // First verify: read-after-write
+      const v1: KvLock | null = await kv.get(cfg.key);
+      if (v1?.holder === holderId && v1?.epoch === epoch) {
+        // Grace period — let any concurrent writer's set propagate
+        await new Promise(r => setTimeout(r, LOCK_GRACE_MS));
+
+        // Second verify: confirm we still own it after grace period
+        const v2: KvLock | null = await kv.get(cfg.key);
+        if (v2?.holder === holderId && v2?.epoch === epoch) {
+          return holderId; // Lock acquired — double-verified
+        }
+        // Someone overwrote during grace period — fall through to retry
       }
       // Someone else won — fall through to retry
     }
 
     // Jittered backoff to prevent thundering herd
-    const jitter = POOL_LOCK_RETRY_INTERVAL_MS + Math.random() * POOL_LOCK_RETRY_INTERVAL_MS;
+    const jitter = cfg.retryMs + Math.random() * cfg.retryMs;
     await new Promise(r => setTimeout(r, jitter));
   }
 
-  console.log(`[Lock] Timeout on pool ${poolId} after ${POOL_LOCK_WAIT_MS}ms`);
-  return null; // Timeout
+  console.log(`[Lock] Timeout on ${cfg.key} after ${cfg.waitMs}ms`);
+  return null;
 }
 
-/**
- * Release a per-pool lock. Only the holder can release it.
- */
-async function releasePoolLock(poolId: string, holderId: string): Promise<void> {
-  const lockKey = POOL_LOCK_PREFIX + poolId;
+/** Release a KV lock. Only the holder can release it. */
+async function releaseKvLock(key: string, holderId: string): Promise<void> {
   try {
-    const existing: PoolLock | null = await kv.get(lockKey);
+    const existing: KvLock | null = await kv.get(key);
     // Only release if we still own it (could have expired and been re-acquired)
     if (existing?.holder === holderId) {
-      await kv.del(lockKey);
+      await kv.del(key);
     }
   } catch {
     // Best-effort release — TTL will clean up regardless
@@ -1006,7 +1218,36 @@ async function releasePoolLock(poolId: string, holderId: string): Promise<void> 
 }
 
 /**
- * Execute a function while holding the pool lock.
+ * Execute a function while holding a KV lock.
+ * Throws `{ code: "LOCK_TIMEOUT" }` if acquisition fails.
+ */
+async function withKvLock<T>(cfg: KvLockConfig, fn: () => Promise<T>): Promise<T> {
+  const holderId = await acquireKvLock(cfg);
+  if (!holderId) {
+    throw { code: "LOCK_TIMEOUT", message: `Lock acquisition timeout on ${cfg.key}` };
+  }
+  try {
+    return await fn();
+  } finally {
+    await releaseKvLock(cfg.key, holderId);
+  }
+}
+
+// ── Per-Pool Lock (swap, add/remove liquidity) ─────────────────────
+// Tuned for fast in-flight mutations: 5s TTL, 3s wait.
+
+function poolLockConfig(poolId: string): KvLockConfig {
+  return {
+    key: POOL_LOCK_PREFIX + poolId,
+    ttlMs: POOL_LOCK_TTL_MS,
+    waitMs: POOL_LOCK_WAIT_MS,
+    retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+  };
+}
+
+/**
+ * Execute a function while holding a per-pool lock.
+ * Throws `{ code: "POOL_BUSY" }` on timeout (callers return 503).
  *
  * Usage:
  *   const result = await withPoolLock(poolId, async () => {
@@ -1018,16 +1259,28 @@ async function releasePoolLock(poolId: string, holderId: string): Promise<void> 
  *   });
  */
 async function withPoolLock<T>(poolId: string, fn: () => Promise<T>): Promise<T> {
-  const holderId = await acquirePoolLock(poolId);
-  if (!holderId) {
-    throw { code: "POOL_BUSY", message: "Pool is busy — too many concurrent operations. Please retry." };
-  }
   try {
-    return await fn();
-  } finally {
-    await releasePoolLock(poolId, holderId);
+    return await withKvLock(poolLockConfig(poolId), fn);
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") {
+      throw { code: "POOL_BUSY", message: "Pool is busy — too many concurrent operations. Please retry." };
+    }
+    throw err;
   }
 }
+
+// ── Pool Creation Lock ──────────────────────────────────────────────
+// Serializes all pool creation requests to prevent:
+//   1. Duplicate-pair race (two requests for same pair both pass check)
+//   2. Pool index corruption (concurrent read-modify-write on index key)
+// Longer timeouts than pool locks — creation involves multiple KV ops.
+
+const POOL_CREATION_LOCK_CONFIG: KvLockConfig = {
+  key: "sl_create_lock",
+  ttlMs: 10_000,       // 10s hold time — creation does index scan + write
+  waitMs: 5_000,       // 5s wait — pool creation is rare, OK to queue
+  retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+};
 
 async function getLPPosition(poolId: string, accountId: string): Promise<LPPosition | null> {
   return await kv.get(`${LP_PREFIX}${poolId}_${accountId}`);
@@ -1043,11 +1296,15 @@ async function saveLPPosition(pos: LPPosition): Promise<void> {
 async function getAllPools(poolIds: string[]): Promise<PoolState[]> {
   if (poolIds.length === 0) return [];
   const keys = poolIds.map(id => POOL_PREFIX + id);
-  const values: any[] = await kv.mget(keys);
+  const values: (PoolState | null)[] = await kv.mget(keys);
   const pools: PoolState[] = [];
   for (const v of values) {
     if (!v) continue;
     if (typeof v.version !== "number") v.version = 0; // Backfill legacy pools
+    // Backfill legacy float USD → micro-USD string
+    if (typeof v.cumulativeVolumeUsd === "number") {
+      v.cumulativeVolumeUsd = Math.round(v.cumulativeVolumeUsd * VOLUME_MICRO_SCALE).toString();
+    }
     pools.push(v as PoolState);
   }
   return pools;
@@ -1059,10 +1316,10 @@ app.get("/make-server-54299934/pools", async (c) => {
     const poolIds = await getPoolIndex();
     const prices = await fetchOraclePrices();
     const allPools = await getAllPools(poolIds);
-    const pools: any[] = [];
+    const pools: PoolApiResponse[] = [];
     for (const pool of allPools) {
       if (pool.status !== "active") continue;
-      pools.push({ ...pool, tvlUsd: poolTvlUsd(pool, prices), priceA: prices[pool.tokenIdA] || 0, priceB: prices[pool.tokenIdB] || 0 });
+      pools.push({ ...poolToApi(pool), tvlUsd: poolTvlUsd(pool, prices), priceA: prices[pool.tokenIdA] || 0, priceB: prices[pool.tokenIdB] || 0 });
     }
 
     return c.json({ pools, tokens: ACTIVE_TOKENS, prices, updatedAt: Math.floor(Date.now() / 1000) });
@@ -1084,10 +1341,13 @@ app.get("/make-server-54299934/pools/prices", async (c) => {
 });
 
 // POST /pools/create — Authenticated. Tier 1 tokens only. Fee is protocol-fixed.
+// Protected by POOL_CREATION_LOCK to prevent duplicate-pair races and index corruption.
 app.post("/make-server-54299934/pools/create", async (c) => {
   try {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    // ── Auth + input validation (outside lock — no state mutation) ──
 
     const auth = await requireAuth(c);
     if (auth instanceof Response) return auth;
@@ -1104,37 +1364,55 @@ app.post("/make-server-54299934/pools/create", async (c) => {
 
     // Fee is protocol-fixed. Any client-supplied feeBps is ignored.
 
-    // Check duplicate
-    const poolIds = await getPoolIndex();
-    for (const pid of poolIds) {
-      const ex = await getPool(pid);
-      if (!ex || ex.status !== "active") continue;
-      if ((ex.tokenA === tokenA && ex.tokenB === tokenB) || (ex.tokenA === tokenB && ex.tokenB === tokenA)) {
-        return c.json({ error: `Pool ${tokenA}/${tokenB} already exists (${ex.id})` }, 409);
-      }
-    }
-
-    // Sort deterministically
+    // Compute deterministic pool ID early (before lock) for logging
     const [sA, sB] = [defA, defB].sort((a, b) => a.symbol.localeCompare(b.symbol));
     const poolId = `sl-${sA.symbol.toLowerCase()}-${sB.symbol.toLowerCase()}`;
 
-    const pool: PoolState = {
-      id: poolId, name: sanitizeString(name || `${sA.symbol} / ${sB.symbol}`, 64),
-      description: sanitizeString(description || `${sA.symbol}/${sB.symbol} liquidity pool`, 256),
-      tokenA: sA.symbol, tokenB: sB.symbol, tokenIdA: sA.tokenId, tokenIdB: sB.tokenId,
-      decimalsA: sA.decimals, decimalsB: sB.decimals,
-      reserveA: "0", reserveB: "0", lpTotalSupply: "0",
-      swapFeeBps: FIXED_SWAP_FEE_BPS, creator: sanitizeString(accountId, 20), createdAt: Date.now(),
-      cumulativeVolumeUsd: 0, swapCount: 0, status: "active",
-      version: 1,
-    };
+    // ── Inside creation lock: duplicate check + create + index update ──
+    // Lock serializes ALL pool creations, preventing:
+    //   - Two requests for the same pair both passing the duplicate check
+    //   - Two requests for different pairs corrupting the pool index
 
-    await savePool(pool);
-    poolIds.push(poolId);
-    await kv.set(POOL_INDEX_KEY, poolIds);
-    console.log(`[SmartLiquidity] Pool created: ${poolId} by ${accountId} (fee=${FIXED_SWAP_FEE_BPS}bps fixed)`);
-    return c.json({ success: true, pool });
-  } catch (err) {
+    const result = await withKvLock(POOL_CREATION_LOCK_CONFIG, async () => {
+      // Primary guard: direct key lookup for the deterministic pool ID
+      const existingPool = await getPool(poolId);
+      if (existingPool) {
+        return c.json({ error: `Pool ${sA.symbol}/${sB.symbol} already exists (${existingPool.id})` }, 409);
+      }
+
+      // Secondary guard: index scan catches any naming/key edge cases
+      const poolIds = await getPoolIndex();
+      const allPools = await getAllPools(poolIds);
+      for (const p of allPools) {
+        if (p.status !== "active") continue;
+        if ((p.tokenA === sA.symbol && p.tokenB === sB.symbol) || (p.tokenA === sB.symbol && p.tokenB === sA.symbol)) {
+          return c.json({ error: `Pool ${sA.symbol}/${sB.symbol} already exists (${p.id})` }, 409);
+        }
+      }
+
+      const pool: PoolState = {
+        id: poolId, name: sanitizeString(name || `${sA.symbol} / ${sB.symbol}`, 64),
+        description: sanitizeString(description || `${sA.symbol}/${sB.symbol} liquidity pool`, 256),
+        tokenA: sA.symbol, tokenB: sB.symbol, tokenIdA: sA.tokenId, tokenIdB: sB.tokenId,
+        decimalsA: sA.decimals, decimalsB: sB.decimals,
+        reserveA: "0", reserveB: "0", lpTotalSupply: "0",
+        swapFeeBps: FIXED_SWAP_FEE_BPS, creator: sanitizeString(accountId, 20), createdAt: Date.now(),
+        cumulativeVolumeUsd: "0", swapCount: 0, status: "active",
+        version: 1,
+      };
+
+      await savePool(pool);
+      poolIds.push(poolId);
+      await kv.set(POOL_INDEX_KEY, poolIds);
+      console.log(`[SmartLiquidity] Pool created: ${poolId} by ${accountId} (fee=${FIXED_SWAP_FEE_BPS}bps fixed)`);
+      return c.json({ success: true, pool: poolToApi(pool) });
+    });
+
+    return result;
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") {
+      return c.json({ error: "Pool creation service is busy — please retry in a few seconds", code: "CREATION_BUSY" }, 503);
+    }
     console.log("Error in POST /pools/create:", err);
     return c.json({ error: "Pool creation failed" }, 500);
   }
@@ -1362,10 +1640,10 @@ app.post("/make-server-54299934/pools/quote", async (c) => {
     const outDisplay = Number(best.amountOut) / (10 ** defOut.decimals);
     const inDisplay = parseFloat(amountIn);
 
-    // Protocol fee in HBAR (WHBAR oracle price or fallback)
+    // Protocol fee in HBAR (WHBAR oracle price or fallback, clamped to safety ceiling)
     const hbarPrice = prices["0.0.1456986"] || HBAR_FALLBACK_PRICE_USD;
     const protocolFeeHbar = PROTOCOL_FEE_USD / hbarPrice;
-    const protocolFeeTinybar = Math.max(1, Math.round(protocolFeeHbar * 1e8));
+    const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round(protocolFeeHbar * 1e8)));
     const lpRewardTinybar = Math.floor(protocolFeeTinybar / 2);
     const treasuryFeeTinybar = protocolFeeTinybar - lpRewardTinybar;
 
@@ -1461,7 +1739,12 @@ app.post("/make-server-54299934/pools/swap", async (c) => {
 
           pool.swapCount++;
           const defOut = TOKEN_BY_SYMBOL.get(tokenOut);
-          if (defOut) pool.cumulativeVolumeUsd += Number(rawOut) / (10 ** defOut.decimals) * (prices[defOut.tokenId] || 0);
+          if (defOut) {
+            const swapUsd = Number(rawOut) / (10 ** defOut.decimals) * (prices[defOut.tokenId] || 0);
+            const swapMicro = Math.round(swapUsd * VOLUME_MICRO_SCALE);
+            const currentMicro = parseInt(pool.cumulativeVolumeUsd || "0", 10) || 0;
+            pool.cumulativeVolumeUsd = (currentMicro + swapMicro).toString();
+          }
 
           const casOk = await compareAndSavePool(pool, expectedVersion);
           if (!casOk) {
@@ -1469,19 +1752,36 @@ app.post("/make-server-54299934/pools/swap", async (c) => {
             return c.json({ error: "Pool state changed during swap — please retry", code: "VERSION_CONFLICT" }, 409);
           }
 
-          // Protocol fee: $0.0007 per swap, split 50/50 LP rewards / treasury
+          // Protocol fee: $0.0007 per swap, split 50/50 LP rewards / treasury (clamped)
           const hbarPriceForFee = prices["0.0.1456986"] || HBAR_FALLBACK_PRICE_USD;
-          const protocolFeeTinybar = Math.max(1, Math.round((PROTOCOL_FEE_USD / hbarPriceForFee) * 1e8));
+          const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round((PROTOCOL_FEE_USD / hbarPriceForFee) * 1e8)));
           const treasuryFeeTinybar = protocolFeeTinybar - Math.floor(protocolFeeTinybar / 2);
+          // CAS retry loop: prevent concurrent swaps from losing fee data
           try {
-            const existingFees: { totalTinybar: number; swapCount: number } | null = await kv.get(TREASURY_FEE_KEY);
-            const updated = {
-              totalTinybar: (existingFees?.totalTinybar || 0) + treasuryFeeTinybar,
-              swapCount: (existingFees?.swapCount || 0) + 1,
-              treasuryAccount: PROTOCOL_TREASURY_ACCOUNT,
-              lastUpdated: Date.now(),
-            };
-            await kv.set(TREASURY_FEE_KEY, updated);
+            const FEE_CAS_MAX_RETRIES = 3;
+            for (let feeAttempt = 0; feeAttempt < FEE_CAS_MAX_RETRIES; feeAttempt++) {
+              const existingFees: TreasuryFeeAccumulator | null = await kv.get(TREASURY_FEE_KEY);
+              const prevTotal = existingFees?.totalTinybar || 0;
+              const prevCount = existingFees?.swapCount || 0;
+              const updated = {
+                totalTinybar: prevTotal + treasuryFeeTinybar,
+                swapCount: prevCount + 1,
+                treasuryAccount: PROTOCOL_TREASURY_ACCOUNT,
+                lastUpdated: Date.now(),
+              };
+              await kv.set(TREASURY_FEE_KEY, updated);
+              // Write-verify: re-read to confirm our write persisted
+              const verify: TreasuryFeeAccumulator | null = await kv.get(TREASURY_FEE_KEY);
+              if (verify && verify.totalTinybar >= updated.totalTinybar && verify.swapCount >= updated.swapCount) {
+                break; // Our write stuck (or a later writer incremented further — both are correct)
+              }
+              // Another writer overwrote between set and verify — retry with fresh read
+              if (feeAttempt < FEE_CAS_MAX_RETRIES - 1) {
+                await new Promise(r => setTimeout(r, 10 + Math.random() * 20));
+              } else {
+                console.log(`[Treasury] Fee CAS failed after ${FEE_CAS_MAX_RETRIES} attempts — ${treasuryFeeTinybar}tb may be lost`);
+              }
+            }
           } catch { /* fee accrual failure is non-critical — swap still succeeds */ }
 
           // Log swap — global log is anonymized (no accountId).
@@ -1494,14 +1794,14 @@ app.post("/make-server-54299934/pools/swap", async (c) => {
           const userRecord = { poolId, tokenIn, tokenOut, amountIn: amountInRaw, amountOut: rawOut.toString(), protocolFeeTinybar, timestamp: swapTs };
           try {
             const userSwapsKey = USER_SWAPS_PREFIX + accountId;
-            const existing: any[] = (await kv.get(userSwapsKey)) ?? [];
+            const existing: SwapRecord[] = (await kv.get(userSwapsKey)) ?? [];
             existing.push(userRecord);
             while (existing.length > USER_SWAPS_MAX) existing.shift();
             await kv.set(userSwapsKey, existing);
           } catch { /* non-critical */ }
           // Global recent swaps: anonymized, capped, for site activity feed
           try {
-            const recentSwaps: any[] = (await kv.get(GLOBAL_RECENT_SWAPS_KEY)) ?? [];
+            const recentSwaps: SwapRecord[] = (await kv.get(GLOBAL_RECENT_SWAPS_KEY)) ?? [];
             recentSwaps.push({ poolId, tokenIn, tokenOut, amountIn: amountInRaw, amountOut: rawOut.toString(), timestamp: swapTs });
             while (recentSwaps.length > GLOBAL_RECENT_SWAPS_MAX) recentSwaps.shift();
             await kv.set(GLOBAL_RECENT_SWAPS_KEY, recentSwaps);
@@ -1544,11 +1844,11 @@ app.get("/make-server-54299934/pools/swaps/:accountId", async (c) => {
 
     // O(1) per-account index read — no prefix scan, no fallback
     const userSwapsKey = USER_SWAPS_PREFIX + accountId;
-    const userSwaps: any[] | null = await kv.get(userSwapsKey);
+    const userSwaps: SwapRecord[] | null = await kv.get(userSwapsKey);
     if (userSwaps && Array.isArray(userSwaps)) {
       // Newest first, capped to USER_SWAPS_MAX
       const sorted = userSwaps
-        .sort((a: any, b: any) => (b?.timestamp || 0) - (a?.timestamp || 0))
+        .sort((a, b) => (b?.timestamp || 0) - (a?.timestamp || 0))
         .slice(0, USER_SWAPS_MAX);
       return c.json({ swaps: sorted });
     }
@@ -1563,9 +1863,9 @@ app.get("/make-server-54299934/pools/swaps/:accountId", async (c) => {
 // GET /pools/recent-swaps — Public anonymized activity feed (no wallet data).
 app.get("/make-server-54299934/pools/recent-swaps", async (c) => {
   try {
-    const recentSwaps: any[] = (await kv.get(GLOBAL_RECENT_SWAPS_KEY)) ?? [];
+    const recentSwaps: SwapRecord[] = (await kv.get(GLOBAL_RECENT_SWAPS_KEY)) ?? [];
     // Newest first
-    recentSwaps.sort((a: any, b: any) => (b?.timestamp || 0) - (a?.timestamp || 0));
+    recentSwaps.sort((a, b) => (b?.timestamp || 0) - (a?.timestamp || 0));
     return c.json({ swaps: recentSwaps });
   } catch (err) {
     console.log("Error in GET /pools/recent-swaps:", err);
@@ -1631,8 +1931,6 @@ async function verifyVipBalance(accountId: string): Promise<{ eligible: boolean;
 }
 
 // ── VIP NFT Ownership Check (Mirror Node) ───────────────────────────
-// [VIP-GATE-01] Checks for VIP NFT (0.0.10146181) via Mirror Node.
-// Either 100M+ HBAR.ħ tokens OR 1+ VIP NFT unlocks VIP access.
 
 async function verifyVipNftOwnership(accountId: string): Promise<{ hasNft: boolean; nftCount: number }> {
   try {
@@ -1650,9 +1948,7 @@ async function verifyVipNftOwnership(accountId: string): Promise<{ hasNft: boole
   }
 }
 
-// ── Combined VIP Eligibility (Token OR NFT) ─────────────────────────
-// [VIP-GATE-02] Server-authoritative VIP check with KV caching.
-// Fail-CLOSED: if Mirror Node is unreachable, deny access.
+// ── Combined VIP Eligibility (Token OR NFT, cached 5 min) ───────────
 
 interface VipStatusResult {
   eligible: boolean;
@@ -1722,8 +2018,8 @@ app.post("/make-server-54299934/vip-chat/messages", async (c) => {
     if (lastSent && (Date.now() - lastSent) < VIP_CHAT_COOLDOWN_MS) {
       return c.json({ error: "Cooldown active", cooldownMs: VIP_CHAT_COOLDOWN_MS - (Date.now() - lastSent) }, 429);
     }
-    const { eligible } = await verifyVipBalance(accountId);
-    if (!eligible) return c.json({ error: "VIP access requires 100M+ HBAR.ħ tokens" }, 403);
+    const vipCheck = await verifyVipEligibilityFull(accountId);
+    if (!vipCheck.eligible) return c.json({ error: "VIP access requires 100M+ HBAR.ħ tokens or a VIP NFT" }, 403);
     const body = await c.req.json();
     const text = sanitizeString(typeof body.text === "string" ? body.text : "", VIP_CHAT_MAX_CHARS);
     if (!text) return c.json({ error: "Message cannot be empty" }, 400);
@@ -1743,8 +2039,7 @@ app.post("/make-server-54299934/vip-chat/messages", async (c) => {
   }
 });
 
-// [AUDIT-VIP-01] Strict admin auth helper — matches DELETE /winners hardened pattern.
-// Previous code used `auth.includes(sk)` which allowed substring bypass attacks.
+/** Strict admin auth — requires exact Bearer match against service role key. */
 function isAdminAuthorized(c: any): boolean {
   const auth = c.req.header("authorization") || "";
   const sk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -1799,20 +2094,7 @@ app.delete("/make-server-54299934/vip-chat/messages", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// VIP STATUS — Authenticated, server-authoritative VIP eligibility check
-// ═══════════════════════════════════════════════════════════════════════
-//
-// Security:
-//   [VIP-GATE-03] Session-token authenticated (ED25519 challenge-response)
-//                 — proves wallet ownership, accountId from session NOT body
-//   [VIP-GATE-04] Server-side Mirror Node verification for BOTH:
-//                 - HBAR.ħ token balance (≥100M display tokens)
-//                 - VIP NFT ownership (≥1 of 0.0.10146181)
-//   [VIP-GATE-05] Fail-CLOSED: Mirror Node errors → deny access
-//   [VIP-GATE-06] 5-minute KV cache to reduce Mirror Node load
-//   [VIP-GATE-07] Rate limited (shared global rate limiter)
-//
-// Returns: { eligible, tokenBalance, nftCount, verifiedAt, accountId }
+// VIP STATUS — Authenticated eligibility check (token + NFT, fail-closed)
 // ═══════════════════════════════════════════════════════════════════════
 
 app.get("/make-server-54299934/vip/status", async (c) => {
@@ -1820,12 +2102,10 @@ app.get("/make-server-54299934/vip/status", async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    // [VIP-GATE-03] Require authenticated session — accountId from verified session
     const auth = await requireAuth(c);
     if (auth instanceof Response) return auth;
     const { accountId } = auth;
 
-    // [VIP-GATE-04] Server-side Mirror Node verification (cached 5 min)
     const status = await verifyVipEligibilityFull(accountId);
 
     console.log(`[VIP-GATE] Status check: ${accountId} eligible=${status.eligible} balance=${status.tokenBalance} nfts=${status.nftCount} cached=${status.cached}`);
@@ -1840,7 +2120,6 @@ app.get("/make-server-54299934/vip/status", async (c) => {
     });
   } catch (err) {
     console.log(`[VIP-GATE] Status check error: ${err}`);
-    // [VIP-GATE-05] Fail CLOSED — deny on error
     return c.json({ eligible: false, error: "VIP verification failed" }, 500);
   }
 });
@@ -1849,19 +2128,10 @@ app.get("/make-server-54299934/vip/status", async (c) => {
 // DAO GOVERNANCE — Server-Authoritative Proposals, Votes & Comments
 // ═══════════════════════════════════════════════════════════════════════
 //
-// [AUDIT-D01] REMEDIATION — Migrated from localStorage to server-side KV.
-//
-// Security:
-//   [DAO-01] Proposals stored in server KV — cannot be manipulated via DevTools
-//   [DAO-02] Admin-only proposal CRUD: wallet 0.0.518487 (session-verified)
-//   [DAO-03] Vote weight calculated SERVER-SIDE from Mirror Node balance
-//   [DAO-04] Vote deduplication enforced SERVER-SIDE via voterLog
-//   [DAO-05] Comments require authenticated session + eligibility check
-//   [DAO-06] All inputs sanitized, rate-limited, fail-closed
-//   [DAO-07] Proposal cap: 100 max. Comment cap: 200 per proposal.
-//
-// KV Keys:
-//   dao_proposals — Array of Proposal objects
+// All state in KV (dao_proposals). Admin CRUD restricted to 0.0.518487
+// + dynamic admin list. Vote weight from Mirror Node balance (server-side).
+// Deduplication via voterLog. Inputs sanitized, rate-limited, fail-closed.
+// Caps: 100 proposals, 200 comments per proposal.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1870,9 +2140,7 @@ const DAO_MAX_PROPOSALS = 100;
 const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
 
 // ── Dynamic Admin List (KV-backed) ─────────────────────────────────
-// [DAO-08] Founder 0.0.518487 is permanently protected — can never be removed.
-// Additional admins are KV-stored. Admin add/remove requires a "fresh" session
-// (created within 2 min) to enforce wallet re-signing as confirmation.
+// Founder permanently protected. Add/remove requires fresh session (<2 min).
 const DAO_ADMINS_KEY = "dao_admin_accounts";
 const DAO_FOUNDER_ACCOUNT = "0.0.518487";
 const DAO_MAX_ADMINS = 10;
@@ -2086,8 +2354,7 @@ app.delete("/make-server-54299934/dao/proposals/:id", async (c) => {
   }
 });
 
-// POST /dao/proposals/:id/vote — Authenticated + eligible vote
-// [DAO-03] Weight from Mirror Node [DAO-04] Dedup from voterLog
+// POST /dao/proposals/:id/vote — Authenticated + eligible, weight from Mirror Node
 app.post("/make-server-54299934/dao/proposals/:id/vote", async (c) => {
   try {
     const ip = getClientIp(c);
@@ -2100,7 +2367,6 @@ app.post("/make-server-54299934/dao/proposals/:id/vote", async (c) => {
     const body = await c.req.json();
     const { direction } = body;
     if (direction !== "for" && direction !== "against") return c.json({ error: "Direction must be 'for' or 'against'" }, 400);
-    // [DAO-03] Server-side Mirror Node verification
     const vipStatus = await verifyVipEligibilityFull(accountId);
     if (!vipStatus.eligible) {
       console.log(`[DAO] Ineligible vote attempt: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
@@ -2114,7 +2380,6 @@ app.post("/make-server-54299934/dao/proposals/:id/vote", async (c) => {
     const proposal = proposals[idx];
     if (proposal.status !== "active" && proposal.status !== "pending") return c.json({ error: "Voting is closed on this proposal" }, 400);
     if (Date.now() >= proposal.endsAt) return c.json({ error: "Voting period has ended" }, 400);
-    // [DAO-04] Server-side deduplication
     if (proposal.voterLog[accountId]) {
       return c.json({ error: "You have already voted on this proposal", code: "DAO_ALREADY_VOTED", existingVote: proposal.voterLog[accountId] }, 409);
     }
@@ -2189,14 +2454,11 @@ app.get("/make-server-54299934/dao/voting-power", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// DAO ADMIN MANAGEMENT — Dynamic admin list with fresh-session enforcement
+// DAO ADMIN MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════
 //
-// [DAO-08] Only existing admins can add/remove admins.
-// [DAO-09] Founder 0.0.518487 can NEVER be removed.
-// [DAO-10] Admin mutations require a "fresh" session (<2 min old),
-//          forcing a new wallet signature as 2FA-style confirmation.
-// [DAO-11] Max 10 admins. All inputs validated.
+// Admin-only add/remove with fresh-session (<2 min) enforcement.
+// Founder (0.0.518487) permanently protected. Max 10 admins.
 // ═══════════════════════════════════════════════════════════════════════
 
 // GET /dao/admins — Admin-only: list current admins
@@ -2223,7 +2485,6 @@ app.post("/make-server-54299934/dao/admins", async (c) => {
   try {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-    // [DAO-10] Require fresh session (< 2 min old wallet signature)
     const auth = await requireFreshAdminAuth(c);
     if (auth instanceof Response) return auth;
     const { accountId } = auth;
@@ -2261,7 +2522,6 @@ app.delete("/make-server-54299934/dao/admins/:accountId", async (c) => {
   try {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-    // [DAO-10] Require fresh session
     const auth = await requireFreshAdminAuth(c);
     if (auth instanceof Response) return auth;
     const { accountId } = auth;
@@ -2272,7 +2532,6 @@ app.delete("/make-server-54299934/dao/admins/:accountId", async (c) => {
     if (!targetAccountId || !isValidHederaAccountId(targetAccountId)) {
       return c.json({ error: "Invalid target account ID" }, 400);
     }
-    // [DAO-09] Founder can NEVER be removed
     if (targetAccountId === DAO_FOUNDER_ACCOUNT) {
       console.log(`[DAO-ADMIN] Attempted removal of founder by ${accountId} — DENIED`);
       return c.json({ error: "The founder admin (0.0.518487) cannot be removed", code: "FOUNDER_PROTECTED" }, 403);

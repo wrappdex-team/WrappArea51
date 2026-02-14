@@ -20,6 +20,9 @@ import { SiteActivity } from "./SiteActivity";
 import { HBARH_LOGO_DARK, HBARH_LOGO_LIGHT } from "../assets/brand";
 import { TOKEN_LOGOS } from "../utils/coingecko";
 import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
+import { DashboardStatsSkeleton, MarketListSkeleton } from "./Skeletons";
+import { Tip } from "./Tip";
+import { PriceFlash } from "./PriceFlash";
 
 // ── Types & Helpers ────────────────────────────────────────────────
 
@@ -95,10 +98,11 @@ function OracleDot({ source, isDark }: { source?: OracleSource; isDark: boolean 
     fallback:  "Cached price",
   };
   return (
+    <Tip content={labels[source]}>
     <span
       className={`inline-block w-1.5 h-1.5 rounded-full ${colors[source]}`}
-      title={labels[source]}
     />
+    </Tip>
   );
 }
 
@@ -191,6 +195,22 @@ export function Dashboard() {
     loadPrices();
     const interval = setInterval(loadPrices, 30000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Pull-to-refresh support — re-fetch all price data on mobile swipe-down
+  useEffect(() => {
+    const handlePullRefresh = () => {
+      setLoading(true);
+      fetchCoinPrices(ALL_SYMBOLS).then((prices) => {
+        setMarketData(buildMarketAssets(prices));
+        setOracleStats(getOracleStats());
+        setLoading(false);
+      }).catch(() => setLoading(false));
+      fetchGlobalMarketData().then(setGlobalData);
+      fetchHbarhPrice().then(setHbarhData);
+    };
+    window.addEventListener("wrappdex:pull-refresh", handlePullRefresh);
+    return () => window.removeEventListener("wrappdex:pull-refresh", handlePullRefresh);
   }, []);
 
   useEffect(() => {
@@ -391,9 +411,11 @@ export function Dashboard() {
                 {btcChangeSource === "fallback" ? (
                   <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>---</span>
                 ) : (
+                  <PriceFlash value={btcChange}>
                   <span className={`text-xs font-medium ${btcChange >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
                     {btcChange >= 0 ? "▲" : "▼"} {Math.abs(btcChange).toFixed(2)}%
                   </span>
+                  </PriceFlash>
                 )}
               </div>
               {renderSparkline(btcSparkline, "btc-spark-grad")}
@@ -427,9 +449,11 @@ export function Dashboard() {
                 {hbarChangeSource === "fallback" ? (
                   <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>---</span>
                 ) : (
+                  <PriceFlash value={hbarChange}>
                   <span className={`text-xs font-medium ${hbarChange >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
                     {hbarChange >= 0 ? "▲" : "▼"} {Math.abs(hbarChange).toFixed(2)}%
                   </span>
+                  </PriceFlash>
                 )}
               </div>
               {renderSparkline(hbarSparkline, "hbar-spark-grad")}
@@ -460,9 +484,11 @@ export function Dashboard() {
               </div>
               <div className="flex items-center gap-1.5 mt-1.5">
                 {hbarhData ? (
+                  <PriceFlash value={hbarhData.change24h}>
                   <span className={`text-xs font-medium ${hbarhData.change24h >= 0 ? "text-[#16c784]" : "text-[#ea3943]"}`}>
                     {hbarhData.change24h >= 0 ? "▲" : "▼"} {Math.abs(hbarhData.change24h).toFixed(2)}%
                   </span>
+                  </PriceFlash>
                 ) : (
                   <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>---</span>
                 )}
@@ -551,7 +577,7 @@ export function Dashboard() {
       <div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">
           <h2 className={`text-xl md:text-2xl font-bold ${isDark ? "text-white" : "text-gray-900"} transition-all duration-300`}>
-            Top Markets {loading && <span className={`text-sm font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>(Loading...)</span>}
+            Top Markets
           </h2>
           <div className="flex gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
             {(["all", "layer1", "stablecoin"] as const).map((f) => (
@@ -584,6 +610,9 @@ export function Dashboard() {
           </div>
         </div>
 
+        {loading ? (
+          <MarketListSkeleton rows={8} />
+        ) : (
         <div className="grid grid-cols-1 gap-3">
           {filteredMarkets.map((item) => {
             const expanded = isExpanded(item.symbol);
@@ -627,10 +656,11 @@ export function Dashboard() {
                         <span className="font-bold text-sm md:text-base">{item.symbol}</span>
                         <OracleDot source={item.oracleSource} isDark={isDark} />
                         {item.symbol === "HBAR.ħ" && (
+                          <Tip content="DexScreener API">
                           <span
                             className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-500"
-                            title="DexScreener API"
                           />
+                          </Tip>
                         )}
                       </div>
                       <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"} hidden sm:flex items-center gap-1`}>
@@ -656,15 +686,17 @@ export function Dashboard() {
                       </div>
                       {/* Mobile-only change below price */}
                       {item.changeSource === "fallback" ? (
+                        <Tip content="Waiting for live 24h data...">
                         <div
                           className={`flex items-center justify-end gap-0.5 text-xs md:hidden ${
                             isDark ? "text-slate-500" : "text-gray-400"
                           } animate-pulse`}
-                          title="Waiting for live 24h data..."
                         >
                           —
                         </div>
+                        </Tip>
                       ) : (
+                        <PriceFlash value={item.change}>
                         <div
                           className={`flex items-center justify-end gap-0.5 text-xs md:hidden ${
                             item.change >= 0 ? "text-emerald-500" : "text-red-500"
@@ -672,20 +704,23 @@ export function Dashboard() {
                         >
                           {item.change >= 0 ? "+" : ""}{Math.abs(item.change).toFixed(2)}%
                         </div>
+                        </PriceFlash>
                       )}
                     </div>
 
                     <div className="hidden md:block w-20 text-right">
                       {item.changeSource === "fallback" ? (
+                        <Tip content="Waiting for live 24h data from CoinCap/CoinGecko...">
                         <div
                           className={`flex items-center justify-end gap-1 font-bold text-sm ${
                             isDark ? "text-slate-500" : "text-gray-400"
                           } animate-pulse`}
-                          title="Waiting for live 24h data from CoinCap/CoinGecko..."
                         >
                           <span className="text-xs">~</span> —
                         </div>
+                        </Tip>
                       ) : (
+                        <PriceFlash value={item.change}>
                         <div
                           className={`flex items-center justify-end gap-1 font-bold text-sm ${
                             item.change >= 0 ? "text-emerald-500" : "text-red-500"
@@ -698,6 +733,7 @@ export function Dashboard() {
                           )}
                           {Math.abs(item.change).toFixed(2)}%
                         </div>
+                        </PriceFlash>
                       )}
                     </div>
 
@@ -817,6 +853,7 @@ export function Dashboard() {
             );
           })}
         </div>
+        )}
       </div>
 
       {/* ═══ Top 20 Coins Heat Map — QuantifyCrypto (sandboxed iframe) ═══ */}

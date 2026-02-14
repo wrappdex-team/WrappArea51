@@ -1,25 +1,27 @@
-import { useState, useCallback, useRef, useEffect, Suspense } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT, HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
-import { Outlet, Link, useLocation } from "react-router";
-import { TrendingUp, Wallet, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, X, Volume2, VolumeOff, Droplets, Crown } from "lucide-react";
+import { Link, useLocation } from "react-router";
+import { TrendingUp, Wallet, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, Volume2, VolumeOff, Volume1, Droplets, Crown, AlertTriangle, Shield, Globe } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { WalletConnectModal } from "./WalletConnectModal";
 import { formatHbar } from "../utils/hedera";
 import { formatAddress } from "../utils/metamask";
 import { NewsTicker } from "./NewsTicker";
-import { playTabChime, getSoundMuted, setSoundMuted } from "../utils/sounds";
+import { playTabChime, getSoundVolume, cycleSoundVolume } from "../utils/sounds";
 import { Toaster } from "sonner";
 import { VIPPanel } from "./VIPPanel";
-import { ErrorBoundary } from "./ErrorBoundary";
-import {
-  isVipEligible,
-  loadVipPrefs,
-  type VipPrefs,
-} from "../utils/vip";
+import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
 import { SEOHead, ROUTE_SEO } from "./SEOHead";
 import { preloadRoute } from "../utils/preload";
 import { trackRouteChange } from "../utils/performance";
+import { Tip } from "./Tip";
+import { AnimatedOutlet } from "./AnimatedOutlet";
+import { motion, AnimatePresence } from "motion/react";
+import { PullToRefresh } from "./PullToRefresh";
+import { ScrollToTop } from "./ScrollToTop";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
+import { AnimatedNumber } from "./AnimatedNumber";
 
 export function Layout() {
   const location = useLocation();
@@ -30,7 +32,7 @@ export function Layout() {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [flashingTab, setFlashingTab] = useState<string | null>(null);
   const lastPathRef = useRef(location.pathname);
-  const [soundMuted, _setSoundMuted] = useState(getSoundMuted);
+  const [soundVolume, _setSoundVolume] = useState(getSoundVolume);
   const [showVipPanel, setShowVipPanel] = useState(false);
   const [vipPrefs, setVipPrefs] = useState<VipPrefs>(loadVipPrefs);
 
@@ -58,11 +60,8 @@ export function Layout() {
   }, [vipActive, vipPrefs.features.vip_theme, vipPrefs.features.vip_glow]);
 
   const toggleMute = useCallback(() => {
-    _setSoundMuted((prev) => {
-      const next = !prev;
-      setSoundMuted(next);
-      return next;
-    });
+    const next = cycleSoundVolume();
+    _setSoundVolume(next);
   }, []);
 
   const handleTabClick = useCallback((path: string) => {
@@ -83,6 +82,14 @@ export function Layout() {
     { path: "/defi", label: "DeFi", icon: Droplets },
     { path: "/wallet", label: "Wallet", icon: Wallet },
     { path: "/dao", label: "DAO", icon: Vote },
+  ];
+
+  // Secondary items shown in the mobile "More" sheet drawer
+  const secondaryNavItems = [
+    { path: "/wallet", label: "Wallet", icon: Wallet, description: "Assets & portfolio" },
+    { path: "/dao", label: "DAO", icon: Vote, description: "Governance & proposals" },
+    { path: "/bridges", label: "Bridges", icon: Globe, description: "Cross-chain transfers" },
+    { path: "/audit", label: "Audit", icon: Shield, description: "Security reports" },
   ];
 
   const isActive = (path: string) => {
@@ -119,6 +126,17 @@ export function Layout() {
       {/* News Ticker */}
       <NewsTicker />
 
+      {/* Testnet Warning Banner — prominent full-width strip when on testnet */}
+      {hederaNetwork === "testnet" && (
+        <div className="relative z-[51] bg-gradient-to-r from-amber-600/90 via-orange-500/90 to-amber-600/90 text-white text-center py-1.5 px-4 backdrop-blur-sm" role="alert">
+          <div className="flex items-center justify-center gap-2 text-xs md:text-sm font-bold">
+            <AlertTriangle className="w-3.5 h-3.5 md:w-4 md:h-4 animate-pulse" />
+            <span>TESTNET MODE — You are connected to Hedera Testnet. Transactions use test HBAR with no real value.</span>
+            <AlertTriangle className="w-3.5 h-3.5 md:w-4 md:h-4 animate-pulse" />
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className={`border-b sticky top-0 z-50 backdrop-blur-xl ${
         isDark
@@ -151,8 +169,8 @@ export function Layout() {
             </Link>
 
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3">
-              <div className="flex items-center gap-1 xl:gap-1.5">
+            <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3" aria-label="Main navigation">
+              <div className="flex items-center gap-1 xl:gap-1.5" role="menubar">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.path);
@@ -163,7 +181,9 @@ export function Layout() {
                     to={item.path}
                     onClick={() => handleTabClick(item.path)}
                     onMouseEnter={() => preloadRoute(item.path)}
-                    className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap ${
+                    role="menuitem"
+                    aria-current={active ? "page" : undefined}
+                    className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
                       active
                         ? `text-white shadow-lg shadow-pink-500/30 active-nav nav-iridescent ${isFlashing ? "tab-click-flash" : ""}`
                         : isDark
@@ -188,7 +208,24 @@ export function Layout() {
 
             {/* Right Side: Theme Toggle + Wallet + Mobile Menu */}
             <div className="flex items-center gap-1 md:gap-1.5 flex-shrink-0">
+              {/* Network Indicator Badge */}
+              <Tip content={`Connected to Hedera ${hederaNetwork === "testnet" ? "Testnet" : "Mainnet"}`}>
+              <div className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border cursor-default ${
+                hederaNetwork === "testnet"
+                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                  : isDark
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+              }`} role="status" aria-label={`Network: ${hederaNetwork}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  hederaNetwork === "testnet" ? "bg-amber-400 animate-pulse" : "bg-emerald-400"
+                }`} />
+                <span className="uppercase tracking-wider">{hederaNetwork === "testnet" ? "Testnet" : "Mainnet"}</span>
+              </div>
+              </Tip>
+
               {/* Social Links */}
+              <Tip content="Follow HBAR.ħ on X">
               <a
                 href="https://x.com/WRAPpDEX"
                 target="_blank"
@@ -198,12 +235,13 @@ export function Layout() {
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-white border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 border border-gray-200"
                 }`}
-                title="Follow HBAR.ħ on X"
               >
                 <svg className="w-4 h-4 md:w-5 md:h-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                 </svg>
               </a>
+              </Tip>
+              <Tip content="Join HBAR.ħ Discord">
               <a
                 href="https://discord.gg/tRSZZ9rUJ"
                 target="_blank"
@@ -213,22 +251,23 @@ export function Layout() {
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-[#5865F2] border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-[#5865F2] border border-gray-200"
                 }`}
-                title="Join HBAR.ħ Discord"
               >
                 <svg className="w-4 h-4 md:w-5 md:h-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.074.074 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
                 </svg>
               </a>
+              </Tip>
 
               {/* Theme Toggle */}
+              <Tip content={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}>
               <button
                 onClick={toggleTheme}
-                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                aria-label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-yellow-400 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200"
                 }`}
-                title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
               >
                 {isDark ? (
                   <Sun className="w-4 h-4 md:w-5 md:h-5" />
@@ -236,8 +275,10 @@ export function Layout() {
                   <Moon className="w-4 h-4 md:w-5 md:h-5" />
                 )}
               </button>
+              </Tip>
 
               {/* Accent Color Toggle — Sky (Blue) ↔ Pink */}
+              <Tip content={isSky ? "Switch to Pink accent" : "Switch to Sky accent"}>
               <button
                 onClick={toggleAccent}
                 className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
@@ -245,47 +286,62 @@ export function Layout() {
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
                 }`}
-                title={isSky ? "Switch to Pink accent" : "Switch to Sky accent"}
               >
                 <span className="text-sm md:text-base leading-none select-none" role="img" aria-label={isSky ? "Sky Blue mode" : "Pink mode"}>
                   {isSky ? "🩵" : "🩷"}
                 </span>
               </button>
+              </Tip>
 
               {/* Sound Toggle */}
+              <Tip content={`Sound: ${soundVolume.charAt(0).toUpperCase() + soundVolume.slice(1)} — click to cycle`}>
               <button
                 onClick={toggleMute}
-                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                aria-label={`Sound volume: ${soundVolume}. Click to cycle.`}
+                aria-pressed={soundVolume !== "off"}
+                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
-                } ${soundMuted ? (isDark ? "text-slate-500" : "text-gray-400") : (isDark ? "text-pink-400" : "text-pink-600")}`}
-                title={soundMuted ? "Unmute Sounds" : "Mute Sounds"}
+                } ${soundVolume === "off" ? (isDark ? "text-slate-500" : "text-gray-400") : (isDark ? "text-pink-400" : "text-pink-600")}`}
               >
-                {soundMuted ? (
+                {soundVolume === "off" ? (
                   <VolumeOff className="w-4 h-4 md:w-5 md:h-5" />
+                ) : soundVolume === "low" ? (
+                  <Volume1 className="w-4 h-4 md:w-5 md:h-5" />
                 ) : (
                   <Volume2 className="w-4 h-4 md:w-5 md:h-5" />
                 )}
+                {/* Volume level indicator bars */}
+                {soundVolume !== "off" && (
+                  <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 flex gap-px">
+                    <span className={`w-1 h-0.5 rounded-full vol-bar-anim ${isDark ? "bg-pink-400" : "bg-pink-500"}`} />
+                    <span className={`w-1 h-0.5 rounded-full vol-bar-anim ${soundVolume === "medium" || soundVolume === "high" ? (isDark ? "bg-pink-400" : "bg-pink-500") : (isDark ? "bg-slate-700" : "bg-gray-300")}`} />
+                    <span className={`w-1 h-0.5 rounded-full vol-bar-anim ${soundVolume === "high" ? (isDark ? "bg-pink-400" : "bg-pink-500") : (isDark ? "bg-slate-700" : "bg-gray-300")}`} />
+                  </span>
+                )}
               </button>
+              </Tip>
 
               {/* VIP Crown Button */}
+              <Tip content={vipActive ? "VIP Active" : "VIP Features"}>
               <button
                 onClick={() => setShowVipPanel(true)}
-                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                aria-label={vipActive ? "VIP Active — Open VIP panel" : "Open VIP Features panel"}
+                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 crown-shimmer-hover ${
                   vipActive
                     ? "bg-gradient-to-br from-emerald-600/20 to-teal-600/20 border border-emerald-500/30 text-emerald-400"
                     : isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20 text-slate-400 hover:text-emerald-400"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-500 hover:text-emerald-600"
                 }`}
-                title={vipActive ? "VIP Active" : "VIP Features"}
               >
-                <Crown className={`w-4 h-4 md:w-5 md:h-5 ${vipActive ? "drop-shadow-[0_0_4px_rgba(16,185,129,0.5)]" : ""}`} />
+                <Crown className={`w-4 h-4 md:w-5 md:h-5 transition-all duration-300 ${vipActive ? "drop-shadow-[0_0_4px_rgba(16,185,129,0.5)]" : ""}`} />
                 {vipActive && (
                   <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 )}
               </button>
+              </Tip>
 
               {/* Wallet Connection */}
               <div className="relative">
@@ -293,6 +349,9 @@ export function Layout() {
                   <div>
                     <button
                       onClick={() => setShowWalletMenu(!showWalletMenu)}
+                      aria-label="Wallet menu"
+                      aria-expanded={showWalletMenu}
+                      aria-haspopup="true"
                       className={`flex items-center gap-2 md:gap-3 px-2 md:px-4 py-1.5 md:py-2 rounded-lg transition-all duration-300 ${
                         isDark
                           ? "bg-slate-800/50 hover:bg-slate-800 border border-pink-500/20"
@@ -338,23 +397,32 @@ export function Layout() {
                         <div className="text-sm font-mono">{formatAddress(primaryWallet.address)}</div>
                         {hederaAccount && primaryWallet.type === "hedera" && (
                           <div className="text-[10px] text-emerald-400 font-bold">
-                            {formatHbar(hederaAccount.hbarBalance)} HBAR (~${(hederaAccount.hbarBalance * hbarPrice).toFixed(2)})
+                            <AnimatedNumber value={hederaAccount.hbarBalance} decimals={2} suffix=" HBAR" /> (~$<AnimatedNumber value={hederaAccount.hbarBalance * hbarPrice} decimals={2} />)
                           </div>
                         )}
                         {metaMaskAccount && primaryWallet.type === "ethereum" && primaryWallet.connector === "MetaMask" && (
                           <div className="text-[10px] text-orange-400 font-bold">
-                            {parseFloat(metaMaskAccount.balanceEth).toFixed(4)} {metaMaskAccount.nativeSymbol} (~${(parseFloat(metaMaskAccount.balanceEth) * ethPrice).toFixed(2)})
+                            <AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth)} decimals={4} suffix={` ${metaMaskAccount.nativeSymbol}`} /> (~$<AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth) * ethPrice} decimals={2} />)
                           </div>
                         )}
                       </div>
                     </button>
 
+                    <AnimatePresence>
                     {showWalletMenu && (
-                      <div className={`absolute right-0 mt-2 w-72 rounded-xl shadow-xl overflow-hidden z-50 ${
-                        isDark
-                          ? "bg-slate-900 border border-pink-500/30 shadow-pink-500/10"
-                          : "bg-white border border-gray-200 shadow-gray-200/50"
-                      }`}>
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                        transition={{ duration: 0.15, ease: "easeOut" }}
+                        role="menu"
+                        aria-label="Connected wallets"
+                        className={`absolute right-0 mt-2 w-72 rounded-xl shadow-xl overflow-hidden z-50 ${
+                          isDark
+                            ? "bg-slate-900 border border-pink-500/30 shadow-pink-500/10"
+                            : "bg-white border border-gray-200 shadow-gray-200/50"
+                        }`}
+                      >
                         <div className={`p-3 border-b ${isDark ? "border-pink-500/20" : "border-gray-100"}`}>
                           <div className={`text-xs mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                             Connected Wallets ({connectedWallets.length})
@@ -412,11 +480,13 @@ export function Layout() {
                                 <div className="flex items-center gap-1.5">
                                   <div className="text-sm font-bold">{wallet.connector}</div>
                                   {wallet.isDemo && (
+                                    <Tip content="Simulated demo wallet — not a real blockchain connection" side="bottom">
                                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
                                       isDark ? "bg-yellow-500/10 text-yellow-500/70 border border-yellow-500/20" : "bg-yellow-50 text-yellow-600 border border-yellow-200"
-                                    }`} title="Simulated demo wallet — not a real blockchain connection">
+                                    }`}>
                                       DEMO
                                     </span>
+                                    </Tip>
                                   )}
                                 </div>
                                 <div className={`text-xs font-mono ${isDark ? "text-slate-400" : "text-gray-500"}`}>
@@ -424,13 +494,14 @@ export function Layout() {
                                 </div>
                               </div>
                             </div>
+                            <Tip content="Disconnect wallet" side="left">
                             <button
                               onClick={() => disconnectWallet(wallet.address)}
                               className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                              title="Disconnect"
                             >
                               <LogOut className="w-4 h-4 text-red-400" />
                             </button>
+                            </Tip>
                           </div>
                         ))}
                         <button
@@ -446,13 +517,15 @@ export function Layout() {
                         >
                           + Connect Another Wallet
                         </button>
-                      </div>
+                      </motion.div>
                     )}
+                    </AnimatePresence>
                   </div>
                 ) : (
                   <button
                     onClick={() => setShowWalletModal(true)}
-                    className="px-3 md:px-6 py-1.5 md:py-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 rounded-lg font-bold transition-all duration-300 shadow-lg shadow-pink-500/30 text-white text-sm md:text-base btn-iridescent"
+                    aria-label="Connect crypto wallet"
+                    className="px-3 md:px-6 py-1.5 md:py-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 rounded-lg font-bold transition-all duration-300 shadow-lg shadow-pink-500/30 text-white text-sm md:text-base btn-iridescent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                   >
                     <span className="hidden sm:inline">Connect Wallet</span>
                     <span className="sm:hidden">Connect</span>
@@ -460,70 +533,20 @@ export function Layout() {
                 )}
               </div>
 
-              {/* Mobile Menu Toggle */}
-              <button
-                onClick={() => setShowMobileMenu(!showMobileMenu)}
-                className={`lg:hidden p-2 rounded-lg transition-all ${
-                  isDark
-                    ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
-                    : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
-                }`}
-              >
-                {showMobileMenu ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              </button>
+              {/* Mobile Menu Toggle — REMOVED: Bottom bar "More" now opens a sheet drawer.
+                  Single access path eliminates dual-nav confusion on mobile. */}
             </div>
           </div>
 
-          {/* Mobile Dropdown Menu */}
-          {showMobileMenu && (
-            <nav className={`lg:hidden mt-3 pt-3 pb-1 border-t ${isDark ? "border-pink-900/20" : "border-gray-200"}`}>
-              <div className="grid grid-cols-4 gap-2">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const active = isActive(item.path);
-                  return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => {
-                        handleTabClick(item.path);
-                        setShowMobileMenu(false);
-                      }}
-                      className={`flex flex-col items-center gap-1 py-2.5 rounded-lg transition-all duration-200 text-xs ${
-                        active
-                          ? "text-white shadow-lg shadow-pink-500/30 nav-iridescent-dropdown"
-                          : isDark
-                          ? "text-slate-400 hover:text-white hover:bg-slate-800/50"
-                          : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
-                      }`}
-                    >
-                      <Icon className="w-5 h-5" />
-                      <span>{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </nav>
-          )}
+          {/* Mobile Dropdown Menu — REMOVED: replaced by bottom sheet via "More" button */}
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content — wrapped in PullToRefresh for mobile DeFi UX */}
       <main className="container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content" style={{ border: 'none', outline: 'none', boxShadow: 'none' }}>
-        <ErrorBoundary isDark={isDark}>
-          <Suspense
-            fallback={
-              <div className="flex items-center justify-center min-h-[60vh]">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="w-10 h-10 border-2 border-pink-500 border-t-transparent rounded-full animate-spin" />
-                  <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Loading…</span>
-                </div>
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
-        </ErrorBoundary>
+        <PullToRefresh>
+          <AnimatedOutlet />
+        </PullToRefresh>
       </main>
 
       {/* Footer – Copyright */}
@@ -533,10 +556,10 @@ export function Layout() {
           : "bg-[#f8fafc]"
       }`} style={{ border: 'none', borderTop: 'none', outline: 'none', boxShadow: 'none' }}>
         <p className={`text-[10px] md:text-[11px] leading-relaxed ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-          &copy; {new Date().getFullYear()} Wrappdex. All rights reserved. Wrappdex is a decentralized exchange on the Hedera network. Trading crypto assets involves significant risk. This platform does not constitute financial advice.
+          &copy; {new Date().getFullYear()} Wrappdex. All rights reserved. Wrappdex is a decentralized exchange built on the Hedera network. Trading digital assets involves significant risk of loss. This platform does not constitute financial, investment, or legal advice. Past performance is not indicative of future results.
         </p>
         <p className={`text-[9px] md:text-[10px] mt-1.5 ${isDark ? "text-slate-700" : "text-gray-300"}`}>
-          BETA VERSION — Not audited. For testing purposes only. Use at your own risk.
+          Stage 1 security audit completed &middot; Use at your own risk &middot; Not available in all jurisdictions.
         </p>
       </footer>
 
@@ -545,7 +568,7 @@ export function Layout() {
         isDark
           ? "bg-[#12121a]/95 border-pink-900/20 backdrop-blur-md"
           : "bg-white/95 border-gray-200 backdrop-blur-md"
-      }`}>
+      }`} aria-label="Bottom navigation">
         <div className="flex justify-around items-center py-1.5 px-1 safe-bottom">
           {navItems.slice(0, 5).map((item) => {
             const Icon = item.icon;
@@ -555,6 +578,7 @@ export function Layout() {
                 key={item.path}
                 to={item.path}
                 onClick={() => handleTabClick(item.path)}
+                aria-current={active ? "page" : undefined}
                 className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-lg transition-all min-w-[52px] ${
                   active
                     ? `nav-iridescent-mobile ${isDark ? "text-pink-400" : "text-pink-600"}`
@@ -573,6 +597,8 @@ export function Layout() {
           })}
           <button
             onClick={() => setShowMobileMenu(!showMobileMenu)}
+            aria-label="More navigation options"
+            aria-expanded={showMobileMenu}
             className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-lg transition-all min-w-[52px] ${
               isDark ? "text-slate-500" : "text-gray-400"
             }`}
@@ -586,13 +612,20 @@ export function Layout() {
       {/* Wallet Connect Modal */}
       {showWalletModal && <WalletConnectModal onClose={() => setShowWalletModal(false)} />}
 
-      {/* Click outside to close menu */}
+      {/* Click outside to close wallet menu — animated backdrop */}
+      <AnimatePresence>
       {showWalletMenu && (
-        <div
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
           className="fixed inset-0 z-40"
           onClick={() => setShowWalletMenu(false)}
+          aria-hidden="true"
         />
       )}
+      </AnimatePresence>
 
       {/* VIP Features Panel */}
       <VIPPanel
@@ -601,7 +634,78 @@ export function Layout() {
         onPrefsChange={setVipPrefs}
       />
 
-      {/* Toast notifications */}
+      {/* Mobile "More" Bottom Sheet — secondary nav items */}
+      <Sheet open={showMobileMenu} onOpenChange={setShowMobileMenu}>
+        <SheetContent
+          side="bottom"
+          className={`rounded-t-2xl ${
+            isDark
+              ? "bg-[#0f1019] border-t border-pink-500/20"
+              : "bg-white border-t border-gray-200"
+          }`}
+        >
+          <SheetHeader className="pb-2">
+            <SheetTitle className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+              More
+            </SheetTitle>
+            <SheetDescription className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              Additional sections & tools
+            </SheetDescription>
+          </SheetHeader>
+
+          <nav className="grid grid-cols-2 gap-2 pb-4 px-1" aria-label="Secondary navigation">
+            {secondaryNavItems.map((item) => {
+              const Icon = item.icon;
+              const active = isActive(item.path);
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => {
+                    handleTabClick(item.path);
+                    setShowMobileMenu(false);
+                  }}
+                  className={`flex items-center gap-3 p-3.5 rounded-xl transition-all duration-200 ${
+                    active
+                      ? isDark
+                        ? "bg-pink-500/10 border border-pink-500/25 text-pink-400"
+                        : "bg-pink-50 border border-pink-200 text-pink-600"
+                      : isDark
+                      ? "bg-slate-800/40 border border-white/5 text-slate-300 hover:bg-slate-800/70 hover:text-white"
+                      : "bg-gray-50 border border-gray-100 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  }`}
+                >
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    active
+                      ? "bg-pink-500/20"
+                      : isDark
+                      ? "bg-slate-700/50"
+                      : "bg-gray-200/50"
+                  }`}>
+                    <Icon className="w-4.5 h-4.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold leading-tight">{item.label}</div>
+                    <div className={`text-[10px] leading-tight mt-0.5 ${
+                      isDark ? "text-slate-500" : "text-gray-400"
+                    }`}>
+                      {item.description}
+                    </div>
+                  </div>
+                  {active && (
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
+                  )}
+                </Link>
+              );
+            })}
+          </nav>
+        </SheetContent>
+      </Sheet>
+
+      {/* Scroll-to-Top floating button */}
+      <ScrollToTop />
+
+      {/* Toast notifications — offset on mobile to clear bottom nav */}
       <Toaster
         theme={isDark ? "dark" : "light"}
         position="bottom-right"
@@ -619,6 +723,12 @@ export function Layout() {
       <style>{`
         .safe-bottom {
           padding-bottom: env(safe-area-inset-bottom, 4px);
+        }
+        /* Push toasts above mobile bottom nav (≈60px) on small screens */
+        @media (max-width: 1023px) {
+          [data-sonner-toaster] {
+            --offset: 72px !important;
+          }
         }
       `}</style>
     </div>

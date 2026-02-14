@@ -1,19 +1,10 @@
 /**
  * HBAR.ħ DAO — Server-Authoritative Governance Client
  *
- * [AUDIT-D01] REMEDIATED — All proposals, votes, and comments are now
- * stored server-side in KV with ED25519 session authentication.
- *
- * Eligibility: >= 100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified SERVER-SIDE).
- * Power:       1 vote per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
- * Admin:       0.0.518487 — full proposal CRUD (verified server-side via session).
- *
- * Security Properties:
- *   [DAO-01] Proposals stored in server KV — cannot be manipulated via DevTools
- *   [DAO-02] Admin-only proposal CRUD verified server-side (session accountId)
- *   [DAO-03] Vote weight calculated SERVER-SIDE from Mirror Node balance
- *   [DAO-04] Vote deduplication enforced SERVER-SIDE via voterLog
- *   [DAO-05] Comments require authenticated session + eligibility check
+ * All state in server KV. Proposals, votes, and comments use ED25519 session auth.
+ * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified server-side).
+ * Vote weight: 1 per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
+ * Admin CRUD restricted to 0.0.518487 + dynamic admin list.
  */
 
 import type { HederaTokenBalance } from "./hedera";
@@ -366,8 +357,6 @@ export function formatCommentTime(createdAt: number): string {
 }
 
 // ── Admin Management API ────────────────────────────────────────────
-// [DAO-08] Dynamic admin list — only existing admins can add/remove.
-// [DAO-10] Add/remove require a FRESH wallet signature (re-sign flow).
 
 /**
  * Fetch the current admin list from the server.
@@ -473,11 +462,11 @@ export async function removeDaoAdmin(
 
 /**
  * Force a fresh wallet re-authentication.
- * Clears the existing session, then triggers a new ED25519 challenge-response
- * cycle requiring the user to sign in their HashPack wallet.
+ * Awaits server-side revocation of the old session (ATK-002) before
+ * creating a new one, ensuring no overlap window where both tokens are valid.
  * Returns the fresh session token (< 2 min old, satisfying server freshness check).
  */
 export async function forceReauthenticate(accountId: string): Promise<string> {
-  clearSession();
+  await clearSession();
   return await authenticate(accountId);
 }

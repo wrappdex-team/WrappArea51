@@ -14,6 +14,7 @@ import {
   Lightbulb,
   RotateCcw,
 } from "lucide-react";
+import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { toast } from "sonner";
@@ -399,22 +400,24 @@ export function TransactionDiagnoser({ prefillTxId, onPrefillConsumed, autoRunOn
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                <Tip content="Copy diagnosis to clipboard">
                 <button
                   onClick={handleCopyDiagnosis}
                   className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
-                  title="Copy diagnosis to clipboard"
                 >
                   {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                 </button>
+                </Tip>
+                <Tip content="View on HashScan">
                 <a
                   href={getHashScanTxUrl(formatTxIdForMirrorNode(txInput.trim()), hederaNetwork)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
-                  title="View on HashScan"
                 >
                   <ExternalLink className="w-3 h-3" />
                 </a>
+                </Tip>
               </div>
             </div>
 

@@ -31,7 +31,6 @@ import {
   signMessageViaWC,
   disconnectSession,
   forceResetSignClient,
-  findSessionForAccount,
   onSessionDelete,
   clearWCStorage as coreClearWCStorage,
   isWalletConnectConfigured,
@@ -41,7 +40,7 @@ import {
   subscribeWCModal,
 } from "./wallet-core";
 
-// ── Mirror Node Endpoints ────────────────────────���─────────────────────
+// ── Mirror Node Endpoints ──────────────────────────────────────────
 
 const MIRROR_NODES: Record<HederaNetwork, string> = {
   mainnet: "https://mainnet-public.mirrornode.hedera.com",
@@ -133,23 +132,6 @@ onSessionDelete((topic) => {
 
 export async function isHashConnectSDKAvailable(): Promise<boolean> {
   return isWalletConnectConfigured();
-}
-
-// ── Extension Detection Stubs ──────────────────────────────────────────
-// These are kept as no-op stubs so the UI layer (WalletConnectModal.tsx)
-// continues to compile without changes. The next UI step can remove them.
-
-export function isHashPackExtensionInstalled(): boolean {
-  return false;
-}
-
-export async function detectHashPackExtension(_maxWaitMs = 3000): Promise<boolean> {
-  return false;
-}
-
-export function isMobileDevice(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 }
 
 // ── Connect via WalletConnect v2 ───────────────────────────────────────
@@ -289,353 +271,268 @@ export async function connectViaHashConnect(
   }
 }
 
-/** Kept for API compatibility */
-export async function openHashConnectPairingModal(
-  network: HederaNetwork,
-  _themeMode: "dark" | "light" = "dark",
-): Promise<HashPackConnectionResult> {
-  return connectViaHashConnect(network);
-}
-
 // ── Connect via Mirror Node (read-only) ────────────────────────────────
 
+/**
+ * Lightweight read-only connection — validates the account exists on
+ * mainnet via Mirror Node, but provides no signing capability.
+ * Used as a fallback when WalletConnect is unavailable.
+ */
 export async function connectViaMirrorNode(
   accountId: string,
-  network: HederaNetwork,
+  network: HederaNetwork = "mainnet",
 ): Promise<HashPackConnectionResult> {
   try {
-    if (!/^0\.0\.\d+$/.test(accountId.trim())) {
-      return { success: false, session: null, error: "Invalid account ID format. Use 0.0.xxxxx format." };
+    const info = await fetchAccountInfo(accountId);
+    if (!info) {
+      return { success: false, session: null, error: `Account ${accountId} not found on Hedera ${network}` };
     }
-
-    const accountInfo = await fetchAccountInfo(accountId.trim(), network);
-    if (!accountInfo) return { success: false, session: null, error: `Account ${accountId} not found on ${network}.` };
-    if (accountInfo.deleted) return { success: false, session: null, error: `Account ${accountId} has been deleted on ${network}.` };
-
-    const session: HashPackSession = {
-      accountId: accountInfo.accountId,
-      evmAddress: accountInfo.evmAddress || "",
-      network,
-      connectedAt: Date.now(),
-      isVerified: false,
-      connectionMethod: "mirror-node",
-      profile: null,
-    };
-
-    persistSession(session);
-    return { success: true, session, error: null };
+    return await _buildSession(accountId, network, "mirror-node");
   } catch (err: any) {
-    return { success: false, session: null, error: err.message || "Failed to connect via Mirror Node." };
+    return { success: false, session: null, error: err?.message || "Mirror Node connection failed" };
   }
 }
 
-// ── Build Session Helper ───────────────────────────────────────────────
+// ── Session Builder ────────────────────────────────────────────────────
 
 async function _buildSession(
   accountId: string,
   network: HederaNetwork,
-  connectionMethod: "walletconnect",
+  method: "walletconnect" | "mirror-node",
   wcTopic?: string,
 ): Promise<HashPackConnectionResult> {
-  let evmAddress = "";
-  try { evmAddress = (await resolveAccountIdToEvm(accountId, network)) || ""; } catch { /* */ }
-
+  const evmAddress = await _getEvmAddress(accountId, network);
   const session: HashPackSession = {
     accountId,
-    evmAddress,
+    evmAddress: evmAddress || "",
     network,
     connectedAt: Date.now(),
-    isVerified: true,
-    connectionMethod,
+    isVerified: method === "walletconnect",
+    connectionMethod: method,
     profile: null,
     wcTopic,
   };
 
-  persistSession(session);
+  if (wcTopic) _activeWcTopic = wcTopic;
+  _activeNetwork = network;
+
+  // Persist to localStorage for session restore
+  try {
+    localStorage.setItem("hashpack_session", JSON.stringify(session));
+  } catch { /* storage quota — non-critical */ }
+
   return { success: true, session, error: null };
 }
 
-// ── Disconnect ─────────────────────────────────────────────────────────
-
-export async function disconnectHashConnect(): Promise<void> {
-  _connectionAbortController?.abort();
-  _connectionAbortController = null;
-  if (_activeWcTopic) {
-    await disconnectSession(_activeWcTopic);
-    _activeWcTopic = null;
-  }
-  clearSession();
-}
-
-// ── Transaction Signing ────────────────────────────────────────────────
-
-export function getCurrentHashConnect(): { topic: string | null } {
-  return { topic: _activeWcTopic };
-}
-
-/** Resolve the WC topic for signing (state → persisted → WC client scan) */
-function _resolveTopic(accountId: string): string | null {
-  // [AUDIT-WC-02] Validate that the resolved topic actually exists in the WC client.
-  // A stale topic (session deleted remotely) would cause signing to fail with opaque errors.
-  if (_activeWcTopic) {
-    // Quick check: does this topic belong to a session with our account?
-    const wc = findSessionForAccount(accountId);
-    if (wc && wc.topic === _activeWcTopic) return _activeWcTopic;
-    // Topic is stale — clear and try other sources
-    if (!wc) {
-      console.warn("[HBAR.\u0127] Active topic stale — clearing");
-      _activeWcTopic = null;
-    }
-  }
-  // Try WC client scan first (most authoritative)
-  const wc = findSessionForAccount(accountId);
-  if (wc) { _activeWcTopic = wc.topic; return wc.topic; }
-  // Fall back to persisted session
-  const saved = restoreSession();
-  if (saved?.wcTopic) {
-    // Verify this topic exists in the WC client
-    const wcCheck = findSessionForAccount(accountId);
-    if (wcCheck && wcCheck.topic === saved.wcTopic) {
-      _activeWcTopic = saved.wcTopic;
-      return saved.wcTopic;
-    }
-    // Persisted topic is stale — don't use it
-    console.warn("[HBAR.\u0127] Persisted WC topic not found in client — session may have expired");
-  }
-  return null;
-}
-
-export async function signTransaction(
-  accountId: string,
-  txBytes: Uint8Array,
-): Promise<Uint8Array | null> {
-  const topic = _resolveTopic(accountId);
-  if (!topic) { console.debug("[HBAR.\u0127] signTransaction: no active WC session"); return null; }
-  return signTransactionViaWC(topic, _activeNetwork, accountId, txBytes);
-}
-
-export async function sendHederaTransaction(
-  accountId: string,
-  txBytes: Uint8Array,
-): Promise<{ success: boolean; transactionId: string | null; error: string | null }> {
-  const topic = _resolveTopic(accountId);
-  if (!topic) return { success: false, transactionId: null, error: "Wallet not connected. Please reconnect." };
-
+async function _getEvmAddress(accountId: string, network: HederaNetwork): Promise<string | null> {
   try {
-    const result = await signAndExecuteTransaction(topic, _activeNetwork, accountId, txBytes);
-    const txId = result?.transactionId?.toString?.() ?? result?.transactionId ?? null;
-    const status = result?.status ?? result?.receipt?.status ?? "";
-
-    if (txId && (status === "SUCCESS" || !status)) {
-      try {
-        const mr = await pollMirrorNodeReceipt(txId, _activeNetwork);
-        if (mr) return { success: mr.result === "SUCCESS", transactionId: txId, error: mr.result === "SUCCESS" ? null : `Transaction failed: ${mr.result}` };
-      } catch { /* fall through */ }
-      return { success: true, transactionId: txId, error: null };
-    }
-    return { success: !!result, transactionId: txId, error: null };
-  } catch (err: any) {
-    const msg = err?.message || "Transaction failed";
-    if (msg.includes("rejected") || msg.includes("User rejected")) return { success: false, transactionId: null, error: "Transaction rejected by user." };
-    return { success: false, transactionId: null, error: msg };
-  }
-}
-
-export async function executeHederaTransaction(
-  accountId: string,
-  transaction: any,
-): Promise<{ success: boolean; transactionId: string | null; error: string | null; userCancelled?: boolean }> {
-  try {
-    let txBytes: Uint8Array;
-    if (transaction instanceof Uint8Array) txBytes = transaction;
-    else if (typeof transaction?.toBytes === "function") txBytes = transaction.toBytes();
-    else return { success: false, transactionId: null, error: "Invalid transaction object — must have toBytes() method." };
-    const result = await sendHederaTransaction(accountId, txBytes);
-    return { ...result, userCancelled: result.error?.includes("rejected") || result.error?.includes("cancelled") };
-  } catch (err: any) {
-    const msg = err?.message || "Transaction execution failed";
-    return { success: false, transactionId: null, error: msg, userCancelled: msg.includes("rejected") || msg.includes("cancelled") };
-  }
-}
-
-// ── Message Signing ────────────────────────────────────────────────────
-
-export async function signMessage(
-  accountId: string,
-  message: string,
-): Promise<{ signatures: any[] } | null> {
-  const topic = _resolveTopic(accountId);
-  if (!topic) { console.debug("[HBAR.\u0127] signMessage: no active WC session"); return null; }
-  return signMessageViaWC(topic, _activeNetwork, accountId, message);
-}
-
-// ── Mirror Node Utilities ──────────────────────────────────────────────
-
-export async function resolveEvmToAccountId(evmAddress: string, network: HederaNetwork): Promise<string | null> {
-  try {
-    const res = await fetch(`${MIRROR_NODES[network]}/api/v1/accounts/${evmAddress.toLowerCase()}`, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return null;
-    return (await res.json()).account || null;
-  } catch { return null; }
-}
-
-export async function resolveAccountIdToEvm(accountId: string, network: HederaNetwork): Promise<string | null> {
-  try {
-    const res = await fetch(`${MIRROR_NODES[network]}/api/v1/accounts/${accountId.trim()}`, { signal: AbortSignal.timeout(10000) });
+    const base = MIRROR_NODES[network];
+    const res = await fetch(`${base}/api/v1/accounts/${accountId}`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
     return (await res.json()).evm_address || null;
   } catch { return null; }
 }
 
-export async function fetchHashPackProfile(
-  _accountId: string,
-  _network: HederaNetwork,
-): Promise<HashPackProfile | null> {
-  // Stub — wallet-specific profile APIs removed.
-  // Returns null; the UI degrades gracefully (no profile picture/username).
-  return null;
-}
-
-// ── Token Gating Utility ───────────────────────────────────────────────
-
-export async function checkTokenHolding(
-  accountId: string,
-  tokenId: string,
-  network: HederaNetwork,
-  minBalance = 0,
-): Promise<{ holds: boolean; balance: number }> {
-  try {
-    const res = await fetch(
-      `${MIRROR_NODES[network]}/api/v1/accounts/${accountId.trim()}/tokens?token.id=${tokenId}`,
-      { signal: AbortSignal.timeout(8000) },
-    );
-    if (!res.ok) return { holds: false, balance: 0 };
-    const data = await res.json();
-    if (!data.tokens || data.tokens.length === 0) return { holds: false, balance: 0 };
-    const balance = data.tokens[0].balance || 0;
-    return { holds: balance > minBalance, balance };
-  } catch { return { holds: false, balance: 0 }; }
-}
-
 // ── Session Persistence ────────────────────────────────────────────────
 
-const STORAGE_KEYS = {
-  session: "hbarh-hashpack-session",
-  network: "hbarh-hedera-network",
-} as const;
+const SESSION_KEY = "hashpack_session";
 
-function persistSession(session: HashPackSession): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.session, JSON.stringify(session));
-    localStorage.setItem("hbarh-hedera-account", session.accountId);
-    localStorage.setItem("hbarh-hedera-network", session.network);
-  } catch { console.warn("Failed to persist session"); }
+/** Stale-session event — consumers can subscribe to detect expired WC sessions */
+type StaleSessionCallback = (accountId: string) => void;
+const _staleSessionCBs = new Set<StaleSessionCallback>();
+
+export function onStaleSession(cb: StaleSessionCallback): () => void {
+  _staleSessionCBs.add(cb);
+  return () => { _staleSessionCBs.delete(cb); };
 }
 
 export function restoreSession(): HashPackSession | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.session);
+    const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const session: HashPackSession = JSON.parse(raw);
-    if (Date.now() - session.connectedAt > 24 * 60 * 60 * 1000) { clearSession(); return null; }
-    if (!session.accountId || !session.network) { clearSession(); return null; }
+    // Reject sessions older than 24 hours
+    if (Date.now() - session.connectedAt > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
     if (session.wcTopic) _activeWcTopic = session.wcTopic;
     _activeNetwork = session.network;
+
+    // Schedule async WC session validation (REC-004)
+    // This runs after the sync return so the UI can render immediately,
+    // then fires stale-session callbacks if the WC session is gone.
+    if (session.wcTopic && session.connectionMethod === "walletconnect") {
+      _scheduleSessionValidation(session);
+    }
+
     return session;
-  } catch { clearSession(); return null; }
-}
-
-export function clearSession(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEYS.session);
-    localStorage.removeItem("hbarh-hedera-account");
-  } catch { /* ignore */ }
-}
-
-// ── Manual Pairing String Connection ───────────────────────────────────
-
-export async function injectPairingUri(uri: string): Promise<string | null> {
-  if (!uri || !uri.startsWith("wc:")) return "Invalid pairing string. It should start with 'wc:'.";
-  try {
-    const client = await getSignClient();
-    await client.core.pairing.pair({ uri });
-    console.log("[HBAR.\u0127] Manual pairing URI injected");
+  } catch {
     return null;
-  } catch (err: any) {
-    const msg = err?.message || "";
-    if (msg.includes("expired")) return "Pairing string has expired. Copy a fresh one.";
-    if (msg.includes("already exists")) return null;
-    return `Pairing failed: ${msg}`;
   }
 }
 
-export async function connectViaPairingString(
-  pairingString: string,
-  network: HederaNetwork,
-): Promise<HashPackConnectionResult> {
-  const error = await injectPairingUri(pairingString);
-  if (error) return { success: false, session: null, error };
-  return new Promise<HashPackConnectionResult>((resolve) => {
-    const timeout = setTimeout(() => {
-      resolve({ success: false, session: null, error: "Pairing timed out. Approve the connection in your wallet." });
-    }, 60000);
-    const check = setInterval(async () => {
+/**
+ * Async background check: verifies the persisted wcTopic actually exists
+ * in the WC SignClient session store. If not, the session is stale —
+ * the user appears "connected" but cannot sign anything.
+ *
+ * Fires after a brief delay to let the SignClient finish initializing.
+ * On stale detection: clears local state and notifies subscribers.
+ */
+function _scheduleSessionValidation(session: HashPackSession): void {
+  // Delay to allow SignClient init (getSignClient is lazy-async)
+  setTimeout(async () => {
+    try {
+      const client = await getSignClient();
+      if (!client) return;
+
+      // Check if the topic is in the client's session store
+      let found = false;
       try {
-        const client = await getSignClient();
-        const sessions = client.session?.getAll?.() ?? [];
-        for (const s of sessions) {
-          const accounts = getAccountsFromSession(s);
-          if (accounts.length > 0) {
-            clearTimeout(timeout);
-            clearInterval(check);
-            _activeWcTopic = s.topic;
-            _activeNetwork = network;
-            resolve(await _buildSession(accounts[0], network, "walletconnect", s.topic));
-            return;
-          }
+        const wcSession = client.session?.get?.(session.wcTopic);
+        found = !!wcSession;
+      } catch {
+        // session.get throws if topic doesn't exist in some WC versions
+        found = false;
+      }
+
+      if (!found) {
+        // Fallback: scan all sessions for this account
+        const allSessions = client.session?.getAll?.() ?? [];
+        const matchingSession = allSessions.find((s: any) => {
+          const accounts = s?.namespaces?.hedera?.accounts ?? [];
+          return accounts.some((a: string) => a.includes(session.accountId));
+        });
+
+        if (matchingSession) {
+          // Found under a different topic — update our local state
+          console.log(`[HBAR.\u0127] Session topic updated: ${session.wcTopic?.slice(0, 8)} → ${matchingSession.topic.slice(0, 8)}`);
+          _activeWcTopic = matchingSession.topic;
+          session.wcTopic = matchingSession.topic;
+          try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch { /* */ }
+          return;
         }
-      } catch { /* keep checking */ }
-    }, 1500);
-  });
+
+        // No WC session at all — stale
+        console.warn(`[HBAR.\u0127] Stale session detected for ${session.accountId} — WC topic not found in SignClient`);
+        _activeWcTopic = null;
+        try { localStorage.removeItem(SESSION_KEY); } catch { /* */ }
+        _staleSessionCBs.forEach(cb => {
+          try { cb(session.accountId); } catch { /* */ }
+        });
+      }
+    } catch (err: any) {
+      // SignClient init failed — can't validate, leave session as-is
+      console.warn("[HBAR.\u0127] Session validation skipped — SignClient unavailable:", err?.message);
+    }
+  }, 2000); // 2s delay — SignClient needs time to init + relay handshake
 }
 
-// ── Force Reset & Storage (public API for modal) ───────────────────────
+export function clearSession(): void {
+  _activeWcTopic = null;
+  try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+}
+
+// ── Disconnect ─────────────────────────────────────────────────────────
+
+export async function disconnectHashConnect(): Promise<void> {
+  try {
+    if (_activeWcTopic) {
+      await disconnectSession(_activeWcTopic);
+    }
+  } catch (err) {
+    console.warn("[HBAR.\u0127] Disconnect error (non-fatal):", err);
+  } finally {
+    _activeWcTopic = null;
+    clearSession();
+  }
+}
+
+// ── Transaction Signing ────────────────────────────────────────────────
+
+/**
+ * Sign and execute a transaction via the connected wallet.
+ * Returns the transaction response bytes, or null if rejected.
+ */
+export async function sendHederaTransaction(
+  accountId: string,
+  transactionBytes: Uint8Array,
+): Promise<{ success: boolean; receipt?: { result: string; status: string } | null; error?: string }> {
+  if (!_activeWcTopic) {
+    return { success: false, error: "No active WalletConnect session" };
+  }
+  try {
+    const result = await signAndExecuteTransaction(_activeWcTopic, _activeNetwork, accountId, transactionBytes);
+    // Poll Mirror Node for receipt confirmation
+    const receipt = await pollMirrorNodeReceipt(result.transactionId, _activeNetwork);
+    return { success: true, receipt };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (msg.includes("rejected") || msg.includes("User rejected")) {
+      return { success: false, error: "Transaction rejected by wallet" };
+    }
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Sign a transaction (without executing). Returns signed bytes or null.
+ */
+export async function signTransaction(
+  accountId: string,
+  transactionBytes: Uint8Array,
+): Promise<Uint8Array | null> {
+  if (!_activeWcTopic) return null;
+  try {
+    return await signTransactionViaWC(_activeWcTopic, _activeNetwork, accountId, transactionBytes);
+  } catch (err: any) {
+    console.warn("[HBAR.\u0127] Sign failed:", err?.message);
+    return null;
+  }
+}
+
+/**
+ * Sign an arbitrary message (for auth challenge-response).
+ * Returns the wallet's response object with `signatures` (preserving
+ * the interface that auth.ts expects), or null on rejection.
+ *
+ * wallet-core.signMessageViaWC already returns { signatures: any[] },
+ * so we pass it through directly — no extra wrapping needed.
+ */
+export async function signMessage(
+  accountId: string,
+  message: string,
+): Promise<{ signatures: any } | null> {
+  if (!_activeWcTopic) return null;
+  try {
+    return await signMessageViaWC(_activeWcTopic, _activeNetwork, accountId, message);
+  } catch (err: any) {
+    console.warn("[HBAR.\u0127] Message sign failed:", err?.message);
+    return null;
+  }
+}
+
+// ── Reset / Cleanup Utilities ──────────────────────────────────────────
 
 export async function forceResetHashConnect(): Promise<void> {
-  _connectionAbortController?.abort();
-  _connectionAbortController = null;
   _activeWcTopic = null;
-  await forceResetSignClient();
   clearSession();
-  console.log("[HBAR.\u0127] Wallet connection force-reset complete");
+  try { await forceResetSignClient(); } catch { /* best-effort */ }
 }
 
-export function clearWCStorage(preserveIdentity = false): number {
-  return coreClearWCStorage(preserveIdentity);
+export function clearWCStorage(preserveIdentity = false): void {
+  coreClearWCStorage(preserveIdentity);
 }
 
-// ── Utility Exports ────────────────────────────────────────────────────
-
-export function getHashPackDownloadUrl(): string {
-  return "https://www.hashpack.app/download";
-}
-
-export function getHashPackDeepLink(pairingUri: string): string {
-  return `https://www.hashpack.app/wc?uri=${encodeURIComponent(pairingUri)}`;
-}
-
-export function getBladeDeepLink(pairingUri: string): string {
-  if (isMobileDevice()) return `bladewallet://wc?uri=${encodeURIComponent(pairingUri)}`;
-  return `https://blade.app/wc?uri=${encodeURIComponent(pairingUri)}`;
-}
-
-export function getWalletConnectUniversalLink(pairingUri: string): string {
-  return `https://www.hashpack.app/wc?uri=${encodeURIComponent(pairingUri)}`;
+/**
+ * Diagnostic accessor — returns current connection state for health reports.
+ */
+export function getCurrentHashConnect(): { topic: string | null; network: HederaNetwork } {
+  return { topic: _activeWcTopic, network: _activeNetwork };
 }
 
 export { isWalletConnectConfigured, getWalletConnectProjectId, openWCModal, closeWCModal, subscribeWCModal };
-
-/** Backward-compat stub */
-export async function tryExtensionDirect(_hc: any): Promise<boolean> {
-  return false;
-}

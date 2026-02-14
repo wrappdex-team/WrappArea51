@@ -59,7 +59,6 @@ export function loadSwapHistory(): SwapHistoryEntry[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed: SwapHistoryEntry[] = JSON.parse(raw);
-    // [AUDIT-AMM-04] Enforce 10-entry cap on read (auto-trims legacy larger histories)
     return Array.isArray(parsed) ? parsed.slice(0, 10) : [];
   } catch {
     return [];
@@ -70,7 +69,6 @@ export function saveSwapToHistory(entry: SwapHistoryEntry): void {
   try {
     const history = loadSwapHistory();
     history.unshift(entry);
-    // [AUDIT-AMM-04] Keep last 10 entries only — data minimization
     const trimmed = history.slice(0, 10);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   } catch { /* ignore */ }
@@ -322,15 +320,16 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
         </div>
         <div className="flex items-center gap-2">
           {history.length > 0 && (
+            <Tip content="Clear history">
             <button
               onClick={(e) => { e.stopPropagation(); onClear(); }}
               className={`p-1 rounded transition-colors ${
                 isDark ? "hover:bg-slate-700 text-slate-500" : "hover:bg-gray-200 text-gray-400"
               }`}
-              title="Clear history"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+            </Tip>
           )}
           <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""} ${
             isDark ? "text-slate-400" : "text-gray-500"
@@ -406,7 +405,6 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
                                 ? isDark ? "text-blue-400" : "text-blue-600"
                                 : isDark ? "text-slate-500 hover:text-blue-400" : "text-gray-400 hover:text-blue-600"
                             }`}
-                            title="Diagnose this transaction"
                           >
                             {diagnosisLoading && diagnosingId === entry.id ? (
                               <Loader2 className="w-2.5 h-2.5 animate-spin" />
@@ -475,20 +473,22 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
                               </span>
                             </div>
                             <div className="flex items-center gap-1">
+                              <Tip content="Copy diagnosis">
                               <button
                                 onClick={handleCopyDiagnosis}
                                 className={`p-1 rounded transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
-                                title="Copy diagnosis"
                               >
                                 {copiedDiag ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
                               </button>
+                              </Tip>
+                              <Tip content="Close diagnosis">
                               <button
                                 onClick={() => { setDiagnosingId(null); setDiagnosisResult(null); }}
                                 className={`p-1 rounded transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
-                                title="Close diagnosis"
                               >
                                 <XCircle className="w-2.5 h-2.5" />
                               </button>
+                              </Tip>
                             </div>
                           </div>
 

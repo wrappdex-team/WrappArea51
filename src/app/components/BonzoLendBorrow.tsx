@@ -130,8 +130,7 @@ function ActionModal({
 
   if (!market) return null;
 
-  // [AUDIT-F01] Sanitize amount: reject NaN, Infinity, negative values.
-  // type="number" inputs can still receive "-" or "e" via paste/keyboard.
+  // Sanitize: type="number" can still receive "-" or "e" via paste/keyboard.
   const rawParsed = parseFloat(amount);
   const numAmount = (!isFinite(rawParsed) || rawParsed < 0) ? 0 : rawParsed;
   const hasLendingPool = isBonzoLendingPoolConfigured();
@@ -189,15 +188,13 @@ function ActionModal({
       const assetAddr = market.evmAddress;
       const userAddr = accountIdToEvmAddress(accountId);
 
-      // [AUDIT-F02] Use string-based decimal conversion to avoid
-      // JavaScript Number precision loss for high-decimal tokens (e.g. WETH 18 decimals).
-      // Math.floor(float * 10^18) silently loses precision beyond 2^53.
+      // String-based decimal conversion avoids Number precision loss for 18-decimal tokens.
       const amountStr = numAmount.toFixed(market.decimals); // "1.234567890000000000"
       const [intPart, fracPart = ""] = amountStr.split(".");
       const paddedFrac = fracPart.padEnd(market.decimals, "0").slice(0, market.decimals);
       const rawAmount = BigInt(intPart + paddedFrac);
 
-      // [AUDIT-F03] Guard: rawAmount must be > 0 after conversion
+      // Guard: rawAmount must be > 0 after conversion
       if (rawAmount <= 0n) {
         setTxResult({ success: false, txId: null, error: "Amount too small after conversion" });
         setLoading(false);
@@ -645,11 +642,28 @@ export function BonzoLendBorrow() {
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Loading State — Skeleton shimmer */}
       {loading && markets.length === 0 && (
-        <div className={`rounded-xl p-12 flex flex-col items-center gap-3 ${cardClass}`}>
-          <Loader2 className={`w-8 h-8 animate-spin ${isDark ? "text-teal-400" : "text-teal-600"}`} />
-          <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>Loading Bonzo markets...</div>
+        <div className={`rounded-xl overflow-hidden ${cardClass}`} role="status" aria-label="Loading Bonzo markets">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className={`flex items-center gap-4 px-4 py-3.5 ${
+                isDark ? "border-b border-white/[0.04]" : "border-b border-gray-100"
+              }`}
+            >
+              <div className={`w-8 h-8 rounded-full ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`} aria-hidden="true">
+                <div className="absolute inset-0 skeleton-shimmer" />
+              </div>
+              <div className="flex-1 space-y-2">
+                <div className={`h-3.5 w-20 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                <div className={`h-2.5 w-32 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+              </div>
+              <div className={`h-4 w-14 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+              <div className={`h-4 w-14 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+            </div>
+          ))}
+          <span className="sr-only">Loading Bonzo markets...</span>
         </div>
       )}
 

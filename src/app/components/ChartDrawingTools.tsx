@@ -1,3 +1,5 @@
+import type { IChartApi, ISeriesApi } from "lightweight-charts";
+import { Tip } from "./Tip";
 import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import {
   Minus,
@@ -7,7 +9,6 @@ import {
   Trash2,
   MoveUpRight,
 } from "lucide-react";
-import type { IChartApi, ISeriesApi } from "lightweight-charts";
 
 type DrawingMode = "none" | "trendline" | "horizontal" | "ray" | "fibonacci";
 
@@ -289,7 +290,6 @@ export function ChartDrawingTools({
                 setMode(tool.id);
                 setActivePoints([]);
               }}
-              title={tool.tooltip}
               className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1.5 ${
                 active
                   ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm"
@@ -306,9 +306,9 @@ export function ChartDrawingTools({
 
         <div className={`w-px h-5 mx-1.5 ${isDark ? "bg-slate-700" : "bg-gray-300"}`} />
 
+        <Tip content="Undo last drawing">
         <button
           onClick={undoLast}
-          title="Undo last drawing"
           disabled={drawings.length === 0}
           className={`px-2 py-1 rounded text-xs transition-all ${
             drawings.length === 0
@@ -322,10 +322,11 @@ export function ChartDrawingTools({
         >
           Undo
         </button>
+        </Tip>
 
+        <Tip content="Clear all drawings">
         <button
           onClick={clearAll}
-          title="Clear all drawings"
           disabled={drawings.length === 0}
           className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
             drawings.length === 0
@@ -338,6 +339,7 @@ export function ChartDrawingTools({
           <Trash2 className="w-3.5 h-3.5" />
           Clear
         </button>
+        </Tip>
 
         {drawings.length > 0 && (
           <span className={`text-xs ml-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>

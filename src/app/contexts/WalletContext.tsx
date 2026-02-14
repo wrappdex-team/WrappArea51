@@ -32,7 +32,7 @@ import {
   connectViaMirrorNode,
   disconnectHashConnect,
   restoreSession,
-  fetchHashPackProfile,
+  onStaleSession,
 } from "../utils/hashpack";
 import {
   connectToSmartNode,
@@ -189,6 +189,19 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }, 300_000);
     return () => clearInterval(hbarPriceIv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // REC-004: Listen for stale WC session detection (fires ~2s after mount)
+  useEffect(() => {
+    const unsub = onStaleSession((accountId) => {
+      console.warn(`[WalletContext] Stale session for ${accountId} — clearing wallet state`);
+      setHashPackSession(null);
+      setHederaAccount(null);
+      setHashPackProfile(null);
+      setHederaConnectionError("Wallet session expired — please reconnect.");
+      setConnectedWallets((prev) => prev.filter((w) => w.type !== "hedera"));
+    });
+    return unsub;
   }, []);
 
   // Restore MetaMask connection on mount

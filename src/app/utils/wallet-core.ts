@@ -20,11 +20,12 @@
 
 import "./polyfills";
 import type { HederaNetwork } from "./hedera";
+import { ENV } from "./env";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-/** Real WalletConnect Cloud project ID — https://cloud.walletconnect.com */
-const WC_PROJECT_ID = "44b5b74e402af9f8e3c14ce8e4d2d2a0";
+/** WalletConnect Cloud project ID — sourced from ENV (supports env var rotation) */
+const WC_PROJECT_ID = ENV.WALLETCONNECT_PROJECT_ID;
 
 const DAPP_METADATA = {
   name: "Wrappdex",
@@ -231,14 +232,9 @@ export function getAccountsFromSession(session: any): string[] {
 // ── Transaction Signing (HIP-820) ──────────────────────────────────────
 
 /**
- * [AUDIT-WC-01] Validate session health before any client.request() call.
- *
- * Root cause analysis: When a WC session expires, is deleted remotely, or the
- * relay disconnects, client.request() can fail in opaque ways — including
- * triggering deep-link navigation (the redirect bug). This guard ensures we
- * catch stale sessions BEFORE they hit WC internals.
- *
- * Throws a descriptive error that callers can surface to the user.
+ * Validate session health before any client.request() call.
+ * Catches stale/expired/relay-disconnected sessions before they hit WC internals
+ * (which can fail opaquely or trigger unwanted deep-link redirects).
  */
 async function _validateSessionBeforeRequest(client: any, topic: string): Promise<void> {
   // 1. Session must exist in the client's store

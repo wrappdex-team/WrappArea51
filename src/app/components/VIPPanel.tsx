@@ -169,6 +169,9 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="VIP Features"
     >
       <div className="bg-slate-900 border border-emerald-500/20 rounded-xl max-w-md w-full overflow-hidden">
         {/* Header with iridescent gradient */}
@@ -176,11 +179,12 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Crown className="w-5 h-5 text-emerald-400" />
-              <span className="text-white">VIP Features</span>
+              <span className="text-white" id="vip-panel-title">VIP Features</span>
             </div>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white transition-colors p-1"
+              aria-label="Close VIP panel"
+              className="text-slate-400 hover:text-white transition-colors p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 rounded"
             >
               <X className="w-4 h-4" />
             </button>

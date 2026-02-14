@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
+import { Tip } from "./Tip";
 import {
   getOrderbook,
   getOrderbookStats,
@@ -88,7 +89,6 @@ export function SiteActivity() {
 
   // Poll orderbook data
   const refreshData = useCallback(() => {
-    // [AUDIT-AMM-04] Cap to 10 trades max for data minimization
     setTrades(getOrderbook(10));
     setStats(getOrderbookStats());
     setStorageInfo(getStorageInfo());
@@ -189,6 +189,7 @@ export function SiteActivity() {
         </div>
         <div className="flex items-center gap-2">
           {isExpanded && (
+            <Tip content="Admin Settings">
             <button
               onClick={(e) => { e.stopPropagation(); setShowAdmin(!showAdmin); }}
               className={`p-1.5 rounded-lg transition-colors ${
@@ -196,10 +197,10 @@ export function SiteActivity() {
                   ? isDark ? "bg-pink-500/20 text-pink-400" : "bg-pink-100 text-pink-600"
                   : isDark ? "text-slate-500 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
               }`}
-              title="Admin Settings"
             >
               <Settings className="w-4 h-4" />
             </button>
+            </Tip>
           )}
           <div className={`p-1 rounded transition-transform duration-300 ${
             isExpanded ? "rotate-180" : "rotate-0"
@@ -417,7 +418,6 @@ export function SiteActivity() {
                     )}
                   </div>
                   <div className={`text-[10px] flex items-center gap-2 mt-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    {/* [AUDIT-AMM-04] Wallet is anonymized — show truncated form */}
                     <span className="font-mono">{trade.wallet}</span>
                     <span>&middot;</span>
                     <span>{timeSince(trade.timestamp)}</span>

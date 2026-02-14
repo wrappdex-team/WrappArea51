@@ -37,6 +37,7 @@ import {
   Sparkles,
   Globe,
 } from "lucide-react";
+import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
 import {
   playVipCashRegister,
@@ -823,6 +824,7 @@ export function OneInchWidget() {
         <div className="flex items-center justify-between mb-2">
           <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Pay</span>
           {evmAccount && fromBalance !== null && (
+            <Tip content="Use max balance">
             <button
               onClick={() => {
                 const bal = parseFloat(fromBalance.replace(/,/g, ""));
@@ -834,11 +836,11 @@ export function OneInchWidget() {
               className={`text-[10px] flex items-center gap-1 transition-colors ${
                 isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"
               }`}
-              title="Use max balance"
             >
               <Wallet className="w-2.5 h-2.5" />
               {fromBalance} {fromToken.symbol}
             </button>
+            </Tip>
           )}
         </div>
         <div className="flex items-center gap-3">

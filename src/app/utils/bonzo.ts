@@ -860,22 +860,9 @@ export function isBonzoLendingPoolConfigured(): boolean {
 // Used by BonzoLendBorrow.tsx to build ContractExecuteTransaction.
 //
 // ═══════════════════════════════════════════════════════════════════════
-// [AUDIT-F04] These functions assume all inputs are pre-validated.
-//   The caller (BonzoLendBorrow.tsx) MUST ensure:
-//   (a) `amount` is > 0 and within uint256 range
-//   (b) `asset` is a valid 20-byte hex EVM address
-//   (c) `onBehalfOf` / `to` is the authenticated user's EVM address
-//   (d) No overflow: amount * 10^decimals must fit in uint256
-//
-// [AUDIT-F05] The function selectors below are standard Aave V2.
-//   Bonzo is a direct fork, so these should be correct. However,
-//   a human engineer should verify by calling each function on
-//   the deployed Bonzo LendingPool contract via Etherscan/HashScan.
-//
-// [AUDIT-F06] Token approvals: Before calling deposit() or repay(),
-//   the user must have approved the LendingPool contract to spend
-//   their HTS tokens. The BonzoLendBorrow UI should check allowance
-//   and prompt for approval if needed. This is NOT yet implemented.
+// Callers must pre-validate: amount > 0, valid EVM addresses, no uint256 overflow.
+// Selectors are standard Aave V2 (Bonzo is a direct fork).
+// TODO: Token approval check before deposit()/repay() is not yet implemented.
 // ═══════════════════════════════════════════════════════════════════════
 
 function padAddress(addr: string): string {

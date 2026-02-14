@@ -36,6 +36,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { toast } from "sonner";
 import { playVipCashRegister } from "../utils/sounds";
 import { loadVipPrefs, isVipEligible } from "../utils/vip";
+import { motion } from "motion/react";
 import {
   SAUCERSWAP_TOKENS,
   estimateSwapQuote,
@@ -63,9 +64,12 @@ import {
   type SwapHistoryEntry,
 } from "./SwapHistory";
 import { OneInchWidget } from "./OneInchWidget";
+import { Tip } from "./Tip";
+import { SwapSuccessOverlay } from "./SwapSuccessOverlay";
 
 const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
 const GAS_RESERVE = 1; // HBAR reserved for gas — Hedera fees are sub-cent, 1 HBAR covers dozens of txns
+const QUOTE_REFRESH_INTERVAL = 30; // seconds
 
 function isUserCancelled(r: SwapResult | null): boolean {
   if (!r) return false;
@@ -103,6 +107,19 @@ export function SwapPanel() {
   const [swapError, setSwapError] = useState<string | null>(null);
   const [lastTxId, setLastTxId] = useState<string | null>(null);
 
+  // ── Success overlay state ──
+  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+  const [successDetails, setSuccessDetails] = useState<{
+    inputSymbol: string; outputSymbol: string;
+    inputAmount: string; outputAmount: string;
+    inputLogo: string; outputLogo: string;
+    inputUsd: number; outputUsd: number;
+    transactionId: string | null;
+    txUrl: string | null;
+    slippage: number; venue: string;
+    isWrapUnwrap: boolean;
+  } | null>(null);
+
   // ── UI state ──
   const [slippage, setSlippage] = useState(0.5);
   const [customSlippage, setCustomSlippage] = useState("");
@@ -115,6 +132,17 @@ export function SwapPanel() {
   // ── Swap history ──
   const [swapHistory, setSwapHistory] = useState<SwapHistoryEntry[]>([]);
   useEffect(() => { setSwapHistory(loadSwapHistory()); }, []);
+
+  // ── Quote refresh countdown ──
+  const [quoteCountdown, setQuoteCountdown] = useState(QUOTE_REFRESH_INTERVAL);
+  useEffect(() => {
+    // Reset countdown when prices refresh
+    setQuoteCountdown(QUOTE_REFRESH_INTERVAL);
+    const iv = setInterval(() => {
+      setQuoteCountdown(prev => (prev <= 1 ? QUOTE_REFRESH_INTERVAL : prev - 1));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [livePrices]);
 
   // ── Derived ──
   const allPools = useMemo(() => getPoolRoutes(), []);
@@ -144,6 +172,13 @@ export function SwapPanel() {
     fetchPrices();
     const iv = setInterval(fetchPrices, 30000);
     return () => clearInterval(iv);
+  }, [fetchPrices]);
+
+  // Pull-to-refresh support — re-fetch swap prices on mobile swipe-down
+  useEffect(() => {
+    const handlePullRefresh = () => { fetchPrices(); };
+    window.addEventListener("wrappdex:pull-refresh", handlePullRefresh);
+    return () => window.removeEventListener("wrappdex:pull-refresh", handlePullRefresh);
   }, [fetchPrices]);
 
   // ── Fetch balances ──
@@ -203,7 +238,9 @@ export function SwapPanel() {
   }, [inputAmount, inputToken.symbol, outputToken.symbol, inputPrice, outputPrice, effectiveSlippage, isWrapUnwrap]);
 
   // ── Token flip ──
+  const [flipCount, setFlipCount] = useState(0);
   const flipTokens = useCallback(() => {
+    setFlipCount(c => c + 1);
     setInputToken(outputToken);
     setOutputToken(inputToken);
     setInputAmount(outputAmount);
@@ -279,6 +316,20 @@ export function SwapPanel() {
         saveSwapToHistory(entry);
         setSwapHistory(loadSwapHistory());
         fetchBalances();
+
+        // Show success overlay
+        setSuccessDetails({
+          inputSymbol: inputToken.symbol, outputSymbol: outputToken.symbol,
+          inputAmount, outputAmount: result.outputAmount?.toString() || outputAmount,
+          inputLogo: inputToken.logo, outputLogo: outputToken.logo,
+          inputUsd, outputUsd,
+          transactionId: result.transactionId || null,
+          txUrl: result.transactionId ? getHashScanTxUrl(result.transactionId, hederaNetwork) : null,
+          slippage: effectiveSlippage,
+          venue: result.executionVenue,
+          isWrapUnwrap,
+        });
+        setShowSuccessOverlay(true);
       } else if (isUserCancelled(result)) {
         setSwapStatus("idle");
         toast.info("Transaction cancelled");
@@ -340,13 +391,18 @@ export function SwapPanel() {
       .filter(t => !tokenSearch || t.symbol.toLowerCase().includes(tokenSearch.toLowerCase()) || t.name.toLowerCase().includes(tokenSearch.toLowerCase()));
     return (
       <>
-        <div className="fixed inset-0 z-40" onClick={onClose} />
-        <div className={`absolute top-full right-0 mt-2 w-72 rounded-xl shadow-2xl overflow-hidden z-50 ${isDark ? "bg-slate-900 border border-pink-500/30" : "bg-white border border-gray-200"}`}>
+        <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+        <div
+          role="listbox"
+          aria-label="Select token"
+          className={`absolute top-full right-0 mt-2 w-72 rounded-xl shadow-2xl overflow-hidden z-50 ${isDark ? "bg-slate-900 border border-pink-500/30" : "bg-white border border-gray-200"}`}
+        >
           <div className="p-3">
             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${inputClass}`}>
               <Search className="w-3.5 h-3.5 text-slate-500" />
               <input
                 type="text" placeholder="Search tokens..." autoFocus
+                aria-label="Search tokens"
                 className="bg-transparent flex-1 outline-none text-sm"
                 value={tokenSearch} onChange={e => setTokenSearch(e.target.value)}
               />
@@ -355,7 +411,9 @@ export function SwapPanel() {
           <div className="max-h-56 overflow-y-auto px-2 pb-2">
             {filtered.map(t => (
               <button key={t.symbol} onClick={() => onSelect(t)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left ${isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"}`}>
+                role="option"
+                aria-selected={false}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"}`}>
                 <img src={t.logo} alt={t.symbol} className="w-6 h-6 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
                 <div>
                   <div className="font-bold text-sm">{t.symbol}</div>
@@ -379,14 +437,14 @@ export function SwapPanel() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* ═══ SWAP INTERFACE ═══ */}
         <div className="lg:col-span-5">
-          <div className={`rounded-2xl p-5 ${cardClass}`}>
+          <div className={`rounded-2xl p-5 relative ${cardClass}`} role="form" aria-label="Token swap">
             {/* Input Token */}
             <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1.5">
-                  <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Pay</span>
+                  <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`} id="swap-input-label">You Pay</span>
                   {isWalletConnected && (
-                    <button onClick={fetchBalances} className={`p-0.5 rounded transition-colors ${isDark ? "hover:bg-slate-700 text-slate-600" : "hover:bg-gray-200 text-gray-400"}`} title="Refresh">
+                    <button onClick={fetchBalances} aria-label="Refresh balances" className={`p-0.5 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-700 text-slate-600" : "hover:bg-gray-200 text-gray-400"}`}>
                       <RefreshCw className="w-2.5 h-2.5" />
                     </button>
                   )}
@@ -399,11 +457,16 @@ export function SwapPanel() {
               </div>
               <div className="flex items-center gap-3">
                 <input type="number" placeholder="0.0"
+                  aria-labelledby="swap-input-label"
+                  aria-describedby="swap-input-usd"
                   className="bg-transparent flex-1 outline-none text-2xl min-w-0"
                   value={inputAmount} onChange={e => { setInputAmount(e.target.value); setSwapStatus("idle"); setSwapError(null); }} />
                 <div className="relative shrink-0">
                   <button onClick={() => { setShowInputSelector(!showInputSelector); setShowOutputSelector(false); setTokenSearch(""); }}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
+                    aria-label={`Select input token, currently ${inputToken.symbol}`}
+                    aria-haspopup="listbox"
+                    aria-expanded={showInputSelector}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
                     <img src={inputToken.logo} alt={inputToken.symbol} className="w-6 h-6 rounded-full shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
                     <span className="font-bold text-sm">{inputToken.symbol}</span>
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
@@ -417,34 +480,39 @@ export function SwapPanel() {
                   {inputToken.isNative ? "Native" : `HTS: ${inputToken.htsId}`}
                 </div>
                 {isWalletConnected && inputBalance !== null && (
+                  <Tip content="Use max balance" side="top">
                   <button onClick={() => {
                     const max = inputToken.isNative ? Math.max(0, inputBalance - GAS_RESERVE) : inputBalance;
                     if (max > 0) setInputAmount(max.toString());
                   }}
-                    className={`text-[10px] flex items-center gap-1 transition-colors ${isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"}`}
-                    title="Use max balance">
+                    className={`text-[10px] flex items-center gap-1 transition-colors ${isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"}`}>
                     <Wallet className="w-2.5 h-2.5" />
                     {inputBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {inputToken.symbol}
                   </button>
+                  </Tip>
                 )}
               </div>
             </div>
 
             {/* Flip Button */}
             <div className="flex justify-center -my-3 relative z-10">
-              <button onClick={flipTokens}
-                className={`p-2.5 rounded-xl border-4 transition-all duration-300 hover:rotate-180 ${
+              <motion.button onClick={flipTokens}
+                aria-label="Swap input and output tokens"
+                animate={{ rotate: flipCount * 180 }}
+                transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                whileTap={{ scale: 0.85 }}
+                className={`p-2.5 rounded-xl border-4 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   isDark ? "bg-slate-800 border-slate-900/80 hover:bg-slate-700 text-pink-400"
                     : "bg-white border-gray-100 hover:bg-gray-50 text-pink-600 shadow-sm"
                 }`}>
                 <ArrowDownUp className="w-5 h-5" />
-              </button>
+              </motion.button>
             </div>
 
             {/* Output Token */}
             <div className={`rounded-xl p-4 mt-2 ${inputClass}`}>
               <div className="flex items-center justify-between mb-2">
-                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Receive</span>
+                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`} id="swap-output-label">You Receive</span>
                 {outputUsd > 0 && (
                   <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                     ~${outputUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -453,11 +521,16 @@ export function SwapPanel() {
               </div>
               <div className="flex items-center gap-3">
                 <input type="number" placeholder="0.0" readOnly
+                  aria-labelledby="swap-output-label"
+                  aria-live="polite"
                   className={`bg-transparent flex-1 outline-none text-2xl min-w-0 ${quoteLoading ? "animate-pulse" : ""}`}
                   value={outputAmount} />
                 <div className="relative shrink-0">
                   <button onClick={() => { setShowOutputSelector(!showOutputSelector); setShowInputSelector(false); setTokenSearch(""); }}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
+                    aria-label={`Select output token, currently ${outputToken.symbol}`}
+                    aria-haspopup="listbox"
+                    aria-expanded={showOutputSelector}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
                     <img src={outputToken.logo} alt={outputToken.symbol} className="w-6 h-6 rounded-full shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
                     <span className="font-bold text-sm">{outputToken.symbol}</span>
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
@@ -537,6 +610,33 @@ export function SwapPanel() {
                     </div>
                   </>
                 )}
+                {/* Quote Refresh Countdown */}
+                <div className={`pt-1.5 mt-1.5 border-t ${isDark ? "border-slate-700/30" : "border-gray-200"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[10px] flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                      <RefreshCw className={`w-2.5 h-2.5 ${quoteCountdown <= 5 ? "animate-spin" : ""}`} />
+                      Quote refreshes in {quoteCountdown}s
+                    </span>
+                    <Tip content="Refresh quote now" side="top">
+                    <button
+                      onClick={fetchPrices}
+                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isDark ? "text-pink-400 hover:bg-pink-500/10" : "text-pink-600 hover:bg-pink-50"}`}
+                    >
+                      Refresh
+                    </button>
+                    </Tip>
+                  </div>
+                  <div className={`mt-1 h-[2px] rounded-full overflow-hidden ${isDark ? "bg-slate-700/30" : "bg-gray-200"}`}>
+                    <div
+                      className={`h-full rounded-full transition-all duration-1000 ease-linear ${
+                        quoteCountdown <= 5
+                          ? "bg-gradient-to-r from-amber-500 to-red-500"
+                          : "bg-gradient-to-r from-pink-500 to-purple-500"
+                      }`}
+                      style={{ width: `${(quoteCountdown / QUOTE_REFRESH_INTERVAL) * 100}%` }}
+                    />
+                  </div>
+                </div>
               </div>
             )}
 
@@ -667,6 +767,27 @@ export function SwapPanel() {
                 </>
               )}
             </div>
+
+            {/* Success Celebration Overlay */}
+            {successDetails && (
+              <SwapSuccessOverlay
+                show={showSuccessOverlay}
+                inputSymbol={successDetails.inputSymbol}
+                outputSymbol={successDetails.outputSymbol}
+                inputAmount={successDetails.inputAmount}
+                outputAmount={successDetails.outputAmount}
+                inputLogo={successDetails.inputLogo}
+                outputLogo={successDetails.outputLogo}
+                inputUsd={successDetails.inputUsd}
+                outputUsd={successDetails.outputUsd}
+                transactionId={successDetails.transactionId}
+                txUrl={successDetails.txUrl}
+                slippage={successDetails.slippage}
+                venue={successDetails.venue}
+                isWrapUnwrap={successDetails.isWrapUnwrap}
+                onClose={() => setShowSuccessOverlay(false)}
+              />
+            )}
           </div>
 
           {/* ═══ 1INCH AGGREGATOR (under SaucerSwap box) ═══ */}
@@ -750,11 +871,12 @@ export function SwapPanel() {
                           {pool.apr}%
                         </td>
                         <td className="text-center px-3 py-2.5">
+                          <Tip content={`Swap ${pool.tokenA.symbol}/${pool.tokenB.symbol}`}>
                           <button onClick={() => handlePoolSwap(pool)}
-                            className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-pink-500/15 text-pink-400" : "hover:bg-pink-50 text-pink-600"}`}
-                            title={`Swap ${pool.tokenA.symbol}/${pool.tokenB.symbol}`}>
+                            className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-pink-500/15 text-pink-400" : "hover:bg-pink-50 text-pink-600"}`}>
                             <ArrowDownUp className="w-3.5 h-3.5" />
                           </button>
+                          </Tip>
                         </td>
                       </tr>
                     );

@@ -1,5 +1,37 @@
 /* Light Mode Overrides for HBAR.h */
 
+/* ===== Skeleton Shimmer Animation ===== */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0.04) 40%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.04) 60%,
+    rgba(255,255,255,0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+html.light-mode .skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(0,0,0,0) 0%,
+    rgba(0,0,0,0.04) 40%,
+    rgba(0,0,0,0.08) 50%,
+    rgba(0,0,0,0.04) 60%,
+    rgba(0,0,0,0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
 /* ===== Transition for smooth theme switching ===== */
 html {
   transition: background-color 0.3s ease, color 0.3s ease;

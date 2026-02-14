@@ -1,23 +1,8 @@
 /**
- * Wrappdex Authentication — Challenge-Response Session Management
+ * Wrappdex Authentication — ED25519 Challenge-Response Sessions
  *
- * [AUDIT-AMM-01] Implements cryptographic proof of Hedera account ownership
- * using ED25519 challenge-response signing via HashConnect (HashPack wallet).
- *
- * Flow:
- *   1. requestChallenge(accountId) — server issues CSPRNG nonce
- *   2. signChallenge(accountId, message) — HashPack signs via HashConnect
- *   3. createSession(accountId, challengeId, signature) — server verifies & issues token
- *   4. getSessionToken() — returns cached token for authenticated requests
- *
- * Session tokens are 30-minute TTL, cached in-memory on the client.
- * A single wallet signature creates a session for all subsequent operations.
- *
- * Security Properties:
- *   - Private key never leaves HashPack wallet
- *   - Challenge nonces are single-use (server enforces)
- *   - Session tokens are CSPRNG-generated, KV-backed server-side
- *   - Account binding: session locked to specific accountId
+ * Flow: requestChallenge → wallet signs → server verifies → 30-min session token.
+ * Private key never leaves the wallet. Nonces are single-use, sessions KV-backed.
  */
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -94,14 +79,22 @@ export function hasValidSession(accountId: string): boolean {
 
 /**
  * Clear the current session (e.g., on wallet disconnect).
+ * Returns a promise that resolves once the server-side revocation
+ * completes (or fails — best-effort). Callers that need atomicity
+ * (forceReauthenticate) should await this.
  */
-export function clearSession(): void {
+export async function clearSession(): Promise<void> {
   if (_currentSession?.sessionToken) {
-    // Best-effort server-side revocation (fire and forget)
-    fetch(`${API_BASE}/auth/session`, {
-      method: "DELETE",
-      headers: { ...baseHeaders, "X-Session-Token": _currentSession.sessionToken },
-    }).catch(() => {});
+    try {
+      await fetch(`${API_BASE}/auth/session`, {
+        method: "DELETE",
+        headers: { ...baseHeaders, "X-Session-Token": _currentSession.sessionToken },
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // Revocation failed — server will expire it via TTL (30 min max)
+      console.warn("[Auth] Session revocation request failed — will expire via TTL");
+    }
   }
   _currentSession = null;
 }
@@ -229,7 +222,7 @@ export async function authenticate(accountId: string): Promise<string> {
 
   // Clear any stale session for a different account
   if (_currentSession && _currentSession.accountId !== accountId) {
-    clearSession();
+    await clearSession();
   }
 
   console.log(`[Auth] Starting authentication for ${accountId}...`);

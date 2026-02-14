@@ -42,6 +42,7 @@ import {
   type StargateQuote,
   type BridgeStep,
 } from "../utils/stargate";
+import { Tip } from "./Tip";
 
 interface StargateBridgeWidgetProps {
   onClose: () => void;
@@ -830,14 +831,14 @@ export function StargateBridgeWidget({ onClose, isDark }: StargateBridgeWidgetPr
                 </div>
                 <div className="flex flex-wrap justify-center gap-1">
                   {ALL_CHAINS.map((c) => (
+                    <Tip key={c.id} content={c.name} side="top">
                     <div
-                      key={c.id}
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
                       style={{ backgroundColor: c.color, opacity: 0.7 }}
-                      title={c.name}
                     >
                       {c.icon}
                     </div>
+                    </Tip>
                   ))}
                 </div>
               </div>

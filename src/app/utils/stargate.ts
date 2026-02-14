@@ -85,33 +85,15 @@ const SEL_APPROVE     = "0x095ea7b3"; // approve(address,uint256)
  * (0xc026395860Db2d07ee33e05fE50ed7bD583189C7)
  * ══════════════════════════════════════════════════════════════ */
 
-// ═══════════════════════════════════════════════════════════════════════
-// [AUDIT-B01] RESOLVED — Selectors are now distinct.
-//
-//   quoteSend canonical:
-//     keccak256("quoteSend((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),bool)")[:4]
-//     = 0xc7c7f5b3
-//
-//   send canonical:
-//     keccak256("send((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),(uint256,uint256),address)")[:4]
-//     = 0xbb0b6a53
-//
-//   Verified against the LayerZero V2 IOFT.sol interface used by Stargate V2.
-//   The previous code had BOTH set to 0xc7c7f5b3, meaning `send()` would
-//   call `quoteSend()` on-chain — a view function — silently failing or
-//   returning unexpected data instead of executing the bridge transfer.
-//
-// [AUDIT-B02] All Stargate pool/token addresses in this file should be
-//   verified against the official Stargate V2 deployment registry at
-//   https://stargateprotocol.gitbook.io/stargate/v/v2-developer-docs
-// ═══════════════════════════════════════════════════════════════════════
+// Verified against LayerZero V2 IOFT.sol (Stargate V2).
+// Pool/token addresses should be verified against the official Stargate V2 deployment registry.
 
-const SEL_QUOTE_SEND = "0xc7c7f5b3"; // quoteSend((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),bool)
-const SEL_SEND       = "0xbb0b6a53"; // send((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),(uint256,uint256),address)
+const SEL_QUOTE_SEND = "0xc7c7f5b3"; // quoteSend(SendParam,bool)
+const SEL_SEND       = "0xbb0b6a53"; // send(SendParam,MessagingFee,address)
 
-// Runtime safety: assert selectors are distinct (would catch copy-paste regression)
+// Runtime safety: assert selectors are distinct (catch copy-paste regression)
 if (SEL_QUOTE_SEND === SEL_SEND) {
-  throw new Error("[AUDIT-B01] CRITICAL: quoteSend and send selectors must differ — aborting to prevent fund loss");
+  throw new Error("CRITICAL: quoteSend and send selectors must differ — aborting to prevent fund loss");
 }
 
 // Note: The actual selectors depend on the exact struct layout. We'll use

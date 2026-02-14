@@ -52,7 +52,6 @@ export type NetworkMode = "mainnet" | "testnet";
 // ── Network-Aware Storage ───────────────────────────────────────────
 
 const STORAGE_PREFIX = "hbarh-orderbook";
-// [AUDIT-AMM-04] Reduced from 500 — only keep recent trades, data minimization
 const MAX_ENTRIES = 50;
 let _activeNetwork: NetworkMode = "mainnet";
 
@@ -119,9 +118,7 @@ function saveEntries(entries: OrderbookEntry[], network?: NetworkMode): void {
 export function recordTrade(trade: Omit<OrderbookEntry, "id" | "timestamp" | "network">): OrderbookEntry {
   const entry: OrderbookEntry = {
     ...trade,
-    // [AUDIT-AMM-04] Anonymize wallet — don't store full account IDs in localStorage
     wallet: anonymizeWallet(trade.wallet),
-    // [AUDIT-AMM-04] Strip transaction ID from localStorage — view on HashScan only during session
     transactionId: null,
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now(),
@@ -159,8 +156,7 @@ export function getOrderbook(limit: number = 100): OrderbookEntry[] {
 
 /**
  * Get trades for a specific wallet (matches against anonymized wallet pattern).
- * [AUDIT-AMM-04] Since wallets are now anonymized, this matches against the
- * anonymized form. For exact per-user history, use the SwapHistory localStorage.
+ * Matches against the anonymized form. For exact per-user history, use SwapHistory.
  */
 export function getWalletTrades(wallet: string, limit: number = 50): OrderbookEntry[] {
   const anon = anonymizeWallet(wallet);

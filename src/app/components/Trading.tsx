@@ -35,6 +35,7 @@ import { TradingSwapPanel } from "./TradingSwapPanel";
 import { TradingPoolsSection } from "./TradingPoolsSection";
 import { VipChatBox } from "./VipChatBox";
 import { VIPAccessGate } from "./VIPAccessGate";
+import { Tip } from "./Tip";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -133,6 +134,28 @@ export function Trading() {
     const iv = setInterval(load, 30000);
     return () => clearInterval(iv);
   }, []);
+
+  // Pull-to-refresh support — re-fetch prices and chart data on mobile swipe-down
+  useEffect(() => {
+    const handlePullRefresh = () => {
+      const syms = TOKEN_REGISTRY.map((t) => t.symbol);
+      fetchCoinPrices(syms).then(setPrices);
+      invalidateChartCache(selectedToken.symbol);
+      setChartLoading(true);
+      const apiPeriod = timeframe === "All" ? "ALL" : timeframe;
+      fetchRealCandlesWithSource(selectedToken.symbol, apiPeriod, prices[selectedToken.symbol]?.current_price)
+        .then(result => {
+          if (result.candles.length >= 5) {
+            setRealChartData(result.candles);
+            setChartDataSource(result.source);
+          }
+          setChartLoading(false);
+        })
+        .catch(() => setChartLoading(false));
+    };
+    window.addEventListener("wrappdex:pull-refresh", handlePullRefresh);
+    return () => window.removeEventListener("wrappdex:pull-refresh", handlePullRefresh);
+  }, [selectedToken.symbol, timeframe, prices]);
 
   // Fetch real chart data when token/timeframe changes
   useEffect(() => {
@@ -478,7 +501,10 @@ export function Trading() {
             <div className="relative">
               <button
                 onClick={() => setShowTokenSelector(!showTokenSelector)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-50"}`}
+                aria-haspopup="listbox"
+                aria-expanded={showTokenSelector}
+                aria-label={`Select trading pair, current: ${selectedToken.symbol}/USDC`}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-50"}`}
               >
                 <img src={currentLogo} alt={selectedToken.symbol} className="w-7 h-7 rounded-full" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                 <span className="text-lg font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
@@ -531,6 +557,7 @@ export function Trading() {
               <div className="flex items-center gap-2">
                 <span className="text-2xl font-bold">{formatPrice(currentPrice)}</span>
                 {currentOracleSource === "chainlink" ? (
+                  <Tip content={feedInfo ? `Chainlink ${feedInfo.pair} Feed` : "Chainlink Oracle"}>
                   <a
                     href={currentChainlinkFeed ? `https://etherscan.io/address/${currentChainlinkFeed}` : "https://data.chain.link/feeds"}
                     target="_blank"
@@ -538,12 +565,12 @@ export function Trading() {
                     className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors ${
                       isDark ? "bg-blue-500/15 text-blue-400 border border-blue-500/30 hover:bg-blue-500/25" : "bg-blue-100 text-blue-700 border border-blue-200 hover:bg-blue-200"
                     }`}
-                    title={feedInfo ? `Chainlink ${feedInfo.pair} Feed` : "Chainlink Oracle"}
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Zap className="w-2.5 h-2.5" />
                     CHAINLINK
                   </a>
+                  </Tip>
                 ) : (
                   <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-700/50 text-slate-500" : "bg-gray-100 text-gray-400"}`}>
                     {currentOracleSource === "coincap" ? "COINCAP" : currentOracleSource === "coingecko" ? "COINGECKO" : "CACHED"}
@@ -555,9 +582,11 @@ export function Trading() {
               </div>
               <div className="flex items-center gap-3 flex-wrap">
                 {currentChangeSource === "fallback" ? (
-                  <div className={`flex items-center gap-1 text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`} title="Waiting for live 24h data from CoinCap/CoinGecko...">
+                  <Tip content="Waiting for live 24h data from CoinCap/CoinGecko...">
+                  <div className={`flex items-center gap-1 text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>
                     <span>~</span> — <span className={`${isDark ? "text-slate-500" : "text-gray-400"}`}>24h</span>
                   </div>
+                  </Tip>
                 ) : (
                   <div className={`flex items-center gap-1 text-xs ${currentChange >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                     {currentChange >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
@@ -669,9 +698,11 @@ export function Trading() {
                     {token.price >= 1 ? `$${token.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `$${token.price < 0.001 ? token.price.toFixed(6) : token.price.toFixed(4)}`}
                   </span>
                   {token.changeSource === "fallback" ? (
-                    <span className={`text-right w-12 tabular-nums ${isDark ? "text-slate-600" : "text-gray-400"} animate-pulse`} title="Waiting for live 24h data...">
+                    <Tip content="Waiting for live 24h data...">
+                    <span className={`text-right w-12 tabular-nums ${isDark ? "text-slate-600" : "text-gray-400"} animate-pulse`}>
                       —
                     </span>
+                    </Tip>
                   ) : (
                     <span className={`text-right w-12 tabular-nums ${token.change >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                       {token.change >= 0 ? "+" : ""}{token.change.toFixed(1)}%
@@ -692,7 +723,10 @@ export function Trading() {
               <div className="relative" ref={tfDropdownRef}>
                 <button
                   onClick={() => setShowTfDropdown(!showTfDropdown)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-all ${
+                  aria-haspopup="listbox"
+                  aria-expanded={showTfDropdown}
+                  aria-label={`Chart timeframe: ${timeframe}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                     isDark
                       ? "bg-slate-800/60 border border-slate-700/50 text-white hover:border-pink-500/30"
                       : "bg-gray-50 border border-gray-200 text-gray-900 hover:border-pink-300"
@@ -704,12 +738,14 @@ export function Trading() {
                   <ChevronDown className={`w-3 h-3 transition-transform ${showTfDropdown ? "rotate-180" : ""} ${isDark ? "text-slate-500" : "text-gray-400"}`} />
                 </button>
                 {showTfDropdown && (
-                  <div className={`absolute top-full left-0 mt-1 w-[140px] rounded-lg shadow-xl z-[100] ${
+                  <div role="listbox" aria-label="Select chart timeframe" className={`absolute top-full left-0 mt-1 w-[140px] rounded-lg shadow-xl z-[100] ${
                     isDark ? "bg-slate-900 border border-pink-500/20" : "bg-white border border-gray-200"
                   }`}>
                     {TIMEFRAMES.map((tf) => (
                       <button
                         key={tf}
+                        role="option"
+                        aria-selected={timeframe === tf}
                         onClick={() => { setTimeframe(tf); setShowTfDropdown(false); }}
                         className={`w-full flex items-center justify-between px-3 py-1.5 text-xs transition-colors ${
                           timeframe === tf
@@ -728,11 +764,11 @@ export function Trading() {
                   </div>
                 )}
               </div>
-              <div className={`ml-1 flex rounded overflow-hidden border ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
-                <button onClick={() => setChartMode("candle")} className={`px-2 py-1 text-xs transition-all ${chartMode === "candle" ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white" : isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <div className={`ml-1 flex rounded overflow-hidden border ${isDark ? "border-slate-700/50" : "border-gray-200"}`} role="group" aria-label="Chart type">
+                <button onClick={() => setChartMode("candle")} aria-label="Candlestick chart" aria-pressed={chartMode === "candle"} className={`px-2 py-1 text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${chartMode === "candle" ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white" : isDark ? "text-slate-500" : "text-gray-400"}`}>
                   <BarChart2 className="w-3 h-3" />
                 </button>
-                <button onClick={() => setChartMode("line")} className={`px-2 py-1 text-xs transition-all ${chartMode === "line" ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white" : isDark ? "text-slate-500" : "text-gray-400"}`}>
+                <button onClick={() => setChartMode("line")} aria-label="Line chart" aria-pressed={chartMode === "line"} className={`px-2 py-1 text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${chartMode === "line" ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white" : isDark ? "text-slate-500" : "text-gray-400"}`}>
                   <LineChart className="w-3 h-3" />
                 </button>
               </div>
@@ -811,6 +847,7 @@ export function Trading() {
               </div>
 
               {/* Refresh chart button */}
+              <Tip content="Refresh chart data">
               <button
                 onClick={() => {
                   invalidateChartCache(selectedToken.symbol);
@@ -830,10 +867,10 @@ export function Trading() {
                 }}
                 disabled={chartLoading}
                 className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50 text-slate-500 hover:text-slate-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"} ${chartLoading ? "opacity-50 cursor-not-allowed" : ""}`}
-                title="Refresh chart data"
               >
                 <RefreshCw className={`w-3 h-3 ${chartLoading ? "animate-spin" : ""}`} />
               </button>
+              </Tip>
 
               <div className={`flex items-center gap-1 text-[10px] ml-auto ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                 <Info className="w-3 h-3" />

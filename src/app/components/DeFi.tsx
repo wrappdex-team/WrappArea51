@@ -180,6 +180,16 @@ export function DeFi() {
     return () => { cancelled = true; };
   }, [defiRefresh]);
 
+  // Pull-to-refresh support — re-fetch DeFi data on mobile swipe-down
+  useEffect(() => {
+    const handlePullRefresh = () => {
+      invalidateDeFiCache();
+      setDefiRefresh((r) => !r);
+    };
+    window.addEventListener("wrappdex:pull-refresh", handlePullRefresh);
+    return () => window.removeEventListener("wrappdex:pull-refresh", handlePullRefresh);
+  }, []);
+
   const toggleFav = (id: string) =>
     setFavorites((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
 
@@ -333,12 +343,14 @@ export function DeFi() {
                 className="bg-transparent outline-none flex-1 text-sm"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search liquidity pools by token"
               />
             </div>
             <button
               onClick={() => { invalidateDeFiCache(); setDefiRefresh((r) => !r); }}
               disabled={defiLoading}
-              className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}
+              aria-label="Refresh DeFi pool data"
+              className={`px-3 py-2.5 rounded-lg text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}
             >
               <RefreshCw className={`w-4 h-4 ${defiLoading ? "animate-spin" : ""}`} />
             </button>
@@ -347,13 +359,13 @@ export function DeFi() {
           {/* Pools Table */}
           <div className={`rounded-xl overflow-hidden ${cardClass}`}>
             {/* Desktop Header */}
-            <div className={`hidden md:grid grid-cols-12 gap-3 px-4 py-3 text-xs uppercase tracking-wider ${isDark ? "text-slate-500 border-b border-pink-500/10" : "text-gray-400 border-b border-gray-100"}`}>
-              <div className="col-span-1"></div>
-              <div className="col-span-3">Pool</div>
-              <button onClick={() => handleSort("tvl")} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors">TVL <SortIcon field="tvl" /></button>
-              <button onClick={() => handleSort("volume24h")} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors">24h Volume <SortIcon field="volume24h" /></button>
-              <button onClick={() => handleSort("apr")} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors">APR <SortIcon field="apr" /></button>
-              <button onClick={() => handleSort("utilization")} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors">Utilization <SortIcon field="utilization" /></button>
+            <div className={`hidden md:grid grid-cols-12 gap-3 px-4 py-3 text-xs uppercase tracking-wider ${isDark ? "text-slate-500 border-b border-pink-500/10" : "text-gray-400 border-b border-gray-100"}`} role="row">
+              <div className="col-span-1" role="columnheader"></div>
+              <div className="col-span-3" role="columnheader">Pool</div>
+              <button onClick={() => handleSort("tvl")} role="columnheader" aria-sort={sortField === "tvl" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 rounded">TVL <SortIcon field="tvl" /></button>
+              <button onClick={() => handleSort("volume24h")} role="columnheader" aria-sort={sortField === "volume24h" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 rounded">24h Volume <SortIcon field="volume24h" /></button>
+              <button onClick={() => handleSort("apr")} role="columnheader" aria-sort={sortField === "apr" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 rounded">APR <SortIcon field="apr" /></button>
+              <button onClick={() => handleSort("utilization")} role="columnheader" aria-sort={sortField === "utilization" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-pink-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 rounded">Utilization <SortIcon field="utilization" /></button>
             </div>
 
             {/* Pool Rows */}

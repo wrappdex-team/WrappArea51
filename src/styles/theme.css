@@ -4,6 +4,19 @@
   --font-size: 16px;
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+
+  /* ── Fluid Typography Scale ─────────────────────────────────────────
+     clamp(min, preferred, max) scales smoothly between 320px and 1280px
+     viewports. No jarring jumps at breakpoints. */
+  --fluid-xs:   clamp(0.6875rem, 0.65rem + 0.15vw, 0.75rem);     /* 11px → 12px */
+  --fluid-sm:   clamp(0.8125rem, 0.775rem + 0.15vw, 0.875rem);   /* 13px → 14px */
+  --fluid-base: clamp(0.875rem, 0.83rem + 0.2vw, 1rem);          /* 14px → 16px */
+  --fluid-lg:   clamp(1rem, 0.93rem + 0.3vw, 1.125rem);          /* 16px → 18px */
+  --fluid-xl:   clamp(1.125rem, 1.01rem + 0.5vw, 1.25rem);       /* 18px → 20px */
+  --fluid-2xl:  clamp(1.25rem, 1.06rem + 0.8vw, 1.5rem);         /* 20px → 24px */
+  --fluid-3xl:  clamp(1.5rem, 1.2rem + 1.2vw, 1.875rem);         /* 24px → 30px */
+  --fluid-4xl:  clamp(1.875rem, 1.5rem + 1.5vw, 2.25rem);        /* 30px → 36px */
+
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);
   --card: #ffffff;
@@ -162,6 +175,16 @@ html.dark, .dark {
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
 
+  /* ===== Active / pressed state for all interactive buttons ===== */
+  /* Financial-UI "click" feedback — subtle scale-down on press.
+     Only targets non-disabled buttons to avoid confusing the user. */
+  button:not(:disabled):not([aria-disabled="true"]):active,
+  a[role="menuitem"]:active,
+  a[role="button"]:active {
+    transform: scale(0.97);
+    transition: transform 0.08s ease;
+  }
+
   /* ===== Hide scrollbar globally — scroll still works ===== */
   html,
   body {
@@ -183,49 +206,49 @@ html.dark, .dark {
   }
 
   h1 {
-    font-size: var(--text-2xl);
+    font-size: var(--fluid-3xl);
     font-weight: 700;
     line-height: 1.3;
     letter-spacing: -0.025em;
   }
 
   h2 {
-    font-size: var(--text-xl);
+    font-size: var(--fluid-2xl);
     font-weight: 600;
     line-height: 1.35;
     letter-spacing: -0.02em;
   }
 
   h3 {
-    font-size: var(--text-lg);
+    font-size: var(--fluid-xl);
     font-weight: 600;
     line-height: 1.4;
     letter-spacing: -0.015em;
   }
 
   h4 {
-    font-size: var(--text-base);
+    font-size: var(--fluid-lg);
     font-weight: 600;
     line-height: 1.5;
     letter-spacing: -0.01em;
   }
 
   label {
-    font-size: var(--text-sm);
+    font-size: var(--fluid-sm);
     font-weight: 500;
     line-height: 1.5;
     letter-spacing: 0;
   }
 
   button {
-    font-size: var(--text-sm);
+    font-size: var(--fluid-sm);
     font-weight: 500;
     line-height: 1.5;
     letter-spacing: 0;
   }
 
   input {
-    font-size: var(--text-sm);
+    font-size: var(--fluid-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
   }
@@ -236,4 +259,64 @@ html.dark, .dark {
     font-family: var(--font-mono);
     font-feature-settings: 'tnum', 'zero';
   }
+}
+
+/* ── Micro-Interaction Keyframes ──────────────────────────────────── */
+
+/* Price flash — Bloomberg-style value-change pulse */
+@keyframes price-flash {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.price-flash-anim {
+  animation: price-flash 600ms ease-out forwards;
+}
+
+/* VIP crown shimmer — iridescent light sweep on hover */
+@keyframes crown-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.crown-shimmer-hover {
+  position: relative;
+  overflow: hidden;
+}
+
+.crown-shimmer-hover::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(16, 185, 129, 0.15) 35%,
+    rgba(52, 211, 153, 0.3) 50%,
+    rgba(16, 185, 129, 0.15) 65%,
+    transparent 80%
+  );
+  background-size: 200% 100%;
+  background-position: -200% center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.crown-shimmer-hover:hover::after {
+  opacity: 1;
+  animation: crown-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Volume preset indicator bar */
+@keyframes vol-bar-fill {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+.vol-bar-anim {
+  animation: vol-bar-fill 0.3s ease-out;
+  transform-origin: left;
 }

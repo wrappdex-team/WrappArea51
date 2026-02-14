@@ -81,9 +81,8 @@ function SwapPanel({ pools, isDark, accountId }: { pools: PoolState[]; isDark: b
     setStatus("swapping");
     setError(null);
     try {
-      // [AUDIT-AMM-01] Authenticate before mutating — prompts wallet signature if no session
       await authenticate(accountId);
-      // [AUDIT-AMM-03] Always send minAmountOutRaw for slippage protection (0.5% default)
+      // Slippage protection: 0.5% default
       const minOut = (BigInt(quote.amountOutRaw) * 995n / 1000n).toString();
       const result = await executeSwap(accountId, quote.poolId, quote.tokenIn, quote.tokenOut, quote.amountInRaw, minOut);
       if (result.success) {
@@ -270,9 +269,7 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
     setStatus("creating");
     setError("");
     try {
-      // [AUDIT-AMM-01] Authenticate before pool creation
       await authenticate(accountId);
-      // [LP-12] Fee is protocol-fixed at 10 bps (0.1%). Server ignores any other value.
       const result = await createPool(tokens[tokenAIdx].symbol, tokens[tokenBIdx].symbol, 10, accountId, name || undefined);
       if (result.success) { setStatus("done"); onCreated(); setTimeout(onClose, 1500); }
       else { setError(result.error || "Failed"); setStatus("error"); }
@@ -356,7 +353,6 @@ function AddLiquidityModal({ pool, isDark, accountId, onClose, onDone }: {
     setStatus("adding");
     setError("");
     try {
-      // [AUDIT-AMM-01] Authenticate before adding liquidity
       await authenticate(accountId);
       const result = await addLiquidity(pool.id, rawA, rawB, accountId);
       if (result.success) {
@@ -530,7 +526,7 @@ export function SmartLiquidity() {
 
   const accountId = hashPackSession?.accountId || null;
 
-  // [AUDIT-AMM-01] Clear auth session when wallet disconnects or account changes
+  // Clear auth session when wallet disconnects or account changes
   const prevAccountRef = useRef<string | null>(null);
   useEffect(() => {
     if (prevAccountRef.current && prevAccountRef.current !== accountId) {

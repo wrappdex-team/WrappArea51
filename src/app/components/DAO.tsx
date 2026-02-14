@@ -31,6 +31,7 @@ import {
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { toast } from "sonner";
+import { Tip } from "./Tip";
 import {
   HBARH_TOKEN_ID,
   GATE_THRESHOLD,
@@ -65,6 +66,7 @@ import {
   type ProposalStatus,
 } from "../utils/dao";
 import { SpinWheel } from "./SpinWheel";
+import { DAOProposalListSkeleton } from "./Skeletons";
 
 // ── Filter Tabs ──────────────────────────────────────────────────────
 
@@ -597,10 +599,7 @@ export function DAO() {
       {daoTab === "governance" && (
         <>
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
-              <span className="ml-2 text-slate-500">Loading proposals...</span>
-            </div>
+            <DAOProposalListSkeleton rows={4} />
           ) : (
             <ProposalList
               proposals={proposals}
@@ -710,14 +709,15 @@ function EligibilityCard({
             </span>
           )}
         </div>
+        <Tip content="Refresh balance from Mirror Node">
         <button
           onClick={onRefresh}
           disabled={refreshing}
           className={`transition-colors p-1 ${isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}
-          title="Refresh balance from Mirror Node"
         >
           <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
         </button>
+        </Tip>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1031,7 +1031,7 @@ function ProposalList({
                         <span className="text-red-400">{p.votesAgainst}</span>
                       </span>
                     </div>
-                    <div className="h-2.5 rounded-full overflow-hidden bg-slate-800 flex">
+                    <div className="h-2.5 rounded-full overflow-hidden bg-slate-800 flex" role="meter" aria-label="Vote progress" aria-valuenow={Math.round(forPct)} aria-valuemin={0} aria-valuemax={100}>
                       <div
                         className="bg-gradient-to-r from-pink-500 to-pink-400 transition-all"
                         style={{ width: `${forPct}%` }}
@@ -1101,7 +1101,8 @@ function ProposalList({
                               setVoteConfirm({ id: p.id, direction: "for" })
                             }
                             disabled={actionLoading}
-                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 disabled:opacity-50"
+                            aria-label={`Vote for proposal: ${p.title}`}
+                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                           >
                             <CheckCircle className="w-4 h-4" />
                             Vote For
@@ -1111,7 +1112,8 @@ function ProposalList({
                               setVoteConfirm({ id: p.id, direction: "against" })
                             }
                             disabled={actionLoading}
-                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-red-600/80 hover:bg-red-500/80 disabled:opacity-50"
+                            aria-label={`Vote against proposal: ${p.title}`}
+                            className="flex-1 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-red-600/80 hover:bg-red-500/80 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
                           >
                             <XCircle className="w-4 h-4" />
                             Vote Against
@@ -1597,8 +1599,6 @@ function Field({
 }
 
 // ── Admin Management Panel ──────────────────────────────────────────
-// [DAO-08] Toggle-hidden panel for managing DAO admins.
-// Add/remove require wallet re-signing (forced re-authentication).
 
 function AdminManagementPanel({
   accountId,
@@ -1635,7 +1635,6 @@ function AdminManagementPanel({
     setError(null);
     setActionLoading(true);
     try {
-      // [DAO-10] Force fresh wallet signature as confirmation
       await forceReauthenticate(accountId);
       // Now make the API call with the fresh session
       const result = await addDaoAdmin(accountId, newAdminId.trim());
@@ -1757,14 +1756,15 @@ function AdminManagementPanel({
                 </span>
               )}
               {!isFounder && !isRemoving && (
+                <Tip content="Remove admin" side="left">
                 <button
                   onClick={() => handleStartRemove(admin)}
                   disabled={actionLoading || step !== "idle"}
                   className="text-slate-500 hover:text-red-400 transition-colors disabled:opacity-30 p-0.5"
-                  title="Remove admin"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
+                </Tip>
               )}
               {isRemoving && step === "confirm-remove" && (
                 <div className="flex items-center gap-1.5">
