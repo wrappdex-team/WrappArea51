@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { log } from "../utils/logger";
 import {
   RefreshCw,
   TrendingUp,
@@ -279,10 +280,10 @@ export function BuySell() {
           onSwapSuccess(saucerResult.transactionId || null, "saucerswap", accountId);
           return;
         }
-        console.debug("[BuySell] SauceSwap failed:", saucerResult.error);
+        log.debug("BuySell", "SauceSwap failed", saucerResult.error);
         setSwapError(`SauceSwap: ${saucerResult.error} — trying HSuite...`);
       } catch (err: any) {
-        console.debug("[BuySell] SauceSwap error:", err?.message);
+        log.debug("BuySell", "SauceSwap error", err?.message);
       }
 
       // HSuite fallback
@@ -305,9 +306,9 @@ export function BuySell() {
           onSwapSuccess(result.transactionId || null, "hsuite", accountId);
           return;
         }
-        console.debug("[BuySell] HSuite failed:", result.error);
+        log.debug("BuySell", "HSuite failed", result.error);
       } catch (err: any) {
-        console.debug("[BuySell] HSuite error:", err?.message);
+        log.debug("BuySell", "HSuite error", err?.message);
       }
     }
 

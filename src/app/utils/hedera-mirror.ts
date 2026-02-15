@@ -12,6 +12,7 @@
  */
 
 import type { HederaNetwork } from "./hedera";
+import { log } from "./logger";
 
 // ── Mirror Node Endpoints ──────────────────────────────────────────
 
@@ -69,7 +70,7 @@ export async function fetchTokenFromMirrorNode(
     clearTimeout(timeout);
 
     if (!res.ok) {
-      console.warn(`[MirrorNode] Token ${tokenId} fetch failed: HTTP ${res.status}`);
+      log.warn("MirrorNode", `Token ${tokenId} fetch failed: HTTP ${res.status}`);
       return null;
     }
 
@@ -93,7 +94,7 @@ export async function fetchTokenFromMirrorNode(
     _tokenCache.set(`${network}:${tokenId}`, { data: info, fetchedAt: Date.now() });
     return info;
   } catch (err) {
-    console.warn(`[MirrorNode] Token ${tokenId} fetch error:`, (err as Error).message);
+    log.warn("MirrorNode", `Token ${tokenId} fetch error`, (err as Error).message);
     return null;
   }
 }
@@ -118,9 +119,7 @@ export async function fetchMultipleTokens(
 
   await Promise.allSettled(fetches);
 
-  console.log(
-    `[MirrorNode] Fetched ${results.size}/${tokenIds.length} tokens from ${network} Mirror Node`,
-  );
+  log.info("MirrorNode", `Fetched ${results.size}/${tokenIds.length} tokens from ${network} Mirror Node`);
 
   return results;
 }

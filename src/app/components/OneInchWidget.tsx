@@ -18,6 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { log } from "../utils/logger";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowDownUp,
@@ -46,6 +47,7 @@ import {
   playConnectionSuccess,
 } from "../utils/sounds";
 import { METAMASK_LOGO } from "../assets/brand";
+import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -218,6 +220,7 @@ function toWei(amount: string, decimals: number): string {
 
 export function OneInchWidget() {
   const { isDark } = useTheme();
+  const partnerLogos = usePartneredLogos();
 
   // ── Wallet state ──
   const [evmAccount, setEvmAccount] = useState<string | null>(null);
@@ -285,7 +288,7 @@ export function OneInchWidget() {
       const chainHex: string = await window.ethereum.request({ method: "eth_chainId" });
       setEvmChainId(parseInt(chainHex, 16));
     } catch (err: any) {
-      console.error("[1inch] Wallet connect error:", err);
+      log.error("1inch", "Wallet connect error", err);
       if (!err?.message?.includes("User rejected")) {
         setSwapError(err?.message || "Failed to connect wallet");
       }
@@ -1041,8 +1044,8 @@ export function OneInchWidget() {
                 <><Loader2 className="w-4 h-4 animate-spin" /> Connecting...</>
               ) : (
                 <>
-                  {METAMASK_LOGO ? (
-                    <img src={METAMASK_LOGO} alt="" className="w-5 h-5 rounded" />
+                  {partnerLogos.metamask ? (
+                    <img src={partnerLogos.metamask} alt="" className="w-5 h-5 rounded" />
                   ) : (
                     <Wallet className="w-4 h-4" />
                   )}

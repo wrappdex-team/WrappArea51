@@ -7,6 +7,7 @@
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { signMessage } from "./hashpack";
+import { log } from "./logger";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export async function clearSession(): Promise<void> {
       });
     } catch {
       // Revocation failed — server will expire it via TTL (30 min max)
-      console.warn("[Auth] Session revocation request failed — will expire via TTL");
+      log.warn("Auth", "Session revocation request failed — will expire via TTL");
     }
   }
   _currentSession = null;
@@ -169,7 +170,7 @@ async function signChallengeMessage(accountId: string, message: string): Promise
   }
 
   if (!sigHex) {
-    console.error("[Auth] Could not extract signature from HashConnect result:", sigs);
+    log.error("Auth", "Could not extract signature from HashConnect result", sigs);
     throw new Error("Could not extract signature from wallet response");
   }
 
@@ -225,19 +226,19 @@ export async function authenticate(accountId: string): Promise<string> {
     await clearSession();
   }
 
-  console.log(`[Auth] Starting authentication for ${accountId}...`);
+  log.info("Auth", `Starting authentication for ${accountId}`);
 
   // Step 1: Request challenge
   const challenge = await requestChallenge(accountId);
-  console.log(`[Auth] Challenge received: ${challenge.challengeId}`);
+  log.info("Auth", `Challenge received: ${challenge.challengeId}`);
 
   // Step 2: Sign in wallet
   const signature = await signChallengeMessage(accountId, challenge.message);
-  console.log(`[Auth] Signature obtained (${signature.length} hex chars)`);
+  log.info("Auth", `Signature obtained (${signature.length} hex chars)`);
 
   // Step 3: Create session
   const session = await submitSession(accountId, challenge.challengeId, signature);
-  console.log(`[Auth] Session created, expires in ${session.ttlMs / 60000}min`);
+  log.info("Auth", `Session created, expires in ${session.ttlMs / 60000}min`);
 
   // Cache the session
   _currentSession = {

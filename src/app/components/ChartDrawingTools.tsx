@@ -278,19 +278,24 @@ export function ChartDrawingTools({
   return (
     <>
       {/* Drawing Toolbar */}
-      <div className={`flex items-center gap-1 mb-2 py-1.5 px-2 rounded-lg ${isDark ? "bg-slate-800/30" : "bg-gray-50/80"}`}>
-        <span className={`text-xs mr-1.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Draw:</span>
+      <div
+        className={`flex flex-wrap items-center gap-1 mb-2 py-1.5 px-2 rounded-lg overflow-hidden max-w-full ${isDark ? "bg-slate-800/30" : "bg-gray-50/80"}`}
+        role="toolbar"
+        aria-label="Chart drawing tools"
+      >
+        <span className={`text-xs mr-1.5 hidden sm:inline ${isDark ? "text-slate-500" : "text-gray-400"}`}>Draw:</span>
         {tools.map((tool) => {
           const Icon = tool.icon;
           const active = mode === tool.id;
           return (
+            <Tip key={tool.id} content={tool.tooltip}>
             <button
-              key={tool.id}
+              aria-label={tool.tooltip}
               onClick={() => {
                 setMode(tool.id);
                 setActivePoints([]);
               }}
-              className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1.5 ${
+              className={`px-1.5 sm:px-2 py-1 rounded text-xs transition-all flex items-center gap-1 sm:gap-1.5 ${
                 active
                   ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm"
                   : isDark
@@ -298,19 +303,21 @@ export function ChartDrawingTools({
                   : "text-gray-500 hover:text-gray-900 hover:bg-gray-200"
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
-              <span>{tool.label}</span>
+              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">{tool.label}</span>
             </button>
+            </Tip>
           );
         })}
 
-        <div className={`w-px h-5 mx-1.5 ${isDark ? "bg-slate-700" : "bg-gray-300"}`} />
+        <div className={`w-px h-5 mx-0.5 sm:mx-1.5 ${isDark ? "bg-slate-700" : "bg-gray-300"}`} />
 
         <Tip content="Undo last drawing">
         <button
+          aria-label="Undo last drawing"
           onClick={undoLast}
           disabled={drawings.length === 0}
-          className={`px-2 py-1 rounded text-xs transition-all ${
+          className={`px-1.5 sm:px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
             drawings.length === 0
               ? isDark
                 ? "text-slate-600 cursor-not-allowed"
@@ -320,15 +327,17 @@ export function ChartDrawingTools({
               : "text-gray-500 hover:text-gray-900 hover:bg-gray-200"
           }`}
         >
-          Undo
+          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          <span className="hidden sm:inline">Undo</span>
         </button>
         </Tip>
 
         <Tip content="Clear all drawings">
         <button
+          aria-label="Clear all drawings"
           onClick={clearAll}
           disabled={drawings.length === 0}
-          className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
+          className={`px-1.5 sm:px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
             drawings.length === 0
               ? isDark
                 ? "text-slate-600 cursor-not-allowed"
@@ -336,13 +345,13 @@ export function ChartDrawingTools({
               : "text-red-400 hover:text-red-300 hover:bg-red-900/20"
           }`}
         >
-          <Trash2 className="w-3.5 h-3.5" />
-          Clear
+          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+          <span className="hidden sm:inline">Clear</span>
         </button>
         </Tip>
 
         {drawings.length > 0 && (
-          <span className={`text-xs ml-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+          <span className={`text-xs ml-0.5 sm:ml-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
             ({drawings.length})
           </span>
         )}

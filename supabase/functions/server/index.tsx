@@ -115,10 +115,46 @@ async function isRateLimited(ip: string): Promise<boolean> {
   return false;
 }
 
+// Trusted-proxy IP resolution for Supabase Edge Functions.
+// Supabase runs behind Cloudflare → Kong API gateway → Deno Deploy.
+//
+// Priority (most trustworthy first):
+//   1. cf-connecting-ip  — Set by Cloudflare at the edge; cannot be spoofed by clients.
+//   2. x-real-ip         — Set by Kong/nginx reverse proxy layer; infrastructure-controlled.
+//   3. x-forwarded-for   — LAST entry only (rightmost-first). Cloudflare appends the real
+//                          client IP, so the rightmost value is the most recently proxy-appended.
+//                          The leftmost value is client-supplied and trivially spoofable.
+//
+// All values are validated against IPv4/IPv6 format to reject garbage injection.
+const _IP_V4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+const _IP_V6_RE = /^[0-9a-fA-F:]+$/;
+function _isValidIp(ip: string | undefined | null): ip is string {
+  if (!ip) return false;
+  const trimmed = ip.trim();
+  return trimmed.length > 0 && trimmed.length <= 45 && (_IP_V4_RE.test(trimmed) || _IP_V6_RE.test(trimmed));
+}
+
 function getClientIp(c: any): string {
-  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
-    || c.req.header("cf-connecting-ip")
-    || "unknown";
+  // 1. Cloudflare-set header — highest trust
+  const cfIp = c.req.header("cf-connecting-ip")?.trim();
+  if (_isValidIp(cfIp)) return cfIp;
+
+  // 2. Reverse-proxy header
+  const realIp = c.req.header("x-real-ip")?.trim();
+  if (_isValidIp(realIp)) return realIp;
+
+  // 3. XFF fallback — rightmost entry (last proxy-appended, not client-supplied)
+  const xff = c.req.header("x-forwarded-for");
+  if (xff) {
+    const parts = xff.split(",");
+    // Walk from right to left, return first valid IP
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const candidate = parts[i].trim();
+      if (_isValidIp(candidate)) return candidate;
+    }
+  }
+
+  return "unknown";
 }
 
 // ── Input Sanitization ───────────────────────────────────────────────
@@ -162,10 +198,118 @@ function generateTicketId(): string {
   return `TKT-${hex}`;
 }
 
+// ── Health Check Helpers ─────────────────────────────────────────────
+
+const HEALTH_CACHE_KEY_V2 = "sys_health_cache";
+const HEALTH_CACHE_TTL_MS_V2 = 24 * 60 * 60 * 1000;
+const HEALTH_API_TIMEOUT_MS_V2 = 6_000;
+
+interface HealthCheckResultV2 {
+  status: "ok" | "degraded" | "error";
+  latencyMs: number;
+  detail?: string;
+}
+
+interface HealthSnapshotV2 {
+  timestamp: number;
+  totalMs: number;
+  checks: Record<string, HealthCheckResultV2>;
+}
+
+async function probeApiV2(url: string): Promise<HealthCheckResultV2> {
+  const t0 = Date.now();
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), HEALTH_API_TIMEOUT_MS_V2);
+  try {
+    const res = await fetch(url, { signal: ac.signal, headers: { Accept: "application/json" } });
+    clearTimeout(timer);
+    const latencyMs = Date.now() - t0;
+    if (res.ok) return { status: "ok", latencyMs, detail: `HTTP ${res.status}` };
+    return { status: "degraded", latencyMs, detail: `HTTP ${res.status}` };
+  } catch (err: any) {
+    clearTimeout(timer);
+    return {
+      status: "error",
+      latencyMs: Date.now() - t0,
+      detail: err?.name === "AbortError" ? `Timeout (>${HEALTH_API_TIMEOUT_MS_V2}ms)` : String(err).slice(0, 120),
+    };
+  }
+}
+
 // ── Routes ───────────────────────────────────────────────────────────
 
-app.get("/make-server-54299934/health", (c) => {
-  return c.json({ status: "ok" });
+app.get("/make-server-54299934/health", async (c) => {
+  const forceRefresh = c.req.query("refresh") === "1";
+
+  // Serve from cache when valid
+  if (!forceRefresh) {
+    try {
+      const cached: (HealthSnapshotV2 & { fromCache?: boolean }) | null = await kv.get(HEALTH_CACHE_KEY_V2);
+      if (cached && Date.now() - cached.timestamp < HEALTH_CACHE_TTL_MS_V2) {
+        return c.json({ ...cached, fromCache: true });
+      }
+    } catch { /* cache miss — proceed to live check */ }
+  }
+
+  const start = Date.now();
+
+  const kvProbe = async (): Promise<HealthCheckResultV2> => {
+    const t0 = Date.now();
+    const probeKey = `health_probe_${Date.now()}`;
+    try {
+      await kv.set(probeKey, { ok: true, ts: t0 });
+      const readback: { ok: boolean } | null = await kv.get(probeKey);
+      await kv.del(probeKey);
+      const latencyMs = Date.now() - t0;
+      if (readback?.ok) return { status: "ok", latencyMs, detail: "Read/write verified" };
+      return { status: "degraded", latencyMs, detail: "Write ok, readback mismatch" };
+    } catch (err: any) {
+      return { status: "error", latencyMs: Date.now() - t0, detail: String(err).slice(0, 120) };
+    }
+  };
+
+  const storageProbe = async (): Promise<HealthCheckResultV2> => {
+    const t0 = Date.now();
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      const supabase = createSupabaseClient(supabaseUrl, supabaseKey);
+      const { data, error } = await supabase.storage.listBuckets();
+      if (error) return { status: "error", latencyMs: Date.now() - t0, detail: error.message };
+      return { status: "ok", latencyMs: Date.now() - t0, detail: `${data?.length ?? 0} bucket(s)` };
+    } catch (err: any) {
+      return { status: "error", latencyMs: Date.now() - t0, detail: String(err).slice(0, 120) };
+    }
+  };
+
+  const [kvResult, storageResult, coingecko, coincap, fng, dexscreener] = await Promise.all([
+    kvProbe(),
+    storageProbe(),
+    probeApiV2("https://api.coingecko.com/api/v3/ping"),
+    probeApiV2("https://api.coincap.io/v2/assets?limit=1"),
+    probeApiV2("https://api.alternative.me/fng/?limit=1"),
+    probeApiV2("https://api.dexscreener.com/latest/dex/tokens/0x0000000000000000000000000000000000000000"),
+  ]);
+
+  const snapshot: HealthSnapshotV2 = {
+    timestamp: Date.now(),
+    totalMs: Date.now() - start,
+    checks: {
+      kvStore: kvResult,
+      storage: storageResult,
+      coingecko,
+      coincap,
+      fearGreed: fng,
+      dexscreener,
+    },
+  };
+
+  kv.set(HEALTH_CACHE_KEY_V2, snapshot).catch((err) => {
+    console.log(`[Health] Failed to cache snapshot: ${err}`);
+  });
+
+  console.log(`[Health] Live check complete in ${snapshot.totalMs}ms`);
+  return c.json({ ...snapshot, fromCache: false });
 });
 
 // GET /winners — public read-only, returns last 10 winners
@@ -353,29 +497,29 @@ app.get("/make-server-54299934/spin/cooldown/:accountId", async (c) => {
   }
 });
 
-// DELETE /spin/cooldown — Dev reset: clears spin cooldown
+// DELETE /spin/cooldown — Admin-only: clears spin cooldown for a specific account.
+// Requires SUPABASE_SERVICE_ROLE_KEY (same pattern as DELETE /winners).
 app.delete("/make-server-54299934/spin/cooldown", async (c) => {
   try {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) {
       return c.json({ error: "Rate limited" }, 429);
     }
-    // Session auth preferred; fall back to query param ?accountId=
-    let accountId: string;
-    const session = await validateSession(c);
-    if (session) {
-      accountId = session.accountId;
-    } else {
-      const qid = c.req.query("accountId") || "";
-      if (!qid || !/^0\.0\.\d+$/.test(qid.trim())) {
-        return c.json({ error: "Account ID required" }, 400);
-      }
-      accountId = sanitizeString(qid.trim(), 20);
+
+    // Require service role key — admin only
+    if (!isAdminAuthorized(c)) {
+      return c.json({ error: "Admin access required — service role key must be provided" }, 403);
     }
+
+    const accountId = c.req.query("accountId") || "";
+    if (!accountId || !isValidHederaAccountId(accountId)) {
+      return c.json({ error: "Valid accountId query param required (e.g. ?accountId=0.0.12345)" }, 400);
+    }
+
     const cdKey = COOLDOWN_PREFIX + accountId;
     await kv.del(cdKey);
-    console.log(`[Spin] Cooldown reset for ${accountId} (dev reset from IP: ${ip})`);
-    return c.json({ success: true, accountId, message: "Spin cooldown cleared" });
+    console.log(`[SECURITY] Spin cooldown reset by admin for ${accountId} (IP: ${ip})`);
+    return c.json({ success: true, accountId, message: "Spin cooldown cleared (admin)" });
   } catch (err) {
     console.log("Error resetting spin cooldown:", err);
     return c.json({ error: "Failed to reset cooldown" }, 500);
@@ -560,6 +704,7 @@ const SWAP_HISTORY_RATE_TTL_MS = 5_000;            // 1 request per 5s per accou
 const POOL_INDEX_KEY = "sl_pool_index";
 const ORACLE_CACHE_KEY = "sl_oracle_cache";
 const ORACLE_CACHE_TTL_MS = 60_000;
+const ORACLE_FALLBACK_CONFIG_KEY = "sl_oracle_fallback_cfg";
 const TREASURY_FEE_KEY = "sl_treasury_fees";
 const TREASURY_FEE_LOCK_KEY = "sl_treasury_lock";
 
@@ -902,11 +1047,50 @@ app.delete("/make-server-54299934/auth/session", async (c) => {
 const PROTOCOL_FEE_USD = 0.0007;            // $0.0007 per swap = 0.07 cents
 const PROTOCOL_TREASURY_ACCOUNT = "0.0.9695738";
 // Fallback HBAR price — used ONLY when SaucerSwap oracle is unreachable.
-// Updated: 2026-02-13. Must be refreshed if HBAR moves ±50% from this value.
-// The fee clamp below ensures we never overcharge even if this goes stale.
-const HBAR_FALLBACK_PRICE_USD = 0.28;
-const HBAR_FALLBACK_UPDATED_AT = 1739404800000; // 2026-02-13T00:00:00Z
-const HBAR_FALLBACK_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+// KV-backed at runtime (key: sl_oracle_fallback_cfg) so it can be updated via
+// the admin PUT /oracle/fallback endpoint without redeploying.
+// These compile-time values are bootstrap defaults — used only to seed KV on
+// first run. After that the KV value is authoritative.
+const _DEFAULT_HBAR_FALLBACK_PRICE_USD = 0.28;
+const _DEFAULT_HBAR_FALLBACK_UPDATED_AT = 1739404800000; // 2026-02-13T00:00:00Z
+const _DEFAULT_HBAR_FALLBACK_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
+interface OracleFallbackConfig {
+  price: number;
+  updatedAt: number;
+  maxAgeMs: number;
+}
+
+// In-memory cache — avoids KV hit on every swap. Refreshes every 5 minutes.
+let _fallbackCfgCache: OracleFallbackConfig | null = null;
+let _fallbackCfgCacheTs = 0;
+const _FALLBACK_CFG_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function getOracleFallbackConfig(): Promise<OracleFallbackConfig> {
+  const now = Date.now();
+  if (_fallbackCfgCache && (now - _fallbackCfgCacheTs) < _FALLBACK_CFG_CACHE_TTL_MS) {
+    return _fallbackCfgCache;
+  }
+  try {
+    const stored: OracleFallbackConfig | null = await kv.get(ORACLE_FALLBACK_CONFIG_KEY);
+    if (stored && typeof stored.price === "number" && stored.price > 0) {
+      _fallbackCfgCache = stored;
+      _fallbackCfgCacheTs = now;
+      return stored;
+    }
+  } catch { /* KV miss — use defaults */ }
+
+  // Seed KV with compile-time defaults on first run
+  const defaults: OracleFallbackConfig = {
+    price: _DEFAULT_HBAR_FALLBACK_PRICE_USD,
+    updatedAt: _DEFAULT_HBAR_FALLBACK_UPDATED_AT,
+    maxAgeMs: _DEFAULT_HBAR_FALLBACK_MAX_AGE_MS,
+  };
+  kv.set(ORACLE_FALLBACK_CONFIG_KEY, defaults).catch(() => {});
+  _fallbackCfgCache = defaults;
+  _fallbackCfgCacheTs = now;
+  return defaults;
+}
 // Max protocol fee in tinybar — safety ceiling if oracle + fallback are both stale
 const MAX_PROTOCOL_FEE_TINYBAR = 500; // ~$0.0014 at $0.28/HBAR — 2× normal fee
 
@@ -1079,8 +1263,11 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
       usedFallback = true;
     }
   }
-  if (usedFallback && (Date.now() - HBAR_FALLBACK_UPDATED_AT) > HBAR_FALLBACK_MAX_AGE_MS) {
-    console.log("[Oracle] WARNING: Fallback prices are stale (>90 days). Update HBAR_FALLBACK_PRICE_USD and TOKEN_WHITELIST fallbackPrice values.");
+  if (usedFallback) {
+    const fbCfg = await getOracleFallbackConfig();
+    if ((Date.now() - fbCfg.updatedAt) > fbCfg.maxAgeMs) {
+      console.log("[Oracle] WARNING: Fallback prices are stale (>" + Math.round(fbCfg.maxAgeMs / 86400000) + " days). Update via PUT /oracle/fallback.");
+    }
   }
 
   try { await kv.set(ORACLE_CACHE_KEY, { prices, ts: Date.now() }); } catch { /* non-critical */ }
@@ -1330,6 +1517,64 @@ async function getAllPools(poolIds: string[]): Promise<PoolState[]> {
   }
   return pools;
 }
+
+// GET /oracle/fallback — Current fallback config (public — price is not secret)
+app.get("/make-server-54299934/oracle/fallback", async (c) => {
+  try {
+    const cfg = await getOracleFallbackConfig();
+    const ageMs = Date.now() - cfg.updatedAt;
+    const stale = ageMs > cfg.maxAgeMs;
+    return c.json({
+      price: cfg.price,
+      updatedAt: cfg.updatedAt,
+      updatedAtIso: new Date(cfg.updatedAt).toISOString(),
+      maxAgeDays: Math.round(cfg.maxAgeMs / 86400000),
+      ageDays: Math.round(ageMs / 86400000),
+      stale,
+    });
+  } catch (err) {
+    console.log("Error in GET /oracle/fallback:", err);
+    return c.json({ error: "Failed to read fallback config" }, 500);
+  }
+});
+
+// PUT /oracle/fallback — Admin-only: update fallback HBAR price at runtime.
+// Body: { "price": 0.30 }  (optional: "maxAgeDays": 90)
+// updatedAt is auto-set to now. Requires SUPABASE_SERVICE_ROLE_KEY.
+app.put("/make-server-54299934/oracle/fallback", async (c) => {
+  if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+  try {
+    const body = await c.req.json();
+    const price = parseFloat(body.price);
+    if (!price || price <= 0 || price > 10000) {
+      return c.json({ error: "Invalid price — must be a positive number ≤ 10000" }, 400);
+    }
+    const maxAgeDays = parseInt(body.maxAgeDays) || 90;
+    if (maxAgeDays < 1 || maxAgeDays > 365) {
+      return c.json({ error: "maxAgeDays must be between 1 and 365" }, 400);
+    }
+    const cfg: OracleFallbackConfig = {
+      price,
+      updatedAt: Date.now(),
+      maxAgeMs: maxAgeDays * 24 * 60 * 60 * 1000,
+    };
+    await kv.set(ORACLE_FALLBACK_CONFIG_KEY, cfg);
+    // Bust in-memory cache so this instance picks it up immediately
+    _fallbackCfgCache = cfg;
+    _fallbackCfgCacheTs = Date.now();
+    console.log(`[Admin] Oracle fallback updated: $${price} (maxAge: ${maxAgeDays}d)`);
+    return c.json({
+      success: true,
+      price: cfg.price,
+      updatedAt: cfg.updatedAt,
+      updatedAtIso: new Date(cfg.updatedAt).toISOString(),
+      maxAgeDays,
+    });
+  } catch (err) {
+    console.log("Error in PUT /oracle/fallback:", err);
+    return c.json({ error: "Failed to update fallback config" }, 500);
+  }
+});
 
 // GET /pools — List all active pools with real-time state + oracle prices
 app.get("/make-server-54299934/pools", async (c) => {
@@ -1661,8 +1906,9 @@ app.post("/make-server-54299934/pools/quote", async (c) => {
     const outDisplay = Number(best.amountOut) / (10 ** defOut.decimals);
     const inDisplay = parseFloat(amountIn);
 
-    // Protocol fee in HBAR (WHBAR oracle price or fallback, clamped to safety ceiling)
-    const hbarPrice = prices["0.0.1456986"] || HBAR_FALLBACK_PRICE_USD;
+    // Protocol fee in HBAR (WHBAR oracle price or KV-backed fallback, clamped to safety ceiling)
+    const fbCfg = await getOracleFallbackConfig();
+    const hbarPrice = prices["0.0.1456986"] || fbCfg.price;
     const protocolFeeHbar = PROTOCOL_FEE_USD / hbarPrice;
     const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round(protocolFeeHbar * 1e8)));
     const lpRewardTinybar = Math.floor(protocolFeeTinybar / 2);
@@ -1774,7 +2020,8 @@ app.post("/make-server-54299934/pools/swap", async (c) => {
           }
 
           // Protocol fee: $0.0007 per swap, split 50/50 LP rewards / treasury (clamped)
-          const hbarPriceForFee = prices["0.0.1456986"] || HBAR_FALLBACK_PRICE_USD;
+          const swapFbCfg = await getOracleFallbackConfig();
+          const hbarPriceForFee = prices["0.0.1456986"] || swapFbCfg.price;
           const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round((PROTOCOL_FEE_USD / hbarPriceForFee) * 1e8)));
           const treasuryFeeTinybar = protocolFeeTinybar - Math.floor(protocolFeeTinybar / 2);
           // Lock-protected fee increment �� serializes across concurrent swaps on
@@ -1849,10 +2096,18 @@ app.post("/make-server-54299934/pools/swap", async (c) => {
 });
 
 // GET /pools/swaps/:accountId — Per-user swap history (O(1) index read, rate-limited).
+// Authenticated: session accountId must match the URL param.
 app.get("/make-server-54299934/pools/swaps/:accountId", async (c) => {
   try {
     const accountId = c.req.param("accountId");
     if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid accountId" }, 400);
+
+    const session = await validateSession(c);
+    if (!session) return c.json({ error: "Authentication required" }, 401);
+    if (session.accountId !== accountId) {
+      console.log(`[SECURITY] Swap history access denied: session ${session.accountId} tried to read ${accountId}`);
+      return c.json({ error: "Forbidden — you may only view your own swap history" }, 403);
+    }
 
     // Rate limit: 1 read per 5s per account
     const rateKey = SWAP_HISTORY_RATE_PREFIX + accountId;
@@ -1910,7 +2165,7 @@ app.get("/make-server-54299934/news", async (c) => {
 // Authenticated via session token. VIP eligibility verified server-side
 // against Mirror Node. 2-min cooldown, 25-word limit, 50-msg FIFO cap.
 // Admin ops (delete/ban) require SUPABASE_SERVICE_ROLE_KEY.
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════���═══════════
 
 const VIP_CHAT_MSGS_KEY = "vip_chat_messages";
 const VIP_CHAT_CD_PREFIX = "vip_chat_cd_";
@@ -2957,6 +3212,162 @@ app.get("/make-server-54299934/brand-logos", async (c) => {
     return c.json({ logos, bucket: BRAND_BUCKET, urlType: "signed" });
   } catch (err) {
     console.log(`[Brand Logos] Unexpected error: ${err}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+// ── Partnered Logos Bucket ────────────────────────────────────────────
+// Lists files from "Partnered logos" bucket and returns public/signed URLs.
+// The frontend matches filenames to partner keys (metamask, hashpack, etc.).
+const PARTNER_BUCKET = "Partnered logos";
+const PARTNER_SIGNED_TTL = 3600; // 1 hour
+const IMG_RE = /\.(png|jpg|jpeg|webp|svg|avif|gif)$/i;
+
+app.get("/make-server-54299934/partnered-logos", async (c) => {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) return c.json({ error: "Missing env" }, 500);
+    const supabase = createSupabaseClient(supabaseUrl, serviceKey);
+
+    // Step 1: Verify bucket exists
+    const { data: buckets, error: bucketsErr } = await supabase.storage.listBuckets();
+    if (bucketsErr) {
+      console.log(`[Partnered Logos] Failed to list buckets: ${bucketsErr.message}`);
+      return c.json({ error: bucketsErr.message }, 502);
+    }
+    const allBucketNames = (buckets || []).map((b: any) => b.name);
+    console.log(`[Partnered Logos] Available buckets: [${allBucketNames.join(", ")}]`);
+
+    const bucket = buckets?.find((b: any) => b.name === PARTNER_BUCKET);
+    if (!bucket) {
+      console.log(`[Partnered Logos] Bucket "${PARTNER_BUCKET}" not found`);
+      return c.json({ logos: [], bucket: PARTNER_BUCKET, availableBuckets: allBucketNames, hint: "Bucket not found" });
+    }
+    const isPublic = !!(bucket as any).public;
+    console.log(`[Partnered Logos] Bucket found — public=${isPublic}`);
+
+    // Step 2: List all files (root level + one level of subdirectories)
+    const { data: files, error: listErr } = await supabase.storage
+      .from(PARTNER_BUCKET)
+      .list("", { limit: 200, sortBy: { column: "name", order: "asc" } });
+    if (listErr) {
+      console.log(`[Partnered Logos] List error: ${listErr.message}`);
+      return c.json({ error: listErr.message, bucket: PARTNER_BUCKET }, 502);
+    }
+
+    console.log(`[Partnered Logos] Raw entries: ${JSON.stringify((files || []).map((f: any) => ({ n: f.name, id: !!f.id })))}`);
+
+    // Collect image files from root
+    const rootImages = (files || []).filter((f: any) =>
+      f.name && !f.name.startsWith(".") && !f.name.endsWith("/") && IMG_RE.test(f.name)
+    );
+
+    // Also check subdirectories (folders have no id)
+    const folders = (files || []).filter((f: any) => !f.id && f.name && !f.name.startsWith("."));
+    const subImages: { name: string; path: string }[] = [];
+    for (const folder of folders) {
+      const { data: sub } = await supabase.storage
+        .from(PARTNER_BUCKET)
+        .list(folder.name, { limit: 100 });
+      if (sub) {
+        for (const sf of sub) {
+          if (sf.name && IMG_RE.test(sf.name)) {
+            subImages.push({ name: sf.name, path: `${folder.name}/${sf.name}` });
+          }
+        }
+      }
+    }
+
+    // Combine: root images + sub-directory images
+    const allImages = [
+      ...rootImages.map((f: any) => ({ name: f.name, path: f.name })),
+      ...subImages,
+    ];
+
+    console.log(`[Partnered Logos] Image files (${allImages.length}): [${allImages.map((f: any) => f.path).join(", ")}]`);
+
+    if (allImages.length === 0) {
+      return c.json({ logos: [], bucket: PARTNER_BUCKET, rawFileCount: (files || []).length, hint: "No image files found" });
+    }
+
+    // Step 3: Build URLs using Supabase client's getPublicUrl (correct encoding)
+    if (isPublic) {
+      const logos = allImages.map((f: any) => {
+        const { data } = supabase.storage.from(PARTNER_BUCKET).getPublicUrl(f.path);
+        return { name: f.name, publicUrl: data.publicUrl };
+      });
+      console.log(`[Partnered Logos] Public — ${logos.length} URL(s) built`);
+      return c.json({ logos, bucket: PARTNER_BUCKET, urlType: "public", isPublic: true });
+    }
+
+    // Private bucket — create signed URLs
+    const { data: signedUrls, error: signErr } = await supabase.storage
+      .from(PARTNER_BUCKET)
+      .createSignedUrls(
+        allImages.map((f: any) => f.path),
+        PARTNER_SIGNED_TTL,
+      );
+    if (signErr) {
+      console.log(`[Partnered Logos] Signed URL error: ${signErr.message} — using getPublicUrl fallback`);
+      const logos = allImages.map((f: any) => {
+        const { data } = supabase.storage.from(PARTNER_BUCKET).getPublicUrl(f.path);
+        return { name: f.name, publicUrl: data.publicUrl };
+      });
+      return c.json({ logos, bucket: PARTNER_BUCKET, urlType: "public-fallback" });
+    }
+
+    const logos = (signedUrls || [])
+      .filter((s: any) => !s.error)
+      .map((s: any) => ({
+        name: allImages.find((f: any) => f.path === s.path)?.name || s.path,
+        publicUrl: s.signedUrl,
+      }));
+    console.log(`[Partnered Logos] Signed — ${logos.length} URL(s): [${logos.map((l: any) => l.name).join(", ")}]`);
+    return c.json({ logos, bucket: PARTNER_BUCKET, urlType: "signed", isPublic: false });
+  } catch (err) {
+    console.log(`[Partnered Logos] Unexpected error: ${err}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+// Diagnostic endpoint — admin-only raw bucket listing for debugging
+app.get("/make-server-54299934/partnered-logos/debug", async (c) => {
+  if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) return c.json({ error: "Missing env" }, 500);
+    const supabase = createSupabaseClient(supabaseUrl, serviceKey);
+
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const allBuckets = (buckets || []).map((b: any) => ({ name: b.name, public: !!(b as any).public, id: b.id }));
+
+    const { data: files, error: listErr } = await supabase.storage
+      .from(PARTNER_BUCKET)
+      .list("", { limit: 200 });
+
+    const rawFiles = (files || []).map((f: any) => ({
+      name: f.name,
+      id: f.id || null,
+      metadata: f.metadata || null,
+      isImage: IMG_RE.test(f.name || ""),
+    }));
+
+    // Check one level of subfolders
+    const folders = (files || []).filter((f: any) => !f.id && f.name && !f.name.startsWith("."));
+    const subFiles: any[] = [];
+    for (const folder of folders) {
+      const { data: sub } = await supabase.storage.from(PARTNER_BUCKET).list(folder.name, { limit: 100 });
+      if (sub) {
+        for (const sf of sub) {
+          subFiles.push({ folder: folder.name, name: sf.name, id: sf.id || null, isImage: IMG_RE.test(sf.name || "") });
+        }
+      }
+    }
+
+    return c.json({ buckets: allBuckets, targetBucket: PARTNER_BUCKET, rootFiles: rawFiles, subFiles, listError: listErr?.message || null });
+  } catch (err) {
     return c.json({ error: String(err) }, 500);
   }
 });

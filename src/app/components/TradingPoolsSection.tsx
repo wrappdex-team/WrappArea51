@@ -40,6 +40,7 @@ import {
   type PoolStats,
   type LPPosition,
 } from "../utils/smart-liquidity";
+import { log } from "../utils/logger";
 
 // ── Stat Card ───────────────────────────────────────────────────────
 
@@ -49,14 +50,17 @@ function StatCard({ label, value, isDark, accent }: { label: string; value: stri
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className={`rounded-xl p-3 text-center relative overflow-hidden ${
-        isDark ? "bg-slate-900/40 border border-pink-500/10" : "bg-white border border-gray-100 shadow-sm"
+        isDark ? "bg-slate-900/40 border border-white/[0.06]" : "bg-white border border-gray-100 shadow-sm"
       }`}
     >
       {accent && (
-        <div className="absolute inset-0 bg-gradient-to-br from-pink-500/5 to-purple-500/5 pointer-events-none" />
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: "linear-gradient(to bottom right, var(--accent-stat-from, rgba(236,72,153,0.05)), var(--accent-stat-to, rgba(168,85,247,0.05)))" }}
+        />
       )}
       <div className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>{label}</div>
-      <div className="text-lg font-bold mt-0.5">{value}</div>
+      <div className={`text-lg font-bold mt-0.5 relative ${isDark ? "text-white" : "text-gray-900"}`}>{value}</div>
     </motion.div>
   );
 }
@@ -355,7 +359,7 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
   );
 }
 
-// ── Main Pools Section ──────────────────────────────────────────────
+// ── Main Pools Section ───────────────────────────────────��──────────
 
 interface TradingPoolsSectionProps {
   isDark: boolean;
@@ -380,7 +384,7 @@ export function TradingPoolsSection({ isDark }: TradingPoolsSectionProps) {
       setPools(poolData);
       setStats(statsData);
     } catch (err) {
-      console.debug("[Pools] Load failed:", err);
+      log.debug("Pools", "Load failed", err);
     }
     setLoading(false);
   }, []);

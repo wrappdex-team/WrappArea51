@@ -12,10 +12,9 @@ import {
   Sparkles,
   Trophy,
   ShieldCheck,
-  RotateCcw,
   AlertCircle,
 } from "lucide-react";
-import { HBAR_LOGO as hbarhLogo } from "../assets/brand";
+import { HBARH_LOGO_DARK as hbarhLogo } from "../assets/brand";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { getSessionToken } from "../utils/auth";
 import { verifyVipEligibilityDirect } from "../utils/vip";
@@ -122,14 +121,10 @@ async function fetchWinnerHistory(): Promise<WinnerRecord[]> {
     const res = await fetch(`${API_BASE}/winners`, {
       headers: { Authorization: `Bearer ${publicAnonKey}` },
     });
-    if (!res.ok) {
-      console.log(`Failed to fetch winners: ${res.status} ${res.statusText}`);
-      return [];
-    }
+    if (!res.ok) return [];
     const data = await res.json();
     return (data.winners ?? []) as WinnerRecord[];
-  } catch (err) {
-    console.log("Error fetching winner history from backend:", err);
+  } catch {
     return [];
   }
 }
@@ -162,42 +157,11 @@ async function requestSpin(accountId: string): Promise<SpinResult | null> {
     });
     const data = await res.json();
     if (!res.ok) {
-      console.log(`Spin request failed: ${res.status}`, data);
       return { win: false, ticketId: null, segmentIndex: 0, spinDelta: 0, timestamp: 0, error: data.error || "Spin failed", canSpin: data.canSpin, cooldownMs: data.cooldownMs };
     }
     return data as SpinResult;
-  } catch (err) {
-    console.log("Error requesting spin from server:", err);
+  } catch {
     return null;
-  }
-}
-
-async function resetSpinCooldown(accountId: string): Promise<boolean> {
-  try {
-    const sessionToken = getSessionToken();
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${publicAnonKey}`,
-    };
-    if (sessionToken) headers["X-Session-Token"] = sessionToken;
-
-    const res = await fetch(`${API_BASE}/spin/cooldown?accountId=${encodeURIComponent(accountId)}`, {
-      method: "DELETE",
-      headers,
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      console.log(`Reset spin cooldown failed: ${res.status}`, data);
-      return false;
-    }
-    // Clear client-side localStorage too
-    try {
-      localStorage.removeItem(SPIN_STORAGE_KEY + accountId);
-    } catch { /* non-critical */ }
-    console.log(`[Spin] Cooldown reset for ${accountId}`);
-    return true;
-  } catch (err) {
-    console.log("Error resetting spin cooldown:", err);
-    return false;
   }
 }
 
@@ -832,7 +796,6 @@ export function SpinWheel({ accountId }: { accountId: string }) {
   const [winTimestamp, setWinTimestamp] = useState<number>(0);
   const spinAudioRef = useRef<AudioContext | null>(null);
   const [winnerHistory, setWinnerHistory] = useState<WinnerRecord[]>([]);
-  const [resetting, setResetting] = useState(false);
   const [spinError, setSpinError] = useState<string | null>(null);
 
   // ── Mirror Node VIP Verification ──
@@ -857,19 +820,11 @@ export function SpinWheel({ accountId }: { accountId: string }) {
       return;
     }
     setVipStatus("checking");
-    console.log(`[SpinWheel] Verifying VIP eligibility via Mirror Node for ${accountId}...`);
     verifyVipEligibilityDirect(accountId).then((res) => {
       setVipBalance(res.balance);
-      if (res.error) {
-        console.log(`[SpinWheel] VIP check error: ${res.error}`);
-        setVipStatus("error");
-      } else if (res.eligible) {
-        console.log(`[SpinWheel] VIP verified: balance=${res.balance}`);
-        setVipStatus("verified");
-      } else {
-        console.log(`[SpinWheel] Not VIP: balance=${res.balance} (need 100M+)`);
-        setVipStatus("ineligible");
-      }
+      if (res.error) setVipStatus("error");
+      else if (res.eligible) setVipStatus("verified");
+      else setVipStatus("ineligible");
     });
   }, [accountId]);
 
@@ -1063,12 +1018,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
     setLastSpinTime(accountId, Date.now());
     setCooldown(SPIN_COOLDOWN_MS);
 
-    if (!spinRes) {
-      console.log("[SpinWheel] onSpinComplete fired but no pending result — unexpected");
-      return;
-    }
-
-    console.log(`[SpinWheel] Animation complete. win=${spinRes.win}, segment=${spinRes.segmentIndex}, finalAngle=${cumulativeRotationRef.current % 360}`);
+    if (!spinRes) return;
 
     if (spinRes.win) {
       setResult("win");
@@ -1093,8 +1043,6 @@ export function SpinWheel({ accountId }: { accountId: string }) {
     playClickSound();
     playCasinoChime();
 
-    console.log(`[SpinWheel] Spin initiated for ${accountId}, current rotation=${cumulativeRotationRef.current}`);
-
     try {
       const spinRes = await requestSpin(accountId);
 
@@ -1103,15 +1051,12 @@ export function SpinWheel({ accountId }: { accountId: string }) {
       }
 
       if (spinRes.error) {
-        console.log(`[SpinWheel] Server rejected spin: ${spinRes.error}`);
         if (spinRes.cooldownMs) {
           setCooldown(spinRes.cooldownMs);
           setLastSpinTime(accountId, Date.now() - SPIN_COOLDOWN_MS + spinRes.cooldownMs);
         }
         throw new Error(spinRes.error);
       }
-
-      console.log(`[SpinWheel] Server response: win=${spinRes.win}, segment=${spinRes.segmentIndex}, spinDelta=${spinRes.spinDelta}`);
 
       // ── Calculate final rotation ──
       const currentCum = cumulativeRotationRef.current;
@@ -1124,8 +1069,6 @@ export function SpinWheel({ accountId }: { accountId: string }) {
       const fullSpinDegrees = MIN_FULL_SPINS * 360;
 
       const finalRotation = currentCum + fullSpinDegrees + angleCorrection;
-
-      console.log(`[SpinWheel] Rotation calc: current=${currentCum}, target%360=${targetMod360}, correction=${angleCorrection}, final=${finalRotation}, final%360=${finalRotation % 360}`);
 
       // Store the pending result for onSpinComplete
       pendingResultRef.current = spinRes;
@@ -1148,24 +1091,10 @@ export function SpinWheel({ accountId }: { accountId: string }) {
         }
       );
     } catch (err) {
-      console.log("[SpinWheel] Spin failed:", err);
       setIsSpinning(false);
       setSpinError(err instanceof Error ? err.message : "Spin failed — please try again");
     }
   }, [canSpin, accountId, playCasinoChime, playClickSound, playTick, onSpinComplete, wheelRotation]);
-
-  const handleDevReset = useCallback(async () => {
-    if (resetting) return;
-    playClickSound();
-    setResetting(true);
-    const ok = await resetSpinCooldown(accountId);
-    if (ok) {
-      setCooldown(0);
-      setResult(null);
-      setSpinError(null);
-    }
-    setResetting(false);
-  }, [accountId, resetting, playClickSound]);
 
   // Cleanup animation on unmount
   useEffect(() => {
@@ -1334,17 +1263,6 @@ export function SpinWheel({ accountId }: { accountId: string }) {
                   View Winning Ticket
                 </motion.button>
               )}
-              {/* Dev reset — clears server + client cooldown for testing */}
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleDevReset}
-                disabled={resetting}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-white bg-slate-100 dark:bg-slate-800/40 hover:bg-slate-200 dark:hover:bg-slate-700/60 border border-slate-300 dark:border-slate-700/50 hover:border-slate-400 dark:hover:border-slate-600 transition-all disabled:opacity-50 disabled:cursor-wait shadow-sm hover:shadow-md"
-              >
-                <RotateCcw className={`w-3 h-3 ${resetting ? "animate-spin" : ""}`} />
-                {resetting ? "Resetting..." : "Dev Reset Cooldown"}
-              </motion.button>
             </div>
           ) : (
             <motion.button

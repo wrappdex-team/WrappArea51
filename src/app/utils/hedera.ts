@@ -1,5 +1,6 @@
 const MIRROR_NODE = "https://mainnet-public.mirrornode.hedera.com";
 const HASHSCAN_URL = "https://hashscan.io/mainnet";
+import { log } from "./logger";
 
 export type HederaNetwork = "mainnet" | "testnet";
 
@@ -284,12 +285,12 @@ export async function fetchHbarPrice(): Promise<number> {
 
   // ── Fallback: cached price from any previous successful fetch ──
   if (_lastKnownHbarPrice > 0) {
-    console.debug(`[HBAR.h] Oracles slow — reusing cached price $${_lastKnownHbarPrice}`);
+    log.debug("Hedera", `Oracles slow — reusing cached price $${_lastKnownHbarPrice}`);
     return _lastKnownHbarPrice;
   }
 
   // ── Last resort hardcoded fallback ──
-  console.debug(`[HBAR.h] No cached price — using fallback $${LAST_RESORT_FALLBACK}`);
+  log.debug("Hedera", `No cached price — using fallback $${LAST_RESORT_FALLBACK}`);
   _lastKnownHbarPrice = LAST_RESORT_FALLBACK;
   _lastHbarPriceTs = Date.now();
   return LAST_RESORT_FALLBACK;

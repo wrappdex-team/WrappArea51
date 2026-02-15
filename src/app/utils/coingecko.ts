@@ -2,6 +2,7 @@ const COINCAP_API = "https://api.coincap.io/v2";
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
 
 import { fetchChainlinkPrices, chainlinkToCoinPrices, updateOracleStats } from "./chainlink";
+import { log } from "./logger";
 
 export const COINCAP_ID_MAP: Record<string, string> = {
   BTC: "bitcoin", ETH: "ethereum", USDT: "tether", BNB: "binance-coin",
@@ -61,7 +62,7 @@ export interface CoinPrice {
   oracle_updated_at?: number;  // unix timestamp from on-chain feed
   chainlink_feed?: string;     // Chainlink feed contract address
   // Tracks where the 24h % change came from (may differ from price source)
-  // When Chainlink provides price but APIs fail, change stays "fallback" (mock data)
+  // When Chainlink provides price but APIs fail, change stays "fallback" (stale/cached data)
   change_source?: OracleSource;
 }
 
@@ -99,7 +100,7 @@ async function fetchFromCoinCap(symbols: string[]): Promise<Record<string, CoinP
     const res = await fetch(`${COINCAP_API}/assets?ids=${ids}`, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (!res.ok) {
-      console.debug(`[Oracle] CoinCap HTTP ${res.status}`);
+      log.debug("Oracle", `CoinCap HTTP ${res.status}`);
       return {};
     }
 
@@ -129,9 +130,9 @@ async function fetchFromCoinCap(symbols: string[]): Promise<Record<string, CoinP
     clearTimeout(timeoutId);
     // Network errors (CORS, blocked, offline) are expected in sandboxed environments
     if (err instanceof TypeError && (err as TypeError).message === "Failed to fetch") {
-      console.debug("[Oracle] CoinCap unreachable (network/CORS) — using fallback");
+      log.debug("Oracle", "CoinCap unreachable (network/CORS) — using fallback");
     } else {
-      console.debug("[Oracle] CoinCap fetch error:", (err as Error).message);
+      log.debug("Oracle", "CoinCap fetch error", (err as Error).message);
     }
     return {};
   }
@@ -151,7 +152,7 @@ async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, Coi
     );
     clearTimeout(timeoutId);
     if (!res.ok) {
-      console.debug(`[Oracle] CoinGecko HTTP ${res.status}`);
+      log.debug("Oracle", `CoinGecko HTTP ${res.status}`);
       return {};
     }
 
@@ -179,9 +180,9 @@ async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, Coi
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof TypeError && (err as TypeError).message === "Failed to fetch") {
-      console.debug("[Oracle] CoinGecko unreachable (network/CORS) — using fallback");
+      log.debug("Oracle", "CoinGecko unreachable (network/CORS) — using fallback");
     } else {
-      console.debug("[Oracle] CoinGecko fetch error:", (err as Error).message);
+      log.debug("Oracle", "CoinGecko fetch error", (err as Error).message);
     }
     return {};
   }
@@ -250,7 +251,7 @@ export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
       if (price > 0.001 && price < 50) {
         const result = buildResult(price, change, "coincap", { volume }); // label as coincap (API source)
         _hbarFastCache = { price: result, ts: Date.now() };
-        console.debug(`[Oracle] HBAR fast-path: $${price.toFixed(4)} via Binance`);
+        log.debug("Oracle", `HBAR fast-path: $${price.toFixed(4)} via Binance`);
         return result;
       }
     }
@@ -277,7 +278,7 @@ export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
             { marketCap: parseFloat(asset.marketCapUsd) || 0, volume: parseFloat(asset.volumeUsd24Hr) || 0 }
           );
           _hbarFastCache = { price: result, ts: Date.now() };
-          console.debug(`[Oracle] HBAR fast-path: $${price.toFixed(4)} via CoinCap`);
+          log.debug("Oracle", `HBAR fast-path: $${price.toFixed(4)} via CoinCap`);
           return result;
         }
       }
@@ -304,7 +305,7 @@ export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
           { marketCap: hbar.usd_market_cap || 0, volume: hbar.usd_24h_vol || 0 }
         );
         _hbarFastCache = { price: result, ts: Date.now() };
-        console.debug(`[Oracle] HBAR fast-path: $${hbar.usd.toFixed(4)} via CoinGecko`);
+        log.debug("Oracle", `HBAR fast-path: $${hbar.usd.toFixed(4)} via CoinGecko`);
         return result;
       }
     }
@@ -422,9 +423,7 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
     totalFeeds: symbols.length,
   });
 
-  console.debug(
-    `[Oracle] Merged ${symbols.length} tokens: ${clCount} Chainlink · ${ccCount} CoinCap · ${cgCount} CoinGecko · ${fbCount} Fallback`
-  );
+  log.debug("Oracle", `Merged ${symbols.length} tokens: ${clCount} Chainlink · ${ccCount} CoinCap · ${cgCount} CoinGecko · ${fbCount} Fallback`);
 
   // ── HBAR fast-path patch ─────────────────────────────────────────
   // If HBAR ended up on fallback or has no live price, override with
@@ -434,7 +433,7 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
     const existing = merged["HBAR"];
     if (!existing || existing.oracle_source === "fallback" || existing.current_price <= 0) {
       merged["HBAR"] = hbarFast;
-      console.debug(`[Oracle] HBAR patched from fast-path: $${hbarFast.current_price.toFixed(4)}`);
+      log.debug("Oracle", `HBAR patched from fast-path: $${hbarFast.current_price.toFixed(4)}`);
     }
   }
 

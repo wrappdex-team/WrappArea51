@@ -14,6 +14,7 @@ type HederaNetwork = "mainnet" | "testnet";
 
 const SAUCERSWAP_API = "https://api.saucerswap.finance";
 const HBARH_TOKEN_ID = "0.0.9356476";
+import { log } from "./logger";
 
 // ── Resilient SaucerSwap API helper ────────────────────────────────
 // The SaucerSwap REST API has been observed to respond differently
@@ -44,24 +45,24 @@ async function saucerFetch(
       });
       if (res.ok) {
         if (_apiDiagLogged.has(path)) {
-          console.log(`[HBAR.h] SaucerSwap ${variant} recovered`);
+          log.info("SaucerSwap", `${variant} recovered`);
         }
         return res;
       }
       // Log first failure per path, then stay quiet
       if (!_apiDiagLogged.has(path)) {
-        console.log(`[HBAR.h] SaucerSwap ${variant} → HTTP ${res.status}, trying next variant…`);
+        log.info("SaucerSwap", `${variant} → HTTP ${res.status}, trying next variant…`);
       }
     } catch {
       if (!_apiDiagLogged.has(path)) {
-        console.log(`[HBAR.h] SaucerSwap ${variant} → network error, trying next variant…`);
+        log.info("SaucerSwap", `${variant} → network error, trying next variant…`);
       }
     }
   }
 
   // All variants exhausted
   if (!_apiDiagLogged.has(path)) {
-    console.log(`[HBAR.h] SaucerSwap ${path}: all URL variants failed — using fallback data`);
+    log.info("SaucerSwap", `${path}: all URL variants failed — using fallback data`);
     _apiDiagLogged.add(path);
   }
   return null;
@@ -546,7 +547,7 @@ async function fetchRouterQuote(
   const callDataHex = bytesToHex(callData);
   const gasHex = "0x" + (1_500_000).toString(16); // 0x16E360
 
-  console.log(`[HBAR.h] Router quote: getAmountsOut(${amountIn}, [${pathAddresses.join(", ")}]) → router ${routerEvm}`);
+  log.info("SaucerSwap", `Router quote: getAmountsOut(${amountIn}, [${pathAddresses.join(", ")}]) → router ${routerEvm}`);
 
   // ── Strategy A: JSON-RPC relay (eth_call) ──
   try {
@@ -572,17 +573,17 @@ async function fetchRouterQuote(
       if (rpcData.result && rpcData.result !== "0x" && rpcData.result.length > 2) {
         const amountOut = decodeAmountsOutResult(rpcData.result);
         if (amountOut !== null && amountOut > 0n) {
-          console.log(`[HBAR.h] Router quote via JSON-RPC relay: amountOut=${amountOut}`);
+          log.info("SaucerSwap", `Router quote via JSON-RPC relay: amountOut=${amountOut}`);
           return amountOut;
         }
       }
       // Log RPC error if present
       if (rpcData.error) {
-        console.log(`[HBAR.h] JSON-RPC eth_call error: ${rpcData.error.message || JSON.stringify(rpcData.error).slice(0, 200)}`);
+        log.info("SaucerSwap", `JSON-RPC eth_call error: ${rpcData.error.message || JSON.stringify(rpcData.error).slice(0, 200)}`);
       }
     }
   } catch (err: any) {
-    console.log("[HBAR.h] JSON-RPC relay quote failed:", err?.message || err);
+    log.info("SaucerSwap", `JSON-RPC relay quote failed: ${err?.message || err}`);
   }
 
   // ── Strategy B: Mirror Node /api/v1/contracts/call ──
@@ -606,7 +607,7 @@ async function fetchRouterQuote(
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
-      console.log(`[HBAR.h] Mirror Node contract call HTTP ${res.status}`, errBody.slice(0, 200));
+      log.info("SaucerSwap", `Mirror Node contract call HTTP ${res.status} ${errBody.slice(0, 200)}`);
       return null;
     }
 
@@ -615,11 +616,7 @@ async function fetchRouterQuote(
 
     if (!resultHex || resultHex === "0x") {
       const errMsg = data.error_message || data._status?.messages?.[0]?.message || "";
-      console.log(
-        "[HBAR.h] Mirror Node contract call returned empty result —",
-        errMsg || "cross-contract calls may not be supported in simulation.",
-        "Falling back to price estimate."
-      );
+      log.info("SaucerSwap", `Mirror Node contract call returned empty result — ${errMsg || "cross-contract calls may not be supported in simulation."} Falling back to price estimate.`);
       return null;
     }
 

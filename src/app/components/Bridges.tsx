@@ -7,6 +7,7 @@ import { StargateBridgeWidget } from "./StargateBridgeWidget";
 
 // ── Official brand logos ──
 import { SQUID_LOGO, HASHPORT_LOGO } from "../assets/brand";
+import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 
 // Stargate — inline SVG (dark circle with nested diamond geometry)
 const STARGATE_LOGO = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#1B1B2B"/><g fill="none" stroke="#fff" stroke-width="2.5"><polygon points="60,16 104,60 60,104 16,60" stroke-width="3"/><polygon points="60,30 90,60 60,90 30,60" stroke-width="2.5"/><circle cx="60" cy="60" r="11" fill="#fff" stroke="none"/></g></svg>`)}`;
@@ -92,6 +93,7 @@ function getAccentClasses(accentColor: string) {
 
 export function Bridges() {
   const { isDark } = useTheme();
+  const partnerLogos = usePartneredLogos();
   const [activeBridge, setActiveBridge] = useState<ActiveBridge>(null);
 
   const handleBridgeToggle = (id: "squid" | "hashport" | "stargate") => {
@@ -133,7 +135,7 @@ export function Bridges() {
               <div className="flex items-start gap-3">
                 <div className="relative w-11 h-11 flex-shrink-0">
                   <img
-                    src={bridge.logo}
+                    src={bridge.id === "hashport" ? partnerLogos.hashport : bridge.logo}
                     alt={bridge.name}
                     className={`w-11 h-11 rounded-xl object-contain ${bridge.logoBg ? `${bridge.logoBg} p-1` : ""}`}
                     onError={(e) => {

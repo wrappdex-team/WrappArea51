@@ -9,6 +9,7 @@
 
 import type { HederaTokenBalance } from "./hedera";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { log } from "./logger";
 import { getSessionToken, authHeaders, authenticate, clearSession } from "./auth";
 
 // ── API Base ────────────────────────────────────────────────────────
@@ -156,12 +157,12 @@ export async function loadProposals(): Promise<Proposal[]> {
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[DAO] Failed to load proposals: ${data.error || res.status}`);
+      log.error("DAO", `Failed to load proposals: ${data.error || res.status}`);
       return [];
     }
     return (data.proposals ?? []) as Proposal[];
   } catch (err) {
-    console.error("[DAO] Error loading proposals:", err);
+    log.error("DAO", "Error loading proposals", err);
     return [];
   }
 }
@@ -188,12 +189,12 @@ export async function createProposal(
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[DAO] Create proposal failed: ${data.error}`);
+      log.error("DAO", `Create proposal failed: ${data.error}`);
       return { proposals: [], error: data.error || "Failed to create proposal" };
     }
     return { proposals: data.proposals as Proposal[] };
   } catch (err: any) {
-    console.error("[DAO] Error creating proposal:", err);
+    log.error("DAO", "Error creating proposal", err);
     return { proposals: [], error: err?.message || "Network error" };
   }
 }
@@ -216,12 +217,12 @@ export async function editProposal(
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[DAO] Edit proposal failed: ${data.error}`);
+      log.error("DAO", `Edit proposal failed: ${data.error}`);
       return { proposals: [], error: data.error || "Failed to edit proposal" };
     }
     return { proposals: data.proposals as Proposal[] };
   } catch (err: any) {
-    console.error("[DAO] Error editing proposal:", err);
+    log.error("DAO", "Error editing proposal", err);
     return { proposals: [], error: err?.message || "Network error" };
   }
 }
@@ -242,12 +243,12 @@ export async function deleteProposal(
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[DAO] Delete proposal failed: ${data.error}`);
+      log.error("DAO", `Delete proposal failed: ${data.error}`);
       return { proposals: [], error: data.error || "Failed to delete proposal" };
     }
     return { proposals: data.proposals as Proposal[] };
   } catch (err: any) {
-    console.error("[DAO] Error deleting proposal:", err);
+    log.error("DAO", "Error deleting proposal", err);
     return { proposals: [], error: err?.message || "Network error" };
   }
 }
@@ -271,7 +272,7 @@ export async function castVote(
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[DAO] Vote failed: ${data.error}`);
+      log.error("DAO", `Vote failed: ${data.error}`);
       return { success: false, error: data.error || "Failed to cast vote" };
     }
     return {
@@ -280,7 +281,7 @@ export async function castVote(
       votingPower: data.votingPower,
     };
   } catch (err: any) {
-    console.error("[DAO] Error casting vote:", err);
+    log.error("DAO", "Error casting vote", err);
     return { success: false, error: err?.message || "Network error" };
   }
 }
@@ -303,12 +304,12 @@ export async function addComment(
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[DAO] Comment failed: ${data.error}`);
+      log.error("DAO", `Comment failed: ${data.error}`);
       return { success: false, error: data.error || "Failed to add comment" };
     }
     return { success: true, proposal: data.proposal as Proposal };
   } catch (err: any) {
-    console.error("[DAO] Error adding comment:", err);
+    log.error("DAO", "Error adding comment", err);
     return { success: false, error: err?.message || "Network error" };
   }
 }
@@ -390,7 +391,7 @@ export async function fetchDaoAdmins(
     setAdminListCache(data.admins);
     return { admins: data.admins, founder: data.founder, maxAdmins: data.maxAdmins };
   } catch (err: any) {
-    console.error("[DAO] Error fetching admin list:", err);
+    log.error("DAO", "Error fetching admin list", err);
     return { ...defaultResult, error: err?.message };
   }
 }
@@ -425,7 +426,7 @@ export async function addDaoAdmin(
     setAdminListCache(data.admins);
     return { admins: data.admins };
   } catch (err: any) {
-    console.error("[DAO] Error adding admin:", err);
+    log.error("DAO", "Error adding admin", err);
     return { admins: [], error: err?.message || "Network error" };
   }
 }
@@ -455,7 +456,7 @@ export async function removeDaoAdmin(
     setAdminListCache(data.admins);
     return { admins: data.admins };
   } catch (err: any) {
-    console.error("[DAO] Error removing admin:", err);
+    log.error("DAO", "Error removing admin", err);
     return { admins: [], error: err?.message || "Network error" };
   }
 }

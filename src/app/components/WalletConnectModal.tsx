@@ -24,6 +24,7 @@ import {
   DYNAMIC_LOGO,
 } from "../assets/brand";
 import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
+import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
 
 /**
@@ -211,6 +212,8 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     metaMaskAccount,
   } = useWallet();
 
+  const partnerLogos = usePartneredLogos();
+
   // Dynamic Labs — programmatic auth flow trigger.
   // DynamicHooksBridge is a child component that only mounts when the SDK is
   // available, keeping all hook calls unconditional (Rules of Hooks compliant).
@@ -345,7 +348,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
             <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
-            <img src={METAMASK_LOGO} alt="MetaMask" className="w-7 h-7 rounded-lg" />
+            <img src={partnerLogos.metamask} alt="MetaMask" className="w-7 h-7 rounded-lg" />
             <span className="text-white/90">MetaMask</span>
           </div>
           <div className="text-center py-10">
@@ -418,7 +421,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
             {selectedWallet && (
-              <img src={selectedWallet.logo} alt={selectedWallet.name} className="w-7 h-7 rounded-lg object-cover" />
+              <img src={selectedWallet.id === "hashpack" ? partnerLogos.hashpack : selectedWallet.logo} alt={selectedWallet.name} className="w-7 h-7 rounded-lg object-cover" />
             )}
             <span className="text-white/90">{selectedWallet?.name || "Connecting"}</span>
           </div>
@@ -506,7 +509,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
             className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-purple-500/30 hover:bg-white/[0.02] text-left mb-2"
           >
             <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0 bg-white/[0.03]">
-              <img src={wallet.logo} alt={wallet.name} className="w-11 h-11 object-cover" />
+              <img src={wallet.id === "hashpack" ? partnerLogos.hashpack : wallet.logo} alt={wallet.name} className="w-11 h-11 object-cover" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
@@ -533,7 +536,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-orange-500/30 hover:bg-white/[0.02] text-left mb-2"
         >
           <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
-            <img src={METAMASK_LOGO} alt="MetaMask" className="w-11 h-11 object-cover" />
+            <img src={partnerLogos.metamask} alt="MetaMask" className="w-11 h-11 object-cover" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
@@ -559,7 +562,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-blue-500/30 hover:bg-white/[0.02] text-left mb-2"
         >
           <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
-            <img src={DYNAMIC_LOGO} alt="Dynamic" className="w-11 h-11 object-cover" />
+            <img src={partnerLogos.dynamic} alt="Dynamic" className="w-11 h-11 object-cover" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">

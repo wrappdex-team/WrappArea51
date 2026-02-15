@@ -24,6 +24,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { toast } from "sonner";
 import { copyToClipboard } from "../utils/clipboard";
+import { Tip } from "./Tip";
 import {
   getHashScanTxUrl,
   diagnoseTransaction,

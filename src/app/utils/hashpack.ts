@@ -22,6 +22,7 @@ import "./polyfills";
 
 import type { HederaNetwork } from "./hedera";
 import { fetchAccountInfo } from "./hedera";
+import { log } from "./logger";
 import {
   getSignClient,
   proposeSession,
@@ -75,10 +76,10 @@ async function pollMirrorNodeReceipt(
       const txList = data.transactions || [];
       if (txList.length === 0) continue;
       const result = txList[0].result || "";
-      console.log(`[HBAR.\u0127] Mirror receipt: "${result}" (attempt ${i + 1})`);
+      log.info("HashPack", `Mirror receipt: "${result}" (attempt ${i + 1})`);
       return { result, status: result };
     } catch {
-      console.log(`[HBAR.\u0127] Mirror poll ${i + 1}/${maxAttempts}: network error`);
+      log.info("HashPack", `Mirror poll ${i + 1}/${maxAttempts}: network error`);
     }
   }
   return null;
@@ -124,7 +125,7 @@ onSessionDelete((topic) => {
   if (topic === _activeWcTopic) {
     _activeWcTopic = null;
     clearSession();
-    console.log("[HBAR.\u0127] WC session deleted remotely");
+    log.info("HashPack", "WC session deleted remotely");
   }
 });
 
@@ -185,7 +186,7 @@ export async function connectViaHashConnect(
     try {
       await openWCModal(uri);
     } catch (modalErr: any) {
-      console.warn("[HBAR.\u0127] WC Modal failed to open, falling back:", modalErr?.message);
+      log.warn("HashPack", "WC Modal failed to open, falling back", modalErr?.message);
       // If modal fails, the UI still has the URI via onPairingString
     }
 
@@ -237,13 +238,13 @@ export async function connectViaHashConnect(
     if (signal.aborted) throw new Error("Connection aborted");
 
     // Extract accounts
-    console.log("[HBAR.\u0127] WC session approved. Topic:", session?.topic);
-    console.log("[HBAR.\u0127] Namespaces:", JSON.stringify(session?.namespaces, null, 2)?.slice(0, 2000));
-    console.log("[HBAR.\u0127] Peer:", session?.peer?.metadata?.name);
+    log.info("HashPack", `WC session approved. Topic: ${session?.topic}`);
+    log.debug("HashPack", "Namespaces", JSON.stringify(session?.namespaces, null, 2)?.slice(0, 2000));
+    log.info("HashPack", `Peer: ${session?.peer?.metadata?.name}`);
 
     const accounts = getAccountsFromSession(session);
     if (accounts.length === 0) {
-      console.warn("[HBAR.\u0127] No Hedera accounts in session. Keys:", Object.keys(session?.namespaces || {}));
+      log.warn("HashPack", "No Hedera accounts in session. Keys: " + Object.keys(session?.namespaces || {}).join(", "));
       return {
         success: false,
         session: null,
@@ -258,7 +259,7 @@ export async function connectViaHashConnect(
     _activeWcTopic = session.topic;
     _activeNetwork = network;
 
-    console.log(`[HBAR.\u0127] Connected: ${accountId} (topic: ${session.topic})`);
+    log.info("HashPack", `Connected: ${accountId} (topic: ${session.topic})`);
 
     return await _buildSession(accountId, network, "walletconnect", session.topic);
   } catch (err: any) {
@@ -410,7 +411,7 @@ function _scheduleSessionValidation(session: HashPackSession): void {
 
         if (matchingSession) {
           // Found under a different topic — update our local state
-          console.log(`[HBAR.\u0127] Session topic updated: ${session.wcTopic?.slice(0, 8)} → ${matchingSession.topic.slice(0, 8)}`);
+          log.info("HashPack", `Session topic updated: ${session.wcTopic?.slice(0, 8)} → ${matchingSession.topic.slice(0, 8)}`);
           _activeWcTopic = matchingSession.topic;
           session.wcTopic = matchingSession.topic;
           try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch { /* */ }
@@ -418,7 +419,7 @@ function _scheduleSessionValidation(session: HashPackSession): void {
         }
 
         // No WC session at all — stale
-        console.warn(`[HBAR.\u0127] Stale session detected for ${session.accountId} — WC topic not found in SignClient`);
+        log.warn("HashPack", `Stale session detected for ${session.accountId} — WC topic not found in SignClient`);
         _activeWcTopic = null;
         try { localStorage.removeItem(SESSION_KEY); } catch { /* */ }
         _staleSessionCBs.forEach(cb => {
@@ -427,7 +428,7 @@ function _scheduleSessionValidation(session: HashPackSession): void {
       }
     } catch (err: any) {
       // SignClient init failed — can't validate, leave session as-is
-      console.warn("[HBAR.\u0127] Session validation skipped — SignClient unavailable:", err?.message);
+      log.warn("HashPack", "Session validation skipped — SignClient unavailable", err?.message);
     }
   }, 2000); // 2s delay — SignClient needs time to init + relay handshake
 }
@@ -445,7 +446,7 @@ export async function disconnectHashConnect(): Promise<void> {
       await disconnectSession(_activeWcTopic);
     }
   } catch (err) {
-    console.warn("[HBAR.\u0127] Disconnect error (non-fatal):", err);
+    log.warn("HashPack", "Disconnect error (non-fatal)", err);
   } finally {
     _activeWcTopic = null;
     clearSession();
@@ -490,7 +491,7 @@ export async function signTransaction(
   try {
     return await signTransactionViaWC(_activeWcTopic, _activeNetwork, accountId, transactionBytes);
   } catch (err: any) {
-    console.warn("[HBAR.\u0127] Sign failed:", err?.message);
+    log.warn("HashPack", "Sign failed", err?.message);
     return null;
   }
 }
@@ -511,7 +512,7 @@ export async function signMessage(
   try {
     return await signMessageViaWC(_activeWcTopic, _activeNetwork, accountId, message);
   } catch (err: any) {
-    console.warn("[HBAR.\u0127] Message sign failed:", err?.message);
+    log.warn("HashPack", "Message sign failed", err?.message);
     return null;
   }
 }

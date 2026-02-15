@@ -18,6 +18,7 @@
  */
 
 // ── Types ──────────────────────────────────────────────────────────
+import { log } from "./logger";
 
 export interface BonzoMarket {
   id: string;
@@ -410,7 +411,7 @@ async function fetchBonzoDataAPI(): Promise<BonzoAPIReserve[] | null> {
       }
 
       if (reserves && reserves.length > 0) {
-        console.log(`[HBAR.h] Bonzo Data API hit: ${endpoint} — ${reserves.length} reserves`);
+        log.info("Bonzo", `Data API hit: ${endpoint} — ${reserves.length} reserves`);
         return reserves;
       }
     } catch {
@@ -418,7 +419,7 @@ async function fetchBonzoDataAPI(): Promise<BonzoAPIReserve[] | null> {
     }
   }
 
-  console.log("[HBAR.h] Bonzo Data API: no working endpoint found, using fallback");
+  log.info("Bonzo", "Data API: no working endpoint found, using fallback");
   return null;
 }
 
@@ -447,7 +448,7 @@ async function fetchBonzoUserDataAPI(accountAddress: string): Promise<any | null
       if (!res.ok) continue;
       const data = await res.json();
       if (data) {
-        console.log(`[HBAR.h] Bonzo user data hit: ${endpoint}`);
+        log.info("Bonzo", `User data hit: ${endpoint}`);
         return data;
       }
     } catch {
@@ -680,13 +681,13 @@ export async function fetchBonzoMarkets(): Promise<{
       return { markets, stats };
     }
   } catch (err) {
-    console.log("[HBAR.h] Bonzo Data API error:", err);
+    log.warn("Bonzo", "Data API error", err);
   }
 
   // ── Strategy B: Mirror Node contract calls ──
   const providerAddr = BONZO_CONTRACTS.protocolDataProvider;
   if (providerAddr) {
-    console.log("[HBAR.h] Fetching Bonzo reserve data from Mirror Node...");
+    log.info("Bonzo", "Fetching reserve data from Mirror Node...");
     const results = await Promise.allSettled(
       BONZO_SUPPORTED_TOKENS.map((token) => fetchReserveOnChain(token, providerAddr))
     );
@@ -713,7 +714,7 @@ export async function fetchBonzoMarkets(): Promise<{
   }
 
   // ── Strategy C: Defaults ──
-  console.log("[HBAR.h] Bonzo: returning defaults (API unavailable, contract addresses not configured)");
+  log.info("Bonzo", "Returning defaults (API unavailable, contract addresses not configured)");
   const stats: BonzoProtocolStats = {
     totalSupplyUSD: null,
     totalBorrowUSD: null,
@@ -792,7 +793,7 @@ export async function fetchBonzoUserPositions(accountId: string): Promise<BonzoU
         positions,
       };
     } catch (err) {
-      console.log("[HBAR.h] Error parsing Bonzo user data:", err);
+      log.warn("Bonzo", "Error parsing user data", err);
     }
   }
 
@@ -862,7 +863,10 @@ export function isBonzoLendingPoolConfigured(): boolean {
 // ═══════════════════════════════════════════════════════════════════════
 // Callers must pre-validate: amount > 0, valid EVM addresses, no uint256 overflow.
 // Selectors are standard Aave V2 (Bonzo is a direct fork).
-// TODO: Token approval check before deposit()/repay() is not yet implemented.
+// Limitation: Token approval (ERC-20 `approve`) for the LendingPool is
+// assumed to be handled by the caller's UI flow before invoking these
+// helpers. A pre-flight allowance check can be added here when the
+// full supply/borrow transaction pipeline is integrated.
 // ═══════════════════════════════════════════════════════════════════════
 
 function padAddress(addr: string): string {

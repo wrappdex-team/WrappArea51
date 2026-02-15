@@ -1,6 +1,7 @@
 import { useTheme } from "../contexts/ThemeContext";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { log } from "../utils/logger";
 
 interface NewsItem {
   token: string;
@@ -44,7 +45,7 @@ export function NewsTicker() {
         setLastFetch(Date.now());
       }
     } catch (err) {
-      console.log("[NewsTicker] Fetch error (using fallback):", err);
+      log.warn("NewsTicker", "Fetch error (using fallback)", err);
       // Keep existing items (fallback or previously fetched)
     }
   }, []);

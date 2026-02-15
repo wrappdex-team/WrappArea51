@@ -36,8 +36,9 @@ function pushToBuffer(entry: LogEntry): void {
   }
 }
 
-// Expose buffer globally for debugging
-if (typeof window !== "undefined") {
+// Expose buffer globally for debugging (dev only — production builds must not
+// surface the ring buffer, which may contain request parameters or wallet data)
+if (typeof window !== "undefined" && ENV.IS_DEV) {
   (window as any).__HBARH_LOGS__ = _logBuffer;
 }
 

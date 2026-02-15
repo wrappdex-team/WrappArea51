@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Crown, Lock, ShieldCheck, AlertTriangle } from "lucide-react";
+import { log } from "../utils/logger";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { isVipEligible, verifyVipEligibilityDirect, getVipNftCount } from "../utils/vip";
@@ -102,7 +103,7 @@ async function verifyVipOnServer(): Promise<{
       error: null,
     };
   } catch (err: any) {
-    console.error("[VIP-GATE] Server verification failed:", err?.message || err);
+    log.error("VIP-GATE", "Server verification failed", err?.message || err);
     return {
       eligible: false,
       tokenBalance: 0,
@@ -202,7 +203,7 @@ export function CryptoHeatmapWidget() {
       if (serverResult.error === "no_session") {
         finalEligible = clientEligible;
       } else if (serverResult.error) {
-        console.warn("[VIP-GATE] Server verification error, using client-side check:", serverResult.error);
+        log.warn("VIP-GATE", "Server verification error, using client-side check", serverResult.error);
         finalEligible = clientEligible;
       } else {
         finalEligible = serverResult.eligible;
@@ -328,7 +329,7 @@ export function CryptoHeatmapWidget() {
                 : "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%)",
             }}
           >
-            {/* Fake heatmap grid pattern */}
+            {/* Decorative shimmer grid pattern */}
             <div className="absolute inset-0 grid grid-cols-8 grid-rows-4 gap-0.5 p-4 opacity-20">
               {Array.from({ length: 32 }).map((_, i) => (
                 <div

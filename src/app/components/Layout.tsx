@@ -23,6 +23,7 @@ import { ScrollToTop } from "./ScrollToTop";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { HolidayLogo } from "./HolidayLogo";
+import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useBrandLogos } from "../hooks/useBrandLogos";
 
 export function Layout() {
@@ -30,6 +31,7 @@ export function Layout() {
   const { connectedWallets, disconnectWallet, primaryWallet, hederaAccount, hbarPrice, metaMaskAccount, ethPrice, hashPackProfile, hashPackSession } = useWallet();
   const { theme, toggleTheme, isDark, accent, toggleAccent, isSky } = useTheme();
   const brandLogos = useBrandLogos();
+  const partnerLogos = usePartneredLogos();
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showWalletMenu, setShowWalletMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -43,6 +45,13 @@ export function Layout() {
   const tokens = hederaAccount?.tokens ?? [];
   const vipEligible = isVipEligible(tokens, hederaNetwork);
   const vipActive = vipEligible && vipPrefs.active;
+
+  // Re-verify VIP prefs integrity once the wallet account is known —
+  // detects localStorage tampering between sessions.
+  useEffect(() => {
+    const acct = hederaAccount?.accountId ?? hashPackSession?.accountId;
+    if (acct) setVipPrefs(loadVipPrefs(acct));
+  }, [hederaAccount?.accountId, hashPackSession?.accountId]);
 
   // Apply VIP CSS classes to <html> element
   useEffect(() => {
@@ -373,14 +382,14 @@ export function Layout() {
                           />
                         ) : (
                           <img
-                            src={HASHPACK_LOGO}
+                            src={partnerLogos.hashpack}
                             alt="HashPack"
                             className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex-shrink-0 object-cover"
                           />
                         )
                       ) : primaryWallet.connector === "MetaMask" ? (
                         <img
-                          src={METAMASK_LOGO}
+                          src={partnerLogos.metamask}
                           alt="MetaMask"
                           className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex-shrink-0 object-cover"
                         />
@@ -467,13 +476,13 @@ export function Layout() {
                             <div className="flex items-center gap-3">
                               {wallet.type === "hedera" ? (
                                 <img
-                                  src={HASHPACK_LOGO}
+                                  src={partnerLogos.hashpack}
                                   alt="HashPack"
                                   className="w-8 h-8 rounded-lg flex-shrink-0 object-cover"
                                 />
                               ) : wallet.connector === "MetaMask" ? (
                                 <img
-                                  src={METAMASK_LOGO}
+                                  src={partnerLogos.metamask}
                                   alt="MetaMask"
                                   className="w-8 h-8 rounded-lg flex-shrink-0 object-cover"
                                 />

@@ -10,6 +10,7 @@ import { WalletProvider } from "./contexts/WalletContext";
 import { DynamicSDKWrapper, isDynamicSDKAvailable } from "./components/DynamicSDKWrapper";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { SigningProvider } from "./contexts/SigningContext";
+import { PartneredLogosProvider } from "./contexts/PartneredLogosContext";
 import { initPerformanceMonitoring } from "./utils/performance";
 import { runHealthChecks } from "./utils/health";
 import { preloadCriticalRoutes } from "./utils/preload";
@@ -32,7 +33,7 @@ function LazyDynamicBridge() {
         import("./utils/dynamic-bridge")
           .then((mod) => setBridge(() => mod.DynamicWalletBridge))
           .catch((err) =>
-            console.warn("[App] Failed to load DynamicWalletBridge:", err.message)
+            log.warn("App", "Failed to load DynamicWalletBridge", err.message)
           );
         return true;
       }
@@ -84,8 +85,10 @@ export default function App() {
         <ThemeProvider>
           <WalletProvider>
             <SigningProvider>
-              <LazyDynamicBridge />
-              <RouterProvider router={router} />
+              <PartneredLogosProvider>
+                <LazyDynamicBridge />
+                <RouterProvider router={router} />
+              </PartneredLogosProvider>
             </SigningProvider>
           </WalletProvider>
         </ThemeProvider>

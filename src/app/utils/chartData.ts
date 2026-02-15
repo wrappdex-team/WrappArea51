@@ -1,6 +1,7 @@
 import type { CandlestickData } from "lightweight-charts";
 import { fetchCoinCapHistory, type HistoryPoint, COINCAP_ID_MAP, COIN_ID_MAP } from "./coingecko";
 import { TOKEN_REGISTRY } from "./tokens";
+import { log } from "./logger";
 
 // ── Candle colors (green up, blue down — matches screenshot) ─────────
 export const CANDLE_COLORS = {
@@ -87,7 +88,7 @@ async function fetchBinanceKlines(
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      console.debug(`[Chart] Binance HTTP ${res.status} for ${binanceSymbol}`);
+      log.debug("Chart", `Binance HTTP ${res.status} for ${binanceSymbol}`);
       return [];
     }
 
@@ -112,7 +113,7 @@ async function fetchBinanceKlines(
     });
   } catch (err) {
     clearTimeout(timeoutId);
-    console.debug("[Chart] Binance fetch failed:", (err as Error).message);
+    log.debug("Chart", "Binance fetch failed", (err as Error).message);
     return [];
   }
 }
@@ -137,7 +138,7 @@ async function fetchCoinGeckoOHLC(
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      console.debug(`[Chart] CoinGecko OHLC HTTP ${res.status} for ${geckoId}`);
+      log.debug("Chart", `CoinGecko OHLC HTTP ${res.status} for ${geckoId}`);
       return [];
     }
 
@@ -163,7 +164,7 @@ async function fetchCoinGeckoOHLC(
     });
   } catch (err) {
     clearTimeout(timeoutId);
-    console.debug("[Chart] CoinGecko OHLC fetch failed:", (err as Error).message);
+    log.debug("Chart", "CoinGecko OHLC fetch failed", (err as Error).message);
     return [];
   }
 }
@@ -210,7 +211,7 @@ async function fetchCoinCapOHLC(
       if (bars.length >= 3) return bars;
     }
   } catch {
-    console.debug("[Chart] CoinCap history failed for", symbol);
+    log.debug("Chart", `CoinCap history failed for ${symbol}`);
   }
   return [];
 }
@@ -301,7 +302,7 @@ export async function fetchRealCandlesWithSource(
     if (binanceCandles.length >= 5) {
       const result: ChartResult = { candles: binanceCandles, source: "binance" };
       chartCache.set(cacheKey, { data: result, timestamp: Date.now() });
-      console.debug(`[Chart] ${symbol}/${barPeriod}: ${binanceCandles.length} candles from Binance`);
+      log.debug("Chart", `${symbol}/${barPeriod}: ${binanceCandles.length} candles from Binance`);
       return result;
     }
   } catch { /* continue to next source */ }
@@ -312,7 +313,7 @@ export async function fetchRealCandlesWithSource(
     if (geckoCandles.length >= 5) {
       const result: ChartResult = { candles: geckoCandles, source: "coingecko" };
       chartCache.set(cacheKey, { data: result, timestamp: Date.now() });
-      console.debug(`[Chart] ${symbol}/${barPeriod}: ${geckoCandles.length} candles from CoinGecko OHLC`);
+      log.debug("Chart", `${symbol}/${barPeriod}: ${geckoCandles.length} candles from CoinGecko OHLC`);
       return result;
     }
   } catch { /* continue to next source */ }
@@ -323,7 +324,7 @@ export async function fetchRealCandlesWithSource(
     if (coincapCandles.length >= 5) {
       const result: ChartResult = { candles: coincapCandles, source: "coincap" };
       chartCache.set(cacheKey, { data: result, timestamp: Date.now() });
-      console.debug(`[Chart] ${symbol}/${barPeriod}: ${coincapCandles.length} candles from CoinCap`);
+      log.debug("Chart", `${symbol}/${barPeriod}: ${coincapCandles.length} candles from CoinCap`);
       return result;
     }
   } catch { /* continue to synthetic */ }
@@ -334,7 +335,7 @@ export async function fetchRealCandlesWithSource(
   const cfg = SYNTHETIC_CONFIG[barPeriod] || SYNTHETIC_CONFIG["1D"];
   const syntheticCandles = generateCandlestickData(price, vol, cfg.count, cfg.secPerBar);
   const result: ChartResult = { candles: syntheticCandles, source: "synthetic" };
-  console.debug(`[Chart] ${symbol}/${barPeriod}: synthetic fallback (${syntheticCandles.length} candles)`);
+  log.debug("Chart", `${symbol}/${barPeriod}: synthetic fallback (${syntheticCandles.length} candles)`);
   return result;
 }
 

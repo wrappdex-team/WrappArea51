@@ -1,4 +1,6 @@
 import { Component, type ReactNode } from "react";
+import { ENV } from "../utils/env";
+import { log } from "../utils/logger";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -11,6 +13,21 @@ interface ErrorBoundaryState {
   errorInfo: string;
   /** Number of chunk-load auto-retries already attempted */
   chunkRetryCount: number;
+}
+
+/**
+ * Derive a short, deterministic reference code from an error message.
+ * Uses FNV-1a 32-bit for speed — not cryptographic, just a stable
+ * fingerprint users can quote in support requests without leaking
+ * module paths, stack frames, or internal identifiers.
+ */
+function errorRefCode(msg: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < msg.length; i++) {
+    h ^= msg.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return "ERR-" + ((h >>> 0).toString(36).toUpperCase().padStart(7, "0"));
 }
 
 /**
@@ -48,9 +65,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       msg.includes("error loading dynamically imported module");
 
     if (isChunkError && this.state.chunkRetryCount < ErrorBoundary.MAX_CHUNK_RETRIES) {
-      console.warn(
-        `[ErrorBoundary] Chunk load failure detected — auto-retrying (attempt ${this.state.chunkRetryCount + 1}/${ErrorBoundary.MAX_CHUNK_RETRIES})...`
-      );
+      log.warn("ErrorBoundary", `Chunk load failure detected — auto-retrying (attempt ${this.state.chunkRetryCount + 1}/${ErrorBoundary.MAX_CHUNK_RETRIES})`);
       // Increment the retry counter and reset the error state to trigger a
       // re-render, which will re-attempt the lazy import (the retryImport
       // wrapper in routes.tsx handles the actual retry logic with backoff)
@@ -66,13 +81,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     }
 
     if (isChunkError) {
-      console.error(
-        `[ErrorBoundary] Chunk load failure persists after ${ErrorBoundary.MAX_CHUNK_RETRIES} retries — showing error UI`
-      );
+      log.error("ErrorBoundary", `Chunk load failure persists after ${ErrorBoundary.MAX_CHUNK_RETRIES} retries — showing error UI`);
     }
 
     // Log to console for debugging
-    console.error("[ErrorBoundary] Caught render error:", error, errorInfo);
+    log.error("ErrorBoundary", "Caught render error", { error, errorInfo });
   }
 
   handleReset = (): void => {
@@ -134,7 +147,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             temporary issue — try refreshing or navigating back.
           </p>
 
-          {/* Error details (collapsed) */}
+          {/* Error details — production shows only a reference code;
+              development shows full message + component stack */}
           {this.state.error && (
             <details
               className={`text-left mb-5 rounded-xl overflow-hidden border ${
@@ -151,20 +165,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 Error Details
               </summary>
               <div className="px-4 pb-3">
-                <code
-                  className={`text-[11px] block whitespace-pre-wrap break-all ${
-                    isDark ? "text-red-400" : "text-red-600"
-                  }`}
-                >
-                  {this.state.error.message}
-                </code>
-                {this.state.errorInfo && (
+                {ENV.IS_DEV ? (
+                  <>
+                    <code
+                      className={`text-[11px] block whitespace-pre-wrap break-all ${
+                        isDark ? "text-red-400" : "text-red-600"
+                      }`}
+                    >
+                      {this.state.error.message}
+                    </code>
+                    {this.state.errorInfo && (
+                      <code
+                        className={`text-[10px] block mt-2 whitespace-pre-wrap break-all max-h-32 overflow-y-auto ${
+                          isDark ? "text-slate-500" : "text-gray-400"
+                        }`}
+                      >
+                        {this.state.errorInfo.slice(0, 500)}
+                      </code>
+                    )}
+                  </>
+                ) : (
                   <code
-                    className={`text-[10px] block mt-2 whitespace-pre-wrap break-all max-h-32 overflow-y-auto ${
-                      isDark ? "text-slate-500" : "text-gray-400"
+                    className={`text-[11px] block ${
+                      isDark ? "text-slate-400" : "text-gray-500"
                     }`}
                   >
-                    {this.state.errorInfo.slice(0, 500)}
+                    Reference: {errorRefCode(this.state.error.message)}
                   </code>
                 )}
               </div>

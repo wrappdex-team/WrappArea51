@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { log } from "../utils/logger";
 import {
   Zap,
   Shield,
@@ -249,7 +250,7 @@ function ActionModal({
       const errMsg = err?.message || String(err);
       setTxResult({ success: false, txId: null, error: errMsg });
       toast.error("Transaction Error", { description: errMsg });
-      console.log(`[HBAR.h] Bonzo ${type} error:`, err);
+      log.error("Bonzo", `${type} error`, err);
     } finally {
       setLoading(false);
     }
@@ -508,7 +509,7 @@ export function BonzoLendBorrow() {
       const summary = await fetchBonzoUserPositions(accountId);
       setUserSummary(summary);
     } catch (err) {
-      console.log("[HBAR.h] Error loading Bonzo user positions:", err);
+      log.warn("Bonzo", "Error loading user positions", err);
     }
   }, [accountId]);
 

@@ -7,6 +7,7 @@ import {
   useRef,
   ReactNode,
 } from "react";
+import { log } from "../utils/logger";
 import type { HederaAccountInfo, HederaNetwork } from "../utils/hedera";
 import { fetchAccountInfo, fetchHbarPrice } from "../utils/hedera";
 import type { MetaMaskAccountInfo } from "../utils/metamask";
@@ -194,7 +195,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // REC-004: Listen for stale WC session detection (fires ~2s after mount)
   useEffect(() => {
     const unsub = onStaleSession((accountId) => {
-      console.warn(`[WalletContext] Stale session for ${accountId} — clearing wallet state`);
+      log.warn("WalletContext", `Stale session for ${accountId} — clearing wallet state`);
       setHashPackSession(null);
       setHederaAccount(null);
       setHashPackProfile(null);
@@ -352,7 +353,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch {
-      console.debug("Failed to restore Hedera account from session");
+      log.debug("WalletContext", "Failed to restore Hedera account from session");
     }
   }, []);
 

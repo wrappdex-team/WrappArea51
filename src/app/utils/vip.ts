@@ -123,11 +123,39 @@ export async function verifyVipEligibilityDirect(
 
 const PREFS_KEY = "hbarh-vip-prefs";
 
+/**
+ * Lightweight keyed integrity hash (FNV-1a 64-bit, split into two 32-bit lanes).
+ * Not a cryptographic HMAC — purely tamper-detection for casual localStorage edits.
+ * The account ID binds the signature to the specific wallet, so prefs copied from
+ * another session or manually crafted in devtools will fail verification.
+ */
+const VIP_SIG_PEPPER = "hbarh:9356476:vip-integrity";
+
+function computeVipSig(payload: string, accountId: string): string {
+  const input = `${VIP_SIG_PEPPER}:${accountId}:${payload}`;
+  let h1 = 0x811c9dc5; // FNV offset basis
+  let h2 = 0xcbf29ce4;
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193); // FNV prime
+    h2 ^= c ^ (i & 0xff);
+    h2 = Math.imul(h2, 0x01000193);
+  }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+}
+
 export interface VipPrefs {
   /** Master VIP toggle — all features off if false */
   active: boolean;
   /** Per-feature toggles */
   features: Record<VipFeatureId, boolean>;
+}
+
+/** Stored shape — extends VipPrefs with integrity fields (stripped on read) */
+interface StoredVipPrefs extends VipPrefs {
+  _acct?: string;
+  _sig?: string;
 }
 
 const DEFAULT_PREFS: VipPrefs = {
@@ -139,12 +167,33 @@ const DEFAULT_PREFS: VipPrefs = {
   },
 };
 
-export function loadVipPrefs(): VipPrefs {
+/**
+ * Load VIP preferences from localStorage.
+ * When `accountId` is provided and stored data carries a signature, verifies
+ * integrity — a mismatch (manual edit / cross-session copy) returns defaults
+ * with `active: false`, silently neutralising the tampered data.
+ */
+export function loadVipPrefs(accountId?: string): VipPrefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      // Merge with defaults to handle new features
+      const parsed: StoredVipPrefs = JSON.parse(raw);
+
+      // ── Integrity gate ────────────────────────────────────────
+      if (accountId && parsed._sig) {
+        // Re-derive payload (prefs-only, no meta fields) and verify
+        const canonical: VipPrefs = {
+          active: parsed.active ?? false,
+          features: { ...DEFAULT_PREFS.features, ...parsed.features },
+        };
+        const expected = computeVipSig(JSON.stringify(canonical), accountId);
+        if (parsed._acct !== accountId || parsed._sig !== expected) {
+          // Tampered or copied from another wallet — silently reset
+          return { ...DEFAULT_PREFS, features: { ...DEFAULT_PREFS.features } };
+        }
+      }
+
+      // Merge with defaults to handle new features added post-save
       return {
         active: parsed.active ?? false,
         features: { ...DEFAULT_PREFS.features, ...parsed.features },
@@ -154,9 +203,23 @@ export function loadVipPrefs(): VipPrefs {
   return { ...DEFAULT_PREFS, features: { ...DEFAULT_PREFS.features } };
 }
 
-export function saveVipPrefs(prefs: VipPrefs): void {
+/**
+ * Persist VIP preferences to localStorage.
+ * When `accountId` is provided, a keyed integrity signature is embedded so
+ * `loadVipPrefs(accountId)` can detect casual tampering on next read.
+ */
+export function saveVipPrefs(prefs: VipPrefs, accountId?: string): void {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    const canonical: VipPrefs = {
+      active: prefs.active,
+      features: { ...prefs.features },
+    };
+    const stored: StoredVipPrefs = { ...canonical };
+    if (accountId) {
+      stored._acct = accountId;
+      stored._sig = computeVipSig(JSON.stringify(canonical), accountId);
+    }
+    localStorage.setItem(PREFS_KEY, JSON.stringify(stored));
     // Defer the custom event so it never fires inside a React state updater
     // (synchronous dispatch inside setPrefs() would violate the
     //  "don't setState in another component during render" rule).

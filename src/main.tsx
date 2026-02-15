@@ -21,6 +21,23 @@ function showFatalError(error: unknown): void {
 
   console.error("[HBAR.h] Fatal error during app initialization:", error);
 
+  // In production, suppress raw error details (module paths, stack traces)
+  // and show only a deterministic reference code. Dev builds retain full details.
+  let detailsHtml: string;
+  if (import.meta.env.DEV) {
+    // Escape HTML entities to prevent XSS from error messages
+    const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    detailsHtml = `${escape(msg)}\n\n${escape(stack.slice(0, 600))}`;
+  } else {
+    // FNV-1a 32-bit fingerprint — deterministic, leaks no internal paths
+    let h = 0x811c9dc5;
+    for (let i = 0; i < msg.length; i++) {
+      h ^= msg.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    detailsHtml = `Reference: ERR-${(h >>> 0).toString(36).toUpperCase().padStart(7, "0")}`;
+  }
+
   rootEl.innerHTML = `
     <div style="
       min-height: 100vh;
@@ -91,7 +108,7 @@ function showFatalError(error: unknown): void {
             margin: 8px 0 0;
             max-height: 150px;
             overflow-y: auto;
-          ">${msg}\n\n${stack.slice(0, 600)}</pre>
+          ">${detailsHtml}</pre>
         </details>
       </div>
     </div>

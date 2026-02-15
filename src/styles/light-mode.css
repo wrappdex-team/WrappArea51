@@ -375,6 +375,11 @@ html.light-mode.accent-sky header {
 }
 
 /* --- Gradient Backgrounds: pink→purple to sky→blue --- */
+/* CSS custom property for inline-styled stat card accent overlays (avoids attribute selector trap) */
+html.accent-sky {
+  --accent-stat-from: rgba(14,165,233,0.05);
+  --accent-stat-to: rgba(59,130,246,0.05);
+}
 html.accent-sky [class*="from-pink-600"][class*="to-purple-600"] {
   --tw-gradient-from: #0ea5e9 !important;
   --tw-gradient-to: #2563eb !important;

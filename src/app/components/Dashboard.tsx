@@ -18,7 +18,7 @@ import type { CandlestickData } from "lightweight-charts";
 import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
 import { playVipButtonChime } from "../utils/sounds";
 import { SiteActivity } from "./SiteActivity";
-import { HBARH_LOGO_DARK, HBARH_LOGO_LIGHT } from "../assets/brand";
+import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { TOKEN_LOGOS } from "../utils/coingecko";
 import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
 import { DashboardStatsSkeleton, MarketListSkeleton } from "./Skeletons";
@@ -109,6 +109,7 @@ function OracleDot({ source, isDark }: { source?: OracleSource; isDark: boolean 
 
 export function Dashboard() {
   const { isDark, isSky } = useTheme();
+  const partnerLogos = usePartneredLogos();
   const [marketFilter, setMarketFilter] = useState<"all" | "defi" | "layer1" | "stablecoin">("all");
   const [marketData, setMarketData] = useState<MarketAsset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,6 +129,11 @@ export function Dashboard() {
     window.addEventListener("vip-prefs-changed", handler);
     return () => window.removeEventListener("vip-prefs-changed", handler);
   }, []);
+
+  // Re-verify VIP prefs integrity once the wallet account is known
+  useEffect(() => {
+    if (hederaAccount?.accountId) setVipPrefsState(loadVipPrefs(hederaAccount.accountId));
+  }, [hederaAccount?.accountId]);
 
   const vipActive = useMemo(() => {
     if (!hederaAccount?.tokens) return false;
@@ -250,7 +256,7 @@ export function Dashboard() {
       change: hbarhData.change24h,
       volume: formatUsdCompact(hbarhData.volume24h),
       marketCap: "—",
-      logo: isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT,
+      logo: isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight,
       category: "defi",
       chartData: generateCandlestickData("HBAR.ħ", hbarhData.priceUsd, 0.18),
       oracleSource: undefined, // Handled with custom DexScreener badge
@@ -511,7 +517,7 @@ export function Dashboard() {
               <div className="flex items-center justify-between mb-3">
                 <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>HBAR.ħ</span>
                 <img
-                  src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT}
+                  src={isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight}
                   alt="HBAR.ħ"
                   className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
                 />

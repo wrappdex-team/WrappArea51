@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { log } from "../utils/logger";
 import {
   ArrowDownUp,
   ArrowRightLeft,
@@ -546,7 +547,7 @@ export function SmartLiquidity() {
       setPools(poolData);
       setStats(statsData);
     } catch (err) {
-      console.debug("[SmartLiquidity] Load failed:", err);
+      log.debug("SmartLiquidity", "Load failed", err);
     }
     setLoading(false);
   }, []);

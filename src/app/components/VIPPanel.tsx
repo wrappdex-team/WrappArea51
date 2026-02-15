@@ -52,6 +52,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
   const balance = getHbarhBalance(tokens, hederaNetwork);
   const nftCount = getVipNftCount(tokens);
   const connected = !!hashPackSession?.accountId;
+  const walletAccountId = hashPackSession?.accountId;
 
   // The user is only truly eligible if BOTH the cached check AND the
   // direct verification agree (or verification hasn't run yet but cached says yes).
@@ -89,7 +90,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
         if (!finalEligible && prefs.active) {
           const next = { ...prefs, active: false };
           setPrefs(next);
-          saveVipPrefs(next);
+          saveVipPrefs(next, walletAccountId);
         }
       }
 
@@ -140,13 +141,13 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
 
     setPrefs((prev) => {
       const next = { ...prev, active: !prev.active };
-      saveVipPrefs(next);
+      saveVipPrefs(next, walletAccountId);
       if (next.active && eligible) {
         playVipUnlock();
       }
       return next;
     });
-  }, [eligible, prefs.active, hashPackSession?.accountId, nftCount]);
+  }, [eligible, prefs.active, hashPackSession?.accountId, nftCount, walletAccountId]);
 
   const toggleFeature = useCallback((id: VipFeatureId) => {
     setPrefs((prev) => {
@@ -154,11 +155,11 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
         ...prev,
         features: { ...prev.features, [id]: !prev.features[id] },
       };
-      saveVipPrefs(next);
+      saveVipPrefs(next, walletAccountId);
       if (next.features[id]) playVipConfirm();
       return next;
     });
-  }, []);
+  }, [walletAccountId]);
 
   if (!open) return null;
 

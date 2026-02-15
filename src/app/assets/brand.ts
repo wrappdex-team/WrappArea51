@@ -8,9 +8,19 @@
  * For production builds these must be plain strings.
  */
 
+// ── Production logo imports (Figma asset scheme) ─────────────────────
+// These are the official partner logos provided for rollout.
+// HBAR.ħ Protocol — legally distinct from Hedera's HBAR. Two variants:
+//   Dark  = black coin, white ħ glyph  → use on dark backgrounds
+//   Light = white coin, black ħ glyph  → use on light backgrounds
+import hbarhLogoDark from "figma:asset/aad67c07eab3fe55124f5880ab1f99b4ba343a04.png";
+import hbarhLogoLight from "figma:asset/e519d0b3e9b99e29ac52b83f9288a29bac80e611.png";
+// MetaMask — official fox logo on teal circle
+import metamaskLogoOfficial from "figma:asset/7a180712979aa0489b40bc8e6089a93b24e066f7.png";
+
 // ── Wrappdex main logos (light & dark mode) ──────────────────────────
-// PLACEHOLDER: Replace with official Wrappdex brand kit URLs (self-hosted
-// or CDN). The inline SVGs below are temporary text-only stand-ins.
+// Data-URI SVG wordmarks — zero network requests, instant render.
+// Swap for CDN-hosted brand kit assets (PNG / SVG) when available.
 // Dark mode wordmark — light text on transparent, for dark backgrounds
 const wrappdexLogoDark = `data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60"><rect width="280" height="60" rx="8" fill="none"/><text x="140" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-0.5" fill="#e2e8f0">WRAPP<tspan fill="#ec4899">DEX</tspan></text></svg>`
@@ -22,26 +32,30 @@ const wrappdexLogoLight = `data:image/svg+xml,${encodeURIComponent(
 )}`;
 
 // HashPack — official logo from their public GitHub assets
-const hashpackLogoAsset =
-  "https://raw.githubusercontent.com/nicholashc/HashPack/refs/heads/main/hashpack-logo.png";
+const hashpackLogoAsset = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#0c0c14"/><g fill="#c4b5fd"><rect x="11" y="12" width="3" height="16" rx="1.5"/><rect x="26" y="12" width="3" height="16" rx="1.5"/><rect x="14" y="17" width="12" height="3" rx="1"/><rect x="14" y="22" width="12" height="3" rx="1"/></g></svg>`
+)}`;
 
-// MetaMask — official fox logo from their public brand resources
-const metamaskLogoAsset =
-  "https://raw.githubusercontent.com/nicholashc/MetaMask/refs/heads/main/metamask-fox.svg";
+// MetaMask — production fox logo (imported above), SVG kept only as emergency fallback
+const metamaskLogoAsset = metamaskLogoOfficial;
 
 // ── HBAR logo (coin icon) ─────────────────────────────────────────────
 // The standard Hedera HBAR coin image from CoinGecko CDN.
+// This is HEDERA'S logo — NOT HBAR.ħ Protocol's logo. These are legally
+// distinct brands and must never be mixed.
 export const HBAR_LOGO =
   "https://assets.coingecko.com/coins/images/3688/large/hbar.png";
 
-// Alias used in some components — identical to HBAR_LOGO for now.
-// If HBAR.ħ gets its own distinct token icon on CoinGecko, update here.
-export const HBARH_LOGO_DARK = HBAR_LOGO;
-export const HBARH_LOGO_LIGHT = HBAR_LOGO;
+// ── HBAR.ħ Protocol token logo ────────────────────────────────────────
+// Distinct from Hedera's HBAR logo. The HBAR.ħ Protocol is a separate
+// entity with its own branding — official dark/light coin assets imported
+// at module top. These render immediately without waiting for the bucket.
+export const HBARH_LOGO_DARK = hbarhLogoDark;
+export const HBARH_LOGO_LIGHT = hbarhLogoLight;
 
 // ── HBAR.ħ branding wordmark (header / splash) ───────────────────────
-// PLACEHOLDER: Swap these two exports with the official logo URLs once
-// the brand kit assets (transparent PNG / SVG) are provided.
+// Maps to the Wrappdex wordmarks. Update these exports to point at
+// dedicated HBAR.ħ branding assets if the brand kit diverges.
 export const HBARH_BRANDING_DARK = wrappdexLogoDark;
 export const HBARH_BRANDING_LIGHT = wrappdexLogoLight;
 

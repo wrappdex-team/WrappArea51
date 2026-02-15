@@ -9,9 +9,15 @@
  * which only catches errors within <Outlet> (lazy route components).
  * AppErrorBoundary catches errors in ThemeProvider, WalletProvider,
  * DynamicContextProvider, Layout itself, etc.
+ *
+ * In production builds the raw error message is replaced with a
+ * deterministic reference code (FNV-1a hash) to prevent information
+ * disclosure of module paths, stack traces, or internal identifiers.
  */
 
 import { Component, type ReactNode } from "react";
+import { ENV } from "../utils/env";
+import { log } from "../utils/logger";
 
 interface Props {
   children: ReactNode;
@@ -20,6 +26,19 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+}
+
+/**
+ * Derive a short reference code from the error message (FNV-1a 32-bit).
+ * Deterministic so the same error always produces the same code.
+ */
+function errorRefCode(msg: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < msg.length; i++) {
+    h ^= msg.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return "ERR-" + ((h >>> 0).toString(36).toUpperCase().padStart(7, "0"));
 }
 
 export class AppErrorBoundary extends Component<Props, State> {
@@ -33,17 +52,17 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    console.error(
-      "[AppErrorBoundary] Uncaught error in React tree:",
+    log.error("AppErrorBoundary", "Uncaught error in React tree", {
       error,
-      info.componentStack?.slice(0, 500) || ""
-    );
+      componentStack: info.componentStack?.slice(0, 500) || "",
+    });
   }
 
   render(): ReactNode {
     if (!this.state.hasError) return this.props.children;
 
     const msg = this.state.error?.message || "An unexpected error occurred";
+    const displayMsg = ENV.IS_DEV ? msg : `Reference: ${errorRefCode(msg)}`;
 
     return (
       <div
@@ -161,7 +180,7 @@ export class AppErrorBoundary extends Component<Props, State> {
                 overflowY: "auto",
               }}
             >
-              {msg}
+              {displayMsg}
             </pre>
           </details>
         </div>

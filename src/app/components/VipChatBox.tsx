@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { getSessionToken } from "../utils/auth";
 import { playTokenHover, playVipConfirm } from "../utils/sounds";
+import { log } from "../utils/logger";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 const MAX_WORDS = 25;
@@ -153,7 +154,7 @@ export function VipChatBox({
     } catch (err) {
       setError("Network error");
       setTimeout(() => setError(""), 3000);
-      console.error("[VipChat] Send error:", err);
+      log.error("VipChat", "Send error", err);
     } finally {
       setSending(false);
     }

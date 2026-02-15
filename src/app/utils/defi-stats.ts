@@ -15,6 +15,8 @@
  * API docs: https://docs.saucerswap.finance (public, no auth)
  */
 
+import { log } from "./logger";
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface LivePool {
@@ -241,7 +243,7 @@ export async function fetchDeFiPoolData(): Promise<{
     return { pools: _cache.pools, stats: _cache.stats };
   }
 
-  console.log("[HBAR.h] Fetching live SaucerSwap pool data...");
+  log.info("DeFiStats", "Fetching live SaucerSwap pool data...");
 
   // Fetch V1 and V2 pools in parallel
   const [v1Data, v2Data] = await Promise.all([
@@ -254,13 +256,13 @@ export async function fetchDeFiPoolData(): Promise<{
   if (v1Data) {
     const v1Pools = parsePoolsResponse(v1Data, "v1");
     allPools.push(...v1Pools);
-    console.log(`[HBAR.h] Parsed ${v1Pools.length} V1 pools`);
+    log.info("DeFiStats", `Parsed ${v1Pools.length} V1 pools`);
   }
 
   if (v2Data) {
     const v2Pools = parsePoolsResponse(v2Data, "v2");
     allPools.push(...v2Pools);
-    console.log(`[HBAR.h] Parsed ${v2Pools.length} V2 pools`);
+    log.info("DeFiStats", `Parsed ${v2Pools.length} V2 pools`);
   }
 
   // Deduplicate by id (prefer V2 if same id exists)
@@ -296,14 +298,15 @@ export async function fetchDeFiPoolData(): Promise<{
   };
 
   if (isLive) {
-    console.log(
-      `[HBAR.h] DeFi stats: ${allPools.length} pools, ` +
+    log.info(
+      "DeFiStats",
+      `${allPools.length} pools, ` +
       `TVL $${(totalTVL / 1e6).toFixed(2)}M, ` +
       `24h Vol $${(totalVolume24h / 1e6).toFixed(2)}M, ` +
       `Avg APR ${stats.avgAPR}%`
     );
   } else {
-    console.log("[HBAR.h] SaucerSwap pool APIs unreachable — using fallback data");
+    log.info("DeFiStats", "SaucerSwap pool APIs unreachable — using fallback data");
   }
 
   _cache = { pools: allPools, stats, ts: Date.now() };

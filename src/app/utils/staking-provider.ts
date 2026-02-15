@@ -162,13 +162,9 @@ export async function fetchStakingPools(): Promise<{
   pools: StakingPool[];
   stats: StakingStats;
 }> {
-  // ──────────────────────────────────────────────────────────────
-  // TODO: Replace with live data fetch:
-  //
-  // const res = await fetch("https://api.hbarh.app/v1/staking/pools");
-  // const data = await res.json();
-  // return parseLiveStakingData(data);
-  // ──────────────────────────────────────────────────────────────
+  // Pool definitions with null metrics — the DeFi component renders these
+  // with "Pending" badges until a live staking indexer is connected.
+  // See module header for the activation steps.
 
   const pools = STAKING_POOLS;
   const active = pools.filter((p) => p.status === "active").length;
@@ -190,5 +186,5 @@ export async function fetchStakingPools(): Promise<{
  * Called when wallet connects or network changes.
  */
 export function invalidateStakingCache(): void {
-  // No cache yet — placeholder for when live data is implemented
+  // No-op: cache invalidation will be wired up when a live data source is connected.
 }

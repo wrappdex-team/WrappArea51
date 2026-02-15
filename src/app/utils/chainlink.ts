@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────
 // Chainlink Decentralized Oracle Price Feed Integration
 // ─────────────────────────────────────────────────────────────────────
+import { log } from "./logger";
 // Reads live USD prices directly from Chainlink's decentralized oracle
 // network by calling latestRoundData() on Aggregator V3 contracts
 // deployed on Ethereum Mainnet.
@@ -15,7 +16,7 @@
 // (coingecko.ts imports from chainlink.ts at runtime)
 import type { CoinPrice, OracleSource } from "./coingecko";
 
-// ── ABI Function Selector ──────────────────────────────────────────
+// ── ABI Function Selector ──────────��───────────────────────────────
 // latestRoundData() → (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
 const LATEST_ROUND_DATA = "0xfeaf968c";
 
@@ -29,7 +30,7 @@ const RPC_ENDPOINTS = [
 ];
 
 // ── Chainlink Price Feed Contract Addresses (Ethereum Mainnet) ─────
-// All feeds are XXX/USD pairs with 8 decimal precision
+// All feeds are ASSET/USD pairs with 8 decimal precision
 // Source: https://data.chain.link/feeds
 export const CHAINLINK_FEEDS: Record<string, { address: string; decimals: number; pair: string }> = {
   BTC:   { address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", decimals: 8, pair: "BTC / USD" },
@@ -141,7 +142,7 @@ function decodeLatestRoundData(hex: string): {
 
     return { roundId, answer, updatedAt };
   } catch (err) {
-    console.debug("[Chainlink] Failed to decode latestRoundData:", err);
+    log.debug("Chainlink", "Failed to decode latestRoundData", err);
     return null;
   }
 }
@@ -263,7 +264,7 @@ export async function fetchChainlinkPrices(
           if (!data || data.answer <= BigInt(0)) return null;
           return { symbol, data, feed };
         } catch (err) {
-          console.debug(`[Chainlink] Decode failed for ${symbol}:`, err);
+          log.debug("Chainlink", `Decode failed for ${symbol}`, err);
           return null;
         }
       });
@@ -321,19 +322,16 @@ export async function fetchChainlinkPrices(
         rpcEndpoint: rpcUrl,
       });
 
-      console.debug(
-        `[Chainlink] ✓ ${Object.keys(prices).length}/${feedSymbols.length} feeds via ${(() => { try { return new URL(rpcUrl).hostname; } catch { return rpcUrl; } })()} (${elapsedMs}ms)`
-      );
-
+      log.debug("Chainlink", `${Object.keys(prices).length}/${feedSymbols.length} feeds via ${(() => { try { return new URL(rpcUrl).hostname; } catch { return rpcUrl; } })()} (${elapsedMs}ms)`);
       return prices;
     } catch (err) {
       lastError = err as Error;
       const host = (() => { try { return new URL(rpcUrl).hostname; } catch { return rpcUrl; } })();
       // Network errors are expected in sandboxed environments — use debug level
       if (lastError instanceof TypeError && lastError.message === "Failed to fetch") {
-        console.debug(`[Chainlink] RPC unreachable (${host})`);
+        log.debug("Chainlink", `RPC unreachable (${host})`);
       } else {
-        console.debug(`[Chainlink] RPC failed (${host}):`, lastError.message);
+        log.debug("Chainlink", `RPC failed (${host})`, lastError.message);
       }
       continue; // Try next RPC endpoint
     }
@@ -341,9 +339,9 @@ export async function fetchChainlinkPrices(
 
   // All endpoints failed
   if (lastError instanceof TypeError && lastError.message === "Failed to fetch") {
-    console.debug("[Chainlink] All RPC endpoints unreachable (network/CORS) — using fallback");
+    log.debug("Chainlink", "All RPC endpoints unreachable (network/CORS) — using fallback");
   } else {
-    console.debug("[Chainlink] All RPC endpoints failed:", lastError?.message);
+    log.debug("Chainlink", "All RPC endpoints failed", lastError?.message);
   }
   return {};
 }

@@ -14,8 +14,9 @@
 
 import type { HederaNetwork } from "./hedera";
 import { fetchMultipleTokens } from "./hedera-mirror";
+import { log } from "./logger";
 
-// ── HSuite SmartNode Network Configuration ──────────────────────────
+// ── HSuite SmartNode Network Configuration ───────────────────────���──
 
 export interface SmartNodeConfig {
   host: string;
@@ -285,12 +286,10 @@ export async function connectToSmartNode(
       validatorId: "",
     };
 
-    console.debug(
-      `[HSuite] Connected to SmartNode ${node.host} (${_connection.latency}ms)`
-    );
+    log.debug("HSuite", `Connected to SmartNode ${node.host} (${_connection.latency}ms)`);
     return { success: true, error: null };
   } catch (err: any) {
-    console.debug("[HSuite] Connection failed:", err.message);
+    log.debug("HSuite", "Connection failed", err.message);
     return { success: false, error: err.message };
   }
 }
@@ -502,11 +501,11 @@ async function hydrateTokensFromMirrorNode(
         };
       });
 
-      console.log(`[HSuite] Hydrated ${mirrorData.size}/${tokens.length} tokens from Mirror Node`);
+      log.info("HSuite", `Hydrated ${mirrorData.size}/${tokens.length} tokens from Mirror Node`);
       _hydratedTokens = hydrated;
       return hydrated;
     } catch (err) {
-      console.warn("[HSuite] Mirror Node hydration failed, using static fallback:", (err as Error).message);
+      log.warn("HSuite", "Mirror Node hydration failed, using static fallback", (err as Error).message);
       return tokens;
     } finally {
       _hydrationPromise = null;
@@ -564,7 +563,7 @@ export async function getSwapQuote(
       }),
     });
   } catch (err) {
-    console.debug("[HSuite] Swap quote failed:", (err as Error).message);
+    log.debug("HSuite", "Swap quote failed", (err as Error).message);
     return null;
   }
 }

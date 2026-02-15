@@ -11,6 +11,7 @@
  */
 
 import { Component, type ReactNode, useState, useEffect, useRef } from "react";
+import { log } from "../utils/logger";
 
 // ── CSS injected into the Dynamic SDK's shadow DOM ─────────────────
 const DYNAMIC_CSS_OVERRIDES = `
@@ -70,10 +71,7 @@ class DynamicErrorBoundary extends Component<BoundaryProps, BoundaryState> {
   }
 
   componentDidCatch(error: Error): void {
-    console.warn(
-      "[DynamicSDKWrapper] Dynamic Labs SDK render error — degrading gracefully.",
-      error.message
-    );
+    log.warn("DynamicSDK", "Dynamic Labs SDK render error — degrading gracefully", error.message);
   }
 
   render(): ReactNode {
@@ -124,11 +122,7 @@ export function DynamicSDKWrapper({ children }: DynamicSDKWrapperProps) {
         });
       })
       .catch((err) => {
-        console.warn(
-          "[DynamicSDKWrapper] Failed to load Dynamic Labs SDK — " +
-          "continuing without Dynamic wallet features.",
-          err.message || err
-        );
+        log.warn("DynamicSDK", "Failed to load Dynamic Labs SDK — continuing without Dynamic wallet features", err.message || err);
         setSdkState({ Provider: null, connectors: null, loaded: true, failed: true });
       });
   }, []);

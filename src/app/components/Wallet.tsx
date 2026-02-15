@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { log } from "../utils/logger";
 import {
   ArrowUpRight,
   ArrowDownLeft,
@@ -59,6 +60,7 @@ import {
   LP_TOKEN_WHBAR_HBARH,
 } from "../utils/saucerswap";
 import { maxVotesForBalance } from "../utils/dao";
+import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 
 const HBARH_TOKEN_ID = "0.0.9356476";
 const WBTC_TOKEN_ID = "0.0.1055483";
@@ -69,15 +71,17 @@ const TOKEN_LOGOS: Record<string, string> = {
   WBTC: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
 };
 
-function getTokenLogo(symbol: string, tokenId?: string, isDark = true): string | null {
-  if (tokenId === HBARH_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT;
+function getTokenLogo(
+  symbol: string,
+  tokenId?: string,
+  isDark = true,
+  hbarDark = HBARH_LOGO_DARK,
+  hbarLight = HBARH_LOGO_LIGHT,
+): string | null {
+  if (tokenId === HBARH_TOKEN_ID || tokenId === SS_LP_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? hbarDark : hbarLight;
   if (tokenId === WBTC_TOKEN_ID || symbol === "WBTC") return TOKEN_LOGOS.WBTC;
   return TOKEN_LOGOS[symbol] || null;
 }
-
-const CONNECTOR_LOGOS: Record<string, string> = {
-  MetaMask: METAMASK_LOGO,
-};
 
 // Donut chart colors
 const CHART_COLORS = [
@@ -232,6 +236,7 @@ export function Wallet() {
   const [hbarhPriceSource, setHbarhPriceSource] = useState<string>("");
 
   const { isDark } = useTheme();
+  const partnerLogos = usePartneredLogos();
   const {
     hederaAccount,
     hbarPrice,
@@ -263,6 +268,11 @@ export function Wallet() {
     window.addEventListener("vip-prefs-changed", handler);
     return () => window.removeEventListener("vip-prefs-changed", handler);
   }, []);
+
+  // Re-verify VIP prefs integrity once the wallet account is known
+  useEffect(() => {
+    if (hederaAccount?.accountId) setVipPrefs(loadVipPrefs(hederaAccount.accountId));
+  }, [hederaAccount?.accountId]);
 
   const isVip = useMemo(() => {
     if (!hederaAccount) return false;
@@ -297,7 +307,7 @@ export function Wallet() {
         if (result.price > 0) {
           setHbarhPrice(result.price);
           setHbarhPriceSource(result.source);
-          console.log(`[Wallet] HBAR.ħ price: $${result.price} (via ${result.source})`);
+          log.info("Wallet", `HBAR.ħ price: $${result.price} (via ${result.source})`);
         }
       } catch { /* non-critical */ }
     };
@@ -314,7 +324,7 @@ export function Wallet() {
         if (result.price > 0) {
           setLpTokenPrice(result.price);
           setLpTokenPriceSource(result.source);
-          console.log(`[Wallet] LP token price: $${result.price} (via ${result.source})`);
+          log.info("Wallet", `LP token price: $${result.price} (via ${result.source})`);
         }
       } catch { /* non-critical */ }
     };
@@ -329,7 +339,7 @@ export function Wallet() {
       fetchHbarhBalance(hederaAccount.accountId, hederaAccount.network)
         .then((result) => {
           setHbarhDirect(result);
-          console.log(`[Wallet] HBAR.ħ direct balance:`, result);
+          log.info("Wallet", "HBAR.ħ direct balance", result);
         })
         .catch(() => setHbarhDirect(null));
 
@@ -337,7 +347,7 @@ export function Wallet() {
       fetchTokenDirectBalance(hederaAccount.accountId, SS_LP_TOKEN_ID)
         .then((result) => {
           setLpDirect(result);
-          console.log(`[Wallet] LP token direct balance:`, result);
+          log.info("Wallet", "LP token direct balance", result);
         })
         .catch(() => setLpDirect(null));
     } else {
@@ -706,7 +716,7 @@ export function Wallet() {
             {/* HBAR.ħ Price */}
             <div>
               <div className="flex items-center gap-1">
-                <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
+                <img src={isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight} alt="" className="w-3 h-3 rounded-full object-cover" />
                 <span className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
               </div>
               <div className={`font-bold bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-blue-400 to-cyan-400"}`}>
@@ -789,7 +799,7 @@ export function Wallet() {
                 {/* Account header */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3 min-w-0">
-                    <img src={HASHPACK_LOGO} alt="HashPack" className="w-10 h-10 rounded-xl flex-shrink-0" />
+                    <img src={partnerLogos.hashpack} alt="HashPack" className="w-10 h-10 rounded-xl flex-shrink-0" />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold">HashPack</span>
@@ -842,7 +852,7 @@ export function Wallet() {
                   </div>
                   <div className={`p-3 rounded-lg ${isDark ? "bg-black/20" : "bg-gray-50"}`}>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <img src={isDark ? HBARH_LOGO_DARK : HBARH_LOGO_LIGHT} alt="" className="w-3 h-3 rounded-full object-cover" />
+                      <img src={isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight} alt="" className="w-3 h-3 rounded-full object-cover" />
                       <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>HBAR.ħ</span>
                     </div>
                     <div className="font-bold">
@@ -880,7 +890,7 @@ export function Wallet() {
                 {/* Token list (VIP-enhanced) */}
                 <div className="space-y-1.5">
                   {primaryHoldings.map((h) => {
-                    const logo = getTokenLogo(h.symbol, h.tokenId, isDark);
+                    const logo = getTokenLogo(h.symbol, h.tokenId, isDark, partnerLogos.hbarDark, partnerLogos.hbarLight);
                     const pctOfPortfolio = hederaTotalUsd > 0 && h.value > 0 ? ((h.value / hederaTotalUsd) * 100) : 0;
                     return (
                       <div
@@ -1017,7 +1027,7 @@ export function Wallet() {
                 {/* Account header */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3 min-w-0">
-                    <img src={CONNECTOR_LOGOS.MetaMask} alt="MetaMask" className="w-10 h-10 rounded-xl flex-shrink-0" />
+                    <img src={partnerLogos.metamask} alt="MetaMask" className="w-10 h-10 rounded-xl flex-shrink-0" />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold">MetaMask</span>
@@ -1165,7 +1175,7 @@ export function Wallet() {
             {hederaAccount && (
               <>
                 <div className="flex items-center gap-2 mb-2">
-                  <img src={HASHPACK_LOGO} alt="" className="w-4 h-4 rounded" />
+                  <img src={partnerLogos.hashpack} alt="" className="w-4 h-4 rounded" />
                   <span className={`text-xs font-bold ${isDark ? "text-slate-400" : "text-gray-600"}`}>Hedera</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isDark ? "bg-purple-500/15 text-purple-400" : "bg-purple-100 text-purple-600"}`}>
                     Mirror Node
@@ -1247,7 +1257,7 @@ export function Wallet() {
               <>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <img src={CONNECTOR_LOGOS.MetaMask} alt="" className="w-4 h-4 rounded" />
+                    <img src={partnerLogos.metamask} alt="" className="w-4 h-4 rounded" />
                     <span className={`text-xs font-bold ${isDark ? "text-slate-400" : "text-gray-600"}`}>{metaMaskAccount.chainName}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isDark ? "bg-blue-500/15 text-blue-400" : "bg-blue-100 text-blue-600"}`}>
                       {CHAIN_INFO[metaMaskAccount.chainId] ? "Explorer API" : `Chain ${metaMaskAccount.chainId}`}

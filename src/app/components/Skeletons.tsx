@@ -244,7 +244,7 @@ export function ChartSkeleton({ height = "h-[400px]" }: { height?: string }) {
           <Shimmer className="h-6 w-6 rounded" />
         </div>
       </div>
-      {/* Fake chart bars */}
+      {/* Skeleton chart bars */}
       <div className="flex items-end justify-around px-6 pb-4 h-[calc(100%-48px)]">
         {Array.from({ length: 30 }).map((_, i) => (
           <Shimmer
