@@ -1,6 +1,7 @@
 import { Hono } from "npm:hono@4.6.3";
 import { cors } from "npm:hono@4.6.3/cors";
 import { logger } from "npm:hono@4.6.3/logger";
+import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
 const app = new Hono();
 
@@ -33,7 +34,7 @@ app.use("*", async (c, next) => {
 
 // ═══════════════════════════════════════════════════════════════════════
 // Wrappdex Edge Function Server
-// ═════════════════��═════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 //
 // Modules: Spin Wheel, Smart Liquidity (AMM), News Ticker, VIP Chat, DAO
 // Auth:    ED25519 challenge-response sessions (30-min TTL, KV-backed)
@@ -308,12 +309,12 @@ app.delete("/make-server-54299934/winners", async (c) => {
     const adminToken = c.req.header("authorization") || "";
     const expectedToken = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     if (!expectedToken || adminToken !== `Bearer ${expectedToken}`) {
-      console.log(`[AUDIT] Unauthorized DELETE /winners attempt from IP: ${ip}`);
+      console.log(`[SECURITY] Unauthorized DELETE /winners attempt from IP: ${ip}`);
       return c.json({ error: "Unauthorized — service role key required" }, 403);
     }
 
     await kv.set(WINNERS_KEY, []);
-    console.log(`[AUDIT] Winner history cleared by authorized admin from IP: ${ip}`);
+    console.log(`[SECURITY] Winner history cleared by authorized admin from IP: ${ip}`);
     return c.json({ success: true, winners: [] });
   } catch (err) {
     console.log("Error clearing winners:", err);
@@ -600,7 +601,7 @@ interface PoolApiResponse {
 const AUTH_CHALLENGE_PREFIX = "auth_ch_";
 const AUTH_SESSION_PREFIX = "auth_sess_";
 const AUTH_PUBKEY_CACHE_PREFIX = "auth_pk_";
-const AUTH_ACCT_SESSION_PREFIX = "auth_as_";  // Per-account session index (ATK-002)
+const AUTH_ACCT_SESSION_PREFIX = "auth_as_";  // Per-account session index
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_SESSION_TTL_MS = 30 * 60 * 1000;
 const AUTH_PUBKEY_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -827,7 +828,7 @@ app.post("/make-server-54299934/auth/session", async (c) => {
       return c.json({ error: "Signature verification failed. Ensure you signed the exact challenge message.", code: "SIGNATURE_INVALID" }, 401);
     }
 
-    // ── Revoke existing session for this account (ATK-002) ──
+    // ── Revoke existing session for this account ──
     // Ensures only one active session per account. Prevents the scenario
     // where a privilege escalation (e.g., addAdmin) completes with a stale
     // token that wasn't properly revoked by the client-side DELETE.
@@ -835,7 +836,7 @@ app.post("/make-server-54299934/auth/session", async (c) => {
       const oldToken: string | null = await kv.get(AUTH_ACCT_SESSION_PREFIX + accountId);
       if (oldToken) {
         await kv.del(AUTH_SESSION_PREFIX + oldToken);
-        console.log(`[AUTH] Revoked previous session for ${accountId} (ATK-002)`);
+        console.log(`[AUTH] Revoked previous session for ${accountId}`);
       }
     } catch { /* best-effort — new session is still safe to create */ }
 
@@ -865,7 +866,7 @@ app.get("/make-server-54299934/auth/session/validate", async (c) => {
 app.delete("/make-server-54299934/auth/session", async (c) => {
   const token = c.req.header("x-session-token") || "";
   if (token) {
-    // Read session to get accountId for index cleanup (ATK-002)
+    // Read session to get accountId for per-account index cleanup
     try {
       const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
       if (session?.accountId) {
@@ -897,7 +898,6 @@ const HBAR_FALLBACK_UPDATED_AT = 1739404800000; // 2026-02-13T00:00:00Z
 const HBAR_FALLBACK_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 // Max protocol fee in tinybar — safety ceiling if oracle + fallback are both stale
 const MAX_PROTOCOL_FEE_TINYBAR = 500; // ~$0.0014 at $0.28/HBAR — 2× normal fee
-const HBAR_DECIMALS = 8;                    // 1 HBAR = 100_000_000 tinybar
 
 // Swap fee: 0.1% (10 bps) — protocol-fixed, non-adjustable by pool creators.
 const FIXED_SWAP_FEE_BPS = 10;
@@ -1120,11 +1120,11 @@ async function compareAndSavePool(pool: PoolState, expectedVersion: number): Pro
 // Pessimistic lock using KV with write-verify-retry pattern + double-check.
 // TTL safety valve ensures release even if holder crashes.
 //
-// H-1 improvement: Double-verify pattern. After the initial write-then-read
-// confirms our holder, we wait a brief grace period and re-read. This catches
-// the edge case where two concurrent writers both wrote within the same KV
-// propagation window and both passed the first verify. The second verify
-// (after the grace delay) sees the final settled state.
+// Double-verify pattern: After the initial write-then-read confirms our
+// holder, we wait a brief grace period and re-read. This catches the edge
+// case where two concurrent writers both wrote within the same KV propagation
+// window and both passed the first verify. The second verify (after the
+// grace delay) sees the final settled state.
 //
 // Remaining limitation: KV does not support atomic SETNX, so a sub-millisecond
 // race is still theoretically possible. The CAS layer on pool state
@@ -1139,7 +1139,7 @@ interface KvLock {
   epoch: number;       // Monotonic counter — tiebreaker for concurrent writes
 }
 
-/** Monotonic epoch counter for lock fencing (H-1) */
+/** Monotonic epoch counter for lock fencing */
 let _lockEpoch = 0;
 
 interface KvLockConfig {
@@ -1149,7 +1149,7 @@ interface KvLockConfig {
   retryMs: number;     // Base retry interval (jittered)
 }
 
-/** Grace period between first and second verify (H-1 double-check) */
+/** Grace period between first and second verify (double-check) */
 const LOCK_GRACE_MS = 15;
 
 /**
@@ -2045,7 +2045,7 @@ function isAdminAuthorized(c: any): boolean {
   const sk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
   if (!sk || auth !== `Bearer ${sk}`) {
     const ip = getClientIp(c);
-    console.log(`[AUDIT] Unauthorized admin attempt from IP: ${ip}`);
+    console.log(`[SECURITY] Unauthorized admin attempt from IP: ${ip}`);
     return false;
   }
   return true;
@@ -2547,6 +2547,114 @@ app.delete("/make-server-54299934/dao/admins/:accountId", async (c) => {
   } catch (err) {
     console.log(`[DAO-ADMIN] Error removing admin: ${err}`);
     return c.json({ error: "Failed to remove admin" }, 500);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Holiday Logos — lists files from Supabase Storage (auto-creates bucket)
+// Checks: make-54299934-holiday-logos (preferred) → "Holiday Wrapp Logos" (legacy)
+// ═══════════════════════════════════════════════════════════════════════
+
+const HOLIDAY_BUCKET = "make-54299934-holiday-logos";
+const HOLIDAY_BUCKET_LEGACY = "Holiday Wrapp Logos";
+const HOLIDAY_SIGNED_URL_TTL = 3600; // 1 hour
+
+app.get("/make-server-54299934/holiday-logos", async (c) => {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) {
+      console.log("[Holiday Logos] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+      return c.json({ error: "Server configuration error" }, 500);
+    }
+
+    const supabase = createSupabaseClient(supabaseUrl, serviceKey);
+
+    // ── Idempotent bucket creation ─────────────────────────────────
+    const { data: buckets, error: listBucketsErr } = await supabase.storage.listBuckets();
+    if (listBucketsErr) {
+      console.log(`[Holiday Logos] Failed to list buckets: ${listBucketsErr.message}`);
+      return c.json({ error: `Failed to list buckets: ${listBucketsErr.message}` }, 502);
+    }
+
+    // Determine which bucket to use — prefer the prefixed one, fall back to legacy
+    let activeBucket: string | null = null;
+    const hasPrefixed = buckets?.some((b: any) => b.name === HOLIDAY_BUCKET);
+    const hasLegacy = buckets?.some((b: any) => b.name === HOLIDAY_BUCKET_LEGACY);
+
+    if (hasPrefixed) {
+      activeBucket = HOLIDAY_BUCKET;
+    } else if (hasLegacy) {
+      activeBucket = HOLIDAY_BUCKET_LEGACY;
+    } else {
+      // Create the standard bucket (public so <img> tags can load directly)
+      console.log(`[Holiday Logos] No bucket found — creating "${HOLIDAY_BUCKET}" (public)`);
+      const { error: createErr } = await supabase.storage.createBucket(HOLIDAY_BUCKET, {
+        public: true,
+        fileSizeLimit: 5 * 1024 * 1024, // 5 MB
+      });
+      if (createErr) {
+        console.log(`[Holiday Logos] Bucket creation failed: ${createErr.message}`);
+        return c.json({
+          error: `Bucket creation failed: ${createErr.message}`,
+          hint: `Upload a valentine logo to the "${HOLIDAY_BUCKET}" bucket in your Supabase dashboard.`,
+        }, 502);
+      }
+      activeBucket = HOLIDAY_BUCKET;
+    }
+
+    console.log(`[Holiday Logos] Using bucket: "${activeBucket}"`);
+
+    // ── List files ─────────────────────────────────────────────────
+    const { data: files, error: listErr } = await supabase.storage
+      .from(activeBucket)
+      .list("", { limit: 200, sortBy: { column: "name", order: "asc" } });
+
+    if (listErr) {
+      console.log(`[Holiday Logos] File list failed on "${activeBucket}": ${listErr.message}`);
+      return c.json({ error: `File list failed: ${listErr.message}`, bucket: activeBucket }, 502);
+    }
+
+    const realFiles = (files || []).filter(
+      (f: any) => f.name && !f.name.endsWith("/") && f.id,
+    );
+
+    console.log(`[Holiday Logos] Found ${realFiles.length} file(s) in "${activeBucket}": [${realFiles.map((f: any) => f.name).join(", ")}]`);
+
+    if (realFiles.length === 0) {
+      return c.json({ logos: [], bucket: activeBucket });
+    }
+
+    // ── Build signed URLs (works for both public & private buckets) ─
+    const { data: signedUrls, error: signErr } = await supabase.storage
+      .from(activeBucket)
+      .createSignedUrls(
+        realFiles.map((f: any) => f.name),
+        HOLIDAY_SIGNED_URL_TTL,
+      );
+
+    if (signErr) {
+      console.log(`[Holiday Logos] Signed URL generation failed: ${signErr.message}`);
+      // Fallback: build public URLs directly
+      const publicBase = `${supabaseUrl}/storage/v1/object/public/${activeBucket}`;
+      const logos = realFiles.map((f: any) => ({
+        name: f.name,
+        url: `${publicBase}/${encodeURIComponent(f.name)}`,
+      }));
+      return c.json({ logos, bucket: activeBucket, urlType: "public-fallback" });
+    }
+
+    const logos = (signedUrls || [])
+      .filter((s: any) => !s.error)
+      .map((s: any) => ({
+        name: realFiles.find((f: any) => f.name === s.path)?.name || s.path,
+        url: s.signedUrl,
+      }));
+
+    return c.json({ logos, bucket: activeBucket, urlType: "signed" });
+  } catch (err) {
+    console.log(`[Holiday Logos] Unexpected error: ${err}`);
+    return c.json({ error: `Unexpected error: ${String(err)}` }, 500);
   }
 });
 

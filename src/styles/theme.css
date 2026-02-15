@@ -320,3 +320,149 @@ html.dark, .dark {
   animation: vol-bar-fill 0.3s ease-out;
   transform-origin: left;
 }
+
+/* ── Holiday Theme — Frosted Glass Logo Container + Ambient Header Effects
+   ───────────────────────────────────────────────────────────────────── */
+
+/* ── Animated gradient border shimmer ─────────────────────────────── */
+@keyframes holiday-border-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ── Frosted glass container (dark mode default) ──────────────────── */
+.holiday-glass {
+  position: relative;
+  padding: 4px 10px;
+  border-radius: 14px;
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.07),
+    rgba(255, 255, 255, 0.02),
+    rgba(236, 72, 153, 0.07)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 4px 24px rgba(56, 189, 248, 0.06),
+    0 4px 24px rgba(236, 72, 153, 0.04);
+}
+
+/* Animated gradient border — blue → purple → pink loop */
+.holiday-glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.50),
+    rgba(139, 92, 246, 0.30),
+    rgba(236, 72, 153, 0.50),
+    rgba(56, 189, 248, 0.50)
+  );
+  background-size: 300% 300%;
+  animation: holiday-border-shimmer 4s ease infinite;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Holiday name badge (bottom of glass) */
+.holiday-glass-badge {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 8px;
+  border-radius: 9999px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+
+/* ── Compact holiday glass (≈ half-size logo) ────────────────────── */
+.holiday-glass-compact {
+  padding: 3px 7px;
+  border-radius: 10px;
+}
+.holiday-glass-compact::before {
+  padding: 1px;
+}
+.holiday-glass-badge-compact {
+  bottom: -4px;
+  padding: 0px 5px;
+  font-size: 6.5px;
+  letter-spacing: 0.05em;
+}
+
+/* Responsive compact glass refinements */
+@media (min-width: 768px) {
+  .holiday-glass-compact {
+    padding: 3px 8px;
+    border-radius: 11px;
+  }
+  .holiday-glass-badge-compact {
+    bottom: -5px;
+    padding: 1px 6px;
+    font-size: 7px;
+  }
+}
+
+/* ── Light-mode glass adaptation ──────────────────────────────────── */
+html.light-mode .holiday-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.06),
+    rgba(255, 255, 255, 0.55),
+    rgba(236, 72, 153, 0.06)
+  );
+  border-color: rgba(56, 189, 248, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.70),
+    0 4px 24px rgba(56, 189, 248, 0.05),
+    0 4px 24px rgba(236, 72, 153, 0.03);
+}
+
+html.light-mode .holiday-glass::before {
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.35),
+    rgba(139, 92, 246, 0.20),
+    rgba(236, 72, 153, 0.35),
+    rgba(56, 189, 248, 0.35)
+  );
+  background-size: 300% 300%;
+  animation: holiday-border-shimmer 4s ease infinite;
+}
+
+html.light-mode .holiday-glass-badge {
+  color: rgba(30, 41, 59, 0.70);
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Ambient header border per holiday ────────────────────────────── */
+html.holiday-valentines header   { border-image: linear-gradient(90deg, rgba(255,50,100,0.30), rgba(236,72,153,0.25), rgba(255,50,100,0.30)) 1; }
+html.holiday-christmas header    { border-image: linear-gradient(90deg, rgba(220,38,38,0.25), rgba(34,197,94,0.25), rgba(220,38,38,0.25)) 1; }
+html.holiday-halloween header    { border-image: linear-gradient(90deg, rgba(255,140,0,0.30), rgba(147,51,234,0.25), rgba(255,140,0,0.30)) 1; }
+html.holiday-st-patricks header  { border-image: linear-gradient(90deg, rgba(0,200,83,0.30), rgba(16,185,129,0.25), rgba(0,200,83,0.30)) 1; }
+html.holiday-new-year header     { border-image: linear-gradient(90deg, rgba(255,215,0,0.30), rgba(245,158,11,0.25), rgba(255,215,0,0.30)) 1; }
+html.holiday-july4 header        { border-image: linear-gradient(90deg, rgba(220,38,38,0.25), rgba(255,255,255,0.15), rgba(50,100,255,0.25)) 1; }
+html.holiday-hedera header       { border-image: linear-gradient(90deg, rgba(0,229,255,0.30), rgba(56,189,248,0.25), rgba(0,229,255,0.30)) 1; }
+html.holiday-easter header       { border-image: linear-gradient(90deg, rgba(186,135,255,0.30), rgba(251,191,36,0.20), rgba(186,135,255,0.30)) 1; }
+html.holiday-thanksgiving header { border-image: linear-gradient(90deg, rgba(210,150,60,0.30), rgba(180,83,9,0.20), rgba(210,150,60,0.30)) 1; }

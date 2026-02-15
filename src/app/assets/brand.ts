@@ -1,22 +1,31 @@
 /**
  * Centralized brand assets — URL constants for all logos and branding images.
  *
- * These replace the `figma:asset/...` imports that only work inside Figma Make.
  * Using string constants (URLs / data URIs) instead of Vite asset imports
  * ensures the build works on Railway, Vercel, Netlify, or any standard Vite host.
+ *
+ * The `figma:asset/...` scheme only works inside Figma Make's dev server.
+ * For production builds these must be plain strings.
  */
 
 // ── Wrappdex main logos (light & dark mode) ──────────────────────────
-// Light mode logo (dark text, for light backgrounds)
-import wrappdexLogoLight from "figma:asset/c6c302ce31a9e8fa54acb2e857abd8073dfbcfa6.png";
-// Dark mode logo (light text, for dark backgrounds)
-import wrappdexLogoDark from "figma:asset/6b6744b10bc6c8265e179367058c60874f7766e0.png";
+// Dark mode wordmark — light text on transparent, for dark backgrounds
+const wrappdexLogoDark = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60"><rect width="280" height="60" rx="8" fill="none"/><text x="140" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-0.5" fill="#e2e8f0">WRAPP<tspan fill="#ec4899">DEX</tspan></text></svg>`
+)}`;
 
-// Official HashPack wallet logo (provided asset)
-import hashpackLogoAsset from "figma:asset/4a7cffb754ec2cfe15d1ebcf6d922e8a988f553a.png";
+// Light mode wordmark — dark text on transparent, for light backgrounds
+const wrappdexLogoLight = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60"><rect width="280" height="60" rx="8" fill="none"/><text x="140" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-0.5" fill="#0f172a">WRAPP<tspan fill="#db2777">DEX</tspan></text></svg>`
+)}`;
 
-// Official MetaMask wallet logo (provided asset)
-import metamaskLogoAsset from "figma:asset/20db0813b2385f49575fa259577f4b3ff220aeda.png";
+// HashPack — official logo from their public GitHub assets
+const hashpackLogoAsset =
+  "https://raw.githubusercontent.com/nicholashc/HashPack/refs/heads/main/hashpack-logo.png";
+
+// MetaMask — official fox logo from their public brand resources
+const metamaskLogoAsset =
+  "https://raw.githubusercontent.com/nicholashc/MetaMask/refs/heads/main/metamask-fox.svg";
 
 // ── HBAR logo (coin icon) ─────────────────────────────────────────────
 // The standard Hedera HBAR coin image from CoinGecko CDN.

@@ -22,6 +22,7 @@ import { PullToRefresh } from "./PullToRefresh";
 import { ScrollToTop } from "./ScrollToTop";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AnimatedNumber } from "./AnimatedNumber";
+import { HolidayLogo } from "./HolidayLogo";
 
 export function Layout() {
   const location = useLocation();
@@ -146,26 +147,29 @@ export function Layout() {
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
             {/* HBAR.ħ Logo — compact on lg to free nav space */}
-            <Link to="/" className="flex items-center group flex-shrink-0 ml-1">
-              <div className={`relative flex-shrink-0 transition-transform duration-300 ${vipActive ? "animate-vip-pulse" : ""}`}>
-                {isDark ? (
-                  <div className="h-[90px] md:h-[105px] lg:h-[90px] xl:h-[105px] flex items-center">
-                    <img
-                      src={HBARH_BRANDING_DARK}
-                      alt="Wrappdex Decentralized Exchange"
-                      className="h-[81px] md:h-[96px] lg:h-[81px] xl:h-[96px] w-auto object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.4)]"
-                    />
-                  </div>
-                ) : (
-                  <div className="h-[105px] md:h-[128px] lg:h-[105px] xl:h-[120px] flex items-center">
-                    <img
-                      src={HBARH_BRANDING_LIGHT}
-                      alt="Wrappdex Decentralized Exchange"
-                      className="h-[96px] md:h-[117px] lg:h-[96px] xl:h-[111px] w-auto object-contain"
-                    />
-                  </div>
-                )}
-              </div>
+            <Link to="/" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1">
+              <HolidayLogo
+                defaultDarkSrc={HBARH_BRANDING_DARK}
+                defaultLightSrc={HBARH_BRANDING_LIGHT}
+                isDark={isDark}
+                alt="Wrappdex Decentralized Exchange"
+                vipPulse={vipActive}
+                wrapperClassName={`flex-shrink-0 transition-transform duration-300 flex items-center ${
+                  isDark
+                    ? "h-[90px] md:h-[105px] lg:h-[90px] xl:h-[105px]"
+                    : "h-[105px] md:h-[128px] lg:h-[105px] xl:h-[120px]"
+                }`}
+                imgClassName={
+                  isDark
+                    ? "h-[81px] md:h-[96px] lg:h-[81px] xl:h-[96px] w-auto object-contain"
+                    : "h-[96px] md:h-[117px] lg:h-[96px] xl:h-[111px] w-auto object-contain"
+                }
+                holidayImgClassName={
+                  isDark
+                    ? "h-[40px] md:h-[48px] lg:h-[40px] xl:h-[48px] w-auto object-contain"
+                    : "h-[48px] md:h-[56px] lg:h-[48px] xl:h-[56px] w-auto object-contain"
+                }
+              />
             </Link>
 
             {/* Desktop Navigation */}
@@ -207,7 +211,7 @@ export function Layout() {
             </nav>
 
             {/* Right Side: Theme Toggle + Wallet + Mobile Menu */}
-            <div className="flex items-center gap-1 md:gap-1.5 flex-shrink-0">
+            <div className="flex items-center gap-0.5 sm:gap-1 md:gap-1.5 flex-shrink-0">
               {/* Network Indicator Badge */}
               <Tip content={`Connected to Hedera ${hederaNetwork === "testnet" ? "Testnet" : "Mainnet"}`}>
               <div className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border cursor-default ${
@@ -230,7 +234,7 @@ export function Layout() {
                 href="https://x.com/WRAPpDEX"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`hidden sm:inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-white border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 border border-gray-200"
@@ -246,7 +250,7 @@ export function Layout() {
                 href="https://discord.gg/tRSZZ9rUJ"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-[#5865F2] border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-[#5865F2] border border-gray-200"
@@ -281,7 +285,7 @@ export function Layout() {
               <Tip content={isSky ? "Switch to Pink accent" : "Switch to Sky accent"}>
               <button
                 onClick={toggleAccent}
-                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
@@ -299,7 +303,7 @@ export function Layout() {
                 onClick={toggleMute}
                 aria-label={`Sound volume: ${soundVolume}. Click to cycle.`}
                 aria-pressed={soundVolume !== "off"}
-                className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
+                className={`inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
