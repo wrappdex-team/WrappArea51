@@ -27,34 +27,38 @@ import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
 
 /**
- * Safe Dynamic SDK hooks — the module IS in the Vite bundle (static
- * dependency), so the import always works. But the hooks require
- * DynamicContextProvider in the tree. When the SDK failed to init
- * and there's no provider, we skip the hooks and return defaults.
- *
- * `isDynamicSDKAvailable` is set by DynamicSDKWrapper when the
- * lazy initialization succeeds. It's a stable boolean (false→true,
- * never reverts), so the conditional hook call is safe: once the
- * component renders with Dynamic available, it stays that way.
+ * Dynamic SDK hook results forwarded from DynamicHooksBridge.
+ * Defaults are safe no-ops for when the SDK is unavailable.
  */
-function useSafeDynamicHooks() {
-  if (isDynamicSDKAvailable) {
-    // SDK is available and DynamicContextProvider is in the tree — safe to call hooks
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { setShowAuthFlow } = useDynamicContext();
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const isLoggedIn = useIsLoggedIn();
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { setShowLinkNewWalletModal } = useDynamicModals();
-    return { setShowAuthFlow, isLoggedIn, setShowLinkNewWalletModal, available: true };
-  }
-  // SDK not available — return safe no-op defaults
-  return {
-    setShowAuthFlow: (() => {}) as (show: boolean) => void,
-    isLoggedIn: false,
-    setShowLinkNewWalletModal: (() => {}) as (show: boolean) => void,
-    available: false,
-  };
+interface DynamicHooksResult {
+  setShowAuthFlow: (show: boolean) => void;
+  isLoggedIn: boolean;
+  setShowLinkNewWalletModal: (show: boolean) => void;
+  available: boolean;
+}
+
+const DYNAMIC_HOOKS_DEFAULTS: DynamicHooksResult = {
+  setShowAuthFlow: () => {},
+  isLoggedIn: false,
+  setShowLinkNewWalletModal: () => {},
+  available: false,
+};
+
+/**
+ * Bridge component rendered ONLY when the Dynamic SDK has initialized.
+ * Hooks are called unconditionally inside this component (Rules of Hooks
+ * compliant). Results are forwarded to the parent via a stable callback ref.
+ */
+function DynamicHooksBridge({ onUpdateRef }: { onUpdateRef: React.RefObject<(h: DynamicHooksResult) => void> }) {
+  const { setShowAuthFlow } = useDynamicContext();
+  const isLoggedIn = useIsLoggedIn();
+  const { setShowLinkNewWalletModal } = useDynamicModals();
+
+  useEffect(() => {
+    onUpdateRef.current?.({ setShowAuthFlow, isLoggedIn, setShowLinkNewWalletModal, available: true });
+  }, [setShowAuthFlow, isLoggedIn, setShowLinkNewWalletModal, onUpdateRef]);
+
+  return null;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -207,10 +211,14 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     metaMaskAccount,
   } = useWallet();
 
-  // Dynamic Labs — programmatic auth flow trigger
-  // Use useIsLoggedIn + useDynamicModals to avoid the
-  // "Use setShowLinkNewWalletModal" warning when already authenticated
-  const { setShowAuthFlow, isLoggedIn: isLoggedInDynamic, setShowLinkNewWalletModal } = useSafeDynamicHooks();
+  // Dynamic Labs — programmatic auth flow trigger.
+  // DynamicHooksBridge is a child component that only mounts when the SDK is
+  // available, keeping all hook calls unconditional (Rules of Hooks compliant).
+  const [dynamicHooks, setDynamicHooks] = useState<DynamicHooksResult>(DYNAMIC_HOOKS_DEFAULTS);
+  const dynamicUpdateRef = useRef((h: DynamicHooksResult) => setDynamicHooks(h));
+  dynamicUpdateRef.current = (h: DynamicHooksResult) => setDynamicHooks(h);
+
+  const { setShowAuthFlow, isLoggedIn: isLoggedInDynamic, setShowLinkNewWalletModal } = dynamicHooks;
 
   const [step, setStep] = useState<ConnectionStep>("list");
   const [selectedWallet, setSelectedWallet] = useState<WalletOption | null>(null);
@@ -319,11 +327,18 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     }
   };
 
+  // Stable bridge element — rendered in every return branch to keep Dynamic
+  // hooks mounted consistently (React reconciles by position in the tree).
+  const dynamicBridge = isDynamicSDKAvailable
+    ? <DynamicHooksBridge onUpdateRef={dynamicUpdateRef} />
+    : null;
+
   // ═══════════════════════════════════════════════════════════
   // METAMASK CONNECTING
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-connect") {
     return (
+      <> {dynamicBridge}
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-8">
@@ -370,6 +385,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           </div>
         </div>
       </ModalShell>
+      </>
     );
   }
 
@@ -378,9 +394,11 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-success" && metaMaskAccount) {
     return (
+      <>{dynamicBridge}
       <ModalShell>
         <SuccessScreen label="Connected" accountId={formatAddress(metaMaskAccount.address)} onClose={onClose} />
       </ModalShell>
+      </>
     );
   }
 
@@ -392,6 +410,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     const errorMsg = wcError || hederaConnectionError;
 
     return (
+      <>{dynamicBridge}
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-8">
@@ -440,6 +459,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           </div>
         </div>
       </ModalShell>
+      </>
     );
   }
 
@@ -449,9 +469,11 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   const sessionForSuccess = localSession || hashPackSession;
   if (step === "wc-success" && sessionForSuccess) {
     return (
+      <>{dynamicBridge}
       <ModalShell>
         <SuccessScreen label="Connected" accountId={sessionForSuccess.accountId} onClose={onClose} />
       </ModalShell>
+      </>
     );
   }
 
@@ -459,6 +481,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // MAIN WALLET LIST
   // ═════════════════════════════════════════════════════════════
   return (
+    <>{dynamicBridge}
     <ModalShell>
       <div className="p-6">
         {/* Header */}
@@ -559,5 +582,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
         </div>
       </div>
     </ModalShell>
+    </>
   );
 }

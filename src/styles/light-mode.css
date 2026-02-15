@@ -413,7 +413,7 @@ html.accent-sky [class*="from-pink-900/20"][class*="to-purple-900/20"] {
 html.accent-sky [class*="from-purple-900/10"][class*="to-pink-900/10"] {
   background-image: linear-gradient(to bottom right, rgba(30,58,138,0.1), rgba(12,74,110,0.1)) !important;
 }
-html.accent-sky [class*="from-pink-900/10"][class*="to-purple-900/10"] {
+html.accent-sky [class*="from-purple-900/10"][class*="to-purple-900/10"] {
   background-image: linear-gradient(to bottom right, rgba(12,74,110,0.1), rgba(30,58,138,0.1)) !important;
 }
 html.accent-sky [class*="from-purple-50"][class*="to-pink-50"]:not([class*="from-purple-500"]):not([class*="to-pink-500"]) {
@@ -706,4 +706,257 @@ html.vip-theme .vip-btn-bridge:hover {
 
 .animate-vip-pulse {
   animation: vip-logo-pulse 2s ease-in-out infinite;
+}
+
+/* ===== VIP Dashboard Card Shimmer ===== */
+/* Bank-grade iridescent emerald treatment — matches Wallet section.
+   Dual-layer flowing gradient border + counter-flow blurred glow +
+   skewed iridescent shimmer pass for liquid/water-like refraction. */
+
+/* ── Flowing gradient border ── */
+@keyframes vip-card-flow {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* ── Counter-flow glow (blurred depth layer) ── */
+@keyframes vip-card-flow-reverse {
+  0%   { background-position: 200% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ── Iridescent shimmer sweep with hue refraction ── */
+@keyframes vip-card-shimmer {
+  0%   { transform: translateX(-100%) skewX(-15deg); opacity: 0; }
+  8%   { opacity: 1; }
+  92%  { opacity: 1; }
+  100% { transform: translateX(700%) skewX(-15deg); opacity: 0; }
+}
+
+/* ── Soft pulsing outer glow ── */
+@keyframes vip-card-glow-pulse {
+  0%   { box-shadow: 0 0 8px rgba(16,185,129,0.08), 0 0 24px rgba(16,185,129,0.04), inset 0 0 12px rgba(16,185,129,0.02); }
+  33%  { box-shadow: 0 0 12px rgba(20,184,166,0.10), 0 0 30px rgba(6,182,212,0.06), inset 0 0 14px rgba(20,184,166,0.03); }
+  66%  { box-shadow: 0 0 10px rgba(6,182,212,0.09), 0 0 28px rgba(52,211,153,0.05), inset 0 0 12px rgba(6,182,212,0.02); }
+  100% { box-shadow: 0 0 8px rgba(16,185,129,0.08), 0 0 24px rgba(16,185,129,0.04), inset 0 0 12px rgba(16,185,129,0.02); }
+}
+
+/* ── Border color iridescence ── */
+@keyframes vip-card-border-iridescent {
+  0%   { border-color: rgba(16,185,129,0.22); }
+  20%  { border-color: rgba(20,184,166,0.26); }
+  40%  { border-color: rgba(6,182,212,0.24); }
+  60%  { border-color: rgba(52,211,153,0.26); }
+  80%  { border-color: rgba(45,212,191,0.24); }
+  100% { border-color: rgba(16,185,129,0.22); }
+}
+
+/* ── Dashboard card: full treatment ── */
+html.vip-theme .vip-dash-card {
+  position: relative;
+  overflow: hidden;
+  animation:
+    vip-card-border-iridescent 5s ease-in-out infinite,
+    vip-card-glow-pulse 6s ease-in-out infinite;
+}
+
+/* Flowing gradient border layer (::before) */
+html.vip-theme .vip-dash-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(16,185,129,0.20),
+    rgba(6,182,212,0.12),
+    rgba(52,211,153,0.18),
+    rgba(20,184,166,0.10),
+    rgba(16,185,129,0.20)
+  );
+  background-size: 200% 100%;
+  animation: vip-card-flow 4s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 1px;
+}
+
+/* Blurred counter-flow glow for depth */
+html.vip-theme .vip-dash-card::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(16,185,129,0.06),
+    rgba(6,182,212,0.03),
+    rgba(52,211,153,0.06),
+    rgba(20,184,166,0.03),
+    rgba(16,185,129,0.06)
+  );
+  background-size: 200% 100%;
+  animation: vip-card-flow-reverse 5s linear infinite;
+  filter: blur(8px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+html.vip-theme .vip-dash-card:hover {
+  border-color: rgba(52,211,153,0.40) !important;
+  box-shadow:
+    0 0 20px rgba(16,185,129,0.14),
+    0 0 40px rgba(6,182,212,0.08),
+    0 0 60px rgba(52,211,153,0.04),
+    inset 0 0 10px rgba(16,185,129,0.04) !important;
+}
+
+/* Stagger border iridescence across sibling cards */
+html.vip-theme .vip-dash-card:nth-child(2) { animation-delay: -1.7s, -2s; }
+html.vip-theme .vip-dash-card:nth-child(3) { animation-delay: -3.4s, -4s; }
+html.vip-theme .vip-dash-card:nth-child(2)::before { animation-delay: -1.3s; }
+html.vip-theme .vip-dash-card:nth-child(3)::before { animation-delay: -2.6s; }
+html.vip-theme .vip-dash-card:nth-child(2)::after { animation-delay: -1.7s; }
+html.vip-theme .vip-dash-card:nth-child(3)::after { animation-delay: -3.3s; }
+
+/* Inner shimmer pass — skewed iridescent light band (wallet-style) */
+html.vip-theme .vip-shimmer-inner {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  z-index: 2;
+  transform: skewX(-12deg);
+}
+
+html.vip-theme .vip-shimmer-inner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 15%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(16,185,129,0.05),
+    rgba(110,231,183,0.08),
+    rgba(6,182,212,0.05),
+    transparent
+  );
+  animation: vip-card-shimmer 3.5s ease-in-out infinite;
+  animation-delay: 5s;
+}
+
+/* ── Indicator row (RSI, BTC Dom, FearGreed) ── */
+/* Same flowing border + glow, no inner shimmer to avoid
+   overflow:hidden clipping gauge/bar visuals. */
+html.vip-theme .vip-indicator-row > div {
+  position: relative;
+  animation:
+    vip-card-border-iridescent 5s ease-in-out infinite,
+    vip-card-glow-pulse 6s ease-in-out infinite;
+}
+
+html.vip-theme .vip-indicator-row > div::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(16,185,129,0.18),
+    rgba(6,182,212,0.10),
+    rgba(52,211,153,0.16),
+    rgba(20,184,166,0.08),
+    rgba(16,185,129,0.18)
+  );
+  background-size: 200% 100%;
+  animation: vip-card-flow 4.5s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 1px;
+}
+
+html.vip-theme .vip-indicator-row > div:nth-child(2) { animation-delay: -1.7s, -2s; }
+html.vip-theme .vip-indicator-row > div:nth-child(3) { animation-delay: -3.4s, -4s; }
+html.vip-theme .vip-indicator-row > div:nth-child(2)::before { animation-delay: -1.5s; }
+html.vip-theme .vip-indicator-row > div:nth-child(3)::before { animation-delay: -3s; }
+
+html.vip-theme .vip-indicator-row > div:hover {
+  border-color: rgba(52,211,153,0.40) !important;
+  box-shadow:
+    0 0 20px rgba(16,185,129,0.14),
+    0 0 40px rgba(6,182,212,0.08),
+    0 0 60px rgba(52,211,153,0.04) !important;
+}
+
+/* ── Market list rows ── */
+html.vip-theme .vip-market-row {
+  position: relative;
+  overflow: hidden;
+  animation:
+    vip-card-border-iridescent 7s ease-in-out infinite,
+    vip-card-glow-pulse 8s ease-in-out infinite;
+}
+
+html.vip-theme .vip-market-row::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(16,185,129,0.16),
+    rgba(6,182,212,0.08),
+    rgba(52,211,153,0.14),
+    rgba(20,184,166,0.06),
+    rgba(16,185,129,0.16)
+  );
+  background-size: 200% 100%;
+  animation: vip-card-flow 5s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 1px;
+}
+
+html.vip-theme .vip-market-row::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(16,185,129,0.04),
+    rgba(6,182,212,0.02),
+    rgba(52,211,153,0.04),
+    rgba(20,184,166,0.02),
+    rgba(16,185,129,0.04)
+  );
+  background-size: 200% 100%;
+  animation: vip-card-flow-reverse 6s linear infinite;
+  filter: blur(6px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+html.vip-theme .vip-market-row:hover {
+  border-color: rgba(52,211,153,0.40) !important;
+  box-shadow:
+    0 0 18px rgba(16,185,129,0.12),
+    0 0 36px rgba(6,182,212,0.06),
+    0 0 54px rgba(52,211,153,0.03) !important;
 }

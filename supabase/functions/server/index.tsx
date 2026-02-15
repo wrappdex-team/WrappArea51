@@ -96,7 +96,17 @@ async function isRateLimited(ip: string): Promise<boolean> {
       kv.set(kvKey, updated).catch(() => {});
       return updated.count > RATE_LIMIT_MAX_REQUESTS;
     }
-  } catch { /* KV miss or error — start fresh */ }
+  } catch {
+    // KV unreachable — cannot verify whether this IP has prior request history.
+    // Fail conservative: start a penalized L1 window so subsequent requests on
+    // this instance are tracked, but reduce the remaining budget to prevent the
+    // edge case where KV flakiness effectively doubles the allowed burst rate.
+    console.log(`[RateLimit] KV read failed for ${ip} — enforcing conservative L1 limit`);
+    const penalized = { count: Math.ceil(RATE_LIMIT_MAX_REQUESTS * 0.6), resetAt: now + RATE_LIMIT_WINDOW_MS };
+    _rateLimitL1.set(ip, penalized);
+    kv.set(kvKey, penalized).catch(() => {});
+    return penalized.count > RATE_LIMIT_MAX_REQUESTS;
+  }
 
   // Fresh window
   const fresh = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
@@ -551,6 +561,7 @@ const POOL_INDEX_KEY = "sl_pool_index";
 const ORACLE_CACHE_KEY = "sl_oracle_cache";
 const ORACLE_CACHE_TTL_MS = 60_000;
 const TREASURY_FEE_KEY = "sl_treasury_fees";
+const TREASURY_FEE_LOCK_KEY = "sl_treasury_lock";
 
 // Per-pool pessimistic lock (KV-backed)
 const POOL_LOCK_PREFIX = "sl_plock_";
@@ -1136,11 +1147,21 @@ interface KvLock {
   holder: string;      // Random UUID identifying the lock holder
   acquiredAt: number;
   expiresAt: number;
-  epoch: number;       // Monotonic counter — tiebreaker for concurrent writes
+  epoch: number;       // Crypto-random fencing token — globally unique across isolates
 }
 
-/** Monotonic epoch counter for lock fencing */
-let _lockEpoch = 0;
+/**
+ * Crypto-random fencing token — replaces a monotonic counter that was
+ * process-local and therefore meaningless across Edge Function isolates.
+ * A 48-bit random integer has a ~1-in-281-trillion collision probability
+ * per acquisition attempt, making cross-isolate epoch collisions negligible.
+ */
+function cryptoRandomEpoch(): number {
+  const buf = new Uint32Array(2);
+  crypto.getRandomValues(buf);
+  // Use 48 bits (safe within Number.MAX_SAFE_INTEGER = 2^53 - 1)
+  return (buf[0] * 0x10000) + (buf[1] >>> 16);
+}
 
 interface KvLockConfig {
   key: string;         // Full KV key for this lock
@@ -1170,7 +1191,7 @@ async function acquireKvLock(cfg: KvLockConfig): Promise<string | null> {
 
     // Lock is free or expired → try to acquire
     if (!existing || Date.now() > existing.expiresAt) {
-      const epoch = ++_lockEpoch;
+      const epoch = cryptoRandomEpoch();
       const lock: KvLock = {
         holder: holderId,
         acquiredAt: Date.now(),
@@ -1756,33 +1777,32 @@ app.post("/make-server-54299934/pools/swap", async (c) => {
           const hbarPriceForFee = prices["0.0.1456986"] || HBAR_FALLBACK_PRICE_USD;
           const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round((PROTOCOL_FEE_USD / hbarPriceForFee) * 1e8)));
           const treasuryFeeTinybar = protocolFeeTinybar - Math.floor(protocolFeeTinybar / 2);
-          // CAS retry loop: prevent concurrent swaps from losing fee data
+          // Lock-protected fee increment �� serializes across concurrent swaps on
+          // different pools that all write to the same TREASURY_FEE_KEY.
+          // Short TTL: the operation is a single KV read + write (~10ms).
           try {
-            const FEE_CAS_MAX_RETRIES = 3;
-            for (let feeAttempt = 0; feeAttempt < FEE_CAS_MAX_RETRIES; feeAttempt++) {
+            await withKvLock({
+              key: TREASURY_FEE_LOCK_KEY,
+              ttlMs: 2_000,
+              waitMs: 1_500,
+              retryMs: 20,
+            }, async () => {
               const existingFees: TreasuryFeeAccumulator | null = await kv.get(TREASURY_FEE_KEY);
-              const prevTotal = existingFees?.totalTinybar || 0;
-              const prevCount = existingFees?.swapCount || 0;
-              const updated = {
-                totalTinybar: prevTotal + treasuryFeeTinybar,
-                swapCount: prevCount + 1,
+              const updated: TreasuryFeeAccumulator = {
+                totalTinybar: (existingFees?.totalTinybar || 0) + treasuryFeeTinybar,
+                swapCount: (existingFees?.swapCount || 0) + 1,
                 treasuryAccount: PROTOCOL_TREASURY_ACCOUNT,
                 lastUpdated: Date.now(),
               };
               await kv.set(TREASURY_FEE_KEY, updated);
-              // Write-verify: re-read to confirm our write persisted
-              const verify: TreasuryFeeAccumulator | null = await kv.get(TREASURY_FEE_KEY);
-              if (verify && verify.totalTinybar >= updated.totalTinybar && verify.swapCount >= updated.swapCount) {
-                break; // Our write stuck (or a later writer incremented further — both are correct)
-              }
-              // Another writer overwrote between set and verify — retry with fresh read
-              if (feeAttempt < FEE_CAS_MAX_RETRIES - 1) {
-                await new Promise(r => setTimeout(r, 10 + Math.random() * 20));
-              } else {
-                console.log(`[Treasury] Fee CAS failed after ${FEE_CAS_MAX_RETRIES} attempts — ${treasuryFeeTinybar}tb may be lost`);
-              }
+            });
+          } catch (feeErr: any) {
+            // Fee accrual failure is non-critical — swap still succeeds.
+            // Log for monitoring: if this fires frequently, lock contention needs tuning.
+            if (feeErr?.code === "LOCK_TIMEOUT") {
+              console.log(`[Treasury] Fee lock timeout — ${treasuryFeeTinybar}tb deferred`);
             }
-          } catch { /* fee accrual failure is non-critical — swap still succeeds */ }
+          }
 
           // Log swap — global log is anonymized (no accountId).
           const swapTs = Date.now();
@@ -1896,6 +1916,16 @@ const VIP_CHAT_MSGS_KEY = "vip_chat_messages";
 const VIP_CHAT_CD_PREFIX = "vip_chat_cd_";
 const VIP_CHAT_BANS_KEY = "vip_chat_bans";
 const VIP_CHAT_COOLDOWN_MS = 2 * 60 * 1000;
+
+// Lock for all VIP chat mutations (send, delete, ban, clear).
+// Serializes read-mutate-write on VIP_CHAT_MSGS_KEY / VIP_CHAT_BANS_KEY
+// to prevent concurrent messages overwriting each other.
+const VIP_CHAT_LOCK_CONFIG: KvLockConfig = {
+  key: "vip_chat_lock",
+  ttlMs: 5_000,
+  waitMs: 3_000,
+  retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+};
 const VIP_CHAT_MAX_MSGS = 50;
 const VIP_CHAT_MAX_WORDS = 25;
 const VIP_CHAT_MAX_CHARS = 200;
@@ -1920,10 +1950,15 @@ async function verifyVipBalance(accountId: string): Promise<{ eligible: boolean;
     const data = await res.json();
     const entry = data?.tokens?.[0];
     if (!entry) return { eligible: false, balance: 0 };
-    const raw = parseInt(entry.balance || "0", 10);
+    // BigInt-safe parsing — parseInt loses precision above 2^53 (~9×10^15)
+    const rawBigInt = BigInt(entry.balance || "0");
     const dec = parseInt(entry.decimals ?? "8", 10);
-    const display = raw / Math.pow(10, dec);
-    return { eligible: display >= VIP_GATE_THRESHOLD, balance: display };
+    // Compare in raw units to avoid floating-point imprecision
+    const thresholdRaw = BigInt(VIP_GATE_THRESHOLD) * BigInt(10 ** dec);
+    const eligible = rawBigInt >= thresholdRaw;
+    // Display value: safe to convert since human-readable values are small
+    const display = Number(rawBigInt) / Math.pow(10, dec);
+    return { eligible, balance: display };
   } catch (err) {
     console.log(`[VIP-CHAT] Mirror Node VIP check failed for ${accountId}: ${err}`);
     return { eligible: false, balance: 0 };
@@ -1940,7 +1975,10 @@ async function verifyVipNftOwnership(accountId: string): Promise<{ hasNft: boole
     const data = await res.json();
     const entry = data?.tokens?.[0];
     if (!entry) return { hasNft: false, nftCount: 0 };
-    const count = parseInt(entry.balance || "0", 10);
+    // BigInt-safe parsing for consistency (NFT counts are small but
+    // defensive coding prevents silent truncation on any HTS token)
+    const countBigInt = BigInt(entry.balance || "0");
+    const count = Number(countBigInt);
     return { hasNft: count >= 1, nftCount: count };
   } catch (err) {
     console.log(`[VIP-GATE] Mirror Node NFT check failed for ${accountId}: ${err}`);
@@ -2011,6 +2049,8 @@ app.post("/make-server-54299934/vip-chat/messages", async (c) => {
     const { accountId } = session;
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Too many requests" }, 429);
+
+    // Pre-lock validation (no KV mutations — safe to do outside lock)
     const bans: string[] = (await kv.get(VIP_CHAT_BANS_KEY)) ?? [];
     if (bans.includes(accountId)) return c.json({ error: "Account suspended" }, 403);
     const cdKey = VIP_CHAT_CD_PREFIX + accountId;
@@ -2025,15 +2065,21 @@ app.post("/make-server-54299934/vip-chat/messages", async (c) => {
     if (!text) return c.json({ error: "Message cannot be empty" }, 400);
     const wc = text.split(/\s+/).filter(Boolean).length;
     if (wc > VIP_CHAT_MAX_WORDS) return c.json({ error: `Exceeds ${VIP_CHAT_MAX_WORDS} word limit` }, 400);
+
+    // Lock-protected read-mutate-write on the shared message array
     const msg: VipChatMessage = { id: generateChatMsgId(), accountId, text, timestamp: Date.now() };
-    const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
-    msgs.push(msg);
-    while (msgs.length > VIP_CHAT_MAX_MSGS) msgs.shift();
-    await kv.set(VIP_CHAT_MSGS_KEY, msgs);
-    await kv.set(cdKey, Date.now());
+    const result = await withKvLock(VIP_CHAT_LOCK_CONFIG, async () => {
+      const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
+      msgs.push(msg);
+      while (msgs.length > VIP_CHAT_MAX_MSGS) msgs.shift();
+      await kv.set(VIP_CHAT_MSGS_KEY, msgs);
+      await kv.set(cdKey, Date.now());
+      return msg;
+    });
     console.log(`[VIP-CHAT] ${accountId}: "${text}" (${wc}w)`);
-    return c.json({ message: msg });
-  } catch (err) {
+    return c.json({ message: result });
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — please retry in a moment", code: "CHAT_BUSY" }, 503);
     console.log(`[VIP-CHAT] Send error: ${err}`);
     return c.json({ error: "Failed to send message" }, 500);
   }
@@ -2055,13 +2101,20 @@ app.delete("/make-server-54299934/vip-chat/messages/:id", async (c) => {
   if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
   try {
     const id = c.req.param("id");
-    const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
-    const filtered = msgs.filter(m => m.id !== id);
-    if (filtered.length === msgs.length) return c.json({ error: "Not found" }, 404);
-    await kv.set(VIP_CHAT_MSGS_KEY, filtered);
-    console.log(`[VIP-CHAT][ADMIN] Deleted ${id}`);
+    const result = await withKvLock(VIP_CHAT_LOCK_CONFIG, async () => {
+      const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
+      const filtered = msgs.filter(m => m.id !== id);
+      if (filtered.length === msgs.length) return null; // not found
+      await kv.set(VIP_CHAT_MSGS_KEY, filtered);
+      return id;
+    });
+    if (!result) return c.json({ error: "Not found" }, 404);
+    console.log(`[VIP-CHAT][ADMIN] Deleted ${result}`);
     return c.json({ ok: true });
-  } catch { return c.json({ error: "Delete failed" }, 500); }
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — retry shortly" }, 503);
+    return c.json({ error: "Delete failed" }, 500);
+  }
 });
 
 app.post("/make-server-54299934/vip-chat/ban", async (c) => {
@@ -2069,19 +2122,27 @@ app.post("/make-server-54299934/vip-chat/ban", async (c) => {
   try {
     const { accountId, action } = await c.req.json();
     if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid account" }, 400);
-    const bans: string[] = (await kv.get(VIP_CHAT_BANS_KEY)) ?? [];
-    if (action === "ban" && !bans.includes(accountId)) {
-      bans.push(accountId);
-      const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
-      await kv.set(VIP_CHAT_MSGS_KEY, msgs.filter(m => m.accountId !== accountId));
-    } else if (action === "unban") {
-      const idx = bans.indexOf(accountId);
-      if (idx !== -1) bans.splice(idx, 1);
-    }
-    await kv.set(VIP_CHAT_BANS_KEY, bans);
+
+    // Lock-protected: ban mutates both BANS_KEY and MSGS_KEY
+    const bans = await withKvLock(VIP_CHAT_LOCK_CONFIG, async () => {
+      const bans: string[] = (await kv.get(VIP_CHAT_BANS_KEY)) ?? [];
+      if (action === "ban" && !bans.includes(accountId)) {
+        bans.push(accountId);
+        const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
+        await kv.set(VIP_CHAT_MSGS_KEY, msgs.filter(m => m.accountId !== accountId));
+      } else if (action === "unban") {
+        const idx = bans.indexOf(accountId);
+        if (idx !== -1) bans.splice(idx, 1);
+      }
+      await kv.set(VIP_CHAT_BANS_KEY, bans);
+      return bans;
+    });
     console.log(`[VIP-CHAT][ADMIN] ${action} ${accountId}`);
     return c.json({ ok: true, bans });
-  } catch { return c.json({ error: "Ban operation failed" }, 500); }
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — retry shortly" }, 503);
+    return c.json({ error: "Ban operation failed" }, 500);
+  }
 });
 
 app.delete("/make-server-54299934/vip-chat/messages", async (c) => {
@@ -2128,16 +2189,51 @@ app.get("/make-server-54299934/vip/status", async (c) => {
 // DAO GOVERNANCE — Server-Authoritative Proposals, Votes & Comments
 // ═══════════════════════════════════════════════════════════════════════
 //
-// All state in KV (dao_proposals). Admin CRUD restricted to 0.0.518487
-// + dynamic admin list. Vote weight from Mirror Node balance (server-side).
+// Sharded KV storage: index + per-proposal + per-proposal-comments keys.
+// Auto-migrates from legacy single-blob (dao_proposals) on first read.
+// Admin CRUD restricted to 0.0.518487 + dynamic admin list.
+// Vote weight from Mirror Node balance (server-side).
+// Per-proposal locks for vote/edit/comment — global lock only for create/delete.
 // Deduplication via voterLog. Inputs sanitized, rate-limited, fail-closed.
 // Caps: 100 proposals, 200 comments per proposal.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
-const DAO_PROPOSALS_KEY = "dao_proposals";
+// ── Sharded KV Storage ─────────────────────────────────────────────
+// Each proposal and its comments are stored in separate KV keys to avoid
+// hitting the ~1MB per-value size limit that a single "dao_proposals" blob
+// would reach with many proposals, comments, and voter logs.
+//
+// Key schema:
+//   dao_v2_idx              → string[]           (ordered list of proposal IDs)
+//   dao_v2_p:{id}           → DAOProposal        (proposal data + voterLog, no comments)
+//   dao_v2_c:{id}           → DAOComment[]        (comments for a single proposal)
+//   dao_proposals           → (legacy) DAOProposal[]  — auto-migrated on first read
+//
+const DAO_LEGACY_KEY = "dao_proposals";
+const DAO_V2_INDEX_KEY = "dao_v2_idx";
+const DAO_V2_PROP_PREFIX = "dao_v2_p:";
+const DAO_V2_CMT_PREFIX = "dao_v2_c:";
 const DAO_MAX_PROPOSALS = 100;
 const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
+
+// Global lock for INDEX-mutating operations (create/delete proposals).
+const DAO_INDEX_LOCK_CONFIG: KvLockConfig = {
+  key: "dao_proposals_lock",
+  ttlMs: 8_000,
+  waitMs: 5_000,
+  retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+};
+
+// Per-proposal lock factory for vote/edit/comment (much better concurrency).
+function daoProposalLock(proposalId: string): KvLockConfig {
+  return {
+    key: `dao_plock:${proposalId}`,
+    ttlMs: 6_000,
+    waitMs: 4_000,
+    retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+  };
+}
 
 // ── Dynamic Admin List (KV-backed) ─────────────────────────────────
 // Founder permanently protected. Add/remove requires fresh session (<2 min).
@@ -2229,14 +2325,111 @@ function calculateVotingPower(tokenBalance: number, nftCount: number): number {
        + Math.min(Math.floor(nftCount / DAO_NFTS_PER_VOTE), DAO_MAX_NFT_VOTES);
 }
 
+// ── Sharded load/save helpers ──────────────────────────────────────
+
+/** Load all proposals (assembled from sharded keys). Falls back to legacy blob. */
 async function loadDaoProposals(): Promise<DAOProposal[]> {
   try {
-    const p: DAOProposal[] | null = await kv.get(DAO_PROPOSALS_KEY);
-    if (!p || !Array.isArray(p)) return [];
-    return p.map(resolveExpiredProposal);
+    const index: string[] | null = await kv.get(DAO_V2_INDEX_KEY);
+    if (index && Array.isArray(index) && index.length > 0) {
+      // Parallel load individual proposals + comments
+      const results = await Promise.all(
+        index.map(async (id): Promise<DAOProposal | null> => {
+          try {
+            const [data, comments] = await Promise.all([
+              kv.get(`${DAO_V2_PROP_PREFIX}${id}`),
+              kv.get(`${DAO_V2_CMT_PREFIX}${id}`).catch(() => null),
+            ]);
+            if (!data || !data.id) return null;
+            return resolveExpiredProposal({ ...data, comments: Array.isArray(comments) ? comments : [] });
+          } catch { return null; }
+        }),
+      );
+      return results.filter(Boolean) as DAOProposal[];
+    }
+
+    // Fallback: try legacy single-blob format
+    const legacy: DAOProposal[] | null = await kv.get(DAO_LEGACY_KEY);
+    if (legacy && Array.isArray(legacy) && legacy.length > 0) {
+      // Auto-migrate to sharded format (fire-and-forget)
+      migrateLegacyDaoProposals(legacy).catch((err) =>
+        console.log(`[DAO] Migration warning (non-fatal): ${err}`),
+      );
+      return legacy.map(resolveExpiredProposal);
+    }
+    return [];
   } catch { return []; }
 }
-async function saveDaoProposals(proposals: DAOProposal[]): Promise<void> { await kv.set(DAO_PROPOSALS_KEY, proposals); }
+
+/** Load a single proposal by ID (no index scan). */
+async function loadDaoProposal(proposalId: string): Promise<DAOProposal | null> {
+  try {
+    const [data, comments] = await Promise.all([
+      kv.get(`${DAO_V2_PROP_PREFIX}${proposalId}`),
+      kv.get(`${DAO_V2_CMT_PREFIX}${proposalId}`).catch(() => null),
+    ]);
+    if (!data || !data.id) return null;
+    return resolveExpiredProposal({ ...data, comments: Array.isArray(comments) ? comments : [] });
+  } catch { return null; }
+}
+
+/** Save a single proposal (core data without comments). */
+async function saveDaoProposal(proposal: DAOProposal): Promise<void> {
+  const { comments, ...coreData } = proposal;
+  await kv.set(`${DAO_V2_PROP_PREFIX}${proposal.id}`, coreData);
+}
+
+/** Save comments for a single proposal. */
+async function saveDaoComments(proposalId: string, comments: DAOComment[]): Promise<void> {
+  await kv.set(`${DAO_V2_CMT_PREFIX}${proposalId}`, comments);
+}
+
+/** Add a proposal ID to the index (prepend for newest-first order). */
+async function addToIndex(proposalId: string): Promise<string[]> {
+  const index: string[] = (await kv.get(DAO_V2_INDEX_KEY)) ?? [];
+  const updated = [proposalId, ...index.filter(id => id !== proposalId)];
+  await kv.set(DAO_V2_INDEX_KEY, updated);
+  return updated;
+}
+
+/** Remove a proposal ID from the index and clean up its KV keys. */
+async function removeFromIndex(proposalId: string): Promise<string[]> {
+  const index: string[] = (await kv.get(DAO_V2_INDEX_KEY)) ?? [];
+  const updated = index.filter(id => id !== proposalId);
+  await Promise.all([
+    kv.set(DAO_V2_INDEX_KEY, updated),
+    kv.del(`${DAO_V2_PROP_PREFIX}${proposalId}`).catch(() => {}),
+    kv.del(`${DAO_V2_CMT_PREFIX}${proposalId}`).catch(() => {}),
+  ]);
+  return updated;
+}
+
+/** Get current index length (for capacity check). */
+async function getIndexLength(): Promise<number> {
+  const index: string[] | null = await kv.get(DAO_V2_INDEX_KEY);
+  return index ? index.length : 0;
+}
+
+/** One-time migration from legacy single blob to sharded keys. */
+async function migrateLegacyDaoProposals(proposals: DAOProposal[]): Promise<void> {
+  const index = proposals.map(p => p.id);
+  const keys: string[] = [DAO_V2_INDEX_KEY];
+  const values: any[] = [index];
+
+  for (const p of proposals) {
+    const { comments, ...coreData } = p;
+    keys.push(`${DAO_V2_PROP_PREFIX}${p.id}`);
+    values.push(coreData);
+    if (comments && comments.length > 0) {
+      keys.push(`${DAO_V2_CMT_PREFIX}${p.id}`);
+      values.push(comments);
+    }
+  }
+
+  await kv.mset(keys, values);
+  await kv.del(DAO_LEGACY_KEY).catch(() => {});
+  console.log(`[DAO] Migrated ${proposals.length} proposals from legacy blob to sharded keys`);
+}
 
 // GET /dao/proposals — Public read
 app.get("/make-server-54299934/dao/proposals", async (c) => {
@@ -2262,6 +2455,8 @@ app.post("/make-server-54299934/dao/proposals", async (c) => {
       console.log(`[DAO] Non-admin proposal creation attempt: ${accountId}`);
       return c.json({ error: "Only DAO admins can create proposals", code: "DAO_NOT_ADMIN" }, 403);
     }
+
+    // Input validation (outside lock — no state mutations)
     const body = await c.req.json();
     const { title, description, category, durationDays, quorum } = body;
     if (!title || typeof title !== "string" || title.trim().length < 5) return c.json({ error: "Title must be at least 5 characters" }, 400);
@@ -2271,22 +2466,30 @@ app.post("/make-server-54299934/dao/proposals", async (c) => {
     if (!days || days < 1 || days > 30) return c.json({ error: "Duration must be 1-30 days" }, 400);
     const q = Number(quorum);
     if (!q || q < 1 || q > 10000) return c.json({ error: "Quorum must be 1-10000" }, 400);
-    const proposals = await loadDaoProposals();
-    if (proposals.length >= DAO_MAX_PROPOSALS) return c.json({ error: `Maximum ${DAO_MAX_PROPOSALS} proposals reached` }, 400);
-    const idBuf = new Uint8Array(4);
-    crypto.getRandomValues(idBuf);
-    const idHex = Array.from(idBuf).map(b => b.toString(16).padStart(2, "0")).join("");
-    const now = Date.now();
-    const newP: DAOProposal = {
-      id: `prop-${idHex}`, title: sanitizeString(title.trim(), 120), description: sanitizeString(description.trim(), 2000),
-      category, proposer: accountId, status: "active", votesFor: 0, votesAgainst: 0, quorum: q,
-      createdAt: now, endsAt: now + days * 86_400_000, voterLog: {}, comments: [],
-    };
-    const updated = [newP, ...proposals];
-    await saveDaoProposals(updated);
-    console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}"`);
-    return c.json({ proposal: newP, proposals: updated });
-  } catch (err) {
+
+    // Lock the INDEX to add a new proposal (prevents duplicate IDs / capacity races)
+    const result = await withKvLock(DAO_INDEX_LOCK_CONFIG, async () => {
+      const currentLen = await getIndexLength();
+      if (currentLen >= DAO_MAX_PROPOSALS) return c.json({ error: `Maximum ${DAO_MAX_PROPOSALS} proposals reached` }, 400);
+      const idBuf = new Uint8Array(4);
+      crypto.getRandomValues(idBuf);
+      const idHex = Array.from(idBuf).map(b => b.toString(16).padStart(2, "0")).join("");
+      const now = Date.now();
+      const newP: DAOProposal = {
+        id: `prop-${idHex}`, title: sanitizeString(title.trim(), 120), description: sanitizeString(description.trim(), 2000),
+        category, proposer: accountId, status: "active", votesFor: 0, votesAgainst: 0, quorum: q,
+        createdAt: now, endsAt: now + days * 86_400_000, voterLog: {}, comments: [],
+      };
+      // Write proposal to its own key + add to index
+      await Promise.all([saveDaoProposal(newP), addToIndex(newP.id)]);
+      console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}"`);
+      // Return full list for frontend compatibility
+      const allProposals = await loadDaoProposals();
+      return c.json({ proposal: newP, proposals: allProposals });
+    });
+    return result;
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
     console.log(`[DAO] Error creating proposal: ${err}`);
     return c.json({ error: "Failed to create proposal" }, 500);
   }
@@ -2304,24 +2507,29 @@ app.put("/make-server-54299934/dao/proposals/:id", async (c) => {
     if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
     const body = await c.req.json();
     const { title, description, category } = body;
-    const [proposals, adminList] = await Promise.all([loadDaoProposals(), getDaoAdminsCached()]);
-    const idx = proposals.findIndex(p => p.id === proposalId);
-    if (idx === -1) return c.json({ error: "Proposal not found" }, 404);
-    if (!canModifyDaoProposal(proposals[idx], accountId, adminList)) {
-      console.log(`[DAO] Unauthorized edit attempt: ${accountId} on ${proposalId}`);
-      return c.json({ error: "Not authorized to edit this proposal" }, 403);
-    }
-    const updated = [...proposals];
-    updated[idx] = {
-      ...proposals[idx],
-      title: (title && typeof title === "string" && title.trim().length >= 5) ? sanitizeString(title.trim(), 120) : proposals[idx].title,
-      description: (description && typeof description === "string" && description.trim().length >= 20) ? sanitizeString(description.trim(), 2000) : proposals[idx].description,
-      category: (category && DAO_VALID_CATEGORIES.includes(category)) ? category : proposals[idx].category,
-    };
-    await saveDaoProposals(updated);
-    console.log(`[DAO] Proposal edited by ${accountId}: ${proposalId}`);
-    return c.json({ proposal: updated[idx], proposals: updated });
-  } catch (err) {
+
+    // Per-proposal lock — other proposals remain unblocked
+    const result = await withKvLock(daoProposalLock(proposalId), async () => {
+      const [proposal, adminList] = await Promise.all([loadDaoProposal(proposalId), getDaoAdminsCached()]);
+      if (!proposal) return c.json({ error: "Proposal not found" }, 404);
+      if (!canModifyDaoProposal(proposal, accountId, adminList)) {
+        console.log(`[DAO] Unauthorized edit attempt: ${accountId} on ${proposalId}`);
+        return c.json({ error: "Not authorized to edit this proposal" }, 403);
+      }
+      const edited: DAOProposal = {
+        ...proposal,
+        title: (title && typeof title === "string" && title.trim().length >= 5) ? sanitizeString(title.trim(), 120) : proposal.title,
+        description: (description && typeof description === "string" && description.trim().length >= 20) ? sanitizeString(description.trim(), 2000) : proposal.description,
+        category: (category && DAO_VALID_CATEGORIES.includes(category)) ? category : proposal.category,
+      };
+      await saveDaoProposal(edited);
+      console.log(`[DAO] Proposal edited by ${accountId}: ${proposalId}`);
+      const allProposals = await loadDaoProposals();
+      return c.json({ proposal: edited, proposals: allProposals });
+    });
+    return result;
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
     console.log(`[DAO] Error editing proposal: ${err}`);
     return c.json({ error: "Failed to edit proposal" }, 500);
   }
@@ -2337,18 +2545,23 @@ app.delete("/make-server-54299934/dao/proposals/:id", async (c) => {
     const { accountId } = auth;
     const proposalId = c.req.param("id");
     if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
-    const [proposals, adminList] = await Promise.all([loadDaoProposals(), getDaoAdminsCached()]);
-    const idx = proposals.findIndex(p => p.id === proposalId);
-    if (idx === -1) return c.json({ error: "Proposal not found" }, 404);
-    if (!canModifyDaoProposal(proposals[idx], accountId, adminList)) {
-      console.log(`[DAO] Unauthorized delete attempt: ${accountId} on ${proposalId}`);
-      return c.json({ error: "Not authorized to delete this proposal" }, 403);
-    }
-    const updated = proposals.filter(p => p.id !== proposalId);
-    await saveDaoProposals(updated);
-    console.log(`[DAO] Proposal deleted by ${accountId}: ${proposalId}`);
-    return c.json({ success: true, proposals: updated });
-  } catch (err) {
+
+    // Index lock — modifies the proposal list
+    const result = await withKvLock(DAO_INDEX_LOCK_CONFIG, async () => {
+      const [proposal, adminList] = await Promise.all([loadDaoProposal(proposalId), getDaoAdminsCached()]);
+      if (!proposal) return c.json({ error: "Proposal not found" }, 404);
+      if (!canModifyDaoProposal(proposal, accountId, adminList)) {
+        console.log(`[DAO] Unauthorized delete attempt: ${accountId} on ${proposalId}`);
+        return c.json({ error: "Not authorized to delete this proposal" }, 403);
+      }
+      await removeFromIndex(proposalId);
+      console.log(`[DAO] Proposal deleted by ${accountId}: ${proposalId}`);
+      const allProposals = await loadDaoProposals();
+      return c.json({ success: true, proposals: allProposals });
+    });
+    return result;
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
     console.log(`[DAO] Error deleting proposal: ${err}`);
     return c.json({ error: "Failed to delete proposal" }, 500);
   }
@@ -2367,6 +2580,8 @@ app.post("/make-server-54299934/dao/proposals/:id/vote", async (c) => {
     const body = await c.req.json();
     const { direction } = body;
     if (direction !== "for" && direction !== "against") return c.json({ error: "Direction must be 'for' or 'against'" }, 400);
+
+    // Pre-lock: VIP eligibility check (Mirror Node call — keep outside lock to minimize hold time)
     const vipStatus = await verifyVipEligibilityFull(accountId);
     if (!vipStatus.eligible) {
       console.log(`[DAO] Ineligible vote attempt: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
@@ -2374,26 +2589,29 @@ app.post("/make-server-54299934/dao/proposals/:id/vote", async (c) => {
     }
     const weight = calculateVotingPower(vipStatus.tokenBalance, vipStatus.nftCount);
     if (weight <= 0) return c.json({ error: "Insufficient balance for any voting power" }, 403);
-    const proposals = await loadDaoProposals();
-    const idx = proposals.findIndex(p => p.id === proposalId);
-    if (idx === -1) return c.json({ error: "Proposal not found" }, 404);
-    const proposal = proposals[idx];
-    if (proposal.status !== "active" && proposal.status !== "pending") return c.json({ error: "Voting is closed on this proposal" }, 400);
-    if (Date.now() >= proposal.endsAt) return c.json({ error: "Voting period has ended" }, 400);
-    if (proposal.voterLog[accountId]) {
-      return c.json({ error: "You have already voted on this proposal", code: "DAO_ALREADY_VOTED", existingVote: proposal.voterLog[accountId] }, 409);
-    }
-    const updated = [...proposals];
-    updated[idx] = {
-      ...proposal,
-      voterLog: { ...proposal.voterLog, [accountId]: { direction, weight } },
-      votesFor: direction === "for" ? proposal.votesFor + weight : proposal.votesFor,
-      votesAgainst: direction === "against" ? proposal.votesAgainst + weight : proposal.votesAgainst,
-    };
-    await saveDaoProposals(updated);
-    console.log(`[DAO] Vote: ${accountId} voted ${direction} (weight=${weight}) on ${proposalId}`);
-    return c.json({ success: true, proposal: updated[idx], votingPower: weight, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount });
-  } catch (err) {
+
+    // Per-proposal lock — votes on different proposals don't block each other
+    const result = await withKvLock(daoProposalLock(proposalId), async () => {
+      const proposal = await loadDaoProposal(proposalId);
+      if (!proposal) return c.json({ error: "Proposal not found" }, 404);
+      if (proposal.status !== "active" && proposal.status !== "pending") return c.json({ error: "Voting is closed on this proposal" }, 400);
+      if (Date.now() >= proposal.endsAt) return c.json({ error: "Voting period has ended" }, 400);
+      if (proposal.voterLog[accountId]) {
+        return c.json({ error: "You have already voted on this proposal", code: "DAO_ALREADY_VOTED", existingVote: proposal.voterLog[accountId] }, 409);
+      }
+      const voted: DAOProposal = {
+        ...proposal,
+        voterLog: { ...proposal.voterLog, [accountId]: { direction, weight } },
+        votesFor: direction === "for" ? proposal.votesFor + weight : proposal.votesFor,
+        votesAgainst: direction === "against" ? proposal.votesAgainst + weight : proposal.votesAgainst,
+      };
+      await saveDaoProposal(voted);
+      console.log(`[DAO] Vote: ${accountId} voted ${direction} (weight=${weight}) on ${proposalId}`);
+      return c.json({ success: true, proposal: voted, votingPower: weight, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount });
+    });
+    return result;
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
     console.log(`[DAO] Error casting vote: ${err}`);
     return c.json({ error: "Failed to cast vote" }, 500);
   }
@@ -2409,27 +2627,34 @@ app.post("/make-server-54299934/dao/proposals/:id/comment", async (c) => {
     const { accountId } = auth;
     const proposalId = c.req.param("id");
     if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
+
+    // Pre-lock: VIP eligibility + input validation
     const vipStatus = await verifyVipEligibilityFull(accountId);
     if (!vipStatus.eligible) return c.json({ error: "Hold HBAR.ħ tokens or VIP NFTs to comment", code: "DAO_INELIGIBLE" }, 403);
     const body = await c.req.json();
     const { text } = body;
     if (!text || typeof text !== "string" || !text.trim()) return c.json({ error: "Comment text is required" }, 400);
-    const proposals = await loadDaoProposals();
-    const idx = proposals.findIndex(p => p.id === proposalId);
-    if (idx === -1) return c.json({ error: "Proposal not found" }, 404);
-    if ((proposals[idx].comments?.length ?? 0) >= DAO_MAX_COMMENTS_PER_PROPOSAL) {
-      return c.json({ error: `Maximum ${DAO_MAX_COMMENTS_PER_PROPOSAL} comments per proposal` }, 400);
-    }
-    const cmtBuf = new Uint8Array(3);
-    crypto.getRandomValues(cmtBuf);
-    const cmtHex = Array.from(cmtBuf).map(b => b.toString(16).padStart(2, "0")).join("");
-    const comment: DAOComment = { id: `cmt-${Date.now().toString(36)}-${cmtHex}`, author: accountId, text: sanitizeString(text.trim(), 500), createdAt: Date.now() };
-    const updated = [...proposals];
-    updated[idx] = { ...proposals[idx], comments: [...(proposals[idx].comments ?? []), comment] };
-    await saveDaoProposals(updated);
-    console.log(`[DAO] Comment by ${accountId} on ${proposalId}: "${comment.text.slice(0, 50)}"`);
-    return c.json({ success: true, comment, proposal: updated[idx] });
-  } catch (err) {
+
+    // Per-proposal lock on comment key — doesn't block votes or other proposals
+    const result = await withKvLock(daoProposalLock(proposalId), async () => {
+      const proposal = await loadDaoProposal(proposalId);
+      if (!proposal) return c.json({ error: "Proposal not found" }, 404);
+      const existingComments = proposal.comments ?? [];
+      if (existingComments.length >= DAO_MAX_COMMENTS_PER_PROPOSAL) {
+        return c.json({ error: `Maximum ${DAO_MAX_COMMENTS_PER_PROPOSAL} comments per proposal` }, 400);
+      }
+      const cmtBuf = new Uint8Array(3);
+      crypto.getRandomValues(cmtBuf);
+      const cmtHex = Array.from(cmtBuf).map(b => b.toString(16).padStart(2, "0")).join("");
+      const comment: DAOComment = { id: `cmt-${Date.now().toString(36)}-${cmtHex}`, author: accountId, text: sanitizeString(text.trim(), 500), createdAt: Date.now() };
+      const updatedComments = [...existingComments, comment];
+      await saveDaoComments(proposalId, updatedComments);
+      console.log(`[DAO] Comment by ${accountId} on ${proposalId}: "${comment.text.slice(0, 50)}"`);
+      return c.json({ success: true, comment, proposal: { ...proposal, comments: updatedComments } });
+    });
+    return result;
+  } catch (err: any) {
+    if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
     console.log(`[DAO] Error adding comment: ${err}`);
     return c.json({ error: "Failed to add comment" }, 500);
   }
@@ -2655,6 +2880,84 @@ app.get("/make-server-54299934/holiday-logos", async (c) => {
   } catch (err) {
     console.log(`[Holiday Logos] Unexpected error: ${err}`);
     return c.json({ error: `Unexpected error: ${String(err)}` }, 500);
+  }
+});
+
+// ── Brand Logo Bucket ─────────────────────────────────────────────────
+// Lists files from "WRAPP LOGOS" and returns public + signed URLs.
+// Supports both public and private bucket configurations.
+const BRAND_BUCKET = "WRAPP LOGOS";
+const BRAND_SIGNED_TTL = 3600; // 1 hour
+
+app.get("/make-server-54299934/brand-logos", async (c) => {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) return c.json({ error: "Missing env" }, 500);
+    const supabase = createSupabaseClient(supabaseUrl, serviceKey);
+
+    // Check if bucket exists and whether it's public
+    const { data: buckets, error: bucketsErr } = await supabase.storage.listBuckets();
+    if (bucketsErr) {
+      console.log(`[Brand Logos] Failed to list buckets: ${bucketsErr.message}`);
+      return c.json({ error: bucketsErr.message }, 502);
+    }
+    const bucket = buckets?.find((b: any) => b.name === BRAND_BUCKET);
+    if (!bucket) {
+      console.log(`[Brand Logos] Bucket "${BRAND_BUCKET}" not found`);
+      return c.json({ logos: [], bucket: BRAND_BUCKET, hint: "Bucket not found" });
+    }
+    const isPublic = !!(bucket as any).public;
+
+    const { data: files, error: listErr } = await supabase.storage
+      .from(BRAND_BUCKET)
+      .list("", { limit: 200, sortBy: { column: "name", order: "asc" } });
+    if (listErr) return c.json({ error: listErr.message, bucket: BRAND_BUCKET }, 502);
+    const realFiles = (files || []).filter((f: any) => f.name && !f.name.endsWith("/") && f.id);
+
+    if (realFiles.length === 0) {
+      return c.json({ logos: [], bucket: BRAND_BUCKET });
+    }
+
+    // For public buckets, use direct public URLs (faster, CDN-cacheable)
+    if (isPublic) {
+      const publicBase = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(BRAND_BUCKET)}`;
+      const logos = realFiles.map((f: any) => ({
+        name: f.name,
+        publicUrl: `${publicBase}/${encodeURIComponent(f.name)}`,
+      }));
+      console.log(`[Brand Logos] Public bucket — ${logos.length} file(s): [${logos.map((l: any) => l.name).join(", ")}]`);
+      return c.json({ logos, bucket: BRAND_BUCKET, urlType: "public" });
+    }
+
+    // For private buckets, generate signed URLs
+    const { data: signedUrls, error: signErr } = await supabase.storage
+      .from(BRAND_BUCKET)
+      .createSignedUrls(
+        realFiles.map((f: any) => f.name),
+        BRAND_SIGNED_TTL,
+      );
+    if (signErr) {
+      console.log(`[Brand Logos] Signed URL error: ${signErr.message} — falling back to public pattern`);
+      const publicBase = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(BRAND_BUCKET)}`;
+      const logos = realFiles.map((f: any) => ({
+        name: f.name,
+        publicUrl: `${publicBase}/${encodeURIComponent(f.name)}`,
+      }));
+      return c.json({ logos, bucket: BRAND_BUCKET, urlType: "public-fallback" });
+    }
+
+    const logos = (signedUrls || [])
+      .filter((s: any) => !s.error)
+      .map((s: any) => ({
+        name: realFiles.find((f: any) => f.name === s.path)?.name || s.path,
+        publicUrl: s.signedUrl,
+      }));
+    console.log(`[Brand Logos] Private bucket — ${logos.length} signed URL(s): [${logos.map((l: any) => l.name).join(", ")}]`);
+    return c.json({ logos, bucket: BRAND_BUCKET, urlType: "signed" });
+  } catch (err) {
+    console.log(`[Brand Logos] Unexpected error: ${err}`);
+    return c.json({ error: String(err) }, 500);
   }
 });
 

@@ -9,6 +9,8 @@
  */
 
 // ── Wrappdex main logos (light & dark mode) ──────────────────────────
+// PLACEHOLDER: Replace with official Wrappdex brand kit URLs (self-hosted
+// or CDN). The inline SVGs below are temporary text-only stand-ins.
 // Dark mode wordmark — light text on transparent, for dark backgrounds
 const wrappdexLogoDark = `data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60"><rect width="280" height="60" rx="8" fill="none"/><text x="140" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-0.5" fill="#e2e8f0">WRAPP<tspan fill="#ec4899">DEX</tspan></text></svg>`
@@ -38,7 +40,8 @@ export const HBARH_LOGO_DARK = HBAR_LOGO;
 export const HBARH_LOGO_LIGHT = HBAR_LOGO;
 
 // ── HBAR.ħ branding wordmark (header / splash) ───────────────────────
-// Now using the provided Wrappdex logo images instead of generated SVGs.
+// PLACEHOLDER: Swap these two exports with the official logo URLs once
+// the brand kit assets (transparent PNG / SVG) are provided.
 export const HBARH_BRANDING_DARK = wrappdexLogoDark;
 export const HBARH_BRANDING_LIGHT = wrappdexLogoLight;
 

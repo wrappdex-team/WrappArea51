@@ -621,10 +621,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useWallet() {
+export function useWallet(): WalletContextType {
   const context = useContext(WalletContext);
   if (context === undefined) {
-    return DEFAULT_WALLET;
+    throw new Error(
+      "useWallet() called outside <WalletProvider>. " +
+      "Wrap your component tree with <WalletProvider> before using useWallet."
+    );
   }
   return context;
 }

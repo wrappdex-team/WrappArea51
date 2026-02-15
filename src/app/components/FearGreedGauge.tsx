@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
+import { fetchTop20Index, formatMarketCap, type Top20IndexData, type Top20Coin } from "../utils/coingecko";
+import { Tip } from "./Tip";
 
 interface FearGreedData {
   value: number;
@@ -12,6 +14,11 @@ export function FearGreedGauge() {
   const { isDark } = useTheme();
   const [data, setData] = useState<FearGreedData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Top 20 composite index data
+  const [top20, setTop20] = useState<Top20IndexData | null>(null);
+  const [top20Loading, setTop20Loading] = useState(true);
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
   useEffect(() => {
     const fetchFearGreed = async () => {
@@ -35,6 +42,18 @@ export function FearGreedGauge() {
     fetchFearGreed();
     const interval = setInterval(fetchFearGreed, 300000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Fetch Top 20 index data
+  useEffect(() => {
+    const loadTop20 = async () => {
+      const result = await fetchTop20Index();
+      setTop20(result);
+      setTop20Loading(false);
+    };
+    loadTop20();
+    const iv = setInterval(loadTop20, 120000);
+    return () => clearInterval(iv);
   }, []);
 
   const value = data?.value ?? 50;
@@ -175,6 +194,141 @@ export function FearGreedGauge() {
           </div>
         </div>
       )}
+
+      {/* ── Top 20 Composite Index ─────────────────────────────────── */}
+      <div className={`mt-3 pt-3 border-t ${isDark ? "border-white/[0.06]" : "border-gray-100"}`}>
+        <div className="flex items-center justify-between mb-1.5">
+          <button
+            onClick={() => setShowBreakdown(!showBreakdown)}
+            className={`flex items-center gap-1 text-xs font-medium ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"} transition-colors`}
+          >
+            Top 20
+            <ChevronRight className={`w-3 h-3 transition-transform duration-200 ${showBreakdown ? "rotate-90" : ""}`} />
+          </button>
+        </div>
+
+        {top20Loading ? (
+          <div className="flex items-center gap-2 h-8">
+            <div className={`h-5 w-16 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-100"} animate-pulse`} />
+            <div className={`h-4 w-14 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-100"} animate-pulse`} />
+          </div>
+        ) : top20 ? (
+          <>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-lg font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
+                ${formatMarketCap(top20.totalMarketCap)}
+              </span>
+              <span className={`flex items-center gap-0.5 text-xs font-medium ${
+                top20.weightedChange24h >= 0 ? "text-[#16c784]" : "text-[#ea3943]"
+              }`}>
+                {top20.weightedChange24h >= 0 ? (
+                  <TrendingUp className="w-3 h-3" />
+                ) : (
+                  <TrendingDown className="w-3 h-3" />
+                )}
+                {Math.abs(top20.weightedChange24h).toFixed(2)}%
+                <span className={`${isDark ? "text-slate-500" : "text-gray-400"} font-normal`}>(24h)</span>
+              </span>
+            </div>
+
+            {/* Mini dominance bar — top 5 coins market-cap weighted */}
+            {top20.topCoins.length > 0 && (
+              <div className="mt-2.5">
+                <div className="flex gap-[2px] h-[5px] rounded-full overflow-hidden">
+                  {top20.topCoins.slice(0, 5).map((coin, i) => {
+                    const colors = ["#f7931a", "#627eea", "#26a17b", "#f3ba2f", "#e6007a"];
+                    return (
+                      <Tip key={coin.symbol} content={`${coin.symbol} ${coin.dominancePercent.toFixed(1)}%`}>
+                        <div
+                          className="h-full transition-all duration-300"
+                          style={{
+                            width: `${coin.dominancePercent}%`,
+                            minWidth: "3%",
+                            backgroundColor: colors[i] || (isDark ? "#475569" : "#94a3b8"),
+                            opacity: isDark ? 0.85 : 0.75,
+                          }}
+                        />
+                      </Tip>
+                    );
+                  })}
+                  {/* Rest of top 20 as one segment */}
+                  {(() => {
+                    const top5Dom = top20.topCoins.slice(0, 5).reduce((sum, c) => sum + c.dominancePercent, 0);
+                    const restDom = 100 - top5Dom;
+                    if (restDom > 1) {
+                      return (
+                        <Tip content={`Others ${restDom.toFixed(1)}%`}>
+                          <div
+                            className="h-full"
+                            style={{
+                              width: `${restDom}%`,
+                              backgroundColor: isDark ? "#334155" : "#cbd5e1",
+                              opacity: isDark ? 0.5 : 0.4,
+                            }}
+                          />
+                        </Tip>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+                <div className="flex justify-between mt-1">
+                  <div className="flex items-center gap-2">
+                    {top20.topCoins.slice(0, 3).map((coin, i) => {
+                      const colors = ["#f7931a", "#627eea", "#26a17b"];
+                      return (
+                        <span key={coin.symbol} className="flex items-center gap-1 text-[10px]">
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: colors[i] }} />
+                          <span className={isDark ? "text-slate-500" : "text-gray-400"}>{coin.symbol}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    {top20.topCoinCount} coins
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Expandable top-5 breakdown */}
+            {showBreakdown && top20.topCoins.length > 0 && (
+              <div className={`mt-2.5 pt-2 border-t ${isDark ? "border-white/[0.04]" : "border-gray-50"}`}>
+                {top20.topCoins.slice(0, 5).map((coin) => (
+                  <TopCoinRow key={coin.symbol} coin={coin} isDark={isDark} />
+                ))}
+              </div>
+            )}
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Compact single-line coin row for the top-5 breakdown */
+function TopCoinRow({ coin, isDark }: { coin: Top20Coin; isDark: boolean }) {
+  return (
+    <div className={`flex items-center justify-between py-1 text-[11px] ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+      <div className="flex items-center gap-1.5 min-w-0">
+        {coin.image && (
+          <img
+            src={coin.image}
+            alt={coin.symbol}
+            className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        )}
+        <span className="font-medium">{coin.symbol}</span>
+        <span className={isDark ? "text-slate-500" : "text-gray-400"}>
+          ${coin.price >= 1 ? coin.price.toLocaleString(undefined, { maximumFractionDigits: 0 }) : coin.price.toFixed(4)}
+        </span>
+      </div>
+      <span className={`font-medium tabular-nums ${
+        coin.change24h >= 0 ? "text-[#16c784]" : "text-[#ea3943]"
+      }`}>
+        {coin.change24h >= 0 ? "+" : ""}{coin.change24h.toFixed(2)}%
+      </span>
     </div>
   );
 }

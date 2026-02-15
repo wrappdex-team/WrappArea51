@@ -277,13 +277,14 @@ export function Dashboard() {
   ];
 
   const cardClass = isDark
-    ? "rounded-xl p-4 border border-white/[0.06] bg-[#0d0f1a]/80"
-    : "rounded-xl p-4 border border-gray-200 bg-white";
+    ? `rounded-xl p-4 border border-white/[0.06] bg-[#0d0f1a]/80${vipActive ? " vip-dash-card" : ""}`
+    : `rounded-xl p-4 border border-gray-200 bg-white${vipActive ? " vip-dash-card" : ""}`;
 
   return (
     <div className="space-y-4">
       {/* ═══ Row 1: Market Stats — CoinGecko typography ═══ */}
       <div className={cardClass}>
+        {vipActive && <span className="vip-shimmer-inner" aria-hidden="true" />}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           {/* Market Cap */}
           <div>
@@ -510,12 +511,13 @@ export function Dashboard() {
       })()}
 
       {/* ═══ Row 2: CoinMarketCap-style Indicators ═══ */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Fear & Greed — CMC speedometer gauge */}
-        <FearGreedGauge />
+      <div className={`grid grid-cols-1 md:grid-cols-3 gap-3${vipActive ? " vip-indicator-row" : ""}`}>
+        {/* RSI — CMC horizontal bar */}
+        <RSIGauge />
 
         {/* BTC Dominance — CMC horizontal bar */}
         <div className={cardClass}>
+          {vipActive && <span className="vip-shimmer-inner" aria-hidden="true" />}
           <div className="flex items-center gap-0.5 mb-3">
             <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>
               BTC Dominance
@@ -566,8 +568,8 @@ export function Dashboard() {
           )}
         </div>
 
-        {/* RSI — CMC horizontal bar */}
-        <RSIGauge />
+        {/* Fear & Greed — CMC speedometer gauge + Top 20 Index */}
+        <FearGreedGauge />
       </div>
 
       {/* Site Activity — upgraded full-width activity feed */}
@@ -631,7 +633,7 @@ export function Dashboard() {
                         ? isStable ? "border-emerald-300 bg-white shadow-md" : "border-pink-300 bg-white shadow-md"
                         : isStable ? "border-gray-200 bg-white hover:border-emerald-200 shadow-sm hover:shadow-md" : "border-gray-200 bg-white hover:border-pink-200 shadow-sm hover:shadow-md"
                       }`
-                }`}
+                }${vipActive ? " vip-market-row" : ""}`}
               >
                 {/* Row header */}
                 <div

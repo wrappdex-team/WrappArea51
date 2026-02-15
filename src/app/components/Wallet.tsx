@@ -40,8 +40,6 @@ import {
 import {
   HBARH_LOGO_DARK,
   HBARH_LOGO_LIGHT,
-  HBARH_BRANDING_DARK,
-  HBARH_BRANDING_LIGHT,
   HASHPACK_LOGO,
   METAMASK_LOGO,
 } from "../assets/brand";

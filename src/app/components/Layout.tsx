@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT, HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
+import { HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
 import { Link, useLocation } from "react-router";
 import { TrendingUp, Wallet, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, Volume2, VolumeOff, Volume1, Droplets, Crown, AlertTriangle, Shield, Globe } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
@@ -23,11 +23,13 @@ import { ScrollToTop } from "./ScrollToTop";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { HolidayLogo } from "./HolidayLogo";
+import { useBrandLogos } from "../hooks/useBrandLogos";
 
 export function Layout() {
   const location = useLocation();
   const { connectedWallets, disconnectWallet, primaryWallet, hederaAccount, hbarPrice, metaMaskAccount, ethPrice, hashPackProfile, hashPackSession } = useWallet();
   const { theme, toggleTheme, isDark, accent, toggleAccent, isSky } = useTheme();
+  const brandLogos = useBrandLogos();
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showWalletMenu, setShowWalletMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -149,8 +151,8 @@ export function Layout() {
             {/* HBAR.ħ Logo — compact on lg to free nav space */}
             <Link to="/" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1">
               <HolidayLogo
-                defaultDarkSrc={HBARH_BRANDING_DARK}
-                defaultLightSrc={HBARH_BRANDING_LIGHT}
+                defaultDarkSrc={brandLogos.dark}
+                defaultLightSrc={brandLogos.light}
                 isDark={isDark}
                 alt="Wrappdex Decentralized Exchange"
                 vipPulse={vipActive}

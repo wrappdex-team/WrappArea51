@@ -617,3 +617,137 @@ export async function fetchMarketRSI(): Promise<{ rsi: number; prices: number[] 
 
   return { rsi: 52.4, prices: [] };
 }
+
+// ── Top 20 Composite Index ────────────────────────────────────────────
+// Market-cap-weighted composite of the top 20 cryptocurrencies.
+// Uses CoinGecko /coins/markets endpoint (free tier, no API key).
+
+export interface Top20IndexData {
+  totalMarketCap: number;          // Sum of top 20 market caps (USD)
+  weightedChange24h: number;       // Market-cap-weighted average 24h change (%)
+  topCoinCount: number;            // Number of coins in the composite
+  topCoins: Top20Coin[];           // Individual coin data for breakdown
+}
+
+export interface Top20Coin {
+  symbol: string;
+  name: string;
+  price: number;
+  change24h: number;
+  marketCap: number;
+  image: string;
+  dominancePercent: number;        // Share of top-20 total market cap
+}
+
+const TOP20_FALLBACK: Top20IndexData = {
+  totalMarketCap: 3_180_000_000_000,
+  weightedChange24h: 1.42,
+  topCoinCount: 20,
+  topCoins: [],
+};
+
+let _top20Cache: { data: Top20IndexData; ts: number } | null = null;
+const TOP20_CACHE_TTL_MS = 120_000; // 2-minute client-side cache
+
+export async function fetchTop20Index(): Promise<Top20IndexData> {
+  // Check client-side cache
+  if (_top20Cache && Date.now() - _top20Cache.ts < TOP20_CACHE_TTL_MS) {
+    return _top20Cache.data;
+  }
+
+  // CoinGecko /coins/markets — top 20 by market cap
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h`;
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`CoinGecko top20 ${res.status}`);
+    const coins: any[] = await res.json();
+    if (!coins || coins.length < 10) throw new Error("Insufficient data");
+
+    let totalMcap = 0;
+    let weightedChangeSum = 0;
+
+    const topCoins: Top20Coin[] = coins.map((c: any) => {
+      const mcap = c.market_cap ?? 0;
+      const change = c.price_change_percentage_24h ?? 0;
+      totalMcap += mcap;
+      weightedChangeSum += mcap * change;
+      return {
+        symbol: (c.symbol ?? "").toUpperCase(),
+        name: c.name ?? "",
+        price: c.current_price ?? 0,
+        change24h: change,
+        marketCap: mcap,
+        image: c.image ?? "",
+        dominancePercent: 0, // Calculated below
+      };
+    });
+
+    // Calculate dominance percentages
+    if (totalMcap > 0) {
+      topCoins.forEach(c => { c.dominancePercent = (c.marketCap / totalMcap) * 100; });
+    }
+
+    const weightedChange = totalMcap > 0 ? weightedChangeSum / totalMcap : 0;
+
+    const result: Top20IndexData = {
+      totalMarketCap: totalMcap,
+      weightedChange24h: weightedChange,
+      topCoinCount: topCoins.length,
+      topCoins,
+    };
+    _top20Cache = { data: result, ts: Date.now() };
+    return result;
+  } catch {
+    clearTimeout(timeoutId);
+  }
+
+  // Fallback: try to compute from CoinCap
+  const cc = new AbortController();
+  const ccTimeout = setTimeout(() => cc.abort(), 8000);
+  try {
+    const res = await fetch(`${COINCAP_API}/assets?limit=20`, { signal: cc.signal });
+    clearTimeout(ccTimeout);
+    if (!res.ok) throw new Error(`CoinCap top20 ${res.status}`);
+    const json = await res.json();
+    const assets: any[] = json.data || [];
+
+    let totalMcap = 0;
+    let weightedChangeSum = 0;
+
+    const topCoins: Top20Coin[] = assets.map((a: any) => {
+      const mcap = parseFloat(a.marketCapUsd) || 0;
+      const change = parseFloat(a.changePercent24Hr) || 0;
+      totalMcap += mcap;
+      weightedChangeSum += mcap * change;
+      return {
+        symbol: (a.symbol ?? "").toUpperCase(),
+        name: a.name ?? "",
+        price: parseFloat(a.priceUsd) || 0,
+        change24h: change,
+        marketCap: mcap,
+        image: "",
+        dominancePercent: 0,
+      };
+    });
+
+    if (totalMcap > 0) {
+      topCoins.forEach(c => { c.dominancePercent = (c.marketCap / totalMcap) * 100; });
+    }
+
+    const result: Top20IndexData = {
+      totalMarketCap: totalMcap,
+      weightedChange24h: totalMcap > 0 ? weightedChangeSum / totalMcap : 0,
+      topCoinCount: topCoins.length,
+      topCoins,
+    };
+    _top20Cache = { data: result, ts: Date.now() };
+    return result;
+  } catch {
+    clearTimeout(ccTimeout);
+  }
+
+  return { ...TOP20_FALLBACK };
+}
