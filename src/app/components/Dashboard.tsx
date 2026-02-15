@@ -7,6 +7,7 @@ import { FearGreedGauge } from "./FearGreedGauge";
 import { RSIGauge } from "./RSIGauge";
 import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, fetchCoinCapHistory, type CoinPrice } from "../utils/coingecko";
 import type { GlobalMarketData, OracleSource } from "../utils/coingecko";
+import { fetchMarketRSI } from "../utils/coingecko";
 import { CandlestickChart } from "./CandlestickChart";
 import { MarketDetailChart } from "./MarketDetailChart";
 import { fetchRealCandles, generateCandlestickData } from "../utils/chartData";
@@ -153,11 +154,22 @@ export function Dashboard() {
 
   // Global crypto market data — total market cap & volume
   const [globalData, setGlobalData] = useState<GlobalMarketData | null>(null);
+  const [headerRsi, setHeaderRsi] = useState<number | null>(null);
+  const [headerFng, setHeaderFng] = useState<number | null>(null);
 
   useEffect(() => {
     const loadGlobal = async () => {
-      const data = await fetchGlobalMarketData();
+      const [data, rsiData, fngVal] = await Promise.all([
+        fetchGlobalMarketData(),
+        fetchMarketRSI(),
+        fetch("https://api.alternative.me/fng/?limit=1")
+          .then(r => r.json())
+          .then(j => (j.data?.[0] ? parseInt(j.data[0].value) : null))
+          .catch(() => null),
+      ]);
       setGlobalData(data);
+      setHeaderRsi(rsiData.rsi);
+      setHeaderFng(fngVal);
     };
     loadGlobal();
     const iv = setInterval(loadGlobal, 120000);
@@ -332,6 +344,30 @@ export function Dashboard() {
                 <span className={isDark ? "text-slate-500" : "text-gray-400"}>Coins </span>
                 <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{globalData.activeCryptos.toLocaleString()}</span>
               </span>
+              {headerRsi !== null && (
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>RSI </span>
+                  <span className={`font-medium ${
+                    headerRsi <= 30 ? "text-[#16c784]"
+                      : headerRsi <= 45 ? "text-[#30e0a1]"
+                      : headerRsi <= 55 ? "text-amber-400"
+                      : headerRsi <= 70 ? "text-orange-400"
+                      : "text-[#ea3943]"
+                  }`}>{headerRsi.toFixed(1)}</span>
+                </span>
+              )}
+              {headerFng !== null && (
+                <span className="text-xs">
+                  <span className={isDark ? "text-slate-500" : "text-gray-400"}>F&G </span>
+                  <span className={`font-medium ${
+                    headerFng <= 25 ? "text-[#ea3943]"
+                      : headerFng <= 45 ? "text-orange-400"
+                      : headerFng <= 55 ? "text-amber-400"
+                      : headerFng <= 75 ? "text-[#30e0a1]"
+                      : "text-[#16c784]"
+                  }`}>{headerFng}</span>
+                </span>
+              )}
             </div>
           )}
         </div>
