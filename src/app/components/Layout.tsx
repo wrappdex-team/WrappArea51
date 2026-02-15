@@ -158,18 +158,18 @@ export function Layout() {
                 vipPulse={vipActive}
                 wrapperClassName={`flex-shrink-0 transition-transform duration-300 flex items-center ${
                   isDark
-                    ? "h-[90px] md:h-[105px] lg:h-[90px] xl:h-[105px]"
-                    : "h-[105px] md:h-[128px] lg:h-[105px] xl:h-[120px]"
+                    ? "h-[117px] md:h-[137px] lg:h-[117px] xl:h-[137px]"
+                    : "h-[137px] md:h-[166px] lg:h-[137px] xl:h-[156px]"
                 }`}
                 imgClassName={
                   isDark
-                    ? "h-[81px] md:h-[96px] lg:h-[81px] xl:h-[96px] w-auto object-contain"
-                    : "h-[96px] md:h-[117px] lg:h-[96px] xl:h-[111px] w-auto object-contain"
+                    ? "h-[105px] md:h-[125px] lg:h-[105px] xl:h-[125px] w-auto object-contain"
+                    : "h-[125px] md:h-[152px] lg:h-[125px] xl:h-[144px] w-auto object-contain"
                 }
                 holidayImgClassName={
                   isDark
-                    ? "h-[40px] md:h-[48px] lg:h-[40px] xl:h-[48px] w-auto object-contain"
-                    : "h-[48px] md:h-[56px] lg:h-[48px] xl:h-[56px] w-auto object-contain"
+                    ? "h-[52px] md:h-[62px] lg:h-[52px] xl:h-[62px] w-auto object-contain"
+                    : "h-[62px] md:h-[73px] lg:h-[62px] xl:h-[73px] w-auto object-contain"
                 }
               />
             </Link>
