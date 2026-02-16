@@ -219,6 +219,67 @@ async function verifyED25519Signature(
   }
 }
 
+// ── Owner & Admin Session Authorization ─────────────────────────────
+// All admin operations use ED25519 session auth. The service role key is
+// NEVER transmitted from any client. Owner (0.0.518487) has elevated
+// "god key" privileges for site-wide administrative operations.
+//
+// Privilege tiers:
+//   Owner  — full site admin (chat clear, spin reset, AMM kill, oracle, admins)
+//   Admin  — DAO proposal management only (create/edit/delete proposals)
+//   User   — vote, comment, LP, swap (standard ED25519 session)
+
+export const OWNER_ACCOUNT = "0.0.518487";
+
+const ADMIN_AUDIT_KEY = "admin_audit_log";
+const ADMIN_AUDIT_MAX_ENTRIES = 500;
+
+/**
+ * Require an authenticated ED25519 session belonging to the OWNER account.
+ * Used for god-key operations: chat admin, spin reset, AMM kill switch,
+ * oracle config, admin list management, storage debug.
+ */
+export async function requireOwner(c: any): Promise<{ accountId: string } | Response> {
+  const session = await validateSession(c);
+  if (!session) {
+    return c.json({
+      error: "Authentication required — sign a wallet challenge first",
+      code: "AUTH_REQUIRED",
+    }, 401);
+  }
+  if (session.accountId !== OWNER_ACCOUNT) {
+    const ip = getClientIp(c);
+    console.log(`[SECURITY] Non-owner privileged access attempt: ${session.accountId} from IP ${ip}`);
+    return c.json({ error: "Owner authorization required", code: "OWNER_REQUIRED" }, 403);
+  }
+  return { accountId: session.accountId };
+}
+
+/**
+ * Append to the admin audit log (KV-backed, capped, append-only).
+ * Non-blocking — failures are logged but never halt the calling operation.
+ */
+export async function logAdminAction(
+  action: string, accountId: string, ip: string, details?: string,
+): Promise<void> {
+  try {
+    const entry = {
+      action, accountId, ip,
+      ts: Date.now(),
+      iso: new Date().toISOString(),
+      details: details || null,
+    };
+    const log: any[] = (await kv.get(ADMIN_AUDIT_KEY)) ?? [];
+    log.push(entry);
+    if (log.length > ADMIN_AUDIT_MAX_ENTRIES) {
+      log.splice(0, log.length - ADMIN_AUDIT_MAX_ENTRIES);
+    }
+    await kv.set(ADMIN_AUDIT_KEY, log);
+  } catch (err) {
+    console.log(`[ADMIN-AUDIT] Failed to write audit entry: ${err}`);
+  }
+}
+
 // ── Session Helpers (exported for other modules) ────────────────────
 
 /** Validate session token and return bound accountId. */
@@ -420,5 +481,17 @@ export function registerAuthRoutes(app: Hono): void {
       kv.del(AUTH_SESSION_PREFIX + token).catch(() => {});
     }
     return c.json({ success: true });
+  });
+
+  // GET /auth/admin-audit — Owner-only: review admin action audit trail
+  app.get(`${ROUTE_PREFIX}/auth/admin-audit`, async (c) => {
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    try {
+      const log: any[] = (await kv.get(ADMIN_AUDIT_KEY)) ?? [];
+      return c.json({ entries: log, count: log.length, maxEntries: ADMIN_AUDIT_MAX_ENTRIES });
+    } catch {
+      return c.json({ error: "Failed to load audit log" }, 500);
+    }
   });
 }

@@ -431,12 +431,11 @@ export async function fetchDaoAdmins(
 }
 
 /**
- * Add a new DAO admin. Requires:
- * 1. Caller is already an admin (server-verified from session)
- * 2. A FRESH wallet signature (session <2 min old)
- *
+ * Add a new DAO admin. OWNER-ONLY (0.0.518487).
+ * Requires a FRESH wallet signature (session <2 min old).
  * The caller must use forceReauthenticate() first to get a fresh session,
  * which triggers a new HashPack signing prompt as confirmation.
+ * Server enforces owner-only — other admins will receive OWNER_REQUIRED error.
  */
 export async function addDaoAdmin(
   accountId: string,
@@ -466,7 +465,7 @@ export async function addDaoAdmin(
 }
 
 /**
- * Remove a DAO admin. Same fresh-session requirement as add.
+ * Remove a DAO admin. OWNER-ONLY (0.0.518487). Same fresh-session requirement as add.
  * Founder (0.0.518487) can never be removed (server-enforced).
  */
 export async function removeDaoAdmin(

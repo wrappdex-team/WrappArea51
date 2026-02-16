@@ -4,8 +4,8 @@
 //
 // Sharded KV storage: index + per-proposal + per-proposal-comments keys.
 // Auto-migrates from legacy single-blob (dao_proposals) on first read.
-// Admin CRUD restricted to 0.0.518487 + dynamic admin list.
-// Vote weight from Mirror Node balance (server-side).
+// Admin CRUD restricted to 0.0.518487 (owner only for admin management).
+// All admins can create/edit/delete proposals. Vote weight from Mirror Node.
 // Per-proposal locks for vote/edit/comment — global lock only for create/delete.
 // Deduplication via voterLog. Inputs sanitized, rate-limited, fail-closed.
 // Caps: 100 proposals, 200 comments per proposal.
@@ -19,7 +19,7 @@ import {
   withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
-import { requireAuth, AUTH_SESSION_PREFIX } from "./auth.ts";
+import { requireAuth, AUTH_SESSION_PREFIX, requireOwner, logAdminAction, OWNER_ACCOUNT } from "./auth.ts";
 import type { AuthSession } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
@@ -514,8 +514,10 @@ export function registerDaoRoutes(app: Hono): void {
   // DAO ADMIN MANAGEMENT
   // ═══════════════════════════════════════════════════════════════════════
   //
-  // Admin-only add/remove with fresh-session (<2 min) enforcement.
-  // Founder (0.0.518487) permanently protected. Max 10 admins.
+  // OWNER-ONLY add/remove. Only 0.0.518487 can modify the admin list.
+  // This prevents admin chain escalation (compromised admin adding hostile
+  // accounts). Fresh session (<2 min) still required for extra safety.
+  // Founder (0.0.518487) permanently protected from removal. Max 10 admins.
   // ═══════════════════════════════════════════════════════════════════════
 
   // GET /dao/admins — Admin-only: list current admins
@@ -537,7 +539,7 @@ export function registerDaoRoutes(app: Hono): void {
     }
   });
 
-  // POST /dao/admins — Admin-only: add a new admin (requires FRESH session)
+  // POST /dao/admins — OWNER-ONLY: add a new admin (requires FRESH session)
   app.post(`${ROUTE_PREFIX}/dao/admins`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -545,10 +547,13 @@ export function registerDaoRoutes(app: Hono): void {
       const auth = await requireFreshAdminAuth(c);
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
-      if (!(await isDaoAdminAsync(accountId))) {
-        console.log(`[DAO-ADMIN] Non-admin add attempt: ${accountId}`);
-        return c.json({ error: "Only DAO admins can add admins", code: "DAO_NOT_ADMIN" }, 403);
+
+      // ── OWNER-ONLY: prevent admin chain escalation ──
+      if (accountId !== OWNER_ACCOUNT) {
+        console.log(`[SECURITY] Non-owner admin-add attempt by ${accountId} from IP ${ip}`);
+        return c.json({ error: "Only the protocol owner can add admins", code: "OWNER_REQUIRED" }, 403);
       }
+
       const body = await c.req.json();
       const { newAdminAccountId } = body;
       if (!newAdminAccountId || typeof newAdminAccountId !== "string") {
@@ -566,7 +571,8 @@ export function registerDaoRoutes(app: Hono): void {
       }
       admins.push(newAdminAccountId);
       await saveDaoAdminList(admins);
-      console.log(`[DAO-ADMIN] Admin added by ${accountId}: ${newAdminAccountId} (total: ${admins.length})`);
+      console.log(`[DAO-ADMIN] Admin added by OWNER ${accountId}: ${newAdminAccountId} (total: ${admins.length})`);
+      logAdminAction("dao_admin_add", accountId, ip, `target=${newAdminAccountId} total=${admins.length}`);
       return c.json({ success: true, admins, addedBy: accountId });
     } catch (err) {
       console.error(`[DAO-ADMIN] Error adding admin: ${err}`);
@@ -574,7 +580,7 @@ export function registerDaoRoutes(app: Hono): void {
     }
   });
 
-  // DELETE /dao/admins/:accountId — Admin-only: remove an admin (requires FRESH session)
+  // DELETE /dao/admins/:accountId — OWNER-ONLY: remove an admin (requires FRESH session)
   app.delete(`${ROUTE_PREFIX}/dao/admins/:accountId`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -582,9 +588,13 @@ export function registerDaoRoutes(app: Hono): void {
       const auth = await requireFreshAdminAuth(c);
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
-      if (!(await isDaoAdminAsync(accountId))) {
-        return c.json({ error: "Only DAO admins can remove admins", code: "DAO_NOT_ADMIN" }, 403);
+
+      // ── OWNER-ONLY: prevent admin chain escalation ──
+      if (accountId !== OWNER_ACCOUNT) {
+        console.log(`[SECURITY] Non-owner admin-remove attempt by ${accountId} from IP ${ip}`);
+        return c.json({ error: "Only the protocol owner can remove admins", code: "OWNER_REQUIRED" }, 403);
       }
+
       const targetAccountId = c.req.param("accountId");
       if (!targetAccountId || !isValidHederaAccountId(targetAccountId)) {
         return c.json({ error: "Invalid target account ID" }, 400);
@@ -599,7 +609,8 @@ export function registerDaoRoutes(app: Hono): void {
       }
       const updated = admins.filter(a => a !== targetAccountId);
       await saveDaoAdminList(updated);
-      console.log(`[DAO-ADMIN] Admin removed by ${accountId}: ${targetAccountId} (remaining: ${updated.length})`);
+      console.log(`[DAO-ADMIN] Admin removed by OWNER ${accountId}: ${targetAccountId} (remaining: ${updated.length})`);
+      logAdminAction("dao_admin_remove", accountId, ip, `target=${targetAccountId} remaining=${updated.length}`);
       return c.json({ success: true, admins: updated, removedBy: accountId });
     } catch (err) {
       console.error(`[DAO-ADMIN] Error removing admin: ${err}`);

@@ -226,7 +226,7 @@ export function Layout() {
             <div className="flex items-center gap-0.5 sm:gap-1 md:gap-1.5 flex-shrink-0">
               {/* Network Indicator Badge */}
               <Tip content={`Connected to Hedera ${hederaNetwork === "testnet" ? "Testnet" : "Mainnet"}`}>
-              <div className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border cursor-default ${
+              <div className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold border cursor-default ${
                 hederaNetwork === "testnet"
                   ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                   : isDark
@@ -415,12 +415,12 @@ export function Layout() {
                         </div>
                         <div className="text-sm font-mono">{formatAddress(primaryWallet.address)}</div>
                         {hederaAccount && primaryWallet.type === "hedera" && (
-                          <div className="text-[10px] text-emerald-400 font-bold">
+                          <div className="text-xs text-emerald-400 font-bold">
                             <AnimatedNumber value={hederaAccount.hbarBalance} decimals={2} suffix=" HBAR" /> (~$<AnimatedNumber value={hederaAccount.hbarBalance * hbarPrice} decimals={2} />)
                           </div>
                         )}
                         {metaMaskAccount && primaryWallet.type === "ethereum" && primaryWallet.connector === "MetaMask" && (
-                          <div className="text-[10px] text-orange-400 font-bold">
+                          <div className="text-xs text-orange-400 font-bold">
                             <AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth)} decimals={4} suffix={` ${metaMaskAccount.nativeSymbol}`} /> (~$<AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth) * ethPrice} decimals={2} />)
                           </div>
                         )}
@@ -449,7 +449,7 @@ export function Layout() {
                           {/* HashPack session badges */}
                           {hashPackSession && (
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold capitalize ${
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold capitalize ${
                                 hashPackSession.connectionMethod === "walletconnect"
                                   ? "bg-blue-500/20 text-blue-400"
                                   : "bg-yellow-500/20 text-yellow-400"
@@ -457,11 +457,11 @@ export function Layout() {
                                 {hashPackSession.connectionMethod}
                               </span>
                               {hashPackSession.isVerified && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">
+                                <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">
                                   verified
                                 </span>
                               )}
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center gap-1">
+                              <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
                                 live
                               </span>
@@ -566,13 +566,13 @@ export function Layout() {
           : "bg-[#f8fafc]"
       }`} style={{ border: 'none', borderTop: 'none', outline: 'none', boxShadow: 'none' }}>
         <div className="container mx-auto flex items-center justify-between">
-          <p className={`text-[10px] md:text-[11px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+          <p className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
             &copy; 2026 WRAPpDEX
           </p>
           <div className="flex items-center gap-3 md:gap-4">
             <Link
               to="/terms"
-              className={`text-[10px] md:text-[11px] transition-colors ${
+              className={`text-xs transition-colors ${
                 isDark ? "text-slate-600 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"
               }`}
             >
@@ -580,7 +580,7 @@ export function Layout() {
             </Link>
             <Link
               to="/privacy"
-              className={`text-[10px] md:text-[11px] transition-colors ${
+              className={`text-xs transition-colors ${
                 isDark ? "text-slate-600 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"
               }`}
             >
@@ -615,7 +615,7 @@ export function Layout() {
                 }`}
               >
                 <Icon className={`w-5 h-5 nav-icon ${active ? "drop-shadow-[0_0_6px_rgba(236,72,153,0.5)]" : ""}`} />
-                <span className="text-[10px]">{item.label}</span>
+                <span className="text-xs">{item.label}</span>
                 {active && (
                   <div className="w-1 h-1 rounded-full nav-dot -mt-0.5" />
                 )}
@@ -631,7 +631,7 @@ export function Layout() {
             }`}
           >
             <Menu className="w-5 h-5" />
-            <span className="text-[10px]">More</span>
+            <span className="text-xs">More</span>
           </button>
         </div>
       </nav>
@@ -713,7 +713,7 @@ export function Layout() {
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-semibold leading-tight">{item.label}</div>
-                    <div className={`text-[10px] leading-tight mt-0.5 ${
+                    <div className={`text-xs leading-tight mt-0.5 ${
                       isDark ? "text-slate-500" : "text-gray-400"
                     }`}>
                       {item.description}

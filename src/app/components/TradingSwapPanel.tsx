@@ -16,6 +16,7 @@ import {
   Loader2,
   Lock,
   Droplets,
+  PowerOff,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -30,6 +31,10 @@ import {
   type SwapQuote,
 } from "../utils/smart-liquidity";
 import { useTheme } from "../contexts/ThemeContext";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+
+// ── AMM kill switch status polling ──────────────────────────────────
+const AMM_STATUS_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/amm/kill-switch`;
 
 // ── Animated Glow Border ────────────────────────────────────────────
 
@@ -106,6 +111,28 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
   const [showParticles, setShowParticles] = useState(false);
   const [isFlipping, setIsFlipping] = useState(false);
   const [hoverSwap, setHoverSwap] = useState(false);
+
+  // ── AMM Kill Switch Status ──────────────────────────────────────
+  const [ammHalted, setAmmHalted] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch(AMM_STATUS_URL, {
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          setAmmHalted(!!data.active);
+        }
+      } catch { /* ignore — fail-open for status check */ }
+    };
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   const tokenIn = tokens[tokenInIdx];
   const tokenOut = tokens[tokenOutIdx];
@@ -189,7 +216,7 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
     ? "bg-slate-800/60 border border-pink-500/10 focus-within:border-pink-500/40"
     : "bg-gray-50 border border-gray-200 focus-within:border-pink-300";
 
-  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success";
+  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success" || ammHalted;
 
   return (
     <div className="h-full flex flex-col">
@@ -226,6 +253,19 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
           {/* Swap Body */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 relative">
             <ParticleBurst show={showParticles} />
+
+            {/* AMM Kill Switch Banner */}
+            {ammHalted && (
+              <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20 flex items-start gap-2.5">
+                <PowerOff className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-red-400">AMM Trading Halted</p>
+                  <p className="text-[10px] text-red-400/70 mt-0.5 leading-relaxed">
+                    The protocol owner has temporarily suspended all swaps. Existing liquidity can still be withdrawn.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Token In */}
             <div className={`rounded-xl p-3 transition-all ${inputClass}`}>
@@ -421,6 +461,8 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
                   <><Loader2 className="w-4 h-4 animate-spin" /> Executing Swap...</>
                 ) : status === "success" ? (
                   <><CheckCircle2 className="w-4 h-4" /> Swap Complete!</>
+                ) : ammHalted ? (
+                  <><PowerOff className="w-4 h-4" /> Trading Halted</>
                 ) : !accountId ? (
                   <><Lock className="w-4 h-4" /> Connect Wallet</>
                 ) : !quote ? (

@@ -25,11 +25,11 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  generateTicketId, isAdminAuthorized, withKvLock, isValidBigIntString, isValidPoolId,
+  generateTicketId, withKvLock, isValidBigIntString, isValidPoolId,
   POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
-import { requireAuth, validateSession } from "./auth.ts";
+import { requireAuth, validateSession, requireOwner, logAdminAction, OWNER_ACCOUNT } from "./auth.ts";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -51,6 +51,39 @@ const ORACLE_CACHE_TTL_MS = 60_000;
 const ORACLE_FALLBACK_CONFIG_KEY = "sl_oracle_fallback_cfg";
 const TREASURY_FEE_KEY = "sl_treasury_fees";
 const TREASURY_FEE_LOCK_KEY = "sl_treasury_lock";
+const AMM_KILL_SWITCH_KEY = "amm_kill_switch";
+
+// ── AMM Kill Switch ─────────────────────────────────────────────────
+// Owner-only circuit breaker. When active, all swaps and new liquidity
+// additions are rejected. LP removals remain open (users must always
+// be able to withdraw). Checked on every mutating pool operation.
+
+interface AmmKillState {
+  active: boolean;
+  activatedAt: number;
+  activatedBy: string;
+  reason: string;
+}
+
+let _killSwitchCache: { state: AmmKillState | null; ts: number } = { state: null, ts: 0 };
+const _KILL_SWITCH_CACHE_TTL_MS = 5_000; // Re-check KV every 5s
+
+async function isAmmKilled(): Promise<boolean> {
+  const now = Date.now();
+  if (now - _killSwitchCache.ts < _KILL_SWITCH_CACHE_TTL_MS) {
+    return _killSwitchCache.state?.active ?? false;
+  }
+  try {
+    const state: AmmKillState | null = await kv.get(AMM_KILL_SWITCH_KEY);
+    _killSwitchCache = { state, ts: now };
+    return state?.active ?? false;
+  } catch {
+    // KV unreachable — fail-open: allow trading to continue.
+    // A KV outage already prevents pool mutations (lock acquisition fails),
+    // so adding a trading halt here would be redundant and disruptive.
+    return false;
+  }
+}
 
 // Per-pool pessimistic lock (KV-backed)
 const POOL_LOCK_PREFIX = "sl_plock_";
@@ -458,11 +491,13 @@ export function registerAmmRoutes(app: Hono): void {
     }
   });
 
-  // PUT /oracle/fallback — Admin-only: update fallback HBAR price at runtime.
+  // PUT /oracle/fallback — Owner-only: update fallback HBAR price at runtime.
   // Body: { "price": 0.30 }  (optional: "maxAgeDays": 90)
-  // updatedAt is auto-set to now. Requires SUPABASE_SERVICE_ROLE_KEY.
+  // updatedAt is auto-set to now. Requires ED25519 session for 0.0.518487.
   app.put(`${ROUTE_PREFIX}/oracle/fallback`, async (c) => {
-    if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    const ip = getClientIp(c);
     try {
       const body = await c.req.json();
       const price = parseFloat(body.price);
@@ -483,6 +518,7 @@ export function registerAmmRoutes(app: Hono): void {
       _fallbackCfgCache = cfg;
       _fallbackCfgCacheTs = Date.now();
       console.log(`[Admin] Oracle fallback updated: $${price} (maxAge: ${maxAgeDays}d)`);
+      logAdminAction("amm_oracle_update", ownerAuth.accountId, ip, `price=${price} maxAge=${maxAgeDays}d`);
       return c.json({
         success: true,
         price: cfg.price,
@@ -493,6 +529,70 @@ export function registerAmmRoutes(app: Hono): void {
     } catch (err) {
       console.error("[AMM] Error in PUT /oracle/fallback:", err);
       return c.json({ error: "Failed to update fallback config" }, 500);
+    }
+  });
+
+  // ── AMM Kill Switch Endpoints (Owner-only) ────────────────────────
+
+  // GET /amm/kill-switch — Public: check if AMM is halted
+  app.get(`${ROUTE_PREFIX}/amm/kill-switch`, async (c) => {
+    try {
+      const state: AmmKillState | null = await kv.get(AMM_KILL_SWITCH_KEY);
+      return c.json({
+        active: state?.active ?? false,
+        activatedAt: state?.activatedAt ?? null,
+        reason: state?.reason ?? null,
+      });
+    } catch {
+      return c.json({ active: false }, 500);
+    }
+  });
+
+  // POST /amm/kill — Owner-only: halt all AMM swaps and new liquidity
+  app.post(`${ROUTE_PREFIX}/amm/kill`, async (c) => {
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    const ip = getClientIp(c);
+    try {
+      let reason = "Emergency halt";
+      try { const body = await c.req.json(); reason = sanitizeString(body.reason || reason, 200); } catch { /* no body */ }
+      const state: AmmKillState = {
+        active: true,
+        activatedAt: Date.now(),
+        activatedBy: ownerAuth.accountId,
+        reason,
+      };
+      await kv.set(AMM_KILL_SWITCH_KEY, state);
+      _killSwitchCache = { state, ts: Date.now() };
+      console.log(`[CRITICAL] AMM KILL SWITCH ACTIVATED by ${ownerAuth.accountId}: ${reason}`);
+      logAdminAction("amm_kill_activate", ownerAuth.accountId, ip, reason);
+      return c.json({ success: true, ...state });
+    } catch (err) {
+      console.error("[AMM] Error activating kill switch:", err);
+      return c.json({ error: "Failed to activate kill switch" }, 500);
+    }
+  });
+
+  // POST /amm/resume — Owner-only: resume AMM trading
+  app.post(`${ROUTE_PREFIX}/amm/resume`, async (c) => {
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    const ip = getClientIp(c);
+    try {
+      const state: AmmKillState = {
+        active: false,
+        activatedAt: Date.now(),
+        activatedBy: ownerAuth.accountId,
+        reason: "Resumed by owner",
+      };
+      await kv.set(AMM_KILL_SWITCH_KEY, state);
+      _killSwitchCache = { state, ts: Date.now() };
+      console.log(`[AMM] Kill switch DEACTIVATED by ${ownerAuth.accountId}`);
+      logAdminAction("amm_kill_resume", ownerAuth.accountId, ip);
+      return c.json({ success: true, active: false });
+    } catch (err) {
+      console.error("[AMM] Error deactivating kill switch:", err);
+      return c.json({ error: "Failed to resume AMM" }, 500);
     }
   });
 
@@ -532,6 +632,11 @@ export function registerAmmRoutes(app: Hono): void {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+      // ── AMM kill switch: block pool creation ──
+      if (await isAmmKilled()) {
+        return c.json({ error: "AMM trading is temporarily halted by protocol owner", code: "AMM_HALTED" }, 503);
+      }
 
       // ── Auth + input validation (outside lock — no state mutation) ──
 
@@ -610,6 +715,11 @@ export function registerAmmRoutes(app: Hono): void {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+      // ── AMM kill switch: block new liquidity additions ──
+      if (await isAmmKilled()) {
+        return c.json({ error: "AMM trading is temporarily halted by protocol owner", code: "AMM_HALTED" }, 503);
+      }
 
       const auth = await requireAuth(c);
       if (auth instanceof Response) return auth;
@@ -865,6 +975,11 @@ export function registerAmmRoutes(app: Hono): void {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+      // ── AMM kill switch: block swaps ──
+      if (await isAmmKilled()) {
+        return c.json({ error: "AMM trading is temporarily halted by protocol owner", code: "AMM_HALTED" }, 503);
+      }
 
       const auth = await requireAuth(c);
       if (auth instanceof Response) return auth;

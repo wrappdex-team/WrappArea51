@@ -6,9 +6,10 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  secureRandomFloat, secureRandomInt, generateTicketId, isAdminAuthorized, ROUTE_PREFIX,
+  secureRandomFloat, secureRandomInt, generateTicketId, ROUTE_PREFIX,
 } from "./shared.ts";
 import { validateSession } from "./auth.ts";
+import { requireOwner, logAdminAction } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ export function registerSpinRoutes(app: Hono): void {
     );
   });
 
-  // DELETE /winners — Admin-only reset. Requires SUPABASE_SERVICE_ROLE_KEY.
+  // DELETE /winners — Owner-only reset. Requires ED25519 session for 0.0.518487.
   app.delete(`${ROUTE_PREFIX}/winners`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -178,16 +179,12 @@ export function registerSpinRoutes(app: Hono): void {
         return c.json({ error: "Rate limited" }, 429);
       }
 
-      // Require admin wallet identification
-      const adminToken = c.req.header("authorization") || "";
-      const expectedToken = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-      if (!expectedToken || adminToken !== `Bearer ${expectedToken}`) {
-        console.log(`[SECURITY] Unauthorized DELETE /winners attempt from IP: ${ip}`);
-        return c.json({ error: "Unauthorized — service role key required" }, 403);
-      }
+      const ownerAuth = await requireOwner(c);
+      if (ownerAuth instanceof Response) return ownerAuth;
 
       await kv.set(WINNERS_KEY, []);
-      console.log(`[SECURITY] Winner history cleared by authorized admin from IP: ${ip}`);
+      console.log(`[SECURITY] Winner history cleared by owner ${ownerAuth.accountId} from IP: ${ip}`);
+      logAdminAction("spin_clear_winners", ownerAuth.accountId, ip);
       return c.json({ success: true, winners: [] });
     } catch (err) {
       console.error("[SPIN] Error clearing winners:", err);
@@ -195,7 +192,7 @@ export function registerSpinRoutes(app: Hono): void {
     }
   });
 
-  // ── GET /spin/cooldown/:accountId — check remaining cooldown ──────��──
+  // ── GET /spin/cooldown/:accountId — check remaining cooldown ────────
   app.get(`${ROUTE_PREFIX}/spin/cooldown/:accountId`, async (c) => {
     try {
       const accountId = c.req.param("accountId");
@@ -216,8 +213,8 @@ export function registerSpinRoutes(app: Hono): void {
     }
   });
 
-  // DELETE /spin/cooldown — Admin-only: clears spin cooldown for a specific account.
-  // Requires SUPABASE_SERVICE_ROLE_KEY (same pattern as DELETE /winners).
+  // DELETE /spin/cooldown — Owner-only: clears spin cooldown for a specific account.
+  // Requires ED25519 session for 0.0.518487.
   app.delete(`${ROUTE_PREFIX}/spin/cooldown`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -225,10 +222,8 @@ export function registerSpinRoutes(app: Hono): void {
         return c.json({ error: "Rate limited" }, 429);
       }
 
-      // Require service role key — admin only
-      if (!isAdminAuthorized(c)) {
-        return c.json({ error: "Admin access required — service role key must be provided" }, 403);
-      }
+      const ownerAuth = await requireOwner(c);
+      if (ownerAuth instanceof Response) return ownerAuth;
 
       const accountId = c.req.query("accountId") || "";
       if (!accountId || !isValidHederaAccountId(accountId)) {
@@ -237,8 +232,9 @@ export function registerSpinRoutes(app: Hono): void {
 
       const cdKey = COOLDOWN_PREFIX + accountId;
       await kv.del(cdKey);
-      console.log(`[SECURITY] Spin cooldown reset by admin for ${accountId} (IP: ${ip})`);
-      return c.json({ success: true, accountId, message: "Spin cooldown cleared (admin)" });
+      console.log(`[SECURITY] Spin cooldown reset by owner for ${accountId} (IP: ${ip})`);
+      logAdminAction("spin_reset_cooldown", ownerAuth.accountId, ip, `target=${accountId}`);
+      return c.json({ success: true, accountId, message: "Spin cooldown cleared (owner)" });
     } catch (err) {
       console.error("[SPIN] Error resetting spin cooldown:", err);
       return c.json({ error: "Failed to reset cooldown" }, 500);

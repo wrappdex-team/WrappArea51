@@ -167,18 +167,18 @@ export function generateTicketId(): string {
   return `TKT-${hex}`;
 }
 
-// ── Admin Authorization ─────────────────────────────────────────────
+// ── Admin Authorization (DEPRECATED) ────────────────────────────────
+// The old isAdminAuthorized() checked the service role key sent from
+// the client. This was a security vulnerability — the service role key
+// is a god key for all Supabase resources and must NEVER be transmitted
+// over the wire. All admin operations now use ED25519 session auth via
+// requireOwner() in auth.ts. This stub remains only to produce a clear
+// error if any code path still references it.
 
-/** Strict admin auth — requires exact Bearer match against service role key. */
-export function isAdminAuthorized(c: any): boolean {
-  const auth = c.req.header("authorization") || "";
-  const sk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  if (!sk || auth !== `Bearer ${sk}`) {
-    const ip = getClientIp(c);
-    console.log(`[SECURITY] Unauthorized admin attempt from IP: ${ip}`);
-    return false;
-  }
-  return true;
+/** @deprecated Use requireOwner() from auth.ts instead. */
+export function isAdminAuthorized(_c: any): boolean {
+  console.error("[SECURITY] DEPRECATED: isAdminAuthorized() called — migrate to requireOwner() from auth.ts");
+  return false; // Fail-closed: always deny
 }
 
 // ── KV-Based Distributed Lock ───────────────────────────────────────

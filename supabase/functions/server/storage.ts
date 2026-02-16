@@ -4,7 +4,8 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2.49.8";
-import { isAdminAuthorized, ROUTE_PREFIX } from "./shared.ts";
+import { ROUTE_PREFIX } from "./shared.ts";
+import { requireOwner, logAdminAction } from "./auth.ts";
 
 // ── Holiday Logos ───────────────────────────────────────────────────
 const HOLIDAY_BUCKET = "make-54299934-holiday-logos";
@@ -15,7 +16,7 @@ const HOLIDAY_SIGNED_URL_TTL = 3600; // 1 hour
 const BRAND_BUCKET = "WRAPP LOGOS";
 const BRAND_SIGNED_TTL = 3600; // 1 hour
 
-// ── Partnered Logos Bucket ──────────────���───────────────────────────
+// ── Partnered Logos Bucket ─────────────────────────────────────────
 const PARTNER_BUCKET = "Partnered logos";
 const PARTNER_SIGNED_TTL = 3600; // 1 hour
 const IMG_RE = /\.(png|jpg|jpeg|webp|svg|avif|gif)$/i;
@@ -324,9 +325,10 @@ export function registerStorageRoutes(app: Hono): void {
     }
   });
 
-  // Diagnostic endpoint — admin-only raw bucket listing for debugging
+  // Diagnostic endpoint — owner-only raw bucket listing for debugging
   app.get(`${ROUTE_PREFIX}/partnered-logos/debug`, async (c) => {
-    if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");

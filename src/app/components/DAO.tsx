@@ -66,6 +66,7 @@ import {
   type ProposalStatus,
 } from "../utils/dao";
 import { SpinWheel } from "./SpinWheel";
+import { OwnerControlPanel } from "./OwnerControlPanel";
 import { DAOProposalListSkeleton } from "./Skeletons";
 
 // ── Filter Tabs ──────────────────────────────────────────────────────
@@ -166,6 +167,8 @@ export function DAO() {
   const accountId = hashPackSession?.accountId ?? "";
   // isAdmin derived from server-populated admin cache (updated via fetchDaoAdmins)
   const [isAdmin, setIsAdmin] = useState(() => isDAOAdmin(accountId));
+  // Owner (0.0.518487) has elevated privileges — admin management is owner-only
+  const isOwner = accountId === DAO_FOUNDER_ACCOUNT;
 
   // Load proposals from server on mount
   useEffect(() => {
@@ -511,7 +514,8 @@ export function DAO() {
     <div className="space-y-6">
       {isAdmin && daoTab === "governance" && (
         <div className="flex justify-end gap-2">
-          <button
+          {/* Admin management — OWNER ONLY (0.0.518487) */}
+          {isOwner && <button
             onClick={() => setShowAdminPanel((v) => !v)}
             className={`px-3 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-xs border disabled:opacity-50 ${
               showAdminPanel
@@ -523,7 +527,7 @@ export function DAO() {
           >
             <Settings className="w-3.5 h-3.5" />
             Admin
-          </button>
+          </button>}
           <button
             onClick={() => setShowCreate(true)}
             disabled={actionLoading}
@@ -539,15 +543,18 @@ export function DAO() {
         </div>
       )}
 
-      {/* ── Admin Management Panel (toggle-hidden) ── */}
-      {isAdmin && showAdminPanel && (
-        <AdminManagementPanel
-          accountId={accountId}
-          adminList={adminList}
-          setAdminList={setAdminList}
-          actionLoading={actionLoading}
-          setActionLoading={setActionLoading}
-        />
+      {/* ── Admin Management Panel (toggle-hidden) — OWNER ONLY ── */}
+      {isOwner && showAdminPanel && (
+        <div className="space-y-4">
+          <AdminManagementPanel
+            accountId={accountId}
+            adminList={adminList}
+            setAdminList={setAdminList}
+            actionLoading={actionLoading}
+            setActionLoading={setActionLoading}
+          />
+          <OwnerControlPanel />
+        </div>
       )}
 
       <EligibilityCard
@@ -703,7 +710,7 @@ function EligibilityCard({
             {eligible ? "Governance Eligible" : "Not Eligible"}
           </span>
           {isAdmin && (
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-gradient-to-r from-pink-500/15 to-purple-500/15 border ${isDark ? "border-pink-500/30 text-pink-300" : "border-pink-400/40 text-pink-600"}`}>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-gradient-to-r from-pink-500/15 to-purple-500/15 border ${isDark ? "border-pink-500/30 text-pink-300" : "border-pink-400/40 text-pink-600"}`}>
               <Crown className="w-3 h-3" />
               DAO Admin
             </span>
@@ -724,7 +731,7 @@ function EligibilityCard({
         <div>
           <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>HBAR.ħ Balance</div>
           <div className={`text-lg ${isDark ? "text-white" : "text-gray-900"}`}>{formatTokenCount(wrappBalance)}</div>
-          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(tokenVotes, MAX_TOKEN_VOTES)} vote{Math.min(tokenVotes, MAX_TOKEN_VOTES) !== 1 ? "s" : ""} from tokens{tokenVotes > MAX_TOKEN_VOTES ? ` (capped from ${tokenVotes})` : ""}</div>
+          <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(tokenVotes, MAX_TOKEN_VOTES)} vote{Math.min(tokenVotes, MAX_TOKEN_VOTES) !== 1 ? "s" : ""} from tokens{tokenVotes > MAX_TOKEN_VOTES ? ` (capped from ${tokenVotes})` : ""}</div>
         </div>
         <div>
           <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>VIP NFTs Held</div>
@@ -732,22 +739,22 @@ function EligibilityCard({
             <ImageIcon className="w-4 h-4 text-purple-400" />
             {nftCount}
           </div>
-          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(nftVotes, MAX_NFT_VOTES)} vote{Math.min(nftVotes, MAX_NFT_VOTES) !== 1 ? "s" : ""} from NFTs{nftVotes > MAX_NFT_VOTES ? ` (capped from ${nftVotes})` : ""}</div>
+          <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(nftVotes, MAX_NFT_VOTES)} vote{Math.min(nftVotes, MAX_NFT_VOTES) !== 1 ? "s" : ""} from NFTs{nftVotes > MAX_NFT_VOTES ? ` (capped from ${nftVotes})` : ""}</div>
         </div>
         {maxVotes !== undefined && (
           <div>
             <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>Voting Power</div>
             <div className="text-lg text-pink-400">{maxVotes}x</div>
-            <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>per proposal</div>
+            <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>per proposal</div>
           </div>
         )}
         <div>
           <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>Security</div>
-          <div className="text-[10px] text-emerald-400 flex items-center gap-1">
+          <div className="text-xs text-emerald-400 flex items-center gap-1">
             <ShieldCheck className="w-3 h-3" />
             Server-verified
           </div>
-          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-600"}`}>Votes verified on-chain</div>
+          <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>Votes verified on-chain</div>
         </div>
       </div>
 
@@ -1009,7 +1016,7 @@ function ProposalList({
                           Delete
                         </button>
                       )}
-                      <span className="text-[10px] text-slate-600 ml-auto">
+                      <span className={`text-xs ml-auto ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                         {modifyIsAdmin ? "Admin: full edit control" : "Editable until first vote is cast"}
                       </span>
                     </div>
@@ -1229,11 +1236,11 @@ function CommentsSection({
                   {c.author}
                 </span>
                 {c.author === proposal.proposer && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 border border-purple-500/20">
+                  <span className={`text-xs px-1.5 py-0.5 rounded border ${isDark ? "bg-purple-500/15 text-purple-400 border-purple-500/20" : "bg-purple-50 text-purple-600 border-purple-200"}`}>
                     Proposer
                   </span>
                 )}
-                <span className="text-[10px] text-slate-600 ml-auto">
+                <span className={`text-xs ml-auto ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                   {formatCommentTime(c.createdAt)}
                 </span>
               </div>
@@ -1708,7 +1715,7 @@ function AdminManagementPanel({
           <h4 className={`text-sm font-medium ${isDark ? "text-white" : "text-gray-900"}`}>
             DAO Admin Management
           </h4>
-          <p className="text-[10px] text-slate-500">
+          <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
             {adminList.length}/10 admins &middot; Founder 0.0.518487 is permanent
           </p>
         </div>
@@ -1717,7 +1724,7 @@ function AdminManagementPanel({
       {/* Security notice */}
       <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/15 rounded-lg p-3">
         <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-amber-400/80 leading-relaxed">
+        <p className={`text-xs leading-relaxed ${isDark ? "text-amber-400/80" : "text-amber-600/80"}`}>
           Adding or removing admins requires a <strong className="text-amber-300">fresh wallet signature</strong> for
           security confirmation. Your HashPack wallet will prompt you to sign before the change is applied.
         </p>
@@ -1746,12 +1753,12 @@ function AdminManagementPanel({
                 {admin}
               </span>
               {isFounder && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${isDark ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" : "bg-emerald-50 text-emerald-600 border-emerald-200"}`}>
                   Founder
                 </span>
               )}
               {isSelf && !isFounder && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${isDark ? "bg-blue-500/15 text-blue-400 border-blue-500/20" : "bg-blue-50 text-blue-600 border-blue-200"}`}>
                   You
                 </span>
               )}
@@ -1771,14 +1778,14 @@ function AdminManagementPanel({
                   <button
                     onClick={handleConfirmRemove}
                     disabled={actionLoading}
-                    className="px-2 py-1 rounded text-[10px] bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center gap-1"
+                    className="px-2 py-1 rounded text-xs bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center gap-1"
                   >
                     {actionLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <KeyRound className="w-2.5 h-2.5" />}
                     Sign & Remove
                   </button>
                   <button
                     onClick={handleCancel}
-                    className="px-2 py-1 rounded text-[10px] bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                    className={`px-2 py-1 rounded text-xs transition-colors ${isDark ? "bg-slate-700 text-slate-300 hover:text-white" : "bg-gray-200 text-gray-600 hover:text-gray-900"}`}
                   >
                     Cancel
                   </button>
@@ -1819,13 +1826,13 @@ function AdminManagementPanel({
             </button>
           </div>
           {newAdminId && !isValidFormat && (
-            <p className="text-[10px] text-red-400">Enter a valid Hedera account ID (0.0.xxxxx)</p>
+            <p className={`text-xs ${isDark ? "text-red-400" : "text-red-500"}`}>Enter a valid Hedera account ID (0.0.xxxxx)</p>
           )}
           {alreadyAdmin && isValidFormat && (
-            <p className="text-[10px] text-amber-400">This account is already an admin</p>
+            <p className={`text-xs ${isDark ? "text-amber-400" : "text-amber-600"}`}>This account is already an admin</p>
           )}
           {isAtLimit && (
-            <p className="text-[10px] text-amber-400">Maximum 10 admins reached</p>
+            <p className={`text-xs ${isDark ? "text-amber-400" : "text-amber-600"}`}>Maximum 10 admins reached</p>
           )}
         </div>
       )}
@@ -1843,9 +1850,9 @@ function AdminManagementPanel({
           <div className="font-mono text-sm text-amber-300 bg-slate-900/50 rounded px-3 py-2 border border-amber-500/15">
             {newAdminId.trim()}
           </div>
-          <p className="text-[11px] text-slate-500">
-            This will give them full proposal create/edit/delete rights and admin management access.
-            Your wallet will prompt you to sign for confirmation.
+          <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            This will give them DAO admin privileges: proposal create/edit/delete rights.
+            Only the owner (0.0.518487) can add or remove admins. Your wallet will prompt you to sign.
           </p>
           <div className="flex gap-2">
             <button
@@ -1872,7 +1879,7 @@ function AdminManagementPanel({
           <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
           <div>
             <p className="text-sm text-blue-300">Waiting for wallet signature...</p>
-            <p className="text-[10px] text-slate-500 mt-0.5">
+            <p className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
               Check your HashPack wallet for the signing prompt
             </p>
           </div>

@@ -13,9 +13,10 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
+  withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
+import { requireOwner, logAdminAction } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -135,7 +136,9 @@ export function registerVipChatRoutes(app: Hono): void {
   });
 
   app.delete(`${ROUTE_PREFIX}/vip-chat/messages/:id`, async (c) => {
-    if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    const ip = getClientIp(c);
     try {
       const id = c.req.param("id");
       const result = await withKvLock(VIP_CHAT_LOCK_CONFIG, async () => {
@@ -147,6 +150,7 @@ export function registerVipChatRoutes(app: Hono): void {
       });
       if (!result) return c.json({ error: "Not found" }, 404);
       console.log(`[VIP-CHAT][ADMIN] Deleted ${result}`);
+      logAdminAction("vip_chat_delete_msg", ownerAuth.accountId, ip, `msgId=${result}`);
       return c.json({ ok: true });
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — retry shortly" }, 503);
@@ -155,7 +159,9 @@ export function registerVipChatRoutes(app: Hono): void {
   });
 
   app.post(`${ROUTE_PREFIX}/vip-chat/ban`, async (c) => {
-    if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    const ip = getClientIp(c);
     try {
       const { accountId, action } = await c.req.json();
       if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid account" }, 400);
@@ -175,6 +181,7 @@ export function registerVipChatRoutes(app: Hono): void {
         return bans;
       });
       console.log(`[VIP-CHAT][ADMIN] ${action} ${accountId}`);
+      logAdminAction(`vip_chat_${action}`, ownerAuth.accountId, ip, `target=${accountId}`);
       return c.json({ ok: true, bans });
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — retry shortly" }, 503);
@@ -183,10 +190,13 @@ export function registerVipChatRoutes(app: Hono): void {
   });
 
   app.delete(`${ROUTE_PREFIX}/vip-chat/messages`, async (c) => {
-    if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
+    const ownerAuth = await requireOwner(c);
+    if (ownerAuth instanceof Response) return ownerAuth;
+    const ip = getClientIp(c);
     try {
       await kv.set(VIP_CHAT_MSGS_KEY, []);
       console.log("[VIP-CHAT][ADMIN] Cleared all messages");
+      logAdminAction("vip_chat_clear_all", ownerAuth.accountId, ip);
       return c.json({ ok: true });
     } catch { return c.json({ error: "Clear failed" }, 500); }
   });
