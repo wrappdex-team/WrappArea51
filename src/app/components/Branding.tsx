@@ -432,42 +432,6 @@ export function Branding() {
             </GlassCard>
           </div>
 
-          {/* ── Secondary Variants: SVG Fallbacks / Marketing ── */}
-          <h3 className={`text-sm font-bold mb-3 flex items-center gap-2 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-            <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? "bg-slate-500/10 text-slate-400 border border-slate-500/20" : "bg-gray-100 text-gray-500 border border-gray-200"}`}>
-              Secondary
-            </span>
-            Alternate Variants
-          </h3>
-          <p className={`text-xs mb-3 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-            Inline SVG wordmarks used as loading placeholders and the "WRAPp For Her" marketing sub-brand.
-            These render instantly with zero network requests.
-          </p>
-          <div className="grid sm:grid-cols-2 gap-3 mb-6">
-            <GlassCard className="p-5 text-center">
-              <div className="bg-[#0F172A] rounded-xl p-6 mb-3 flex items-center justify-center min-h-[80px] border border-white/[0.06]">
-                <img src={HBARH_BRANDING_DARK} alt="WRAPpDEX Loading Variant (Dark)" className="w-48 h-auto" />
-              </div>
-              <p className={`text-xs font-semibold ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                Loading / Placeholder (Dark)
-              </p>
-              <p className={`text-xs mt-0.5 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                Inline SVG &mdash; zero latency fallback
-              </p>
-            </GlassCard>
-            <GlassCard className="p-5 text-center">
-              <div className="bg-white rounded-xl p-6 mb-3 flex items-center justify-center min-h-[80px] border border-gray-200">
-                <img src={HBARH_BRANDING_LIGHT} alt="WRAPp For Her (Light)" className="w-48 h-auto" />
-              </div>
-              <p className={`text-xs font-semibold ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                WRAPp "For Her" Marketing
-              </p>
-              <p className={`text-xs mt-0.5 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                Pink-accent sub-brand for targeted campaigns
-              </p>
-            </GlassCard>
-          </div>
-
           {/* ── Token Icons ── */}
           <h3 className={`text-sm font-bold mb-3 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
             HBAR.ħ Protocol Token
