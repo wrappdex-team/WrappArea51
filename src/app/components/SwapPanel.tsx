@@ -14,7 +14,7 @@
  * custom implementation with a clean ~450-line native widget.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import {
   ArrowDownUp,
   ChevronDown,
@@ -77,6 +77,71 @@ function isUserCancelled(r: SwapResult | null): boolean {
   const e = (r.error || "").toLowerCase();
   return e.includes("cancelled by user") || e.includes("canceled by user") || e.includes("user_reject") || e.includes("user denied") || e.includes("user rejected");
 }
+
+// ── Extracted Token Selector (stable identity — prevents scroll reset) ──
+
+interface SaucerTokenSelectorProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (t: AllowedToken) => void;
+  excludeSymbol: string;
+  tokenSearch: string;
+  setTokenSearch: (v: string) => void;
+  isDark: boolean;
+  inputClass: string;
+  livePrices: Record<string, number>;
+}
+
+const SaucerTokenSelectorDropdown = memo(function SaucerTokenSelectorDropdown({
+  isOpen, onClose, onSelect, excludeSymbol,
+  tokenSearch, setTokenSearch, isDark, inputClass, livePrices,
+}: SaucerTokenSelectorProps) {
+  if (!isOpen) return null;
+  const filtered = SAUCERSWAP_TOKENS
+    .filter(t => t.symbol !== excludeSymbol)
+    .filter(t => !tokenSearch || t.symbol.toLowerCase().includes(tokenSearch.toLowerCase()) || t.name.toLowerCase().includes(tokenSearch.toLowerCase()));
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+      <div
+        role="listbox"
+        aria-label="Select token"
+        className={`absolute top-full right-0 mt-2 w-72 rounded-xl shadow-2xl overflow-hidden z-50 ${isDark ? "bg-slate-900 border border-pink-500/30" : "bg-white border border-gray-200"}`}
+      >
+        <div className="p-3">
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${inputClass}`}>
+            <Search className="w-3.5 h-3.5 text-slate-500" />
+            <input
+              type="text" placeholder="Search tokens..." autoFocus
+              aria-label="Search tokens"
+              className="bg-transparent flex-1 outline-none text-sm"
+              value={tokenSearch} onChange={e => setTokenSearch(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="max-h-56 overflow-y-auto px-2 pb-2">
+          {filtered.map(t => (
+            <button key={t.symbol} onClick={() => onSelect(t)}
+              role="option"
+              aria-selected={false}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"}`}>
+              <img src={t.logo} alt={t.symbol} className="w-6 h-6 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <div>
+                <div className="font-bold text-sm">{t.symbol}</div>
+                <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
+              </div>
+              {livePrices[t.symbol] ? (
+                <span className={`ml-auto text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                  ${livePrices[t.symbol]?.toFixed(livePrices[t.symbol] >= 1 ? 2 : 6)}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+});
 
 export function SwapPanel() {
   const { isDark } = useTheme();
@@ -381,56 +446,10 @@ export function SwapPanel() {
     ? "bg-slate-800/60 border border-slate-700/30"
     : "bg-gray-50 border border-gray-200";
 
-  // ── Token Selector Dropdown ──
-  const TokenSelector = ({ isOpen, onClose, onSelect, excludeSymbol }: {
-    isOpen: boolean; onClose: () => void; onSelect: (t: AllowedToken) => void; excludeSymbol: string;
-  }) => {
-    if (!isOpen) return null;
-    const filtered = SAUCERSWAP_TOKENS
-      .filter(t => t.symbol !== excludeSymbol)
-      .filter(t => !tokenSearch || t.symbol.toLowerCase().includes(tokenSearch.toLowerCase()) || t.name.toLowerCase().includes(tokenSearch.toLowerCase()));
-    return (
-      <>
-        <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
-        <div
-          role="listbox"
-          aria-label="Select token"
-          className={`absolute top-full right-0 mt-2 w-72 rounded-xl shadow-2xl overflow-hidden z-50 ${isDark ? "bg-slate-900 border border-pink-500/30" : "bg-white border border-gray-200"}`}
-        >
-          <div className="p-3">
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${inputClass}`}>
-              <Search className="w-3.5 h-3.5 text-slate-500" />
-              <input
-                type="text" placeholder="Search tokens..." autoFocus
-                aria-label="Search tokens"
-                className="bg-transparent flex-1 outline-none text-sm"
-                value={tokenSearch} onChange={e => setTokenSearch(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="max-h-56 overflow-y-auto px-2 pb-2">
-            {filtered.map(t => (
-              <button key={t.symbol} onClick={() => onSelect(t)}
-                role="option"
-                aria-selected={false}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"}`}>
-                <img src={t.logo} alt={t.symbol} className="w-6 h-6 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                <div>
-                  <div className="font-bold text-sm">{t.symbol}</div>
-                  <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
-                </div>
-                {livePrices[t.symbol] ? (
-                  <span className={`ml-auto text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                    ${livePrices[t.symbol]?.toFixed(livePrices[t.symbol] >= 1 ? 2 : 6)}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-        </div>
-      </>
-    );
-  };
+  // ── Shared props for extracted TokenSelector ──
+  const saucerTokenSelectorShared = useMemo(() => ({
+    tokenSearch, setTokenSearch, isDark, inputClass, livePrices,
+  }), [tokenSearch, setTokenSearch, isDark, inputClass, livePrices]);
 
   return (
     <div className="space-y-4">
@@ -471,8 +490,10 @@ export function SwapPanel() {
                     <span className="font-bold text-sm">{inputToken.symbol}</span>
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
                   </button>
-                  <TokenSelector isOpen={showInputSelector} onClose={() => { setShowInputSelector(false); setTokenSearch(""); }}
-                    onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} />
+                  {showInputSelector && (
+                    <SaucerTokenSelectorDropdown isOpen={showInputSelector} onClose={() => { setShowInputSelector(false); setTokenSearch(""); }}
+                      onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} {...saucerTokenSelectorShared} />
+                  )}
                 </div>
               </div>
               <div className="flex items-center justify-between mt-1">
@@ -485,7 +506,7 @@ export function SwapPanel() {
                     const max = inputToken.isNative ? Math.max(0, inputBalance - GAS_RESERVE) : inputBalance;
                     if (max > 0) setInputAmount(max.toString());
                   }}
-                    className={`text-[10px] flex items-center gap-1 transition-colors ${isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"}`}>
+                    className={`text-xs flex items-center gap-1 transition-colors ${isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"}`}>
                     <Wallet className="w-2.5 h-2.5" />
                     {inputBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {inputToken.symbol}
                   </button>
@@ -535,8 +556,10 @@ export function SwapPanel() {
                     <span className="font-bold text-sm">{outputToken.symbol}</span>
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
                   </button>
-                  <TokenSelector isOpen={showOutputSelector} onClose={() => { setShowOutputSelector(false); setTokenSearch(""); }}
-                    onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} />
+                  {showOutputSelector && (
+                    <SaucerTokenSelectorDropdown isOpen={showOutputSelector} onClose={() => { setShowOutputSelector(false); setTokenSearch(""); }}
+                      onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} {...saucerTokenSelectorShared} />
+                  )}
                 </div>
               </div>
               <div className="flex items-center justify-between mt-1">
@@ -544,7 +567,7 @@ export function SwapPanel() {
                   {outputToken.isNative ? "Native" : `HTS: ${outputToken.htsId}`}
                 </div>
                 {isWalletConnected && outputBalance !== null && (
-                  <span className={`text-[10px] flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                  <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                     <Wallet className="w-2.5 h-2.5" />
                     {outputBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {outputToken.symbol}
                   </span>
@@ -560,7 +583,7 @@ export function SwapPanel() {
                     <Droplets className={`w-3.5 h-3.5 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
                     <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>Swap Route</span>
                   </div>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${isDark ? "bg-pink-500/10 text-pink-400" : "bg-pink-50 text-pink-600"}`}>
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-pink-500/10 text-pink-400" : "bg-pink-50 text-pink-600"}`}>
                     {route.pools.length === 1 ? "Direct" : `${route.pools.length}-hop`}
                   </span>
                 </div>
@@ -574,7 +597,7 @@ export function SwapPanel() {
                       {idx < route.path.length - 1 && (
                         <div className="flex items-center">
                           <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                          <span className={`text-[9px] px-1 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
+                          <span className={`text-xs px-1 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
                             {route.pools[idx]?.fee}%
                           </span>
                         </div>
@@ -613,14 +636,14 @@ export function SwapPanel() {
                 {/* Quote Refresh Countdown */}
                 <div className={`pt-1.5 mt-1.5 border-t ${isDark ? "border-slate-700/30" : "border-gray-200"}`}>
                   <div className="flex items-center justify-between">
-                    <span className={`text-[10px] flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                       <RefreshCw className={`w-2.5 h-2.5 ${quoteCountdown <= 5 ? "animate-spin" : ""}`} />
                       Quote refreshes in {quoteCountdown}s
                     </span>
                     <Tip content="Refresh quote now" side="top">
                     <button
                       onClick={fetchPrices}
-                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isDark ? "text-pink-400 hover:bg-pink-500/10" : "text-pink-600 hover:bg-pink-50"}`}
+                      className={`text-xs px-1.5 py-0.5 rounded transition-colors ${isDark ? "text-pink-400 hover:bg-pink-500/10" : "text-pink-600 hover:bg-pink-50"}`}
                     >
                       Refresh
                     </button>
@@ -846,13 +869,13 @@ export function SwapPanel() {
                             <div>
                               <div className="font-bold text-xs">{pool.tokenA.symbol}/{pool.tokenB.symbol}</div>
                               {pool.tokenA.isWrapped || pool.tokenB.isWrapped ? (
-                                <span className={`text-[9px] ${isDark ? "text-purple-400" : "text-purple-600"}`}>
+                                <span className={`text-xs ${isDark ? "text-purple-400" : "text-purple-600"}`}>
                                   {pool.tokenA.bridge || pool.tokenB.bridge || "Wrapped"}
                                 </span>
                               ) : null}
                             </div>
                             {isActive && (
-                              <span className={`text-[9px] px-1 py-0.5 rounded ${isDark ? "bg-pink-500/15 text-pink-400" : "bg-pink-100 text-pink-600"}`}>
+                              <span className={`text-xs px-1 py-0.5 rounded ${isDark ? "bg-pink-500/15 text-pink-400" : "bg-pink-100 text-pink-600"}`}>
                                 Active
                               </span>
                             )}
@@ -886,7 +909,7 @@ export function SwapPanel() {
             </div>
 
             {/* Pool legend */}
-            <div className={`px-5 py-3 border-t flex items-center gap-4 text-[10px] flex-wrap ${isDark ? "border-slate-800/30 text-slate-500" : "border-gray-100 text-gray-400"}`}>
+            <div className={`px-5 py-3 border-t flex items-center gap-4 text-xs flex-wrap ${isDark ? "border-slate-800/30 text-slate-500" : "border-gray-100 text-gray-400"}`}>
               <span className="flex items-center gap-1">
                 <span className={`w-2 h-2 rounded-full ${isDark ? "bg-pink-500/30" : "bg-pink-100"}`} />
                 Active in current route

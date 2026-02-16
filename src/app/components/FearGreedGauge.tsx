@@ -277,14 +277,14 @@ export function FearGreedGauge() {
                     {top20.topCoins.slice(0, 3).map((coin, i) => {
                       const colors = ["#f7931a", "#627eea", "#26a17b"];
                       return (
-                        <span key={coin.symbol} className="flex items-center gap-1 text-[10px]">
+                        <span key={coin.symbol} className="flex items-center gap-1 text-xs">
                           <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: colors[i] }} />
                           <span className={isDark ? "text-slate-500" : "text-gray-400"}>{coin.symbol}</span>
                         </span>
                       );
                     })}
                   </div>
-                  <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                  <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                     {top20.topCoinCount} coins
                   </span>
                 </div>
@@ -309,7 +309,7 @@ export function FearGreedGauge() {
 /** Compact single-line coin row for the top-5 breakdown */
 function TopCoinRow({ coin, isDark }: { coin: Top20Coin; isDark: boolean }) {
   return (
-    <div className={`flex items-center justify-between py-1 text-[11px] ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+    <div className={`flex items-center justify-between py-1 text-xs ${isDark ? "text-slate-300" : "text-gray-600"}`}>
       <div className="flex items-center gap-1.5 min-w-0">
         {coin.image && (
           <img

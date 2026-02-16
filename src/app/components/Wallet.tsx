@@ -619,16 +619,27 @@ export function Wallet() {
   // ─── Not Connected ───────────────────────────────────────────────
   if (!hasAnyWallet) {
     return (
-      <div className="flex flex-col items-center justify-center py-20">
-        <div className="w-16 h-16 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-2xl flex items-center justify-center mb-5">
-          <WalletIcon className={`w-8 h-8 ${isDark ? "text-purple-400" : "text-purple-500"}`} />
-        </div>
-        <h3 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent mb-2">
-          Connect a Wallet
-        </h3>
-        <p className={`text-sm max-w-sm text-center ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-          Use the Connect button to link your HashPack or MetaMask wallet and view live balances.
-        </p>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] py-20">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          className="flex flex-col items-center"
+        >
+          <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-6 ${
+            isDark
+              ? "bg-gradient-to-br from-purple-600/20 to-blue-600/20 border border-purple-500/20"
+              : "bg-gradient-to-br from-purple-100 to-blue-100 border border-purple-200"
+          }`}>
+            <WalletIcon className={`w-10 h-10 ${isDark ? "text-purple-400" : "text-purple-500"}`} />
+          </div>
+          <h3 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent mb-3">
+            Connect a Wallet
+          </h3>
+          <p className={`text-sm max-w-sm text-center leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+            Use the Connect button to link your HashPack or MetaMask wallet and view live balances.
+          </p>
+        </motion.div>
       </div>
     );
   }

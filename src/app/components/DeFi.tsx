@@ -327,7 +327,7 @@ export function DeFi() {
               <span className="sm:hidden">{tab.label.split(" ")[0]}</span>
               {tab.count != null && (
                 <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  className={`text-xs px-1.5 py-0.5 rounded-full ${
                     active
                       ? "bg-white/20 text-white"
                       : isDark
@@ -410,7 +410,7 @@ export function DeFi() {
                       </div>
                       <div>
                         <div className="font-bold text-sm">{pool.tokenA.symbol}/{pool.tokenB.symbol}</div>
-                        <div className={`text-[10px] flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                        <div className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                           <span className={`px-1 py-0.5 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{pool.fee}%</span>
                           {pool.trending === "up" && <TrendingUp className="w-3 h-3 text-emerald-400" />}
                           {pool.trending === "down" && <TrendingDown className="w-3 h-3 text-red-400" />}
@@ -421,19 +421,19 @@ export function DeFi() {
                     {/* Mobile: Stats Grid */}
                     <div className="grid grid-cols-4 gap-2 md:hidden">
                       <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>TVL</div>
+                        <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>TVL</div>
                         <div className="text-xs font-bold">{formatUsd(pool.tvl)}</div>
                       </div>
                       <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Vol</div>
+                        <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Vol</div>
                         <div className="text-xs font-bold">{formatUsd(pool.volume24h)}</div>
                       </div>
                       <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>APR</div>
+                        <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>APR</div>
                         <div className="text-xs font-bold text-emerald-400">{pool.apr}%</div>
                       </div>
                       <div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Util</div>
+                        <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Util</div>
                         <div className="text-xs font-bold">{pool.utilization}%</div>
                       </div>
                     </div>
@@ -572,10 +572,10 @@ export function DeFi() {
                     {pool.apy != null ? (
                       <>
                         <div className="text-2xl font-bold text-emerald-400">{pool.apy}%</div>
-                        <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>APY</div>
+                        <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>APY</div>
                       </>
                     ) : (
-                      <span className={`text-[10px] px-2 py-1 rounded-full font-bold ${isDark ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-600 border border-amber-200"}`}>
+                      <span className={`text-xs px-2 py-1 rounded-full font-bold ${isDark ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-600 border border-amber-200"}`}>
                         PENDING
                       </span>
                     )}

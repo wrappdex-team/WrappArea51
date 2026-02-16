@@ -242,9 +242,7 @@ export function VipChatBox({
               {/* Messages */}
               <div
                 ref={scrollRef}
-                className={`px-3 space-y-1 overflow-y-auto scrollbar-thin ${
-                  isDark ? "scrollbar-thumb-emerald-500/10" : ""
-                }`}
+                className={`px-3 space-y-1 overflow-y-auto`}
                 style={{ maxHeight: 180, minHeight: 60 }}
               >
                 {messages.length === 0 ? (

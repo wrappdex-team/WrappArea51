@@ -196,7 +196,7 @@ export function HashPortBridgeWidget({ onClose, isDark }: HashPortBridgeWidgetPr
       </div>
 
       {/* ── Subtle footer ── */}
-      <div className={`mt-2 text-center text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+      <div className={`mt-2 text-center text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
         Powered by HashPort Network — Hedera ↔ EVM Bridge
       </div>
     </div>

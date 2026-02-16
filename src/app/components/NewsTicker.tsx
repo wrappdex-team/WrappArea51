@@ -147,8 +147,8 @@ export function NewsTicker() {
 
       {/* Live indicator — shows when data is real (not fallback) */}
       {lastFetch > 0 && (
-        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[9px] ${
-          isDark ? "text-emerald-500/60" : "text-emerald-600/60"
+        <div className={`absolute right-2 top-[calc(50%+2px)] -translate-y-1/2 z-10 flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full ${
+          isDark ? "text-emerald-500/80 bg-[#080a12]/90" : "text-emerald-600/80 bg-gray-50/90"
         }`}>
           <span className="relative flex h-1.5 w-1.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>

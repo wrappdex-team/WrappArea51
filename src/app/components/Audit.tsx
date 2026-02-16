@@ -38,7 +38,7 @@ import { getSessionToken, getSessionAccountId } from "../utils/auth";
 import { isMetaMaskInstalled } from "../utils/metamask";
 import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 
-// ── Constants ──────────────────────────��────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 
@@ -384,17 +384,17 @@ export function Audit() {
           <div className={`flex items-center gap-4 mt-4 pt-3 border-t ${isDark ? "border-white/[0.04]" : "border-gray-100"}`}>
             <Clock className={`w-3 h-3 ${muted}`} />
             {serverTimestamp && (
-              <span className={`text-[10px] ${muted}`}>
+              <span className={`text-xs ${muted}`}>
                 Infrastructure: {formatAge(serverTimestamp)}
                 {serverFromCache && (
-                  <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[9px] ${isDark ? "bg-blue-500/10 text-blue-400" : "bg-blue-50 text-blue-600"}`}>
+                  <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${isDark ? "bg-blue-500/10 text-blue-400" : "bg-blue-50 text-blue-600"}`}>
                     cached
                   </span>
                 )}
               </span>
             )}
             {walletTimestamp && (
-              <span className={`text-[10px] ${muted}`}>
+              <span className={`text-xs ${muted}`}>
                 Wallet: {formatAge(walletTimestamp)}
               </span>
             )}
@@ -416,7 +416,7 @@ export function Audit() {
           </div>
           <div>
             <h2 className={`text-sm font-semibold ${heading}`}>Infrastructure</h2>
-            <p className={`text-[10px] ${muted}`}>Edge function, database, storage, external APIs</p>
+            <p className={`text-xs ${muted}`}>Edge function, database, storage, external APIs</p>
           </div>
         </div>
 
@@ -445,11 +445,11 @@ export function Audit() {
                     {check.value}
                   </span>
                   {check.latencyMs !== undefined && check.status === "ok" && (
-                    <span className={`text-[10px] ${muted}`}>{check.latencyMs}ms</span>
+                    <span className={`text-xs ${muted}`}>{check.latencyMs}ms</span>
                   )}
                 </div>
                 {check.detail && (
-                  <p className={`text-[10px] mt-1 ${muted} truncate`}>{check.detail}</p>
+                  <p className={`text-xs mt-1 ${muted} truncate`}>{check.detail}</p>
                 )}
               </div>
             );
@@ -471,7 +471,7 @@ export function Audit() {
           </div>
           <div>
             <h2 className={`text-sm font-semibold ${heading}`}>Wallet &amp; Auth</h2>
-            <p className={`text-[10px] ${muted}`}>WalletConnect, HashPack, MetaMask, Dynamic Labs, session tokens</p>
+            <p className={`text-xs ${muted}`}>WalletConnect, HashPack, MetaMask, Dynamic Labs, session tokens</p>
           </div>
         </div>
 
@@ -479,14 +479,14 @@ export function Audit() {
           {walletChecks.map((check) => (
             <div key={check.label} className={`${subcard} px-4 py-3`}>
               <div className="flex items-center justify-between mb-1.5">
-                <span className={`text-[10px] uppercase tracking-wider font-medium ${muted}`}>
+                <span className={`text-xs uppercase tracking-wider font-medium ${muted}`}>
                   {check.label}
                 </span>
                 <StatusDot status={check.status} />
               </div>
               <p className={`text-xs font-medium ${heading} truncate`}>{check.value}</p>
               {check.detail && (
-                <p className={`text-[10px] mt-0.5 ${muted} truncate`}>{check.detail}</p>
+                <p className={`text-xs mt-0.5 ${muted} truncate`}>{check.detail}</p>
               )}
             </div>
           ))}
@@ -494,7 +494,7 @@ export function Audit() {
       </div>
 
       {/* ── Footer ──────────────────────────────────────────────────── */}
-      <p className={`text-center text-[10px] py-2 ${isDark ? "text-slate-700" : "text-gray-300"}`}>
+      <p className={`text-center text-xs py-2 ${isDark ? "text-slate-700" : "text-gray-300"}`}>
         Server checks are cached for 24 hours. Click "Run Check" to force a live re-scan.
       </p>
     </div>

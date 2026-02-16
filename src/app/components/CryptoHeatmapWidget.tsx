@@ -48,12 +48,23 @@ function baseStyles(bg: string): string {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       background: ${bg};
-      overflow-x: hidden;
+      overflow: hidden;
       min-height: 100%;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
+    /* Hide scrollbar on body */
     body::-webkit-scrollbar { display: none; }
     body { -ms-overflow-style: none; scrollbar-width: none; }
+    /* Style scrollbars on all inner elements for dark/light compatibility */
+    *:not(html):not(body) {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.10) transparent;
+    }
+    *:not(html):not(body)::-webkit-scrollbar { width: 4px; height: 4px; }
+    *:not(html):not(body)::-webkit-scrollbar-track { background: transparent; }
+    *:not(html):not(body)::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
+    *:not(html):not(body)::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+    *:not(html):not(body)::-webkit-scrollbar-corner { background: transparent; }
   `;
 }
 
@@ -484,10 +495,11 @@ export function CryptoHeatmapWidget() {
 
       {/* Scrolling Price Ticker */}
       {!tickerError && (
-        <div className="w-full">
+        <div className="w-full overflow-hidden">
           <iframe
             srcDoc={tickerSrcdoc}
             sandbox={SANDBOX}
+            scrolling="no"
             title="Crypto Price Ticker"
             onLoad={handleTickerLoad}
             onError={handleTickerError}
@@ -505,7 +517,7 @@ export function CryptoHeatmapWidget() {
       {/* 50-Coin Heatmap Treemap */}
       {!heatmapError && (
         <div
-          className={`w-full ${
+          className={`w-full overflow-hidden ${
             !tickerError
               ? isDark
                 ? "border-t border-white/[0.04]"
@@ -516,6 +528,7 @@ export function CryptoHeatmapWidget() {
           <iframe
             srcDoc={heatmapSrcdoc}
             sandbox={SANDBOX}
+            scrolling="no"
             title="Top 50 Crypto Heatmap"
             onLoad={handleHeatmapLoad}
             onError={handleHeatmapError}

@@ -94,8 +94,16 @@ html.light-mode [class*="from-orange-900\/"] {
   --tw-gradient-to: rgba(168, 85, 247, 0.06) !important;
 }
 
-/* ===== Scrollbar — hidden globally, scroll still works ===== */
-/* (Removed light-mode scrollbar styling — hidden via theme.css) */
+/* ===== Scrollbar — light-mode overrides for inner elements ===== */
+html.light-mode *:not(html):not(body) {
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+html.light-mode *:not(html):not(body)::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+html.light-mode *:not(html):not(body)::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
 
 /* ===== Font mono in light mode ===== */
 html.light-mode .font-mono {

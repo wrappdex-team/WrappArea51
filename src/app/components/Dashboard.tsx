@@ -599,8 +599,8 @@ export function Dashboard() {
               </div>
 
               <div className="flex justify-between mt-1">
-                <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Bitcoin</span>
-                <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Altcoin</span>
+                <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Bitcoin</span>
+                <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Altcoin</span>
               </div>
             </>
           ) : (
@@ -710,12 +710,12 @@ export function Dashboard() {
                       <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"} hidden sm:flex items-center gap-1`}>
                         {item.name}
                         {item.oracleSource === "chainlink" && (
-                          <span className={`text-[9px] px-1 py-0 rounded border ${isDark ? "text-blue-400 border-blue-500/30" : "text-blue-600 border-blue-200"}`}>
+                          <span className={`text-xs px-1 py-0 rounded border ${isDark ? "text-blue-400 border-blue-500/30" : "text-blue-600 border-blue-200"}`}>
                             CHAINLINK
                           </span>
                         )}
                         {item.symbol === "HBAR.ħ" && (
-                          <span className={`text-[9px] px-1 py-0 rounded border ${isDark ? "text-cyan-400 border-cyan-500/30" : "text-cyan-600 border-cyan-200"}`}>
+                          <span className={`text-xs px-1 py-0 rounded border ${isDark ? "text-cyan-400 border-cyan-500/30" : "text-cyan-600 border-cyan-200"}`}>
                             DEXSCREENER
                           </span>
                         )}

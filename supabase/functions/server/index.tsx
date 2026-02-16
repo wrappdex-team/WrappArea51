@@ -2,7 +2,7 @@
 // Wrappdex Edge Function Server — Route Orchestrator
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Modules: Auth, VIP, Spin Wheel, News, AMM, VIP Chat, DAO, Storage, Health
+// Modules: Auth, VIP, Spin Wheel, News, AMM, VIP Chat, DAO, Storage, Health, 1inch
 // Auth:    ED25519 challenge-response sessions (30-min TTL, KV-backed)
 // Storage: All state persisted in KV (survives cold starts, multi-instance safe)
 // ═══════════════════════════════════════════════════════════════════════
@@ -20,6 +20,7 @@ import { registerVipChatRoutes } from "./vip-chat.ts";
 import { registerDaoRoutes } from "./dao.ts";
 import { registerStorageRoutes } from "./storage.ts";
 import { registerHealthRoutes } from "./health.ts";
+import { registerOneInchRoutes } from "./oneinch.ts";
 
 const app = new Hono();
 
@@ -61,5 +62,6 @@ registerVipChatRoutes(app);
 registerDaoRoutes(app);
 registerStorageRoutes(app);
 registerHealthRoutes(app);
+registerOneInchRoutes(app);
 
 Deno.serve(app.fetch);

@@ -151,7 +151,7 @@ export function Bridges() {
                   <div className="flex items-center gap-2 mb-1">
                     <h4 className="font-bold truncate text-sm">{bridge.name}</h4>
                     {isActive && (
-                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${accent.badgeBg}`}>
+                      <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${accent.badgeBg}`}>
                         Active
                       </span>
                     )}
@@ -163,7 +163,7 @@ export function Bridges() {
                     {bridge.features.map((f) => (
                       <span
                         key={f}
-                        className={`px-1.5 py-0.5 rounded-md text-[10px] ${
+                        className={`px-1.5 py-0.5 rounded-md text-xs ${
                           isDark
                             ? "bg-white/[0.05] text-slate-400"
                             : "bg-gray-100 text-gray-500"

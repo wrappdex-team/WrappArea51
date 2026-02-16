@@ -306,7 +306,7 @@ function ActionModal({
               <label className={`text-xs font-bold ${isDark ? "text-slate-400" : "text-gray-500"}`}>Amount</label>
               <button
                 onClick={handleMaxClick}
-                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-colors ${isDark ? "bg-slate-800 text-teal-400 hover:bg-slate-700" : "bg-gray-100 text-teal-600 hover:bg-gray-200"}`}
+                className={`text-xs px-2 py-0.5 rounded-full font-bold transition-colors ${isDark ? "bg-slate-800 text-teal-400 hover:bg-slate-700" : "bg-gray-100 text-teal-600 hover:bg-gray-200"}`}
               >
                 {maxLabel}: {formatTokenAmount(maxAmount)}
               </button>
@@ -330,12 +330,12 @@ function ActionModal({
               </div>
             </div>
             {priceUSD > 0 && numAmount > 0 && (
-              <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                 ~{formatUsd(valueUSD)}
               </div>
             )}
             {numAmount > maxAmount && maxAmount > 0 && (
-              <div className="text-[11px] mt-1 text-red-400 flex items-center gap-1">
+              <div className="text-xs mt-1 text-red-400 flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" />
                 Exceeds available {maxLabel.toLowerCase()}
               </div>
@@ -447,7 +447,7 @@ function ActionModal({
             </button>
           )}
           {!hasLendingPool && accountId && (
-            <div className={`text-[10px] text-center mt-2 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+            <div className={`text-xs text-center mt-2 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
               On-chain execution will activate when LendingPool contract is configured
             </div>
           )}
@@ -553,7 +553,7 @@ export function BonzoLendBorrow() {
                 href={getBonzoLendUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full transition-colors ${isDark ? "bg-teal-500/10 text-teal-400 hover:bg-teal-500/20" : "bg-teal-100 text-teal-700 hover:bg-teal-200"}`}
+                className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full transition-colors ${isDark ? "bg-teal-500/10 text-teal-400 hover:bg-teal-500/20" : "bg-teal-100 text-teal-700 hover:bg-teal-200"}`}
               >
                 app.bonzo.finance/lend <ExternalLink className="w-2.5 h-2.5" />
               </a>
@@ -590,7 +590,7 @@ export function BonzoLendBorrow() {
             <div className={`rounded-xl p-3 ${cardClass}`}>
               <div className="flex items-center gap-1.5 mb-1">
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                <span className={`text-[10px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total Supply</span>
+                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total Supply</span>
               </div>
               <div className="text-lg font-bold">{formatUsd(stats.totalSupplyUSD)}</div>
             </div>
@@ -599,7 +599,7 @@ export function BonzoLendBorrow() {
             <div className={`rounded-xl p-3 ${cardClass}`}>
               <div className="flex items-center gap-1.5 mb-1">
                 <TrendingDown className="w-3.5 h-3.5 text-amber-400" />
-                <span className={`text-[10px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total Borrowed</span>
+                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Total Borrowed</span>
               </div>
               <div className="text-lg font-bold">{formatUsd(stats.totalBorrowUSD)}</div>
             </div>
@@ -608,7 +608,7 @@ export function BonzoLendBorrow() {
             <div className={`rounded-xl p-3 ${cardClass}`}>
               <div className="flex items-center gap-1.5 mb-1">
                 <Wallet className="w-3.5 h-3.5 text-teal-400" />
-                <span className={`text-[10px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>Your Supply</span>
+                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Your Supply</span>
               </div>
               <div className="text-lg font-bold">{formatUsd(userSummary.totalSuppliedUSD)}</div>
             </div>
@@ -617,7 +617,7 @@ export function BonzoLendBorrow() {
             <div className={`rounded-xl p-3 border ${healthFactorBg(userSummary.healthFactor, isDark)}`}>
               <div className="flex items-center gap-1.5 mb-1">
                 <Heart className="w-3.5 h-3.5 text-pink-400" />
-                <span className={`text-[10px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>Health Factor</span>
+                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Health Factor</span>
               </div>
               <div className={`text-lg font-bold ${healthFactorColor(userSummary.healthFactor)}`}>
                 {userSummary.healthFactor >= 100 ? "Safe" : userSummary.healthFactor.toFixed(2)}
@@ -698,7 +698,7 @@ export function BonzoLendBorrow() {
               >
                 {tab.label}
                 {tab.count != null && tab.count > 0 && (
-                  <span className={`text-[9px] px-1 py-0.5 rounded-full ${subTab === tab.key ? "bg-white/20" : isDark ? "bg-slate-700" : "bg-gray-200"}`}>
+                  <span className={`text-xs px-1 py-0.5 rounded-full ${subTab === tab.key ? "bg-white/20" : isDark ? "bg-slate-700" : "bg-gray-200"}`}>
                     {tab.count}
                   </span>
                 )}
@@ -738,7 +738,7 @@ export function BonzoLendBorrow() {
                             {market.symbol}
                             {market.canBeCollateral && <Shield className={`w-3 h-3 ${isDark ? "text-teal-500" : "text-teal-600"}`} />}
                           </div>
-                          <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                             {market.name}
                           </div>
                         </div>
@@ -747,7 +747,7 @@ export function BonzoLendBorrow() {
                       {/* Mobile Stats */}
                       <div className="grid grid-cols-3 gap-3 md:hidden">
                         <div>
-                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supply APY</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supply APY</div>
                           <div className="text-sm font-bold">
                             {market.supplyAPY != null ? (
                               <span className="text-emerald-400 flex items-center gap-0.5">
@@ -760,13 +760,13 @@ export function BonzoLendBorrow() {
                           </div>
                         </div>
                         <div>
-                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supplied</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supplied</div>
                           <div className="text-sm font-bold">
                             {market.totalSupplyUSD != null ? formatUsd(market.totalSupplyUSD) : "--"}
                           </div>
                         </div>
                         <div>
-                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Collateral</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Collateral</div>
                           <div className="text-sm font-bold">
                             {market.canBeCollateral ? (
                               <span className="text-emerald-400">{market.maxLTV}% LTV</span>
@@ -833,19 +833,19 @@ export function BonzoLendBorrow() {
                       <div className={`px-4 py-3 ${isDark ? "bg-teal-500/5 border-b border-teal-500/10" : "bg-teal-50/30 border-b border-gray-100"}`}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Utilization</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Utilization</div>
                             <div className="font-bold">{market.utilization != null ? `${market.utilization}%` : "--"}</div>
                           </div>
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Liquidation Threshold</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Liquidation Threshold</div>
                             <div className="font-bold">{market.liquidationThreshold != null ? `${market.liquidationThreshold}%` : "--"}</div>
                           </div>
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Available Liquidity</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Available Liquidity</div>
                             <div className="font-bold">{market.availableLiquidityUSD != null ? formatUsd(market.availableLiquidityUSD) : market.availableLiquidityNative != null ? `${formatTokenAmount(market.availableLiquidityNative)} ${market.symbol}` : "--"}</div>
                           </div>
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Token ID</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Token ID</div>
                             <div className={`font-mono text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{market.hederaTokenId}</div>
                           </div>
                         </div>
@@ -886,14 +886,14 @@ export function BonzoLendBorrow() {
                         <img src={market.logo} alt={market.symbol} className="w-9 h-9 rounded-full" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                         <div>
                           <div className="font-bold text-sm">{market.symbol}</div>
-                          <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>{market.name}</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{market.name}</div>
                         </div>
                       </div>
 
                       {/* Mobile Stats */}
                       <div className="grid grid-cols-3 gap-3 md:hidden">
                         <div>
-                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Borrow APY</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Borrow APY</div>
                           <div className="text-sm font-bold">
                             {market.variableBorrowAPY != null ? (
                               <span className="text-amber-400 flex items-center gap-0.5">
@@ -906,13 +906,13 @@ export function BonzoLendBorrow() {
                           </div>
                         </div>
                         <div>
-                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Available</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Available</div>
                           <div className="text-sm font-bold">
                             {market.availableLiquidityUSD != null ? formatUsd(market.availableLiquidityUSD) : "--"}
                           </div>
                         </div>
                         <div>
-                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Util</div>
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Util</div>
                           <div className="text-sm font-bold">
                             {market.utilization != null ? `${market.utilization}%` : "--"}
                           </div>
@@ -983,19 +983,19 @@ export function BonzoLendBorrow() {
                       <div className={`px-4 py-3 ${isDark ? "bg-blue-500/5 border-b border-blue-500/10" : "bg-blue-50/30 border-b border-gray-100"}`}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Total Borrowed</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Total Borrowed</div>
                             <div className="font-bold">{market.totalBorrowUSD != null ? formatUsd(market.totalBorrowUSD) : "--"}</div>
                           </div>
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Liquidation Bonus</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Liquidation Bonus</div>
                             <div className="font-bold">{market.liquidationBonus != null ? `${market.liquidationBonus}%` : "--"}</div>
                           </div>
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Max LTV</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Max LTV</div>
                             <div className="font-bold">{market.maxLTV != null ? `${market.maxLTV}%` : "--"}</div>
                           </div>
                           <div>
-                            <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Rate Mode</div>
+                            <div className={`text-xs mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Rate Mode</div>
                             <div className="font-bold">Variable</div>
                           </div>
                         </div>
@@ -1047,21 +1047,21 @@ export function BonzoLendBorrow() {
                   {/* Position Summary */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className={`rounded-xl p-3 ${cardClass}`}>
-                      <div className={`text-[10px] mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Total Supplied</div>
+                      <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Total Supplied</div>
                       <div className="text-lg font-bold text-emerald-400">{formatUsd(userSummary.totalSuppliedUSD)}</div>
                     </div>
                     <div className={`rounded-xl p-3 ${cardClass}`}>
-                      <div className={`text-[10px] mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Total Borrowed</div>
+                      <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Total Borrowed</div>
                       <div className="text-lg font-bold text-amber-400">{formatUsd(userSummary.totalBorrowedUSD)}</div>
                     </div>
                     <div className={`rounded-xl p-3 border ${healthFactorBg(userSummary.healthFactor, isDark)}`}>
-                      <div className={`text-[10px] mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Health Factor</div>
+                      <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Health Factor</div>
                       <div className={`text-lg font-bold ${healthFactorColor(userSummary.healthFactor)}`}>
                         {userSummary.healthFactor >= 100 ? "Safe" : userSummary.healthFactor.toFixed(2)}
                       </div>
                     </div>
                     <div className={`rounded-xl p-3 ${cardClass}`}>
-                      <div className={`text-[10px] mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Net APY</div>
+                      <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>Net APY</div>
                       <div className={`text-lg font-bold ${userSummary.netAPY >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         {userSummary.netAPY >= 0 ? "+" : ""}{userSummary.netAPY.toFixed(2)}%
                       </div>
@@ -1108,7 +1108,7 @@ export function BonzoLendBorrow() {
                             <img src={pos.logo} alt={pos.symbol} className="w-9 h-9 rounded-full" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                             <div>
                               <div className="font-bold text-sm">{pos.symbol}</div>
-                              <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                              <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                                 {pos.usedAsCollateral ? "Collateral active" : "No collateral"}
                               </div>
                             </div>
@@ -1117,17 +1117,17 @@ export function BonzoLendBorrow() {
                           {/* Mobile Stats */}
                           <div className="grid grid-cols-3 gap-2 md:hidden">
                             <div>
-                              <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supplied</div>
+                              <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Supplied</div>
                               <div className="text-sm font-bold text-emerald-400">{formatTokenAmount(pos.supplied)}</div>
-                              <div className={`text-[9px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>{formatUsd(pos.suppliedUSD)}</div>
+                              <div className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>{formatUsd(pos.suppliedUSD)}</div>
                             </div>
                             <div>
-                              <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Borrowed</div>
+                              <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Borrowed</div>
                               <div className="text-sm font-bold text-amber-400">{pos.borrowed > 0 ? formatTokenAmount(pos.borrowed) : "--"}</div>
-                              {pos.borrowed > 0 && <div className={`text-[9px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>{formatUsd(pos.borrowedUSD)}</div>}
+                              {pos.borrowed > 0 && <div className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>{formatUsd(pos.borrowedUSD)}</div>}
                             </div>
                             <div>
-                              <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>APY</div>
+                              <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>APY</div>
                               <div className="text-sm font-bold text-emerald-400">+{pos.supplyAPY.toFixed(2)}%</div>
                             </div>
                           </div>
@@ -1135,7 +1135,7 @@ export function BonzoLendBorrow() {
                           {/* Desktop: Supplied */}
                           <div className="hidden md:flex col-span-2 items-center justify-end flex-col">
                             <span className="text-sm font-bold text-emerald-400">{formatTokenAmount(pos.supplied)}</span>
-                            <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(pos.suppliedUSD)}</span>
+                            <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(pos.suppliedUSD)}</span>
                           </div>
 
                           {/* Desktop: Borrowed */}
@@ -1143,7 +1143,7 @@ export function BonzoLendBorrow() {
                             {pos.borrowed > 0 ? (
                               <>
                                 <span className="text-sm font-bold text-amber-400">{formatTokenAmount(pos.borrowed)}</span>
-                                <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(pos.borrowedUSD)}</span>
+                                <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(pos.borrowedUSD)}</span>
                               </>
                             ) : (
                               <span className={`text-sm ${isDark ? "text-slate-600" : "text-gray-300"}`}>--</span>
@@ -1154,7 +1154,7 @@ export function BonzoLendBorrow() {
                           <div className="hidden md:flex col-span-2 items-center justify-end flex-col">
                             <span className="text-sm font-bold text-emerald-400">+{pos.supplyAPY.toFixed(2)}%</span>
                             {pos.borrowed > 0 && (
-                              <span className="text-[10px] text-amber-400">-{pos.borrowAPY.toFixed(2)}%</span>
+                              <span className="text-xs text-amber-400">-{pos.borrowAPY.toFixed(2)}%</span>
                             )}
                           </div>
 
@@ -1165,21 +1165,21 @@ export function BonzoLendBorrow() {
                                 {pos.supplied > 0 && (
                                   <button
                                     onClick={() => openAction("withdraw", market, pos)}
-                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${isDark ? "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20" : "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"}`}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isDark ? "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20" : "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"}`}
                                   >
                                     Withdraw
                                   </button>
                                 )}
                                 <button
                                   onClick={() => openAction("supply", market)}
-                                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${isDark ? "bg-teal-500/10 text-teal-400 hover:bg-teal-500/20 border border-teal-500/20" : "bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200"}`}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isDark ? "bg-teal-500/10 text-teal-400 hover:bg-teal-500/20 border border-teal-500/20" : "bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200"}`}
                                 >
                                   Supply More
                                 </button>
                                 {pos.borrowed > 0 && (
                                   <button
                                     onClick={() => openAction("repay", market, pos)}
-                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${isDark ? "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20" : "bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"}`}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isDark ? "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20" : "bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"}`}
                                   >
                                     Repay
                                   </button>

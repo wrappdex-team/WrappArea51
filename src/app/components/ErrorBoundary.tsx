@@ -168,7 +168,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 {ENV.IS_DEV ? (
                   <>
                     <code
-                      className={`text-[11px] block whitespace-pre-wrap break-all ${
+                      className={`text-xs block whitespace-pre-wrap break-all ${
                         isDark ? "text-red-400" : "text-red-600"
                       }`}
                     >
@@ -176,7 +176,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                     </code>
                     {this.state.errorInfo && (
                       <code
-                        className={`text-[10px] block mt-2 whitespace-pre-wrap break-all max-h-32 overflow-y-auto ${
+                        className={`text-xs block mt-2 whitespace-pre-wrap break-all max-h-32 overflow-y-auto ${
                           isDark ? "text-slate-500" : "text-gray-400"
                         }`}
                       >
@@ -186,7 +186,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                   </>
                 ) : (
                   <code
-                    className={`text-[11px] block ${
+                    className={`text-xs block ${
                       isDark ? "text-slate-400" : "text-gray-500"
                     }`}
                   >

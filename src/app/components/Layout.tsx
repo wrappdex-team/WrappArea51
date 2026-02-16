@@ -123,7 +123,7 @@ export function Layout() {
   }, [location.pathname]);
 
   return (
-    <div className={`min-h-screen ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`} style={{ border: 'none', outline: 'none' }}>
+    <div className={`min-h-screen flex flex-col ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`} style={{ border: 'none', outline: 'none' }}>
       {/* Dynamic SEO Head */}
       <SEOHead {...currentSEO} />
 
@@ -553,7 +553,7 @@ export function Layout() {
       </header>
 
       {/* Main Content — wrapped in PullToRefresh for mobile DeFi UX */}
-      <main className="container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content" style={{ border: 'none', outline: 'none', boxShadow: 'none' }}>
+      <main className="flex-1 container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content" style={{ border: 'none', outline: 'none', boxShadow: 'none' }}>
         <PullToRefresh>
           <AnimatedOutlet />
         </PullToRefresh>

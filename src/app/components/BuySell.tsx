@@ -1067,7 +1067,7 @@ function ChangeNowBadge({ isDark }: { isDark: boolean }) {
       href="https://changenow.io/"
       target="_blank"
       rel="noopener noreferrer"
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] transition-all duration-200 ${
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-200 ${
         isDark
           ? "bg-slate-800/60 border border-pink-500/10 text-slate-400 hover:text-pink-300 hover:border-pink-500/30"
           : "bg-gray-50 border border-gray-200 text-gray-500 hover:text-pink-600 hover:border-pink-200"
@@ -1153,7 +1153,7 @@ function FiatConsentGate({ isDark, onAccept }: { isDark: boolean; onAccept: () =
         </div>
 
         {/* Links */}
-        <div className={`flex items-center justify-center gap-3 text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+        <div className={`flex items-center justify-center gap-3 text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
           <a href="https://changenow.io/privacy-policy" target="_blank" rel="noopener noreferrer" className="hover:underline flex items-center gap-0.5">
             Privacy Policy <ExternalLink className="w-2.5 h-2.5" />
           </a>

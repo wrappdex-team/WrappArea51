@@ -247,7 +247,7 @@ export function CrossChainExchange() {
                 <img src={t.logo} alt={t.symbol} className="w-7 h-7 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-sm">{t.symbol}</div>
-                  <div className={`text-[10px] truncate ${mutedFaint}`}>{t.name} &middot; {t.network}</div>
+                  <div className={`text-xs truncate ${mutedFaint}`}>{t.name} &middot; {t.network}</div>
                 </div>
                 {prices[t.symbol]?.current_price ? (
                   <span className={`text-xs font-mono ${muted}`}>
@@ -296,7 +296,7 @@ export function CrossChainExchange() {
                 href="https://changenow.io/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium tracking-wide uppercase transition-all ${
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide uppercase transition-all ${
                   isDark
                     ? "bg-slate-800/40 border border-white/5 text-slate-500 hover:text-pink-400 hover:border-pink-500/20"
                     : "bg-gray-50 border border-gray-200 text-gray-400 hover:text-pink-600 hover:border-pink-200"
@@ -352,7 +352,7 @@ export function CrossChainExchange() {
                 />
               </div>
             </div>
-            <div className={`text-[10px] mt-1 ${mutedFaint}`}>{fromToken.network} network</div>
+            <div className={`text-xs mt-1 ${mutedFaint}`}>{fromToken.network} network</div>
           </div>
 
           {/* Swap direction + rate pill */}
@@ -370,7 +370,7 @@ export function CrossChainExchange() {
               <ArrowDownUp className="w-5 h-5" />
             </button>
             {exchangeRate && (
-              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-medium ${
+              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
                 isDark ? "bg-slate-800/40 border border-white/5 text-slate-400" : "bg-gray-50 border border-gray-200 text-gray-500"
               }`}>
                 <span>1 {fromToken.symbol}</span>
@@ -417,7 +417,7 @@ export function CrossChainExchange() {
                 />
               </div>
             </div>
-            <div className={`text-[10px] mt-1 ${mutedFaint}`}>{toToken.network} network</div>
+            <div className={`text-xs mt-1 ${mutedFaint}`}>{toToken.network} network</div>
           </div>
 
           {/* Recipient address (for HBAR destination) */}
@@ -445,7 +445,7 @@ export function CrossChainExchange() {
                 onChange={e => setRecipientAddress(e.target.value)}
               />
               {walletAddress && recipientAddress === walletAddress && (
-                <div className={`flex items-center gap-1.5 mt-1.5 text-[10px] ${isDark ? "text-emerald-400/80" : "text-emerald-600"}`}>
+                <div className={`flex items-center gap-1.5 mt-1.5 text-xs ${isDark ? "text-emerald-400/80" : "text-emerald-600"}`}>
                   <Shield className="w-2.5 h-2.5" />
                   <span>Connected wallet auto-filled</span>
                 </div>
@@ -504,14 +504,14 @@ export function CrossChainExchange() {
           </button>
 
           {/* Info line */}
-          <div className={`flex items-center justify-center gap-2 text-[10px] ${mutedFaint}`}>
+          <div className={`flex items-center justify-center gap-2 text-xs ${mutedFaint}`}>
             <Shield className="w-3 h-3" />
             <span>Non-custodial exchange &middot; No registration required</span>
           </div>
 
           {/* Rate disclaimer */}
           {estimatedOutput && (
-            <div className={`flex items-start gap-2 text-[10px] p-2.5 rounded-lg ${
+            <div className={`flex items-start gap-2 text-xs p-2.5 rounded-lg ${
               isDark ? "bg-amber-900/10 border border-amber-500/10 text-amber-400/70" : "bg-amber-50 border border-amber-100 text-amber-600/70"
             }`}>
               <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />

@@ -382,7 +382,7 @@ export function CEXTradePanel({
           </div>
           <div className="flex items-center gap-1.5">
             {/* HSuite connection indicator */}
-            <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
+            <div className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
               hsuiteConnected
                 ? isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600"
                 : isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-100 text-gray-400"
@@ -444,7 +444,7 @@ export function CEXTradePanel({
               <Percent className="w-3 h-3 opacity-50" />
             </div>
           </div>
-          <div className={`flex items-center gap-1.5 mt-2 text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+          <div className={`flex items-center gap-1.5 mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
             <Shield className="w-3 h-3" />
             Routes via HSuite SmartNode (SaucerSwap, Pangolin, HeliSwap)
           </div>
@@ -505,7 +505,7 @@ export function CEXTradePanel({
               Amount ({activePair.base})
             </span>
             {isWalletConnected && (
-              <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                 Avail: {trade.side === "sell"
                   ? `${userBaseBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${activePair.base}`
                   : `${userQuoteBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${activePair.quote}`
@@ -532,7 +532,7 @@ export function CEXTradePanel({
                 <button
                   key={pct}
                   onClick={() => handleQuickAmount(pct)}
-                  className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${
+                  className={`flex-1 py-1 rounded text-xs font-bold transition-colors ${
                     isDark
                       ? "bg-slate-800/50 text-slate-500 hover:text-slate-300 border border-slate-700/30"
                       : "bg-gray-100 text-gray-400 hover:text-gray-700 border border-gray-200"
@@ -566,7 +566,7 @@ export function CEXTradePanel({
 
         {/* Trade summary */}
         {trade.amount && parseFloat(trade.amount) > 0 && (
-          <div className={`rounded-lg p-2.5 text-[11px] space-y-1 ${isDark ? "bg-slate-800/20 border border-slate-700/20" : "bg-gray-50 border border-gray-100"}`}>
+          <div className={`rounded-lg p-2.5 text-xs space-y-1 ${isDark ? "bg-slate-800/20 border border-slate-700/20" : "bg-gray-50 border border-gray-100"}`}>
             <div className="flex items-center justify-between">
               <span className={isDark ? "text-slate-500" : "text-gray-400"}>
                 {trade.side === "buy" ? "You pay" : "You sell"}
@@ -689,7 +689,7 @@ export function CEXTradePanel({
         </button>
 
         {/* Execution info */}
-        <div className={`flex items-center justify-center gap-2 text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+        <div className={`flex items-center justify-center gap-2 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
           <Shield className="w-3 h-3" />
           <span>Market order via HSuite SmartNode &middot; HashPack signing</span>
         </div>

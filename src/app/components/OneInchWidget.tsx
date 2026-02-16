@@ -17,7 +17,7 @@
  *   - VIP sound effects, Motion animations, glass-morphism styling
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { log } from "../utils/logger";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -218,6 +218,97 @@ function toWei(amount: string, decimals: number): string {
 
 // ── Component ────────────────────────────────────────────────────────
 
+// ── Extracted Token Selector (stable identity — prevents scroll reset) ──
+
+interface TokenSelectorProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (t: TokenInfo) => void;
+  excludeAddr: string;
+  tokenSearch: string;
+  setTokenSearch: (v: string) => void;
+  tokens: TokenInfo[];
+  mergedTokens: TokenInfo[];
+  allTokensCount: number;
+  tokensLoading: boolean;
+  isDark: boolean;
+  inputClass: string;
+}
+
+const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
+  isOpen, onClose, onSelect, excludeAddr,
+  tokenSearch, setTokenSearch, tokens, mergedTokens,
+  allTokensCount, tokensLoading, isDark, inputClass,
+}: TokenSelectorProps) {
+  if (!isOpen) return null;
+  const search = tokenSearch.toLowerCase().trim();
+  const isAddrSearch = search.startsWith("0x") && search.length > 6;
+  const source = search ? mergedTokens : tokens;
+  const filtered = source
+    .filter(t => t.address !== excludeAddr)
+    .filter(t => !search ||
+      t.symbol.toLowerCase().includes(search) ||
+      t.name.toLowerCase().includes(search) ||
+      (isAddrSearch && t.address.toLowerCase().includes(search))
+    )
+    .slice(0, 50);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        className={`absolute top-full right-0 mt-2 w-72 rounded-2xl shadow-2xl overflow-hidden z-50 ${
+          isDark
+            ? "bg-slate-900 border border-pink-500/20 shadow-pink-500/5"
+            : "bg-white border border-gray-200 shadow-lg"
+        }`}
+      >
+        <div className="p-3">
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl ${inputClass}`}>
+            <Search className={`w-4 h-4 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
+            <input type="text" placeholder={allTokensCount ? `Search ${allTokensCount.toLocaleString()} tokens...` : "Search tokens..."} autoFocus
+              className="bg-transparent flex-1 outline-none text-sm"
+              value={tokenSearch} onChange={e => setTokenSearch(e.target.value)} />
+          </div>
+        </div>
+        <div className="max-h-56 overflow-y-auto px-2 pb-2">
+          {filtered.map(t => (
+            <button key={t.address} onClick={() => onSelect(t)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
+                isDark ? "hover:bg-pink-500/10" : "hover:bg-pink-50"
+              }`}>
+              {t.logoURI ? (
+                <img src={t.logoURI} alt={t.symbol} className="w-7 h-7 rounded-full ring-2 ring-transparent group-hover:ring-pink-500/30 transition-all"
+                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-xs text-white font-bold">
+                  {t.symbol[0]}
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm">{t.symbol}</div>
+                <div className={`text-xs truncate ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
+              </div>
+              {t.isNative && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                  isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
+                }`}>
+                  Native
+                </span>
+              )}
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className={`text-center py-6 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              {tokensLoading ? "Loading tokens..." : search ? "No tokens found" : "Type to search all tokens"}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+});
+
 export function OneInchWidget() {
   const { isDark } = useTheme();
   const partnerLogos = usePartneredLogos();
@@ -239,6 +330,8 @@ export function OneInchWidget() {
   const [showFromSelector, setShowFromSelector] = useState(false);
   const [showToSelector, setShowToSelector] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
+  const [allTokens, setAllTokens] = useState<TokenInfo[]>([]);
+  const [tokensLoading, setTokensLoading] = useState(false);
 
   // ── Quote state ──
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -261,6 +354,13 @@ export function OneInchWidget() {
   const quoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chain = useMemo(() => CHAINS.find(c => c.id === selectedChainId) || CHAINS[0], [selectedChainId]);
   const tokens = useMemo(() => POPULAR_TOKENS[selectedChainId] || POPULAR_TOKENS[1], [selectedChainId]);
+
+  // Merged token list: popular first, then all fetched tokens (de-duped)
+  const mergedTokens = useMemo(() => {
+    const popularAddrs = new Set(tokens.map(t => t.address.toLowerCase()));
+    const extra = allTokens.filter(t => !popularAddrs.has(t.address.toLowerCase()));
+    return [...tokens, ...extra];
+  }, [tokens, allTokens]);
 
   // ── Style tokens (matching SaucerSwap section) ──
   const cardClass = isDark
@@ -397,6 +497,36 @@ export function OneInchWidget() {
     else setFromBalance(null);
   }, [evmAccount, evmChainId, selectedChainId, fromToken, fetchBalance]);
 
+  // ── Fetch full token list for current chain ─────────────────────────
+
+  useEffect(() => {
+    let cancelled = false;
+    setAllTokens([]);
+    setTokensLoading(true);
+    apiGet(`/1inch/tokens/${selectedChainId}`)
+      .then((data) => {
+        if (cancelled || !data?.tokens) return;
+        const list: TokenInfo[] = Object.values(data.tokens).map((t: any) => ({
+          address: t.address,
+          symbol: t.symbol,
+          name: t.name,
+          decimals: t.decimals,
+          logoURI: t.logoURI,
+          isNative: t.address?.toLowerCase() === NATIVE_ADDRESS.toLowerCase(),
+        }));
+        // Sort alphabetically by symbol
+        list.sort((a, b) => a.symbol.localeCompare(b.symbol));
+        setAllTokens(list);
+      })
+      .catch((err) => {
+        log.warn("1inch", "Token list fetch failed", err);
+      })
+      .finally(() => {
+        if (!cancelled) setTokensLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedChainId]);
+
   // ── Chain selection ────────────────────────────────────────────────
 
   const handleChainSelect = useCallback((c: ChainConfig) => {
@@ -516,15 +646,29 @@ export function OneInchWidget() {
         const allowanceData = await apiGet(
           `/1inch/allowance/${selectedChainId}?tokenAddress=${fromToken.address}&walletAddress=${evmAccount}`
         );
+        if (allowanceData.configured === false) throw new Error("1inch API key not configured");
         if (allowanceData.allowance === "0" || BigInt(allowanceData.allowance || "0") < BigInt(amountWei)) {
           const approveData = await apiGet(
             `/1inch/approve/${selectedChainId}?tokenAddress=${fromToken.address}&amount=${amountWei}`
           );
-          await window.ethereum.request({
+          if (approveData.configured === false) throw new Error("1inch API key not configured");
+          if (!approveData.to || !approveData.data) throw new Error("Invalid approval response from 1inch");
+          const approveTxHash = await window.ethereum.request({
             method: "eth_sendTransaction",
             params: [{ from: evmAccount, to: approveData.to, data: approveData.data, value: approveData.value || "0x0" }],
           });
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          // Wait for approval tx to be mined (poll receipt, up to 30 s)
+          log.info("1inch", "Waiting for approval tx", approveTxHash);
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            try {
+              const receipt = await window.ethereum!.request({
+                method: "eth_getTransactionReceipt",
+                params: [approveTxHash],
+              });
+              if (receipt) break;
+            } catch { /* retry */ }
+          }
         }
         setSwapStatus("swapping");
       }
@@ -536,7 +680,9 @@ export function OneInchWidget() {
       });
 
       const swapData = await apiGet(`/1inch/swap/${selectedChainId}?${params.toString()}`);
+      if (swapData.configured === false) throw new Error("1inch API key not configured");
       if (swapData.error) throw new Error(swapData.details || swapData.error);
+      if (!swapData.tx?.to || !swapData.tx?.data) throw new Error("Invalid swap response from 1inch");
 
       const txHash = await window.ethereum.request({
         method: "eth_sendTransaction",
@@ -575,76 +721,11 @@ export function OneInchWidget() {
   const isCorrectChain = evmChainId === selectedChainId;
   const canSwap = evmAccount && fromAmount && parseFloat(fromAmount) > 0 && lastQuote && apiConfigured && swapStatus === "idle";
 
-  // ── Token Selector Dropdown ────────────────────────────────────────
-
-  const TokenSelector = ({ isOpen, onClose, onSelect, excludeAddr }: {
-    isOpen: boolean; onClose: () => void; onSelect: (t: TokenInfo) => void; excludeAddr: string;
-  }) => {
-    if (!isOpen) return null;
-    const filtered = tokens
-      .filter(t => t.address !== excludeAddr)
-      .filter(t => !tokenSearch ||
-        t.symbol.toLowerCase().includes(tokenSearch.toLowerCase()) ||
-        t.name.toLowerCase().includes(tokenSearch.toLowerCase())
-      );
-
-    return (
-      <>
-        <div className="fixed inset-0 z-40" onClick={onClose} />
-        <motion.div
-          initial={{ opacity: 0, y: -8, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -8, scale: 0.96 }}
-          transition={{ duration: 0.18 }}
-          className={`absolute top-full right-0 mt-2 w-72 rounded-2xl shadow-2xl overflow-hidden z-50 ${
-            isDark
-              ? "bg-slate-900 border border-pink-500/20 shadow-pink-500/5"
-              : "bg-white border border-gray-200 shadow-lg"
-          }`}
-        >
-          <div className="p-3">
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl ${inputClass}`}>
-              <Search className={`w-4 h-4 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
-              <input type="text" placeholder="Search tokens..." autoFocus
-                className="bg-transparent flex-1 outline-none text-sm"
-                value={tokenSearch} onChange={e => setTokenSearch(e.target.value)} />
-            </div>
-          </div>
-          <div className="max-h-56 overflow-y-auto px-2 pb-2">
-            {filtered.map(t => (
-              <button key={t.address} onClick={() => onSelect(t)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
-                  isDark ? "hover:bg-pink-500/10" : "hover:bg-pink-50"
-                }`}>
-                {t.logoURI ? (
-                  <img src={t.logoURI} alt={t.symbol} className="w-7 h-7 rounded-full ring-2 ring-transparent group-hover:ring-pink-500/30 transition-all"
-                    onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                ) : (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold">
-                    {t.symbol[0]}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="font-bold text-sm">{t.symbol}</div>
-                  <div className={`text-[10px] truncate ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
-                </div>
-                {t.isNative && (
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
-                    isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
-                  }`}>
-                    Native
-                  </span>
-                )}
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <div className={`text-center py-6 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>No tokens found</div>
-            )}
-          </div>
-        </motion.div>
-      </>
-    );
-  };
+  // ── Shared props for extracted TokenSelector ────────────────────────
+  const tokenSelectorShared = useMemo(() => ({
+    tokenSearch, setTokenSearch, tokens, mergedTokens,
+    allTokensCount: allTokens.length, tokensLoading, isDark, inputClass,
+  }), [tokenSearch, setTokenSearch, tokens, mergedTokens, allTokens.length, tokensLoading, isDark, inputClass]);
 
   // ── Render ─────────────────────────────────────────────────────────
 
@@ -678,7 +759,7 @@ export function OneInchWidget() {
                 <p className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                   Cross-chain EVM aggregator
                 </p>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded-full flex items-center gap-1 ${
+                <span className={`text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1 ${
                   isDark
                     ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                     : "bg-emerald-50 text-emerald-600 border border-emerald-200"
@@ -814,7 +895,7 @@ export function OneInchWidget() {
                   API Key Required
                 </p>
                 <p className={`text-xs mt-1 leading-relaxed ${isDark ? "text-amber-400/70" : "text-amber-600"}`}>
-                  Set <code className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${isDark ? "bg-amber-500/10" : "bg-amber-100"}`}>ONEINCH_API_KEY</code> in
+                  Set <code className={`px-1.5 py-0.5 rounded font-mono text-xs ${isDark ? "bg-amber-500/10" : "bg-amber-100"}`}>ONEINCH_API_KEY</code> in
                   Supabase Edge Function secrets.{" "}
                   <a href="https://portal.1inch.dev/" target="_blank" rel="noopener noreferrer"
                     className="underline underline-offset-2 hover:no-underline font-bold">
@@ -841,7 +922,7 @@ export function OneInchWidget() {
                   playVipButtonChime();
                 }
               }}
-              className={`text-[10px] flex items-center gap-1 transition-colors ${
+              className={`text-xs flex items-center gap-1 transition-colors ${
                 isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"
               }`}
             >
@@ -871,10 +952,10 @@ export function OneInchWidget() {
               <span className="font-bold text-sm">{fromToken.symbol}</span>
               <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
             </button>
-            <AnimatePresence>
-              <TokenSelector isOpen={showFromSelector} onClose={() => { setShowFromSelector(false); setTokenSearch(""); }}
-                onSelect={t => handleSelectToken(t, true)} excludeAddr={toToken.address} />
-            </AnimatePresence>
+            {showFromSelector && (
+              <TokenSelectorDropdown isOpen={showFromSelector} onClose={() => { setShowFromSelector(false); setTokenSearch(""); }}
+                onSelect={t => handleSelectToken(t, true)} excludeAddr={toToken.address} {...tokenSelectorShared} />
+            )}
           </div>
         </div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -904,7 +985,7 @@ export function OneInchWidget() {
         <div className="flex items-center justify-between mb-2">
           <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Receive</span>
           {rate && (
-            <span className={`text-[10px] flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+            <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
               1 {fromToken.symbol} = {rate >= 1 ? rate.toFixed(4) : rate.toFixed(8)} {toToken.symbol}
             </span>
           )}
@@ -932,10 +1013,10 @@ export function OneInchWidget() {
               <span className="font-bold text-sm">{toToken.symbol}</span>
               <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
             </button>
-            <AnimatePresence>
-              <TokenSelector isOpen={showToSelector} onClose={() => { setShowToSelector(false); setTokenSearch(""); }}
-                onSelect={t => handleSelectToken(t, false)} excludeAddr={fromToken.address} />
-            </AnimatePresence>
+            {showToSelector && (
+              <TokenSelectorDropdown isOpen={showToSelector} onClose={() => { setShowToSelector(false); setTokenSearch(""); }}
+                onSelect={t => handleSelectToken(t, false)} excludeAddr={fromToken.address} {...tokenSelectorShared} />
+            )}
           </div>
         </div>
         <div className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -978,7 +1059,7 @@ export function OneInchWidget() {
                   Best Route
                 </span>
               </div>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
                 isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
               }`}>
                 Aggregated
@@ -991,7 +1072,7 @@ export function OneInchWidget() {
                 <span className="text-xs font-bold">{fromToken.symbol}</span>
               </div>
               <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-              <span className={`text-[9px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
+              <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
                 1inch
               </span>
               <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
@@ -1022,7 +1103,7 @@ export function OneInchWidget() {
                 <span className="flex items-center gap-1">
                   <Zap className="w-3 h-3 text-emerald-400" />
                   1inch Aggregation
-                  {lastQuote.cached && <span className={`text-[9px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>(cached)</span>}
+                  {lastQuote.cached && <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>(cached)</span>}
                 </span>
               </div>
             </div>
@@ -1169,7 +1250,7 @@ export function OneInchWidget() {
               1inch Fusion · {chain.name}
             </span>
             <span className="flex items-center gap-1">
-              <span className={`font-mono text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+              <span className={`font-mono text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                 {evmAccount.slice(0, 6)}...{evmAccount.slice(-4)}
               </span>
               {isCorrectChain && (

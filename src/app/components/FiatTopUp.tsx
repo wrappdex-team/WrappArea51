@@ -195,7 +195,7 @@ export function FiatTopUp() {
               href="https://changenow.io/"
               target="_blank"
               rel="noopener noreferrer"
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium tracking-wide uppercase transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium tracking-wide uppercase transition-all ${
                 isDark
                   ? "bg-slate-800/40 border border-white/5 text-slate-500 hover:text-pink-400 hover:border-pink-500/20"
                   : "bg-gray-50 border border-gray-200 text-gray-400 hover:text-pink-600 hover:border-pink-200"
@@ -283,7 +283,7 @@ export function FiatTopUp() {
                             <span className="text-sm font-bold w-10">{fc.symbol}</span>
                             <div className="flex-1">
                               <div className="text-sm font-semibold">{fc.code}</div>
-                              <div className={`text-[10px] ${mutedFaint}`}>{fc.name}</div>
+                              <div className={`text-xs ${mutedFaint}`}>{fc.name}</div>
                             </div>
                             {fc.code === fiatCurrency.code && <Check className="w-3.5 h-3.5 text-pink-400" />}
                           </button>
@@ -360,7 +360,7 @@ export function FiatTopUp() {
                             <img src={ct.logo} alt={ct.symbol} className="w-6 h-6 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
                             <div className="flex-1">
                               <div className="text-sm font-semibold">{ct.symbol}</div>
-                              <div className={`text-[10px] ${mutedFaint}`}>{ct.name} &middot; {ct.network}</div>
+                              <div className={`text-xs ${mutedFaint}`}>{ct.name} &middot; {ct.network}</div>
                             </div>
                             {prices[ct.symbol]?.current_price ? (
                               <span className={`text-xs font-mono ${mutedFaint}`}>
@@ -378,7 +378,7 @@ export function FiatTopUp() {
                 )}
               </div>
             </div>
-            <div className={`text-[10px] mt-1 ${mutedFaint}`}>{cryptoTarget.network} network</div>
+            <div className={`text-xs mt-1 ${mutedFaint}`}>{cryptoTarget.network} network</div>
           </div>
 
           {/* Recipient address */}
@@ -420,14 +420,14 @@ export function FiatTopUp() {
           </button>
 
           {/* Payment methods */}
-          <div className={`flex items-center justify-center gap-4 py-1 text-[10px] ${mutedFaint}`}>
+          <div className={`flex items-center justify-center gap-4 py-1 text-xs ${mutedFaint}`}>
             <span className="flex items-center gap-1"><CreditCard className="w-3 h-3" /> Visa / Mastercard</span>
             <span className="flex items-center gap-1"><Smartphone className="w-3 h-3" /> Apple Pay</span>
             <span className="flex items-center gap-1"><Landmark className="w-3 h-3" /> SEPA / Bank</span>
           </div>
 
           {/* Privacy notice */}
-          <div className={`flex items-start gap-2 text-[10px] p-2.5 rounded-lg ${
+          <div className={`flex items-start gap-2 text-xs p-2.5 rounded-lg ${
             isDark ? "bg-slate-800/30 border border-white/5 text-slate-500" : "bg-gray-50 border border-gray-100 text-gray-400"
           }`}>
             <Lock className="w-3 h-3 mt-0.5 shrink-0 text-pink-400/60" />

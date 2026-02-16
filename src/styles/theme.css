@@ -196,6 +196,29 @@ html.dark, .dark {
     display: none;                  /* Chrome / Safari / Opera */
   }
 
+  /* ===== Dark-mode scrollbar for all inner scrollable elements ===== */
+  *:not(html):not(body) {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  }
+  *:not(html):not(body)::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *:not(html):not(body)::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *:not(html):not(body)::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+  }
+  *:not(html):not(body)::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+  *:not(html):not(body)::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
   /**
   * Default typography styles for HTML elements (h1-h4, p, label, button, input).
   * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
