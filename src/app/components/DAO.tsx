@@ -396,31 +396,33 @@ export function DAO() {
   if (!connected) {
     return (
       <div className="space-y-6">
-        <div className="flex flex-col items-center justify-center min-h-[50vh] py-16 px-4">
+        <div className="flex flex-col items-center justify-center min-h-[60vh] py-20">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
             className="flex flex-col items-center"
           >
-            <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${isSky ? "from-sky-600/20 to-blue-600/20 border border-sky-500/30" : "from-pink-600/20 to-purple-600/20 border border-pink-500/30"} flex items-center justify-center mb-6`}>
-              <ShieldX className={`w-10 h-10 ${isSky ? "text-sky-400" : "text-pink-400"}`} />
+            <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-6 ${
+              isDark
+                ? "bg-gradient-to-br from-purple-600/20 to-blue-600/20 border border-purple-500/20"
+                : "bg-gradient-to-br from-purple-100 to-blue-100 border border-purple-200"
+            }`}>
+              <Wallet className={`w-10 h-10 ${isDark ? "text-purple-400" : "text-purple-500"}`} />
             </div>
-            <h3 className={`text-xl font-bold mb-3 ${isDark ? "text-white" : "text-gray-900"}`}>Wallet Required</h3>
-            <p className={`text-sm text-center max-w-md mb-6 leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+            <h3 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent mb-3">
+              Connect a Wallet
+            </h3>
+            <p className={`text-sm max-w-sm text-center leading-relaxed mb-6 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
               Connect your HashPack wallet to participate in HBAR.ħ governance.
               You need at least{" "}
-              <span className={`font-semibold ${isSky ? "text-sky-400" : "text-pink-400"}`}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
-              tokens or <span className={`font-semibold ${isSky ? "text-sky-400" : "text-pink-400"}`}>1 VIP NFT</span> to vote or create proposals.
+              <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
+              tokens or <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>1 VIP NFT</span> to vote or create proposals.
             </p>
             <button
               onClick={handleConnect}
               disabled={isConnectingHedera}
-              className={`px-8 py-3 rounded-xl transition-all duration-300 disabled:opacity-50 flex items-center gap-2 text-white shadow-lg ${
-                isSky
-                  ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-sky-500/25"
-                  : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/25"
-              }`}
+              className="px-8 py-3 rounded-xl transition-all duration-300 disabled:opacity-50 flex items-center gap-2 text-white shadow-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 shadow-purple-500/25"
             >
               <Wallet className="w-5 h-5" />
               {isConnectingHedera ? "Connecting..." : "Connect HashPack"}

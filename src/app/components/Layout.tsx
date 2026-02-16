@@ -586,6 +586,14 @@ export function Layout() {
             >
               Privacy Policy
             </Link>
+            <Link
+              to="/white-paper"
+              className={`text-xs transition-colors ${
+                isDark ? "text-slate-600 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              White Paper
+            </Link>
           </div>
         </div>
       </footer>

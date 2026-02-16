@@ -135,4 +135,9 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
     description: "WRAPpDEX Privacy Policy — how we collect, use, and protect your information on the WRAPpDEX decentralized exchange platform.",
     path: "/privacy",
   },
+  "/white-paper": {
+    title: "White Paper",
+    description: "The WRAPpDEX Wrapp Paper — institutional-grade DEX on Hedera. Platform overview, AMM engine, oracle pipeline, tokenomics, governance, and roadmap.",
+    path: "/white-paper",
+  },
 };
