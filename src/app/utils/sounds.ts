@@ -1,3 +1,5 @@
+import { loadVipPrefs } from "./vip";
+
 let audioCtx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 
@@ -23,7 +25,7 @@ let _volume: SoundVolume | null = null;
 
 function resolveVolume(): SoundVolume {
   if (_volume !== null) return _volume;
-  if (typeof window === "undefined") { _volume = "high"; return _volume; }
+  if (typeof window === "undefined") { _volume = "off"; return _volume; }
   // Try new key first
   const stored = localStorage.getItem(VOLUME_KEY) as SoundVolume | null;
   if (stored && VOLUME_MULTIPLIERS[stored] !== undefined) {
@@ -33,7 +35,7 @@ function resolveVolume(): SoundVolume {
   // Migrate from legacy boolean mute key
   const legacyMuted = localStorage.getItem(MUTE_KEY);
   if (legacyMuted === "1") { _volume = "off"; }
-  else { _volume = "high"; }
+  else { _volume = "off"; }
   localStorage.setItem(VOLUME_KEY, _volume);
   return _volume;
 }
@@ -336,9 +338,19 @@ export function playVipConfirm(): void {
  * VIP iridescent button chime — uses 33Hz and 44Hz sine waves layered
  * with harmonics to produce a deep, pleasant resonance when hovering
  * or clicking Trade/Bridge buttons in VIP mode.
+ *
+ * Internally gated by the VIP "Premium Sound FX" toggle — if the user
+ * has disabled vip_sounds (or VIP is inactive), this is a silent no-op.
+ * This keeps all 15+ call sites clean.
  */
 export function playVipButtonChime(): void {
   if (isMuted()) return;
+  // Gate behind VIP sound toggle so Trade/Bridge premium sounds
+  // respect the same preference as cash register and piano notes.
+  try {
+    const prefs = loadVipPrefs();
+    if (!prefs.active || !prefs.features.vip_sounds) return;
+  } catch { /* prefs unavailable — allow sound */ }
   try {
     const ctx = getAudioContext();
     const now = ctx.currentTime;
