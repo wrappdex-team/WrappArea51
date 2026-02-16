@@ -275,15 +275,17 @@ function TeamCard({
   role,
   desc,
   accent,
+  href,
 }: {
   name: string;
   role: string;
   desc: string;
   accent: string;
+  href?: string;
 }) {
   const { isDark } = useTheme();
-  return (
-    <GlassCard className="p-5 md:p-6 text-center">
+  const card = (
+    <GlassCard className={`p-5 md:p-6 text-center${href ? " cursor-pointer" : ""}`}>
       <div
         className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-2xl font-bold text-white ${accent}`}
       >
@@ -310,6 +312,8 @@ function TeamCard({
       </p>
     </GlassCard>
   );
+  if (href) return <Link to={href} className="no-underline">{card}</Link>;
+  return card;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1654,6 +1658,7 @@ export function WhitePaper() {
               role="Chief Marketing Officer"
               desc="Leads brand strategy, growth marketing, and market positioning for WRAPpDEX and the HBAR.h ecosystem."
               accent="bg-gradient-to-br from-violet-500 to-pink-500"
+              href="/branding"
             />
             <TeamCard
               name="Carlos"

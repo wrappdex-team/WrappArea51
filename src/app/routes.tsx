@@ -57,6 +57,7 @@ const Audit = lazy(() => retryImport(() => import("./components/Audit")).then(m 
 const TermsOfService = lazy(() => retryImport(() => import("./components/TermsOfService")).then(m => ({ default: m.TermsOfService })));
 const PrivacyPolicy = lazy(() => retryImport(() => import("./components/PrivacyPolicy")).then(m => ({ default: m.PrivacyPolicy })));
 const WhitePaper = lazy(() => retryImport(() => import("./components/WhitePaper")).then(m => ({ default: m.WhitePaper })));
+const Branding = lazy(() => retryImport(() => import("./components/Branding")).then(m => ({ default: m.Branding })));
 const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).then(m => ({ default: m.NotFound })));
 
 export const router = createBrowserRouter([
@@ -77,6 +78,7 @@ export const router = createBrowserRouter([
       { path: "terms", Component: TermsOfService },
       { path: "privacy", Component: PrivacyPolicy },
       { path: "white-paper", Component: WhitePaper },
+      { path: "branding", Component: Branding },
       { path: "smart-liquidity", element: <Navigate to="/trading" replace /> },
       { path: "*", Component: NotFound },
     ],
