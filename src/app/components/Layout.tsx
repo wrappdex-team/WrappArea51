@@ -8,7 +8,7 @@ import { WalletConnectModal } from "./WalletConnectModal";
 import { formatHbar } from "../utils/hedera";
 import { formatAddress } from "../utils/metamask";
 import { NewsTicker } from "./NewsTicker";
-import { playTabChime, getSoundVolume, cycleSoundVolume } from "../utils/sounds";
+import { playTabChime, getSoundVolume, cycleSoundVolume, playVipNavNote } from "../utils/sounds";
 import { Toaster } from "sonner";
 import { VIPPanel } from "./VIPPanel";
 import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
@@ -190,12 +190,13 @@ export function Layout() {
                 const Icon = item.icon;
                 const active = isActive(item.path);
                 const isFlashing = flashingTab === item.path;
+                const navIdx = navItems.indexOf(item);
                 return (
                   <Link
                     key={item.path}
                     to={item.path}
                     onClick={() => handleTabClick(item.path)}
-                    onMouseEnter={() => preloadRoute(item.path)}
+                    onMouseEnter={() => { preloadRoute(item.path); }}
                     role="menuitem"
                     aria-current={active ? "page" : undefined}
                     className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
@@ -235,7 +236,9 @@ export function Layout() {
                 <span className={`w-1.5 h-1.5 rounded-full ${
                   hederaNetwork === "testnet" ? "bg-amber-400 animate-pulse" : "bg-emerald-400"
                 }`} />
-                <span className="uppercase tracking-wider">{hederaNetwork === "testnet" ? "Testnet" : "Mainnet"}</span>
+                {hederaNetwork === "testnet" && (
+                  <span className="uppercase tracking-wider">Testnet</span>
+                )}
               </div>
               </Tip>
 
@@ -245,6 +248,7 @@ export function Layout() {
                 href="https://x.com/WRAPpDEX"
                 target="_blank"
                 rel="noopener noreferrer"
+                onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(0); }}
                 className={`hidden sm:inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-white border border-pink-500/20"
@@ -261,6 +265,7 @@ export function Layout() {
                 href="https://discord.gg/tRSZZ9rUJ"
                 target="_blank"
                 rel="noopener noreferrer"
+                onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(1); }}
                 className={`inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-[#5865F2] border border-pink-500/20"
@@ -277,6 +282,7 @@ export function Layout() {
               <Tip content={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}>
               <button
                 onClick={toggleTheme}
+                onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(2); }}
                 aria-label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
                 className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   isDark
@@ -296,6 +302,7 @@ export function Layout() {
               <Tip content={isSky ? "Switch to Pink accent" : "Switch to Sky accent"}>
               <button
                 onClick={toggleAccent}
+                onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(3); }}
                 className={`inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
@@ -312,6 +319,7 @@ export function Layout() {
               <Tip content={`Sound: ${soundVolume.charAt(0).toUpperCase() + soundVolume.slice(1)} — click to cycle`}>
               <button
                 onClick={toggleMute}
+                onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(4); }}
                 aria-label={`Sound volume: ${soundVolume}. Click to cycle.`}
                 aria-pressed={soundVolume !== "off"}
                 className={`inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
@@ -342,6 +350,7 @@ export function Layout() {
               <Tip content={vipActive ? "VIP Active" : "VIP Features"}>
               <button
                 onClick={() => setShowVipPanel(true)}
+                onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(5); }}
                 aria-label={vipActive ? "VIP Active — Open VIP panel" : "Open VIP Features panel"}
                 className={`relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 crown-shimmer-hover ${
                   vipActive

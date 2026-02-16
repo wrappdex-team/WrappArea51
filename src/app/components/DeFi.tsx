@@ -36,6 +36,8 @@ import {
   type LivePool,
   type DeFiProtocolStats,
 } from "../utils/defi-stats";
+import { isVipEligible } from "../utils/vip";
+import { VIPAccessGate } from "./VIPAccessGate";
 
 // ── Liquidity Pool types (unchanged) ──
 
@@ -91,7 +93,13 @@ function formatCompact(n: number): string {
 
 export function DeFi() {
   const { isDark } = useTheme();
-  const { primaryWallet } = useWallet();
+  const { primaryWallet, hederaAccount, hederaNetwork } = useWallet();
+
+  const isVip = useMemo(() => {
+    if (!hederaAccount?.tokens) return false;
+    return isVipEligible(hederaAccount.tokens, hederaNetwork);
+  }, [hederaAccount?.tokens, hederaNetwork]);
+
   const [activeTab, setActiveTab] = useState<Tab>("pools");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("tvl");
@@ -268,6 +276,11 @@ export function DeFi() {
     { key: "lend", label: "Lend & Borrow", icon: Zap, count: bonzoMarkets.length || 6 },
     { key: "staking", label: "Staking", icon: Lock, count: stakingPools.length || 5 },
   ];
+
+  // VIP Gate
+  if (!isVip) {
+    return <VIPAccessGate featureName="DeFi" />;
+  }
 
   return (
     <div className="space-y-6">

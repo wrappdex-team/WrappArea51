@@ -609,3 +609,162 @@ export function playRefreshWhoosh(): void {
     noise.start(now);
   } catch { /* audio not supported */ }
 }
+
+// ── VIP Navigation Piano Scale ──────────────────────────────────────
+// 6 unique notes in C major pentatonic, voiced like a concert grand piano.
+// Each note has a fundamental + 2nd/3rd partials with exponential decay
+// and a soft hammer attack. Notes rise in scale for a "staircase of light" feel.
+
+const VIP_NAV_SCALE: { freq: number; name: string }[] = [
+  { freq: 523.25, name: "C5"  },  // Markets
+  { freq: 587.33, name: "D5"  },  // Trade
+  { freq: 659.25, name: "E5"  },  // Swap
+  { freq: 783.99, name: "G5"  },  // Buy/Sell
+  { freq: 880.00, name: "A5"  },  // DeFi
+  { freq: 1046.50, name: "C6" },  // Wallet / DAO / More
+];
+
+/**
+ * Play a single grand-piano note from the VIP navigation scale.
+ * @param index 0–5 maps to C5→C6 pentatonic. Values outside range are clamped.
+ */
+export function playVipNavNote(index: number): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const note = VIP_NAV_SCALE[Math.max(0, Math.min(index, VIP_NAV_SCALE.length - 1))];
+    const f = note.freq;
+
+    // Fundamental — warm sine, the body of the piano tone
+    const osc1 = ctx.createOscillator();
+    const g1 = ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(f, now);
+    // Subtle pitch drift — simulates string resonance
+    osc1.frequency.exponentialRampToValueAtTime(f * 0.999, now + 0.8);
+    g1.gain.setValueAtTime(0, now);
+    g1.gain.linearRampToValueAtTime(0.13, now + 0.008);  // ~8ms hammer attack
+    g1.gain.setValueAtTime(0.11, now + 0.04);
+    g1.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    osc1.connect(g1);
+    g1.connect(getMasterOutput());
+    osc1.start(now);
+    osc1.stop(now + 0.95);
+
+    // 2nd partial (octave) — adds brightness and "ring"
+    const osc2 = ctx.createOscillator();
+    const g2 = ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(f * 2, now);
+    g2.gain.setValueAtTime(0, now);
+    g2.gain.linearRampToValueAtTime(0.045, now + 0.006);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    osc2.connect(g2);
+    g2.connect(getMasterOutput());
+    osc2.start(now);
+    osc2.stop(now + 0.6);
+
+    // 3rd partial (octave + fifth) — shimmer and warmth
+    const osc3 = ctx.createOscillator();
+    const g3 = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
+    osc3.type = "sine";
+    osc3.frequency.setValueAtTime(f * 3, now);
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(4000, now);
+    lp.Q.setValueAtTime(0.7, now);
+    g3.gain.setValueAtTime(0, now);
+    g3.gain.linearRampToValueAtTime(0.018, now + 0.005);
+    g3.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc3.connect(lp);
+    lp.connect(g3);
+    g3.connect(getMasterOutput());
+    osc3.start(now);
+    osc3.stop(now + 0.4);
+
+    // Hammer noise — the percussive "thock" of a felt hammer hitting strings
+    const noise = ctx.createBufferSource();
+    const nLen = Math.floor(ctx.sampleRate * 0.012);
+    const nBuf = ctx.createBuffer(1, nLen, ctx.sampleRate);
+    const nData = nBuf.getChannelData(0);
+    for (let i = 0; i < nLen; i++) nData[i] = (Math.random() * 2 - 1) * 0.15;
+    noise.buffer = nBuf;
+    const nGain = ctx.createGain();
+    const nFilter = ctx.createBiquadFilter();
+    nFilter.type = "bandpass";
+    nFilter.frequency.setValueAtTime(f * 4, now);
+    nFilter.Q.setValueAtTime(1.5, now);
+    nGain.gain.setValueAtTime(0.04, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.015);
+    noise.connect(nFilter);
+    nFilter.connect(nGain);
+    nGain.connect(getMasterOutput());
+    noise.start(now);
+  } catch { /* audio not supported */ }
+}
+
+// ── VIP Feature Toggle Bass Hover ───────────────────────────────────
+// Descending sub-bass notes for the 3 VIP feature rows.
+// 40Hz → 36Hz → 33Hz — felt as much as heard, with warm harmonic shimmer.
+
+const VIP_BASS_SCALE = [40, 36, 33];
+
+/**
+ * Play a deep bass pulse when hovering a VIP feature toggle row.
+ * @param index 0–2 maps to 40Hz → 36Hz → 33Hz (descending).
+ */
+export function playVipFeatureBass(index: number): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const f = VIP_BASS_SCALE[Math.max(0, Math.min(index, 2))];
+
+    // Sub-bass fundamental — deep rumble
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(f, now);
+    sub.frequency.exponentialRampToValueAtTime(f * 0.97, now + 0.5);
+    subG.gain.setValueAtTime(0, now);
+    subG.gain.linearRampToValueAtTime(0.2, now + 0.025);
+    subG.gain.setValueAtTime(0.16, now + 0.08);
+    subG.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    sub.connect(subG);
+    subG.connect(getMasterOutput());
+    sub.start(now);
+    sub.stop(now + 0.6);
+
+    // 2nd harmonic — adds body you can hear on small speakers
+    const h2 = ctx.createOscillator();
+    const h2G = ctx.createGain();
+    const h2Lp = ctx.createBiquadFilter();
+    h2.type = "sine";
+    h2.frequency.setValueAtTime(f * 2, now);
+    h2Lp.type = "lowpass";
+    h2Lp.frequency.setValueAtTime(200, now);
+    h2Lp.Q.setValueAtTime(1, now);
+    h2G.gain.setValueAtTime(0, now);
+    h2G.gain.linearRampToValueAtTime(0.09, now + 0.02);
+    h2G.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    h2.connect(h2Lp);
+    h2Lp.connect(h2G);
+    h2G.connect(getMasterOutput());
+    h2.start(now);
+    h2.stop(now + 0.45);
+
+    // Warm 5th-harmonic shimmer — subtle emerald glow in audio form
+    const h5 = ctx.createOscillator();
+    const h5G = ctx.createGain();
+    h5.type = "sine";
+    h5.frequency.setValueAtTime(f * 5, now + 0.015);
+    h5G.gain.setValueAtTime(0, now + 0.015);
+    h5G.gain.linearRampToValueAtTime(0.025, now + 0.03);
+    h5G.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    h5.connect(h5G);
+    h5G.connect(getMasterOutput());
+    h5.start(now + 0.015);
+    h5.stop(now + 0.3);
+  } catch { /* audio not supported */ }
+}
