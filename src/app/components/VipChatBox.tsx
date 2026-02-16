@@ -2,7 +2,7 @@
  * VipChatBox — Emerald glass-morphism VIP-only chat
  *
  * Gate: 100M+ HBAR.ħ tokens (server-verified via Mirror Node on every send)
- * Rules: 25 words max, 2-min cooldown, session-authenticated
+ * Rules: 25 words max, 2-min cooldown, wallet-connected + Mirror Node verified
  * Design: Minimalist, no text bloat — just UX with bleeps and ticks
  */
 
@@ -10,7 +10,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Crown, Send, Check, AlertCircle, Loader2, MessageSquare, ChevronUp, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { getSessionToken } from "../utils/auth";
 import { playTokenHover, playVipConfirm } from "../utils/sounds";
 import { log } from "../utils/logger";
 
@@ -113,9 +112,8 @@ export function VipChatBox({
     const text = input.trim();
     if (!text || overLimit || sending || cooldownLeft > 0) return;
 
-    const token = getSessionToken();
-    if (!token) {
-      setError("Sign in required");
+    if (!accountId) {
+      setError("Connect your wallet first");
       setTimeout(() => setError(""), 3000);
       return;
     }
@@ -129,9 +127,8 @@ export function VipChatBox({
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${publicAnonKey}`,
-          "X-Session-Token": token,
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ accountId, text }),
       });
       const data = await res.json();
 
@@ -158,7 +155,7 @@ export function VipChatBox({
     } finally {
       setSending(false);
     }
-  }, [input, overLimit, sending, cooldownLeft, fetchMessages]);
+  }, [input, overLimit, sending, cooldownLeft, accountId, fetchMessages]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

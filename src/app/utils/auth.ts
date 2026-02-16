@@ -127,56 +127,66 @@ async function signChallengeMessage(accountId: string, message: string): Promise
     throw new Error("Signing failed — wallet may have rejected the request or is not connected");
   }
 
-  // Extract signature bytes from HashConnect result
-  // HashConnect v3 returns various formats — handle them all
+  // Extract signature from WalletConnect result.
+  // wallet-core.ts _parseSignMessageResponse already normalises most formats
+  // to an array of strings, but we still handle edge cases defensively.
   const sigs = result.signatures;
+  log.info("Auth", `Raw signatures type=${typeof sigs} isArray=${Array.isArray(sigs)} preview=${JSON.stringify(sigs).slice(0, 300)}`);
 
   let sigHex: string | null = null;
 
   if (typeof sigs === "string") {
-    // Direct hex string
     sigHex = sigs;
   } else if (sigs instanceof Uint8Array) {
-    // Raw bytes
     sigHex = Array.from(sigs).map(b => b.toString(16).padStart(2, "0")).join("");
   } else if (Array.isArray(sigs)) {
-    // Array of signatures — take the first one
     const first = sigs[0];
     if (typeof first === "string") {
       sigHex = first;
     } else if (first instanceof Uint8Array) {
       sigHex = Array.from(first).map(b => b.toString(16).padStart(2, "0")).join("");
     } else if (first && typeof first === "object") {
-      // Object with signature field
-      const raw = first.signature || first.sig || first.data || first.bytes;
+      // Check ed25519 key (HIP-820 protobuf-style), then common names
+      const raw = first.ed25519 || first.signature || first.sig || first.data || first.bytes;
       if (typeof raw === "string") {
         sigHex = raw;
       } else if (raw instanceof Uint8Array) {
         sigHex = Array.from(raw).map(b => b.toString(16).padStart(2, "0")).join("");
       }
-      // HashConnect may wrap in { signedPayload: { signature } }
       if (!sigHex && first.signedPayload) {
         const sp = first.signedPayload;
-        const spSig = sp.signature || sp.sig;
+        const spSig = sp.ed25519 || sp.signature || sp.sig;
         if (typeof spSig === "string") sigHex = spSig;
         else if (spSig instanceof Uint8Array) sigHex = Array.from(spSig).map(b => b.toString(16).padStart(2, "0")).join("");
       }
     }
   } else if (typeof sigs === "object" && sigs !== null) {
-    // Object with signature field
-    const raw = (sigs as any).signature || (sigs as any).sig || (sigs as any).data;
+    const raw = (sigs as any).ed25519 || (sigs as any).signature || (sigs as any).sig || (sigs as any).data;
     if (typeof raw === "string") sigHex = raw;
     else if (raw instanceof Uint8Array) sigHex = Array.from(raw).map(b => b.toString(16).padStart(2, "0")).join("");
   }
 
   if (!sigHex) {
-    log.error("Auth", "Could not extract signature from HashConnect result", sigs);
+    log.error("Auth", "Could not extract signature from wallet result", sigs);
     throw new Error("Could not extract signature from wallet response");
   }
 
-  // Clean up hex string
+  // Strip 0x prefix if present
   if (sigHex.startsWith("0x")) sigHex = sigHex.slice(2);
 
+  // If the string looks like base64 (not valid hex), convert to hex
+  if (sigHex.length > 0 && !/^[0-9a-fA-F]+$/.test(sigHex)) {
+    try {
+      const bin = atob(sigHex);
+      sigHex = Array.from(new Uint8Array(bin.length), (_, i) => bin.charCodeAt(i).toString(16).padStart(2, "0")).join("");
+      log.info("Auth", `Converted base64 signature to hex (${sigHex.length} chars)`);
+    } catch {
+      log.error("Auth", "Signature is neither valid hex nor base64", sigHex.slice(0, 40));
+      throw new Error("Signature format not recognised");
+    }
+  }
+
+  log.info("Auth", `Final signature: ${sigHex.length} hex chars, preview=${sigHex.slice(0, 32)}...`);
   return sigHex;
 }
 

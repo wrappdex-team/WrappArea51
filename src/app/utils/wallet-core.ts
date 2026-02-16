@@ -376,9 +376,16 @@ export async function signMessageViaWC(
       sessionConfig: { disableDeepLink: true },
     });
 
-    if (result?.signatureMap) return { signatures: Object.values(result.signatureMap) };
-    if (Array.isArray(result)) return { signatures: result };
-    return { signatures: [result] };
+    console.log("[WC] signMessage raw result:", typeof result,
+      result ? JSON.stringify(result).slice(0, 600) : "null");
+
+    // Parse the WC response — wallets return many different formats
+    const signatures = _parseSignMessageResponse(result);
+    if (!signatures || signatures.length === 0) {
+      console.warn("[WC] Could not extract signatures from WC response");
+      return null;
+    }
+    return { signatures };
   } catch (err: any) {
     console.warn("[WC] signMessage failed:", err?.message);
     return null;
@@ -600,4 +607,101 @@ async function _waitForRelay(client: any, timeoutMs = 8000): Promise<void> {
   } catch {
     console.warn("[WC] Could not wait for relay — proceeding");
   }
+}
+
+/**
+ * Parse a WalletConnect response for signMessage.
+ *
+ * Wallets return various formats for signatures:
+ * - Single string (base64-encoded)
+ * - Object with a single key (base64-encoded)
+ * - Array of strings (base64-encoded)
+ * - Object with multiple keys (base64-encoded)
+ *
+ * This function attempts to extract all signatures from the response.
+ */
+function _parseSignMessageResponse(result: any): string[] {
+  if (!result) return [];
+
+  // Case 1: Direct string (some wallets return just the sig)
+  if (typeof result === "string") return [result];
+
+  // Case 2: Array of strings
+  if (Array.isArray(result)) {
+    return result.filter((s: any) => typeof s === "string" && s.length > 0);
+  }
+
+  // Case 3: Object with signatureMap
+  if (result.signatureMap != null) {
+    const sm = result.signatureMap;
+
+    // 3a: signatureMap is a base64 string (protobuf-encoded SignatureMap)
+    if (typeof sm === "string") {
+      const extracted = _extractED25519FromProtobuf(sm);
+      if (extracted) {
+        console.log("[WC] Extracted ED25519 sig from protobuf SignatureMap");
+        return [extracted];
+      }
+      // If protobuf parse fails, pass the raw base64 for downstream handling
+      return [sm];
+    }
+
+    // 3b: signatureMap has sigPair array (JSON-decoded protobuf)
+    if (sm.sigPair && Array.isArray(sm.sigPair)) {
+      const sigs: string[] = [];
+      for (const pair of sm.sigPair) {
+        const sig = pair?.ed25519 || pair?.ECDSA_secp256k1 || pair?.signature;
+        if (typeof sig === "string") sigs.push(sig);
+      }
+      if (sigs.length > 0) return sigs;
+    }
+
+    // 3c: signatureMap is a flat key-value map { accountId/pubkey: sigString }
+    if (typeof sm === "object" && sm !== null) {
+      const vals = Object.values(sm).filter((v: any) => typeof v === "string" && v.length > 0) as string[];
+      if (vals.length > 0) return vals;
+
+      // Nested objects: { key: { ed25519: sigHex } }
+      for (const v of Object.values(sm)) {
+        if (v && typeof v === "object") {
+          const nested = (v as any).ed25519 || (v as any).signature || (v as any).sig;
+          if (typeof nested === "string") return [nested];
+        }
+      }
+    }
+  }
+
+  // Case 4: Object without signatureMap — check for common signature fields
+  if (typeof result === "object") {
+    for (const key of ["signature", "sig", "ed25519", "data"]) {
+      if (typeof result[key] === "string" && result[key].length > 0) {
+        return [result[key]];
+      }
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Try to extract a raw ED25519 signature from a base64-encoded protobuf
+ * SignatureMap. Scans for protobuf field tag 0x1A (field 3 = ed25519,
+ * wire type 2 = length-delimited) followed by length byte 0x40 (64 bytes).
+ * Returns the signature as a hex string, or null if not found.
+ */
+function _extractED25519FromProtobuf(base64Str: string): string | null {
+  try {
+    const bin = atob(base64Str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+    // Scan for ED25519 field: tag 0x1A, length 0x40, then 64 bytes
+    for (let i = 0; i < bytes.length - 65; i++) {
+      if (bytes[i] === 0x1A && bytes[i + 1] === 0x40) {
+        const sig = bytes.slice(i + 2, i + 66);
+        return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
+      }
+    }
+  } catch { /* not valid base64 or not parseable */ }
+  return null;
 }

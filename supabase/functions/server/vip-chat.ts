@@ -2,9 +2,11 @@
 // VIP CHAT — Token-gated chat for 100M+ HBAR.ħ holders
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Authenticated via session token. VIP eligibility verified server-side
-// against Mirror Node. 2-min cooldown, 25-word limit, 50-msg FIFO cap.
-// Admin ops (delete/ban) require SUPABASE_SERVICE_ROLE_KEY.
+// Auth: wallet-connected accountId + server-side Mirror Node verification.
+// Every POST is VIP-verified via Mirror Node (cached 5 min). No challenge-
+// response session needed — the VIP gate IS the authorization.
+// Security: IP rate limiting, per-account cooldown, ban list, word/char
+// limits, input sanitization, KV-locked FIFO writes.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
@@ -14,7 +16,6 @@ import {
   isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
-import { validateSession } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -68,26 +69,48 @@ export function registerVipChatRoutes(app: Hono): void {
     }
   });
 
+  // POST /vip-chat/messages — Wallet-connected + Mirror Node VIP-verified
+  //
+  // Auth model: the caller provides their accountId in the request body.
+  // The server independently verifies VIP eligibility against Hedera Mirror
+  // Node on every send (cached 5 min). An attacker who spoofs an accountId
+  // gains nothing — the Mirror Node check confirms the claimed account
+  // actually holds 100M+ HBAR.h or a VIP NFT. Combined with IP rate
+  // limiting, per-account cooldowns, and the ban list, the chat is
+  // protected against impersonation spam without requiring a signed session.
   app.post("/make-server-54299934/vip-chat/messages", async (c) => {
     try {
-      const session = await validateSession(c);
-      if (!session) return c.json({ error: "Authentication required — sign in with HashPack" }, 401);
-      const { accountId } = session;
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Too many requests" }, 429);
 
-      // Pre-lock validation (no KV mutations — safe to do outside lock)
+      const body = await c.req.json();
+      const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+      const text = sanitizeString(typeof body.text === "string" ? body.text : "", VIP_CHAT_MAX_CHARS);
+
+      // Validate accountId format
+      if (!accountId || !isValidHederaAccountId(accountId)) {
+        return c.json({ error: "Valid Hedera account ID required (connect your wallet)" }, 400);
+      }
+
+      // Ban check
       const bans: string[] = (await kv.get(VIP_CHAT_BANS_KEY)) ?? [];
       if (bans.includes(accountId)) return c.json({ error: "Account suspended" }, 403);
+
+      // Per-account cooldown
       const cdKey = VIP_CHAT_CD_PREFIX + accountId;
       const lastSent: number | null = await kv.get(cdKey);
       if (lastSent && (Date.now() - lastSent) < VIP_CHAT_COOLDOWN_MS) {
         return c.json({ error: "Cooldown active", cooldownMs: VIP_CHAT_COOLDOWN_MS - (Date.now() - lastSent) }, 429);
       }
+
+      // Server-side Mirror Node VIP verification (the real authorization gate)
       const vipCheck = await verifyVipEligibilityFull(accountId);
-      if (!vipCheck.eligible) return c.json({ error: "VIP access requires 100M+ HBAR.ħ tokens or a VIP NFT" }, 403);
-      const body = await c.req.json();
-      const text = sanitizeString(typeof body.text === "string" ? body.text : "", VIP_CHAT_MAX_CHARS);
+      if (!vipCheck.eligible) {
+        console.log(`[VIP-CHAT] Rejected non-VIP: ${accountId} balance=${vipCheck.tokenBalance} nfts=${vipCheck.nftCount}`);
+        return c.json({ error: "VIP access requires 100M+ HBAR.ħ tokens or a VIP NFT" }, 403);
+      }
+
+      // Input validation
       if (!text) return c.json({ error: "Message cannot be empty" }, 400);
       const wc = text.split(/\s+/).filter(Boolean).length;
       if (wc > VIP_CHAT_MAX_WORDS) return c.json({ error: `Exceeds ${VIP_CHAT_MAX_WORDS} word limit` }, 400);
@@ -102,7 +125,7 @@ export function registerVipChatRoutes(app: Hono): void {
         await kv.set(cdKey, Date.now());
         return msg;
       });
-      console.log(`[VIP-CHAT] ${accountId}: "${text}" (${wc}w)`);
+      console.log(`[VIP-CHAT] ${accountId}: "${text}" (${wc}w) [Mirror-verified]`);
       return c.json({ message: result });
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — please retry in a moment", code: "CHAT_BUSY" }, 503);

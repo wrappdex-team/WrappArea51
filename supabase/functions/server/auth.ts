@@ -72,7 +72,18 @@ function generateSessionToken(): string {
 }
 
 function buildChallengeMessage(accountId: string, nonce: string, timestamp: number): string {
-  return `${AUTH_VERSION}:${accountId}:${nonce}:${timestamp}`;
+  const dateStr = new Date(timestamp).toISOString();
+  return [
+    "Wrappdex Identity Verification",
+    "",
+    "Sign this message to prove you own this account.",
+    "No transaction will be submitted and no fees will be charged.",
+    "",
+    `Account: ${accountId}`,
+    `Nonce: ${nonce}`,
+    `Issued: ${dateStr}`,
+    `Version: ${AUTH_VERSION}`,
+  ].join("\n");
 }
 
 // ── Mirror Node Public Key Fetch (cached 10 min) ────────────────────
@@ -123,9 +134,27 @@ async function verifyED25519Signature(
 ): Promise<boolean> {
   try {
     const pubKeyBytes = hexToBytes(publicKeyHex);
-    const sigBytes = hexToBytes(signatureHex);
-    if (sigBytes.length !== 64) { console.log(`[AUTH] Sig length invalid: ${sigBytes.length}`); return false; }
     if (pubKeyBytes.length !== 32) { console.log(`[AUTH] PubKey length invalid: ${pubKeyBytes.length}`); return false; }
+
+    // Decode signature — try hex first, then base64 fallback
+    let sigBytes = hexToBytes(signatureHex);
+    if (sigBytes.length !== 64) {
+      // Hex decode produced wrong length — try base64 decode
+      try {
+        const bin = atob(signatureHex);
+        sigBytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) sigBytes[i] = bin.charCodeAt(i);
+        console.log(`[AUTH] Signature decoded as base64 (${sigBytes.length} bytes)`);
+      } catch {
+        console.log(`[AUTH] Sig not valid hex (${hexToBytes(signatureHex).length}B) or base64`);
+        return false;
+      }
+    }
+
+    if (sigBytes.length !== 64) {
+      console.log(`[AUTH] Sig length invalid after decode: ${sigBytes.length} bytes`);
+      return false;
+    }
 
     const cryptoKey = await crypto.subtle.importKey("raw", pubKeyBytes, { name: "Ed25519" }, false, ["verify"]);
     return await crypto.subtle.verify("Ed25519", cryptoKey, sigBytes, messageBytes);
@@ -250,10 +279,15 @@ export function registerAuthRoutes(app: Hono): void {
 
       const messageBytes = new TextEncoder().encode(challenge.message);
       const cleanSig = signature.startsWith("0x") ? signature.slice(2) : signature;
+
+      // Diagnostic logging for signature debugging
+      console.log(`[AUTH] Verifying sig for ${accountId}: sigLen=${cleanSig.length} chars, msgLen=${messageBytes.length} bytes, pubKey=${keyResult.rawKeyHex.slice(0, 16)}...`);
+      console.log(`[AUTH] Sig preview: ${cleanSig.slice(0, 40)}...`);
+
       const isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, cleanSig);
 
       if (!isValid) {
-        console.log(`[AUTH] Signature FAILED for ${accountId} challenge=${challengeId}`);
+        console.log(`[AUTH] Signature FAILED for ${accountId} challenge=${challengeId} sigChars=${cleanSig.length}`);
         return c.json({ error: "Signature verification failed. Ensure you signed the exact challenge message.", code: "SIGNATURE_INVALID" }, 401);
       }
 
