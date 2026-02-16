@@ -1,0 +1,247 @@
+// ═══════════════════════════════════════════════════════════════════════
+// SPIN WHEEL — CSPRNG-determined outcomes, KV-backed cooldowns
+// ═══════════════════════════════════════════════════════════════════════
+
+import type { Hono } from "npm:hono@4.6.3";
+import * as kv from "./kv_store.tsx";
+import {
+  getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
+  secureRandomFloat, secureRandomInt, generateTicketId, isAdminAuthorized,
+} from "./shared.ts";
+import { validateSession } from "./auth.ts";
+import { verifyVipEligibilityFull } from "./vip.ts";
+
+// ── Constants ────────────────────────────────────────────────────────
+
+const WINNERS_KEY = "spin_winners_log";
+const COOLDOWN_PREFIX = "spin_cd_";   // KV key per account for cooldown
+const MAX_WINNERS = 10;
+const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SPIN_ODDS = 0.02;    // 1:50 = 2% — uniform for ALL wallets
+const SEGMENT_COUNT = 12;
+const WINNER_SEGMENT_INDEX = 5; // index of the "HBAR.ħ" segment on the wheel
+
+interface WinnerRecord {
+  accountId: string;
+  ticketId: string;
+  timestamp: number;
+}
+
+// ── Route Registration ──────────────────────────────────────────────
+
+export function registerSpinRoutes(app: Hono): void {
+
+  // GET /winners — public read-only, returns last 10 winners
+  app.get("/make-server-54299934/winners", async (c) => {
+    try {
+      const winners: WinnerRecord[] = (await kv.get(WINNERS_KEY)) ?? [];
+      return c.json({ winners });
+    } catch (err) {
+      console.log("Error fetching winners:", err);
+      return c.json({ error: "Failed to fetch winners" }, 500);
+    }
+  });
+
+  // POST /spin — Server-determined outcome via CSPRNG.
+  // accountId from session token (preferred) OR from body with Mirror Node VIP gate.
+
+  app.post("/make-server-54299934/spin", async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) {
+        return c.json({ error: "Rate limited — try again in a minute" }, 429);
+      }
+
+      // ── Identify the account ──
+      // Prefer authenticated session; fall back to body.accountId + Mirror Node VIP check.
+      let accountId: string;
+
+      const session = await validateSession(c);
+      if (session) {
+        accountId = session.accountId;
+        console.log(`[Spin] Authenticated via session: ${accountId}`);
+      } else {
+        // No session — accept accountId from body and verify VIP via Mirror Node
+        let body: any;
+        try { body = await c.req.json(); } catch { body = {}; }
+        const rawId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+        if (!rawId || !/^0\.0\.\d+$/.test(rawId)) {
+          return c.json({ error: "Valid Hedera account ID required (e.g. 0.0.12345)", code: "INVALID_ACCOUNT" }, 400);
+        }
+        accountId = sanitizeString(rawId, 20);
+
+        // ── Mirror Node VIP gate ──
+        // Must hold >= 100M HBAR.ħ OR >= 1 VIP NFT to spin.
+        console.log(`[Spin] No session — verifying VIP via Mirror Node for ${accountId}`);
+        const vipStatus = await verifyVipEligibilityFull(accountId);
+        if (!vipStatus.eligible) {
+          console.log(`[Spin] VIP FAILED: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
+          return c.json({
+            error: "VIP access required — hold 100M+ HBAR.ħ tokens or a VIP NFT to spin",
+            code: "VIP_REQUIRED",
+            tokenBalance: vipStatus.tokenBalance,
+            nftCount: vipStatus.nftCount,
+          }, 403);
+        }
+        console.log(`[Spin] VIP verified: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
+      }
+
+      const now = Date.now();
+
+      // ── Server-side cooldown (KV-backed, not localStorage) ──
+      const cdKey = COOLDOWN_PREFIX + accountId;
+      const lastSpin: number | null = await kv.get(cdKey);
+      if (lastSpin && (now - lastSpin) < SPIN_COOLDOWN_MS) {
+        const remaining = SPIN_COOLDOWN_MS - (now - lastSpin);
+        return c.json({
+          canSpin: false,
+          cooldownMs: remaining,
+          error: "Cooldown active — try again later",
+        }, 429);
+      }
+
+      // ── Determine outcome with crypto RNG ──
+      const odds = SPIN_ODDS;
+      const roll = secureRandomFloat();
+      const isWin = roll < odds;
+
+      // ── Calculate wheel segment and rotation ──
+      let targetSegmentIndex: number;
+      if (isWin) {
+        targetSegmentIndex = WINNER_SEGMENT_INDEX;
+      } else {
+        // Pick a random non-winning segment
+        let idx: number;
+        do {
+          idx = secureRandomInt(SEGMENT_COUNT);
+        } while (idx === WINNER_SEGMENT_INDEX);
+        targetSegmentIndex = idx;
+      }
+
+      const segmentAngle = 360 / SEGMENT_COUNT;
+      const segCenterAngle = targetSegmentIndex * segmentAngle + segmentAngle / 2;
+      const jitter = (secureRandomFloat() - 0.5) * segmentAngle * 0.6;
+      const targetAngle = 360 - segCenterAngle + jitter;
+      const fullRotations = (5 + secureRandomInt(4)) * 360;
+      // Client adds this to their current rotation state
+      const spinDelta = fullRotations + ((targetAngle % 360) + 360) % 360;
+
+      // ── Set cooldown ──
+      await kv.set(cdKey, now);
+
+      // ── If win, generate ticket and record ──
+      let ticketId: string | null = null;
+      let winners: WinnerRecord[] | null = null;
+
+      if (isWin) {
+        ticketId = generateTicketId();
+        const record: WinnerRecord = {
+          accountId: sanitizeString(accountId, 20),
+          ticketId,
+          timestamp: now,
+        };
+        const existing: WinnerRecord[] = (await kv.get(WINNERS_KEY)) ?? [];
+        winners = [record, ...existing].slice(0, MAX_WINNERS);
+        await kv.set(WINNERS_KEY, winners);
+        console.log(`[Spin] WIN: ${accountId} / ${ticketId} (roll=${roll.toFixed(4)}, odds=${odds})`);
+      } else {
+        console.log(`[Spin] LOSE: ${accountId} (roll=${roll.toFixed(4)}, odds=${odds})`);
+      }
+
+      return c.json({
+        win: isWin,
+        ticketId,
+        segmentIndex: targetSegmentIndex,
+        spinDelta: Math.round(spinDelta),
+        timestamp: now,
+        winners: winners ?? undefined,
+      });
+    } catch (err) {
+      console.log("Error in /spin:", err);
+      return c.json({ error: "Spin failed" }, 500);
+    }
+  });
+
+  // POST /winners — Disabled. All recording happens inside POST /spin.
+  app.post("/make-server-54299934/winners", (c) => {
+    return c.json(
+      { error: "Direct winner recording is disabled. Use POST /spin instead." },
+      405,
+    );
+  });
+
+  // DELETE /winners — Admin-only reset. Requires SUPABASE_SERVICE_ROLE_KEY.
+  app.delete("/make-server-54299934/winners", async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) {
+        return c.json({ error: "Rate limited" }, 429);
+      }
+
+      // Require admin wallet identification
+      const adminToken = c.req.header("authorization") || "";
+      const expectedToken = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+      if (!expectedToken || adminToken !== `Bearer ${expectedToken}`) {
+        console.log(`[SECURITY] Unauthorized DELETE /winners attempt from IP: ${ip}`);
+        return c.json({ error: "Unauthorized — service role key required" }, 403);
+      }
+
+      await kv.set(WINNERS_KEY, []);
+      console.log(`[SECURITY] Winner history cleared by authorized admin from IP: ${ip}`);
+      return c.json({ success: true, winners: [] });
+    } catch (err) {
+      console.log("Error clearing winners:", err);
+      return c.json({ error: "Failed to clear winners" }, 500);
+    }
+  });
+
+  // ── GET /spin/cooldown/:accountId — check remaining cooldown ─────────
+  app.get("/make-server-54299934/spin/cooldown/:accountId", async (c) => {
+    try {
+      const accountId = c.req.param("accountId");
+      if (!accountId || !isValidHederaAccountId(accountId)) {
+        return c.json({ error: "Invalid accountId" }, 400);
+      }
+      const cdKey = COOLDOWN_PREFIX + accountId;
+      const lastSpin: number | null = await kv.get(cdKey);
+      const now = Date.now();
+      if (!lastSpin || (now - lastSpin) >= SPIN_COOLDOWN_MS) {
+        return c.json({ canSpin: true, cooldownMs: 0 });
+      }
+      return c.json({ canSpin: false, cooldownMs: SPIN_COOLDOWN_MS - (now - lastSpin) });
+    } catch (err) {
+      console.log("Error checking cooldown:", err);
+      // Fail closed — if KV is down, deny spins to prevent cooldown bypass
+      return c.json({ canSpin: false, cooldownMs: SPIN_COOLDOWN_MS, error: "Service temporarily unavailable" }, 503);
+    }
+  });
+
+  // DELETE /spin/cooldown — Admin-only: clears spin cooldown for a specific account.
+  // Requires SUPABASE_SERVICE_ROLE_KEY (same pattern as DELETE /winners).
+  app.delete("/make-server-54299934/spin/cooldown", async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) {
+        return c.json({ error: "Rate limited" }, 429);
+      }
+
+      // Require service role key — admin only
+      if (!isAdminAuthorized(c)) {
+        return c.json({ error: "Admin access required — service role key must be provided" }, 403);
+      }
+
+      const accountId = c.req.query("accountId") || "";
+      if (!accountId || !isValidHederaAccountId(accountId)) {
+        return c.json({ error: "Valid accountId query param required (e.g. ?accountId=0.0.12345)" }, 400);
+      }
+
+      const cdKey = COOLDOWN_PREFIX + accountId;
+      await kv.del(cdKey);
+      console.log(`[SECURITY] Spin cooldown reset by admin for ${accountId} (IP: ${ip})`);
+      return c.json({ success: true, accountId, message: "Spin cooldown cleared (admin)" });
+    } catch (err) {
+      console.log("Error resetting spin cooldown:", err);
+      return c.json({ error: "Failed to reset cooldown" }, 500);
+    }
+  });
+}

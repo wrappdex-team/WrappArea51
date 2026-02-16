@@ -232,6 +232,11 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   const [pairingUri, setPairingUri] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<string>("Initializing...");
 
+  // Guard: prevent a stale MetaMask connection from advancing the UI
+  // after the user clicked Back. Incremented on each connect attempt,
+  // checked after the async call returns.
+  const mmConnectIdRef = useRef(0);
+
   // ── Dynamic Connect ──────────────────────────────────────────────
   //
   // Opens the Dynamic Labs auth modal (email, social, 300+ wallets).
@@ -310,13 +315,25 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // ── MetaMask Connect ─────────────────────────────────────────────
 
   const handleMetaMaskConnect = async () => {
+    const connectId = ++mmConnectIdRef.current;
     setSelectedWallet(WALLET_OPTIONS.find((w) => w.id === "metamask") || null);
     setStep("metamask-connect");
     const success = await connectMetaMask();
+    // Only advance UI if this is still the active connection attempt
+    if (connectId !== mmConnectIdRef.current) return;
     if (success) {
       setStep("metamask-success");
       playConnectionSuccess();
     }
+    // If !success and no metaMaskError, the user cancelled (Back button or
+    // abort). connectMetaMask already reset isConnectingMetaMask to false.
+  };
+
+  // Cancel an in-flight MetaMask connection and return to the wallet list.
+  // Bumps the connect ID so the stale async handler discards its result.
+  const handleMetaMaskBack = () => {
+    mmConnectIdRef.current++;
+    setStep("list");
   };
 
   const handleClearAndRetry = async () => {
@@ -345,7 +362,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-8">
-            <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
+            <button onClick={handleMetaMaskBack} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
             <img src={partnerLogos.metamask} alt="MetaMask" className="w-7 h-7 rounded-lg" />
@@ -358,7 +375,13 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                   <Loader2 className="w-8 h-8 text-orange-400 animate-spin" />
                 </div>
                 <p className="text-white/90 mb-1">Connecting...</p>
-                <p className="text-white/30 text-sm">Approve in your MetaMask extension</p>
+                <p className="text-white/30 text-sm mb-4">Approve in your MetaMask extension</p>
+                <button
+                  onClick={handleMetaMaskBack}
+                  className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+                >
+                  Cancel
+                </button>
               </>
             ) : metaMaskError ? (
               <>

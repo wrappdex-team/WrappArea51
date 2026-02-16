@@ -280,7 +280,12 @@ export function OneInchWidget() {
     setWalletConnecting(true);
     playVipButtonChime();
     try {
-      const accounts: string[] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const accounts: string[] = await Promise.race([
+        window.ethereum.request({ method: "eth_requestAccounts" }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Wallet did not respond in time. Close any pending popups and try again.")), 90_000)
+        ),
+      ]);
       if (accounts[0]) {
         setEvmAccount(accounts[0]);
         playConnectionSuccess();

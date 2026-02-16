@@ -1,0 +1,312 @@
+// ═══════════════════════════════════════════════════════════════════════
+// AUTHENTICATION — ED25519 Challenge-Response Sessions
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Flow:
+//   1. GET  /auth/challenge/:accountId → server issues CSPRNG nonce (5-min TTL)
+//   2. Client signs nonce in HashPack wallet (ED25519)
+//   3. POST /auth/session → server verifies sig against Mirror Node public key
+//   4. Server returns 32-byte CSPRNG session token (30-min TTL, KV-stored)
+//   5. All mutating requests carry X-Session-Token header
+//
+// Security: single-use nonces, replay protection, account-bound sessions,
+// public key caching (10-min TTL), fail-closed on unsupported key types.
+// ═══════════════════════════════════════════════════════════════════════
+
+import type { Hono } from "npm:hono@4.6.3";
+import * as kv from "./kv_store.tsx";
+import { getClientIp, isRateLimited, isValidHederaAccountId } from "./shared.ts";
+
+// ── Constants ───────────────────────────────────────────────────────
+
+const AUTH_CHALLENGE_PREFIX = "auth_ch_";
+export const AUTH_SESSION_PREFIX = "auth_sess_";
+const AUTH_PUBKEY_CACHE_PREFIX = "auth_pk_";
+const AUTH_ACCT_SESSION_PREFIX = "auth_as_";  // Per-account session index
+const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const AUTH_SESSION_TTL_MS = 30 * 60 * 1000;
+const AUTH_PUBKEY_CACHE_TTL_MS = 10 * 60 * 1000;
+const AUTH_VERSION = "wrappdex:auth:v1";
+const HEDERA_MIRROR_NODE = "https://mainnet-public.mirrornode.hedera.com";
+const ED25519_DER_PREFIX = "302a300506032b6570032100";
+
+// ── Types ───────────────────────────────────────────────────────────
+
+interface AuthChallenge {
+  challengeId: string; accountId: string; nonce: string; message: string;
+  createdAt: number; expiresAt: number; used: boolean;
+}
+
+export interface AuthSession { token: string; accountId: string; createdAt: number; expiresAt: number; }
+
+interface PublicKeyResult { type: "ED25519"; rawKeyHex: string; error?: undefined; }
+interface PublicKeyError { type?: undefined; rawKeyHex?: undefined; error: string; }
+
+// ── Hex/Byte Helpers ────────────────────────────────────────────────
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ── Challenge & Session Generators ──────────────────────────────────
+
+function generateChallengeNonce(): string {
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  return bytesToHex(buf);
+}
+
+function generateSessionToken(): string {
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  return bytesToHex(buf);
+}
+
+function buildChallengeMessage(accountId: string, nonce: string, timestamp: number): string {
+  return `${AUTH_VERSION}:${accountId}:${nonce}:${timestamp}`;
+}
+
+// ── Mirror Node Public Key Fetch (cached 10 min) ────────────────────
+
+async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult | PublicKeyError> {
+  const cacheKey = AUTH_PUBKEY_CACHE_PREFIX + accountId;
+  try {
+    const cached: { key: PublicKeyResult; ts: number } | null = await kv.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < AUTH_PUBKEY_CACHE_TTL_MS) return cached.key;
+  } catch { /* cache miss */ }
+
+  try {
+    const res = await fetch(`${HEDERA_MIRROR_NODE}/api/v1/accounts/${accountId}`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      if (res.status === 404) return { error: `Account ${accountId} not found on Hedera mainnet` };
+      return { error: `Mirror Node returned HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    const keyData = data?.key;
+    if (!keyData || !keyData._type || !keyData.key) {
+      return { error: "Account has no public key (possibly a smart contract account)" };
+    }
+    if (keyData._type !== "ED25519") {
+      return { error: `Unsupported key type: ${keyData._type}. Only ED25519 accounts supported for authentication.` };
+    }
+    let rawKeyHex: string = keyData.key.toLowerCase();
+    if (rawKeyHex.startsWith(ED25519_DER_PREFIX)) {
+      rawKeyHex = rawKeyHex.substring(ED25519_DER_PREFIX.length);
+    }
+    if (rawKeyHex.length !== 64) {
+      return { error: `Invalid ED25519 key length: expected 64 hex chars, got ${rawKeyHex.length}` };
+    }
+    const result: PublicKeyResult = { type: "ED25519", rawKeyHex };
+    try { await kv.set(cacheKey, { key: result, ts: Date.now() }); } catch { /* non-critical */ }
+    return result;
+  } catch (err: any) {
+    return { error: `Mirror Node fetch failed: ${err?.message || err}` };
+  }
+}
+
+// ── ED25519 Signature Verification (Web Crypto API) ────────────────
+
+async function verifyED25519Signature(
+  publicKeyHex: string, messageBytes: Uint8Array, signatureHex: string,
+): Promise<boolean> {
+  try {
+    const pubKeyBytes = hexToBytes(publicKeyHex);
+    const sigBytes = hexToBytes(signatureHex);
+    if (sigBytes.length !== 64) { console.log(`[AUTH] Sig length invalid: ${sigBytes.length}`); return false; }
+    if (pubKeyBytes.length !== 32) { console.log(`[AUTH] PubKey length invalid: ${pubKeyBytes.length}`); return false; }
+
+    const cryptoKey = await crypto.subtle.importKey("raw", pubKeyBytes, { name: "Ed25519" }, false, ["verify"]);
+    return await crypto.subtle.verify("Ed25519", cryptoKey, sigBytes, messageBytes);
+  } catch (err: any) {
+    console.log(`[AUTH] ED25519 verification error: ${err?.message || err}`);
+    return false;
+  }
+}
+
+// ── Session Helpers (exported for other modules) ────────────────────
+
+/** Validate session token and return bound accountId. */
+export async function validateSession(c: any): Promise<{ accountId: string } | null> {
+  const token = c.req.header("x-session-token") || "";
+  if (!token || token.length < 32) return null;
+  try {
+    const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
+    if (!session) return null;
+    if (Date.now() > session.expiresAt) {
+      kv.del(AUTH_SESSION_PREFIX + token).catch(() => {});
+      return null;
+    }
+    return { accountId: session.accountId };
+  } catch { return null; }
+}
+
+/** Require authenticated session. Returns accountId from verified session. */
+export async function requireAuth(c: any): Promise<{ accountId: string } | Response> {
+  const session = await validateSession(c);
+  if (!session) {
+    return c.json({
+      error: "Authentication required. Sign a challenge via GET /auth/challenge/:accountId then POST /auth/session.",
+      code: "AUTH_REQUIRED",
+    }, 401);
+  }
+  return { accountId: session.accountId };
+}
+
+// ── Route Registration ──────────────────────────────────────────────
+
+export function registerAuthRoutes(app: Hono): void {
+
+  // GET /auth/challenge/:accountId — Issue a time-limited challenge nonce
+  app.get("/make-server-54299934/auth/challenge/:accountId", async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+      const accountId = c.req.param("accountId");
+      if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid Hedera account ID" }, 400);
+
+      const keyResult = await fetchAccountPublicKey(accountId);
+      if (keyResult.error) return c.json({ error: keyResult.error, code: "KEY_FETCH_FAILED" }, 400);
+
+      const now = Date.now();
+      const nonce = generateChallengeNonce();
+      const challengeId = `ch_${bytesToHex(crypto.getRandomValues(new Uint8Array(8)))}`;
+      const message = buildChallengeMessage(accountId, nonce, now);
+
+      const challenge: AuthChallenge = { challengeId, accountId, nonce, message, createdAt: now, expiresAt: now + AUTH_CHALLENGE_TTL_MS, used: false };
+      await kv.set(AUTH_CHALLENGE_PREFIX + challengeId, challenge);
+      console.log(`[AUTH] Challenge issued: ${challengeId} for ${accountId}`);
+      return c.json({ challengeId, message, expiresAt: challenge.expiresAt, keyType: keyResult.type });
+    } catch (err) {
+      console.log("Error in GET /auth/challenge:", err);
+      return c.json({ error: "Challenge generation failed" }, 500);
+    }
+  });
+
+  // POST /auth/session — Verify signature and create session token
+  //
+  // Nonce consumption strategy: DELETE-BEFORE-VERIFY
+  //   The challenge is deleted from KV immediately after reading, BEFORE
+  //   signature verification. This closes the race window that existed
+  //   when we used a mark-as-used (read → set used=true) pattern — two
+  //   concurrent requests could both read used=false in that window.
+  //
+  //   With delete-first, the second request gets null from kv.get and fails.
+  //   Trade-off: if verification fails (bad sig, Mirror Node down), the
+  //   challenge is already consumed — the user must request a new one.
+  //   This is the correct security posture: one attempt per nonce.
+  //
+  //   Residual race: KV read + delete is not atomic, so two requests
+  //   arriving within ~1ms could both read the challenge before either
+  //   deletes it. In a wallet-signing flow (user clicks "Sign"), this
+  //   is practically unreachable. Both sessions would bind to the same
+  //   accountId with no privilege escalation.
+
+  app.post("/make-server-54299934/auth/session", async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+      const body = await c.req.json();
+      const { challengeId, signature, accountId } = body;
+      if (!challengeId || !signature || !accountId) return c.json({ error: "Missing: challengeId, signature, accountId" }, 400);
+      if (!isValidHederaAccountId(accountId)) return c.json({ error: "Invalid Hedera account ID" }, 400);
+
+      // ── Retrieve challenge ──
+      const challengeKey = AUTH_CHALLENGE_PREFIX + challengeId;
+      const challenge: AuthChallenge | null = await kv.get(challengeKey);
+      if (!challenge) return c.json({ error: "Challenge not found or already consumed", code: "CHALLENGE_INVALID" }, 400);
+
+      // ── Consume nonce immediately — delete from KV before any further work ──
+      // A concurrent request arriving after this point will get null and fail.
+      await kv.del(challengeKey);
+
+      // ── Validate challenge fields (operating on in-memory copy) ──
+      if (challenge.used) {
+        // Belt-and-suspenders: should not occur with delete-first pattern,
+        // but guards against legacy challenge objects still flagged as used.
+        return c.json({ error: "Challenge already consumed (replay rejected)", code: "CHALLENGE_USED" }, 400);
+      }
+      if (Date.now() > challenge.expiresAt) {
+        return c.json({ error: "Challenge expired. Request a new one.", code: "CHALLENGE_EXPIRED" }, 400);
+      }
+      if (challenge.accountId !== accountId) {
+        return c.json({ error: "Challenge was issued for a different account", code: "CHALLENGE_ACCOUNT_MISMATCH" }, 403);
+      }
+
+      // ── Fetch public key and verify ED25519 signature ──
+      const keyResult = await fetchAccountPublicKey(accountId);
+      if (keyResult.error) return c.json({ error: `Cannot verify: ${keyResult.error}`, code: "KEY_FETCH_FAILED" }, 400);
+
+      const messageBytes = new TextEncoder().encode(challenge.message);
+      const cleanSig = signature.startsWith("0x") ? signature.slice(2) : signature;
+      const isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, cleanSig);
+
+      if (!isValid) {
+        console.log(`[AUTH] Signature FAILED for ${accountId} challenge=${challengeId}`);
+        return c.json({ error: "Signature verification failed. Ensure you signed the exact challenge message.", code: "SIGNATURE_INVALID" }, 401);
+      }
+
+      // ── Revoke existing session for this account ──
+      // Ensures only one active session per account. Prevents the scenario
+      // where a privilege escalation (e.g., addAdmin) completes with a stale
+      // token that wasn't properly revoked by the client-side DELETE.
+      try {
+        const oldToken: string | null = await kv.get(AUTH_ACCT_SESSION_PREFIX + accountId);
+        if (oldToken) {
+          await kv.del(AUTH_SESSION_PREFIX + oldToken);
+          console.log(`[AUTH] Revoked previous session for ${accountId}`);
+        }
+      } catch { /* best-effort — new session is still safe to create */ }
+
+      // ── Create session (challenge already consumed by kv.del above) ──
+      const token = generateSessionToken();
+      const now = Date.now();
+      const session: AuthSession = { token, accountId, createdAt: now, expiresAt: now + AUTH_SESSION_TTL_MS };
+      await kv.set(AUTH_SESSION_PREFIX + token, session);
+      // Update per-account index so future logins can revoke this session
+      await kv.set(AUTH_ACCT_SESSION_PREFIX + accountId, token);
+      console.log(`[AUTH] Session created for ${accountId} (expires ${AUTH_SESSION_TTL_MS / 60000}min)`);
+      return c.json({ sessionToken: token, accountId, expiresAt: session.expiresAt, ttlMs: AUTH_SESSION_TTL_MS });
+    } catch (err) {
+      console.log("Error in POST /auth/session:", err);
+      return c.json({ error: "Session creation failed" }, 500);
+    }
+  });
+
+  // GET /auth/session/validate — Check session validity
+  app.get("/make-server-54299934/auth/session/validate", async (c) => {
+    const session = await validateSession(c);
+    if (!session) return c.json({ valid: false }, 401);
+    return c.json({ valid: true, accountId: session.accountId });
+  });
+
+  // DELETE /auth/session — Revoke session (logout)
+  app.delete("/make-server-54299934/auth/session", async (c) => {
+    const token = c.req.header("x-session-token") || "";
+    if (token) {
+      // Read session to get accountId for per-account index cleanup
+      try {
+        const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
+        if (session?.accountId) {
+          const indexed: string | null = await kv.get(AUTH_ACCT_SESSION_PREFIX + session.accountId);
+          if (indexed === token) {
+            kv.del(AUTH_ACCT_SESSION_PREFIX + session.accountId).catch(() => {});
+          }
+        }
+      } catch { /* best-effort — token deletion below is the critical op */ }
+      kv.del(AUTH_SESSION_PREFIX + token).catch(() => {});
+    }
+    return c.json({ success: true });
+  });
+}

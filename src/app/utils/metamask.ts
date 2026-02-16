@@ -110,6 +110,12 @@ export function isMetaMaskProvider(): boolean {
 
 // ── Raw EIP-1193 RPC Helpers ─────────────────────────────────────────
 
+// Timeout for eth_requestAccounts — MetaMask serializes these calls, so if
+// a prior request is stuck (hidden popup, user navigated away) subsequent
+// requests queue behind it indefinitely. A bounded timeout prevents the
+// permanent-spinner condition.
+const MM_REQUEST_TIMEOUT_MS = 90_000; // 90 seconds — generous but finite
+
 /**
  * Convert hex string to BigInt.
  */
@@ -138,13 +144,29 @@ function encodeBalanceOf(address: string): string {
 
 // ── Core EIP-1193 Functions ──────────────────────────────────────────
 
-export async function requestAccounts(): Promise<string[]> {
+export async function requestAccounts(signal?: AbortSignal): Promise<string[]> {
   if (!isMetaMaskInstalled()) throw new Error("MetaMask is not installed");
   try {
-    const accounts = await (window.ethereum as any).request({
+    const requestPromise = (window.ethereum as any).request({
       method: "eth_requestAccounts",
     });
-    return accounts as string[];
+
+    // Race the RPC call against a timeout + optional abort signal
+    const result = await Promise.race([
+      requestPromise,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("MetaMask did not respond in time. Close any pending MetaMask popups and try again.")),
+          MM_REQUEST_TIMEOUT_MS,
+        );
+        // If the caller aborts (e.g. user clicked Back), reject immediately
+        signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new Error("Connection cancelled"));
+        }, { once: true });
+      }),
+    ]);
+    return result as string[];
   } catch (error: any) {
     if (error.code === 4001) throw new Error("Connection rejected by user");
     throw new Error(error.message || "Failed to connect MetaMask");
@@ -195,8 +217,8 @@ export async function getConnectedAccounts(): Promise<string[]> {
 
 // ── Full Connect Flow ────────────────────────────────────────────────
 
-export async function connectMetaMask(): Promise<MetaMaskAccountInfo> {
-  const accounts = await requestAccounts();
+export async function connectMetaMask(signal?: AbortSignal): Promise<MetaMaskAccountInfo> {
+  const accounts = await requestAccounts(signal);
   if (!accounts.length) throw new Error("No accounts returned from MetaMask");
 
   const address = accounts[0];

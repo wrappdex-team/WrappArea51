@@ -230,7 +230,7 @@ export function Layout() {
                   ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                   : isDark
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : "bg-emerald-5 text-emerald-700 border-emerald-200"
               }`} role="status" aria-label={`Network: ${hederaNetwork}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${
                   hederaNetwork === "testnet" ? "bg-amber-400 animate-pulse" : "bg-emerald-400"
@@ -403,11 +403,6 @@ export function Layout() {
                           {primaryWallet.type === "hedera" && hashPackProfile?.username
                             ? hashPackProfile.username
                             : primaryWallet.connector}
-                          {primaryWallet.isDemo && (
-                            <span className={`ml-1.5 text-[9px] px-1 py-0.5 rounded font-bold ${
-                              isDark ? "bg-yellow-500/10 text-yellow-500/70" : "bg-yellow-50 text-yellow-600"
-                            }`}>DEMO</span>
-                          )}
                         </div>
                         <div className="text-sm font-mono">{formatAddress(primaryWallet.address)}</div>
                         {hederaAccount && primaryWallet.type === "hedera" && (
@@ -494,15 +489,6 @@ export function Layout() {
                               <div>
                                 <div className="flex items-center gap-1.5">
                                   <div className="text-sm font-bold">{wallet.connector}</div>
-                                  {wallet.isDemo && (
-                                    <Tip content="Simulated demo wallet — not a real blockchain connection" side="bottom">
-                                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
-                                      isDark ? "bg-yellow-500/10 text-yellow-500/70 border border-yellow-500/20" : "bg-yellow-50 text-yellow-600 border border-yellow-200"
-                                    }`}>
-                                      DEMO
-                                    </span>
-                                    </Tip>
-                                  )}
                                 </div>
                                 <div className={`text-xs font-mono ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                                   {formatAddress(wallet.address)}

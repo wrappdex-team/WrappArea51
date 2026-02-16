@@ -19,6 +19,8 @@ const FALLBACK_ITEMS: NewsItem[] = [
 
 const NEWS_ENDPOINT = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/news`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes (matches server cache TTL)
+const FETCH_MAX_RETRIES = 3;
+const FETCH_INITIAL_DELAY_MS = 1500; // Delay first fetch to let edge function warm up
 
 export function NewsTicker() {
   const { isDark } = useTheme();
@@ -30,31 +32,42 @@ export function NewsTicker() {
   const [lastFetch, setLastFetch] = useState(0);
 
   const fetchNews = useCallback(async () => {
-    try {
-      const resp = await fetch(NEWS_ENDPOINT, {
-        headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
-          Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!resp.ok) throw new Error(`News fetch failed: ${resp.status}`);
-      const data = await resp.json();
-      if (data?.items?.length > 0) {
-        setNewsItems(data.items);
-        setLastFetch(Date.now());
+    for (let attempt = 0; attempt <= FETCH_MAX_RETRIES; attempt++) {
+      try {
+        const resp = await fetch(NEWS_ENDPOINT, {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!resp.ok) throw new Error(`News fetch failed: ${resp.status}`);
+        const data = await resp.json();
+        if (data?.items?.length > 0) {
+          setNewsItems(data.items);
+          setLastFetch(Date.now());
+        }
+        return; // Success — exit retry loop
+      } catch (err) {
+        if (attempt < FETCH_MAX_RETRIES) {
+          // Exponential backoff: 1s, 2s, 4s
+          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+        // All retries exhausted — log once and use fallback
+        log.warn("NewsTicker", "All fetch retries exhausted (using fallback)", err);
       }
-    } catch (err) {
-      log.warn("NewsTicker", "Fetch error (using fallback)", err);
-      // Keep existing items (fallback or previously fetched)
     }
   }, []);
 
-  // Fetch on mount + periodic refresh
+  // Fetch on mount (with warm-up delay) + periodic refresh
   useEffect(() => {
-    fetchNews();
+    const initialTimer = setTimeout(fetchNews, FETCH_INITIAL_DELAY_MS);
     const timer = setInterval(fetchNews, REFRESH_INTERVAL_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(timer);
+    };
   }, [fetchNews]);
 
   // Recalculate animation duration when items change

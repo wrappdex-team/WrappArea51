@@ -46,7 +46,6 @@ interface Wallet {
   address: string;
   type: "hedera" | "ethereum" | "solana";
   connector: string;
-  isDemo?: boolean;
 }
 
 interface WalletContextType {
@@ -164,6 +163,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metaMaskUnsubRef = useRef<(() => void) | null>(null);
+  const metaMaskAbortRef = useRef<AbortController | null>(null);
 
   // Save network preference
   useEffect(() => {
@@ -360,6 +360,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // ─── MetaMask ───────────────────────────────────────────────
 
   const connectMetaMask = useCallback(async (): Promise<boolean> => {
+    // Abort any in-flight connection attempt (prevents stacked eth_requestAccounts)
+    if (metaMaskAbortRef.current) {
+      metaMaskAbortRef.current.abort();
+      metaMaskAbortRef.current = null;
+    }
+
     setIsConnectingMetaMask(true);
     setMetaMaskError(null);
     if (!isMetaMaskInstalled()) {
@@ -367,8 +373,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnectingMetaMask(false);
       return false;
     }
+
+    const controller = new AbortController();
+    metaMaskAbortRef.current = controller;
+
     try {
-      const info = await connectMM();
+      const info = await connectMM(controller.signal);
+      // If this controller was superseded by a newer attempt, discard
+      if (controller.signal.aborted) return false;
       setMetaMaskAccount(info);
       localStorage.setItem("hbarh-metamask-connected", "true");
       setConnectedWallets((prev) => {
@@ -380,9 +392,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnectingMetaMask(false);
       return true;
     } catch (error: any) {
+      // Silently swallow cancellation errors (user clicked Back)
+      if (error.message === "Connection cancelled" || controller.signal.aborted) {
+        setIsConnectingMetaMask(false);
+        return false;
+      }
       setMetaMaskError(error.message || "Failed to connect to MetaMask.");
       setIsConnectingMetaMask(false);
       return false;
+    } finally {
+      if (metaMaskAbortRef.current === controller) {
+        metaMaskAbortRef.current = null;
+      }
     }
   }, []);
 
@@ -532,30 +553,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } catch { /* non-critical */ }
   }, [hashPackSession?.accountId, hederaNetwork]);
 
-  // ─── Demo wallet connections ────────────────────────────────
+  // ─── Wallet connections ─────────────────────────────────────
+  // Real wallet connections are handled by connectHashPack, connectHashPackMirror,
+  // and connectMetaMask above. This stub satisfies the interface for external
+  // bridge consumers (e.g. Dynamic Labs) but performs no action.
 
-  const connectWallet = (type: "hedera" | "ethereum" | "solana", connector: string) => {
-    if (type === "hedera") return;
-    if (type === "ethereum" && connector === "MetaMask") return;
-
-    const generateAddress = (walletType: "hedera" | "ethereum" | "solana"): string => {
-      if (walletType === "ethereum")
-        return `0x${Math.random().toString(16).slice(2, 10)}...${Math.random().toString(16).slice(2, 6)}`;
-      return `${Math.random().toString(36).slice(2, 6).toUpperCase()}...${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-    };
-
-    const newWallet: Wallet = {
-      address: generateAddress(type),
-      type,
-      connector,
-      isDemo: true,
-    };
-
-    setConnectedWallets((prev) => {
-      const existing = prev.find((w) => w.type === type);
-      if (existing) return prev.map((w) => (w.type === type ? newWallet : w));
-      return [...prev, newWallet];
-    });
+  const connectWallet = (_type: "hedera" | "ethereum" | "solana", _connector: string) => {
+    // No-op — all real connections route through dedicated connect* methods.
   };
 
   const disconnectWallet = (address: string) => {
