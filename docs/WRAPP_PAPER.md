@@ -52,7 +52,7 @@ institutional-grade tools but got a toy wrapped in a gradient.
 This is Wrappdex.
 
 Built on Hedera -- the only public ledger that delivers 10,000+
-transactions per second with mathematically provable finality in 3-5
+transactions per second with mathematically provable finality in ~2
 seconds. Not "eventually." Not "probably." Finality. The kind banks
 require. The kind traders deserve.
 
@@ -97,7 +97,7 @@ bridging, fiat on-ramp, and community governance.
 Key Differentiators:
 
   1. HEDERA-NATIVE PERFORMANCE
-     Sub-cent transaction fees, 3-5 second finality, 10,000+ TPS.
+     Sub-cent transaction fees, ~2-second finality, 10,000+ TPS.
      No MEV. No front-running. Hashgraph consensus provides fair ordering.
 
   2. MULTI-SOURCE ORACLE INTEGRITY
@@ -929,11 +929,11 @@ both contribute to governance.
   | Pool Creation Fees            | $50 in HBAR.h per weighted pool          |
   |                               | (non-VIP) -> treasury                    |
   +-------------------------------+------------------------------------------+
-  | AMM Swap Fees                 | 5-100 bps per swap (configurable)        |
-  |                               | Accrues to LP providers                  |
+  | AMM In-Pool Fee               | Fixed 10 bps (0.10%) per swap            |
+  |                               | Stays in pool, accrues to LPs            |
   +-------------------------------+------------------------------------------+
-  | Protocol Fee Share            | Configurable % of swap fees              |
-  |                               | routable to treasury (DAO-governed)      |
+  | Protocol Micro-Fee            | Flat $0.0007 per swap (in HBAR)          |
+  |                               | 50% LP bonus + 50% treasury              |
   +-------------------------------+------------------------------------------+
   | Fiat On-Ramp Affiliate        | ChangeNOW partner referral revenue       |
   +-------------------------------+------------------------------------------+
@@ -1030,7 +1030,7 @@ both contribute to governance.
 ================================================================================
 
   1. THROUGHPUT:  10,000+ TPS (vs Ethereum ~15 TPS)
-  2. FINALITY:    3-5 seconds, mathematically provable (aBFT consensus)
+  2. FINALITY:    ~2 seconds, mathematically provable (aBFT hashgraph consensus)
   3. FEES:        ~$0.0001 per transaction
   4. ORDERING:    Fair, consensus-timestamped (no MEV, no front-running)
   5. GOVERNANCE:  Hedera Governing Council (Google, IBM, Boeing, etc.)

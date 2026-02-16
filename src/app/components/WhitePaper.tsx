@@ -486,7 +486,7 @@ export function WhitePaper() {
           {/* Hero stats */}
           <div className="flex flex-wrap gap-8 md:gap-12 mt-10">
             <StatBadge value="10,000+" label="Transactions / sec" />
-            <StatBadge value="3-5s" label="Finality" />
+            <StatBadge value="~2s" label="Finality" />
             <StatBadge value="~$0.0001" label="Per transaction" />
             <StatBadge value="0" label="MEV / Front-running" />
           </div>
@@ -554,8 +554,8 @@ export function WhitePaper() {
               },
               {
                 icon: Clock,
-                title: "3-5 Second Finality",
-                desc: "Asynchronous Byzantine Fault Tolerant consensus. Not \"eventually\" \u2014 provably final.",
+                title: "~2-Second Finality",
+                desc: "Asynchronous Byzantine Fault Tolerant hashgraph consensus. Not \"eventually\" \u2014 mathematically provable, immutable finality.",
               },
               {
                 icon: Coins,
@@ -857,9 +857,25 @@ export function WhitePaper() {
         <Section id="amm" className="mb-16">
           <h2 className={h2}>Smart Liquidity Engine</h2>
           <p className={subtitle}>
-            A custom AMM that eliminates front-running by design.
+            A custom AMM built for Hedera &mdash; front-running eliminated by design.
+          </p>
+          <p
+            className={`text-xs md:text-sm leading-relaxed mb-6 max-w-3xl ${isDark ? "text-slate-400" : "text-gray-500"}`}
+          >
+            Most decentralized exchanges settle trades on-chain, which means
+            every pending swap sits in a public mempool before it executes.
+            Bots exploit that transparency to front-run ordinary users,
+            extracting value on every trade. WRAPpDEX takes a fundamentally
+            different approach: all pool state is maintained server-side
+            inside a private KV store, so swap execution is deterministic and
+            atomic. There is no mempool to snipe, no block producer who can
+            reorder your transaction, and no MEV leakage. Every mutation is
+            protected by a per-pool pessimistic lock plus optimistic
+            compare-and-swap versioning, and a post-swap k-invariant
+            assertion guarantees that reserves can never decrease.
           </p>
 
+          {/* How It Works + Slippage */}
           <div className="grid md:grid-cols-2 gap-3 mb-4">
             <GlassCard className="p-5 md:p-6">
               <h4
@@ -876,9 +892,14 @@ export function WhitePaper() {
                 >
                   x &times; y = k
                 </span>
-                . Pool state lives server-side, making swap execution
-                deterministic and atomic. No block producer can reorder your
-                trade.
+                . When you submit a swap the engine calculates your exact
+                output amount, deducts a{" "}
+                <span className={`font-semibold ${isDark ? "text-pink-400" : "text-pink-600"}`}>0.10&nbsp;%</span>{" "}
+                in-pool fee (which stays in the pool and increases{" "}
+                <span className="font-mono">k</span>, benefiting all LP
+                holders), and settles instantly &mdash; all in a single
+                atomic step. Because the entire process happens server-side,
+                no third party can see or interfere with your trade.
               </p>
             </GlassCard>
 
@@ -891,13 +912,236 @@ export function WhitePaper() {
               <p
                 className={`text-xs md:text-sm leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}
               >
-                You set your maximum slippage (0.1% to 3%+). If the execution
-                price moves beyond your tolerance, the swap is rejected and your
-                tokens stay safe. No partial fills, no surprises.
+                You set your maximum slippage (0.1&nbsp;% to 3&nbsp;%+). If
+                the execution price moves beyond your tolerance the swap is
+                rejected and your tokens stay safe. No partial fills, no
+                surprises. For example, if you swap{" "}
+                <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>100 HBAR</span>{" "}
+                into USDC with 0.5&nbsp;% slippage, you are guaranteed to
+                receive at least 99.5&nbsp;% of the quoted amount or the
+                trade will not execute at all.
               </p>
             </GlassCard>
           </div>
 
+          {/* Smart Routing */}
+          <GlassCard className="p-5 md:p-6 mb-4" hover={false}>
+            <h4
+              className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
+            >
+              Smart Routing: Direct &amp; USDC-Hop
+            </h4>
+            <p
+              className={`text-xs md:text-sm leading-relaxed mb-3 ${isDark ? "text-slate-400" : "text-gray-500"}`}
+            >
+              Not every token pair has a dedicated pool. WRAPpDEX&#39;s
+              smart router automatically evaluates two route strategies for
+              every quote and picks the one that delivers the best output:
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className={`rounded-lg p-3 ${isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-gray-50 border border-gray-200"}`}>
+                <p className={`text-xs font-bold mb-1 ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>
+                  Direct Route
+                </p>
+                <p className={`text-xs leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                  A &rarr; B &mdash; single-pool swap when a direct pair
+                  exists. Lowest fees, one hop.
+                </p>
+              </div>
+              <div className={`rounded-lg p-3 ${isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-gray-50 border border-gray-200"}`}>
+                <p className={`text-xs font-bold mb-1 ${isDark ? "text-pink-400" : "text-pink-600"}`}>
+                  USDC-Hop Route
+                </p>
+                <p className={`text-xs leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                  A &rarr; USDC &rarr; B &mdash; two-pool hop through the
+                  deepest stablecoin liquidity. Unlocks every pair even
+                  when no direct pool exists.
+                </p>
+              </div>
+            </div>
+            <p className={`text-xs mt-3 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              The router scores every candidate by output amount, price
+              impact, and pool depth. Low-TVL pools (under $100) are excluded
+              from routing to prevent manipulation, and depth-proportional
+              caps limit individual swaps to 2&ndash;10&nbsp;% of pool TVL
+              depending on pool size.
+            </p>
+          </GlassCard>
+
+          {/* Swap Example */}
+          <GlassCard className="p-5 md:p-6 mb-4" hover={false}>
+            <h4
+              className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
+            >
+              Example Swap: HBAR &rarr; USDC
+            </h4>
+            <div className={`text-xs md:text-sm leading-relaxed space-y-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              <p>
+                Suppose a pool holds{" "}
+                <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>500,000 HBAR</span>{" "}
+                and{" "}
+                <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>50,000 USDC</span>{" "}
+                (implied price: $0.10/HBAR). You want to swap{" "}
+                <span className={`font-semibold ${isDark ? "text-pink-400" : "text-pink-600"}`}>1,000 HBAR</span>.
+              </p>
+              <ol className={`list-decimal list-inside space-y-1.5 pl-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                <li>
+                  The 0.10&nbsp;% in-pool fee is applied first: 1,000 &times;
+                  0.999 ={" "}
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>999 HBAR</span>{" "}
+                  enters the pricing formula.
+                </li>
+                <li>
+                  The engine applies{" "}
+                  <span className={`font-mono font-bold ${isDark ? "text-pink-400" : "text-pink-600"}`}>x &times; y = k</span>:{" "}
+                  (999 &times; 50,000) / (500,000 + 999) ={" "}
+                  <span className={`font-semibold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>~99.70 USDC</span>.
+                </li>
+                <li>
+                  Your slippage tolerance is checked. At 0.5&nbsp;%, you
+                  need at least 99.20 USDC &mdash; the quote passes.
+                </li>
+                <li>
+                  A flat protocol fee of{" "}
+                  <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>$0.0007</span>{" "}
+                  (~2.5 tinybar) is assessed separately in HBAR &mdash;
+                  split 50/50 between LP rewards and the protocol treasury.
+                </li>
+                <li>
+                  The swap settles atomically. Pool balances update to
+                  501,000 HBAR / 49,900.30 USDC. A post-swap k-invariant
+                  check confirms reserves never decreased. No front-running
+                  window ever existed.
+                </li>
+              </ol>
+              <p className={`text-xs mt-2 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                Larger trades move the price curve more (price impact). The
+                UI shows your estimated impact before you confirm so there
+                are never any hidden costs.
+              </p>
+            </div>
+          </GlassCard>
+
+          {/* Dual-Fee Structure */}
+          <h4
+            className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
+          >
+            Dual-Fee Structure
+          </h4>
+          <p
+            className={`text-xs md:text-sm leading-relaxed mb-4 max-w-3xl ${isDark ? "text-slate-400" : "text-gray-500"}`}
+          >
+            WRAPpDEX uses a two-layer fee model designed to keep trading
+            costs near zero while sustaining the protocol and rewarding
+            liquidity providers:
+          </p>
+          <div className="grid md:grid-cols-3 gap-3 mb-4">
+            <GlassCard className="p-5 md:p-6">
+              <h4
+                className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
+              >
+                In-Pool Fee
+              </h4>
+              <p className="text-2xl font-bold mb-1 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
+                0.10%
+              </p>
+              <p
+                className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
+              >
+                Applied per trade (10 bps). The fee stays inside the pool,
+                increasing <span className="font-mono">k</span> and
+                benefiting all LP holders proportional to their share. This
+                rate is protocol-fixed and cannot be changed by pool
+                creators.
+              </p>
+            </GlassCard>
+            <GlassCard className="p-5 md:p-6">
+              <h4
+                className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
+              >
+                Protocol Fee
+              </h4>
+              <p className="text-2xl font-bold mb-1 bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
+                $0.0007
+              </p>
+              <p
+                className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
+              >
+                A flat micro-fee per swap (~0.07 cents), paid in HBAR.
+                Split 50/50: half goes to LP providers as a bonus reward,
+                half accrues to the protocol treasury (0.0.9695738). Flat
+                fees prevent manipulation via trade splitting.
+              </p>
+            </GlassCard>
+            <GlassCard className="p-5 md:p-6">
+              <h4
+                className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
+              >
+                Settlement
+              </h4>
+              <p className="text-2xl font-bold mb-1 bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                ~2 Seconds
+              </p>
+              <p
+                className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
+              >
+                Pool state updates server-side in milliseconds, while
+                on-chain token settlement follows Hedera&#39;s aBFT
+                consensus finality of ~2&nbsp;seconds. No pending
+                transactions in a public mempool. The AMM includes an
+                owner-only kill switch for emergency halts &mdash; LP
+                withdrawals always remain open.
+              </p>
+            </GlassCard>
+          </div>
+
+          {/* Security */}
+          <GlassCard className="p-5 md:p-6 mb-4" hover={false}>
+            <h4
+              className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
+            >
+              Security by Design
+            </h4>
+            <div className={`text-xs md:text-sm leading-relaxed space-y-1.5 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              <p>
+                The AMM is hardened against the most common DeFi attack
+                vectors:
+              </p>
+              <ul className={`list-disc list-inside pl-1 space-y-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                <li>
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Private mempool</span>{" "}
+                  &mdash; pool state lives in a KV store accessible only by
+                  the server. No public transaction queue exists.
+                </li>
+                <li>
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>First-depositor attack mitigation</span>{" "}
+                  &mdash; the first 1,000 LP shares of every pool are
+                  permanently locked (MINIMUM_LIQUIDITY), preventing
+                  share-price manipulation.
+                </li>
+                <li>
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Depth-proportional caps</span>{" "}
+                  &mdash; individual swaps are limited to 2&nbsp;% of TVL
+                  for small pools (&lt;$10K), 5&nbsp;% for mid-size, and
+                  10&nbsp;% for large pools (&gt;$100K).
+                </li>
+                <li>
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>K-invariant assertion</span>{" "}
+                  &mdash; every swap is followed by a mathematical proof
+                  that reserves never decreased. Any violation aborts the
+                  trade.
+                </li>
+                <li>
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Circuit breaker</span>{" "}
+                  &mdash; an owner-only kill switch can halt all swaps
+                  instantly. LP withdrawals always remain available so users
+                  can exit at any time.
+                </li>
+              </ul>
+            </div>
+          </GlassCard>
+
+          {/* Weighted Pool Factory */}
           <GlassCard className="p-5 md:p-6" hover={false}>
             <h4
               className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
@@ -908,22 +1152,40 @@ export function WhitePaper() {
               className={`text-xs md:text-sm leading-relaxed mb-3 ${isDark ? "text-slate-400" : "text-gray-500"}`}
             >
               Beyond standard 50/50 pools, WRAPpDEX supports custom weighted
-              multi-token pools (up to 10 tokens) deployed via Solidity smart
-              contract on Hedera's EVM. Think portfolio-style pools like 80/20
-              HBAR/USDC.
+              multi-token pools (2&ndash;10 tokens per pool) deployed via a
+              Solidity smart contract on Hedera&#39;s EVM equivalence layer.
+              Think portfolio-style pools like 80/20 HBAR/USDC &mdash; ideal
+              for projects that want to maintain heavy exposure to one asset
+              while still offering deep, tradable liquidity. Token weights
+              must sum to exactly 100&nbsp;% (validated on-chain), and each
+              token must carry at least a 1&nbsp;% weight to prevent
+              degenerate configurations. The fixed 0.10&nbsp;% swap fee
+              applies uniformly across all pools.
             </p>
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-4 flex-wrap mb-3">
               <span
                 className={`text-xs px-3 py-1 rounded-full ${isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}
               >
-                VIP = Free pool creation
+                VIP or 100M+ HBAR.ħ holders = Free
               </span>
               <span
                 className={`text-xs px-3 py-1 rounded-full ${isDark ? "bg-slate-800 text-slate-300 border border-white/[0.06]" : "bg-gray-50 text-gray-600 border border-gray-200"}`}
               >
-                Non-VIP = $50 in HBAR.h
+                Non-VIP = $50 in HBAR.ħ
               </span>
             </div>
+            <p
+              className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
+            >
+              <span className="font-semibold">Example:</span> A new Hedera
+              token project creates an 80/20 PROJECT/HBAR pool to bootstrap
+              liquidity while keeping 80&nbsp;% of the pool&#39;s value in their
+              native token. Traders get access to a liquid market, and the
+              project earns passive income from every swap. The factory
+              contract is audited against reentrancy, overflow, access
+              control, and front-running vectors, with all state changes
+              emitted as events for full off-chain indexing via Mirror Node.
+            </p>
           </GlassCard>
         </Section>
 
@@ -1382,9 +1644,9 @@ export function WhitePaper() {
 
           <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3 mb-6">
             <TeamCard
-              name="Founder"
-              role="Protocol Architect"
-              desc="Designed and built the complete WRAPpDEX platform \u2014 from Solidity smart contracts to the React frontend, from cryptographic auth to oracle integration."
+              name="Kyle"
+              role="Founder"
+              desc="Visionary leader in blockchain development and the architect behind the WRAPpDEX platform. Driving the future of decentralized finance on Hedera."
               accent="bg-gradient-to-br from-pink-500 to-purple-500"
             />
             <TeamCard

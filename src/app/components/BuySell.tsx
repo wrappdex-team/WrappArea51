@@ -731,7 +731,7 @@ export function BuySell() {
                 )}
                 <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                   <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Routed through SauceSwap on Hedera with ~3-5s finality. Signed via HashPack.</span>
+                  <span>Routed through SauceSwap on Hedera with ~2s finality. Signed via HashPack.</span>
                 </div>
               </div>
             </div>
@@ -865,8 +865,8 @@ export function BuySell() {
                       <Zap className="w-5 h-5 text-emerald-400" />
                     </div>
                     <div>
-                      <div className="text-sm font-bold">3-5s Finality</div>
-                      <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>aBFT consensus</div>
+                      <div className="text-sm font-bold">~2s Finality</div>
+                      <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>aBFT hashgraph consensus</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">

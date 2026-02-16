@@ -1372,7 +1372,7 @@ export function Wallet() {
               {hederaAccount.accountId}
             </div>
             <p className={`text-xs mt-3 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              Send HBAR or HTS tokens to this Account ID. Hedera confirms in 3-5 seconds.
+              Send HBAR or HTS tokens to this Account ID. Hedera confirms in ~2 seconds.
             </p>
             <button onClick={() => copyToClipboard(hederaAccount.accountId, "deposit")} className={`w-full mt-4 py-2.5 rounded-lg text-white flex items-center justify-center gap-2 text-sm ${isVip
               ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500"
