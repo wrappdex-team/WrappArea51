@@ -127,7 +127,72 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
   }
 }
 
-// ── ED25519 Signature Verification (Web Crypto API) ────────────────
+// ── ED25519 Signature Extraction & Verification (Web Crypto API) ────
+
+/**
+ * Extract a raw 64-byte ED25519 signature from a byte array that may be a
+ * protobuf-encoded SignatureMap.  Scans for field-tag 0x1A (field 3, wire
+ * type 2 = length-delimited) followed by length 0x40 (64).
+ */
+function extractED25519SigFromBytes(bytes: Uint8Array): Uint8Array | null {
+  for (let i = 0; i < bytes.length - 65; i++) {
+    if (bytes[i] === 0x1A && bytes[i + 1] === 0x40) {
+      return bytes.slice(i + 2, i + 66);
+    }
+  }
+  return null;
+}
+
+/**
+ * Decode the signature string into exactly 64 bytes.
+ * Strategies tried in order:
+ *   1. Hex decode (128 hex chars → 64 bytes)
+ *   2. Hex decode to >64 bytes → extract ED25519 from protobuf structure
+ *   3. Base64 decode → 64 bytes directly
+ *   4. Base64 decode to >64 bytes → extract ED25519 from protobuf structure
+ */
+function decodeSigTo64Bytes(raw: string): Uint8Array | null {
+  // Strategy 1 & 2: pure hex
+  if (/^[0-9a-fA-F]+$/.test(raw)) {
+    const bytes = hexToBytes(raw);
+    if (bytes.length === 64) {
+      console.log("[AUTH] Sig decoded: hex → 64 bytes");
+      return bytes;
+    }
+    // Hex decoded to >64 bytes — might be full protobuf SignatureMap in hex
+    if (bytes.length > 64) {
+      const extracted = extractED25519SigFromBytes(bytes);
+      if (extracted) {
+        console.log(`[AUTH] Sig decoded: hex → ${bytes.length}B → extracted ED25519 from protobuf`);
+        return extracted;
+      }
+    }
+    console.log(`[AUTH] Sig hex decoded to ${bytes.length} bytes — not 64 and no ED25519 field`);
+  }
+
+  // Strategy 3 & 4: base64 decode
+  try {
+    const bin = atob(raw);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (bytes.length === 64) {
+      console.log("[AUTH] Sig decoded: base64 → 64 bytes");
+      return bytes;
+    }
+    if (bytes.length > 64) {
+      const extracted = extractED25519SigFromBytes(bytes);
+      if (extracted) {
+        console.log(`[AUTH] Sig decoded: base64 → ${bytes.length}B → extracted ED25519 from protobuf`);
+        return extracted;
+      }
+    }
+    console.log(`[AUTH] Sig base64 decoded to ${bytes.length} bytes — not 64 and no ED25519 field`);
+  } catch {
+    console.log("[AUTH] Sig is not valid base64 either");
+  }
+
+  return null;
+}
 
 async function verifyED25519Signature(
   publicKeyHex: string, messageBytes: Uint8Array, signatureHex: string,
@@ -136,25 +201,13 @@ async function verifyED25519Signature(
     const pubKeyBytes = hexToBytes(publicKeyHex);
     if (pubKeyBytes.length !== 32) { console.log(`[AUTH] PubKey length invalid: ${pubKeyBytes.length}`); return false; }
 
-    // Decode signature — try hex first, then base64 fallback
-    let sigBytes = hexToBytes(signatureHex);
-    if (sigBytes.length !== 64) {
-      // Hex decode produced wrong length — try base64 decode
-      try {
-        const bin = atob(signatureHex);
-        sigBytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) sigBytes[i] = bin.charCodeAt(i);
-        console.log(`[AUTH] Signature decoded as base64 (${sigBytes.length} bytes)`);
-      } catch {
-        console.log(`[AUTH] Sig not valid hex (${hexToBytes(signatureHex).length}B) or base64`);
-        return false;
-      }
-    }
-
-    if (sigBytes.length !== 64) {
-      console.log(`[AUTH] Sig length invalid after decode: ${sigBytes.length} bytes`);
+    const sigBytes = decodeSigTo64Bytes(signatureHex);
+    if (!sigBytes) {
+      console.log(`[AUTH] Could not decode signature to 64 bytes from input (${signatureHex.length} chars)`);
       return false;
     }
+
+    console.log(`[AUTH] Verifying: pubKey=${publicKeyHex.slice(0, 16)}... sig=${bytesToHex(sigBytes).slice(0, 32)}... msg=${messageBytes.length}B`);
 
     const cryptoKey = await crypto.subtle.importKey("raw", pubKeyBytes, { name: "Ed25519" }, false, ["verify"]);
     return await crypto.subtle.verify("Ed25519", cryptoKey, sigBytes, messageBytes);
@@ -283,11 +336,34 @@ export function registerAuthRoutes(app: Hono): void {
       // Diagnostic logging for signature debugging
       console.log(`[AUTH] Verifying sig for ${accountId}: sigLen=${cleanSig.length} chars, msgLen=${messageBytes.length} bytes, pubKey=${keyResult.rawKeyHex.slice(0, 16)}...`);
       console.log(`[AUTH] Sig preview: ${cleanSig.slice(0, 40)}...`);
+      console.log(`[AUTH] Message first 80 chars: ${challenge.message.slice(0, 80)}`);
 
-      const isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, cleanSig);
+      // Primary: verify against original challenge message (UTF-8 bytes)
+      let isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, cleanSig);
+
+      // Fallback A: Some wallets sign the base64-encoded message string
+      // (per HIP-820 spec where message param is base64). If the wallet
+      // received base64 and signed those bytes without decoding first.
+      if (!isValid) {
+        try {
+          const b64Msg = btoa(challenge.message);
+          const b64MsgBytes = new TextEncoder().encode(b64Msg);
+          console.log(`[AUTH] Primary failed — trying base64 message variant (${b64MsgBytes.length}B)`);
+          isValid = await verifyED25519Signature(keyResult.rawKeyHex, b64MsgBytes, cleanSig);
+          if (isValid) console.log("[AUTH] Signature verified via base64-message fallback");
+        } catch { /* btoa might fail on non-Latin1 — skip this fallback */ }
+      }
+
+      // Fallback B: Some wallets sign just the nonce bytes (raw hex nonce)
+      if (!isValid && challenge.nonce) {
+        const nonceBytes = new TextEncoder().encode(challenge.nonce);
+        console.log(`[AUTH] Base64 variant failed — trying nonce-only variant (${nonceBytes.length}B)`);
+        isValid = await verifyED25519Signature(keyResult.rawKeyHex, nonceBytes, cleanSig);
+        if (isValid) console.log("[AUTH] Signature verified via nonce-only fallback");
+      }
 
       if (!isValid) {
-        console.log(`[AUTH] Signature FAILED for ${accountId} challenge=${challengeId} sigChars=${cleanSig.length}`);
+        console.log(`[AUTH] ALL verification strategies FAILED for ${accountId} challenge=${challengeId} sigChars=${cleanSig.length}`);
         return c.json({ error: "Signature verification failed. Ensure you signed the exact challenge message.", code: "SIGNATURE_INVALID" }, 401);
       }
 

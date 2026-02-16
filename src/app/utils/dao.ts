@@ -145,11 +145,42 @@ async function ensureAuth(accountId: string): Promise<string> {
 // ── Server API Functions ────────────────────────────────────────────
 // All CRUD operations go through the server. No localStorage.
 
+// Dedup/throttle layer: prevents duplicate network requests from React
+// strict-mode double-mount and rapid re-renders. Returns cached result
+// if a request was fulfilled within the last 5 seconds.
+let _proposalsCache: { data: Proposal[]; ts: number } | null = null;
+let _proposalsInflight: Promise<Proposal[]> | null = null;
+const PROPOSALS_CACHE_TTL_MS = 5_000;
+
 /**
  * Load all proposals from the server.
  * Public endpoint — no auth required.
+ * Deduped: concurrent/rapid calls share a single fetch + 5s cache.
  */
 export async function loadProposals(): Promise<Proposal[]> {
+  // Return cached if fresh
+  if (_proposalsCache && Date.now() - _proposalsCache.ts < PROPOSALS_CACHE_TTL_MS) {
+    return _proposalsCache.data;
+  }
+  // Coalesce concurrent calls into one in-flight request
+  if (_proposalsInflight) return _proposalsInflight;
+
+  _proposalsInflight = _fetchProposals();
+  try {
+    const result = await _proposalsInflight;
+    _proposalsCache = { data: result, ts: Date.now() };
+    return result;
+  } finally {
+    _proposalsInflight = null;
+  }
+}
+
+/** Invalidate the proposals cache (call after create/edit/delete). */
+export function invalidateProposalsCache(): void {
+  _proposalsCache = null;
+}
+
+async function _fetchProposals(): Promise<Proposal[]> {
   try {
     const res = await fetch(`${API_BASE}/dao/proposals`, {
       headers: publicHeaders,
@@ -158,12 +189,12 @@ export async function loadProposals(): Promise<Proposal[]> {
     const data = await res.json();
     if (!res.ok) {
       log.error("DAO", `Failed to load proposals: ${data.error || res.status}`);
-      return [];
+      return _proposalsCache?.data ?? [];
     }
     return (data.proposals ?? []) as Proposal[];
   } catch (err) {
     log.error("DAO", "Error loading proposals", err);
-    return [];
+    return _proposalsCache?.data ?? [];
   }
 }
 
@@ -192,6 +223,7 @@ export async function createProposal(
       log.error("DAO", `Create proposal failed: ${data.error}`);
       return { proposals: [], error: data.error || "Failed to create proposal" };
     }
+    invalidateProposalsCache();
     return { proposals: data.proposals as Proposal[] };
   } catch (err: any) {
     log.error("DAO", "Error creating proposal", err);
@@ -220,6 +252,7 @@ export async function editProposal(
       log.error("DAO", `Edit proposal failed: ${data.error}`);
       return { proposals: [], error: data.error || "Failed to edit proposal" };
     }
+    invalidateProposalsCache();
     return { proposals: data.proposals as Proposal[] };
   } catch (err: any) {
     log.error("DAO", "Error editing proposal", err);
@@ -246,6 +279,7 @@ export async function deleteProposal(
       log.error("DAO", `Delete proposal failed: ${data.error}`);
       return { proposals: [], error: data.error || "Failed to delete proposal" };
     }
+    invalidateProposalsCache();
     return { proposals: data.proposals as Proposal[] };
   } catch (err: any) {
     log.error("DAO", "Error deleting proposal", err);

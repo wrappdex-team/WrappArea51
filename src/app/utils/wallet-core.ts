@@ -62,8 +62,14 @@ export function parseHederaAccount(caip10: string): { network: string; accountId
 
 // ── SignClient Singleton ───────────────────────────────────────────────
 
-let _signClient: any = null;
-let _initPromise: Promise<any> | null = null;
+// Persist across Vite HMR / iframe re-evaluations — WC Core uses an
+// internal global that can only be init'd once per page.
+const _G = globalThis as any;
+const _WC_KEY = "__wrappdex_wc_sign_client";
+const _WC_INIT_KEY = "__wrappdex_wc_init_promise";
+
+let _signClient: any = _G[_WC_KEY] ?? null;
+let _initPromise: Promise<any> | null = _G[_WC_INIT_KEY] ?? null;
 let _initFailed = false;
 
 /**
@@ -71,11 +77,14 @@ let _initFailed = false;
  * WalletConnect Core can only be initialized ONCE per page.
  */
 export async function getSignClient(): Promise<any> {
+  // Re-read from globalThis in case another module evaluation already finished
+  if (_G[_WC_KEY]) { _signClient = _G[_WC_KEY]; return _signClient; }
   if (_signClient) return _signClient;
 
   if (!_initPromise || _initFailed) {
     _initFailed = false;
     _initPromise = _initSignClient();
+    _G[_WC_INIT_KEY] = _initPromise;
     _initPromise.catch(() => { _initFailed = true; });
   }
 
@@ -83,6 +92,9 @@ export async function getSignClient(): Promise<any> {
 }
 
 async function _initSignClient(): Promise<any> {
+  // Final guard: if another execution path raced ahead, return its result
+  if (_G[_WC_KEY]) { _signClient = _G[_WC_KEY]; return _signClient; }
+
   cleanStaleStorage();
 
   const { SignClient } = await import("@walletconnect/sign-client");
@@ -93,6 +105,7 @@ async function _initSignClient(): Promise<any> {
   });
 
   _signClient = client;
+  _G[_WC_KEY] = client;
 
   // Wait for the WebSocket relay handshake before sending anything.
   await _waitForRelay(client);
@@ -291,6 +304,45 @@ async function _validateSessionBeforeRequest(client: any, topic: string): Promis
   }
 }
 
+/**
+ * Iframe-safe wrapper around client.request().
+ *
+ * WC v2.23 fires a deep-link redirect via window.open(url, "_top") in
+ * parallel with every relay request.  Inside an iframe this navigates
+ * the parent frame away, destroying the dApp.  On a top-level page the
+ * SDK already uses "_blank" for HTTPS deep-links, so no fix is needed.
+ *
+ * Fix: temporarily intercept window.open during the request and
+ * downgrade _top / _parent → _blank.  The deep-link still fires
+ * (waking the wallet) without hijacking navigation.
+ *
+ * NOTE: sessionConfig.disableDeepLink in request params is IGNORED by
+ * WC v2.23 — the SDK reads it from the stored session object only.
+ * We avoid patching session.set() because that triggers WC-internal
+ * events that can invalidate the session.
+ */
+async function _safeRequest(client: any, params: Record<string, any>): Promise<any> {
+  const origOpen = window.open;
+  const isIframe = (() => { try { return window !== window.top; } catch { return true; } })();
+
+  if (isIframe) {
+    window.open = function (url?: any, target?: any, features?: any): WindowProxy | null {
+      if (typeof target === "string" && (target === "_top" || target === "_parent")) {
+        console.log(`[WC] Deep-link target downgraded "${target}" → "_blank":`,
+          String(url).slice(0, 120));
+        return origOpen.call(window, url, "_blank", features);
+      }
+      return origOpen.call(window, url, target, features);
+    } as typeof window.open;
+  }
+
+  try {
+    return await client.request(params);
+  } finally {
+    if (isIframe) window.open = origOpen;
+  }
+}
+
 export async function signAndExecuteTransaction(
   topic: string,
   network: HederaNetwork,
@@ -301,7 +353,7 @@ export async function signAndExecuteTransaction(
   await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
 
-  return client.request({
+  return _safeRequest(client, {
     topic,
     chainId,
     request: {
@@ -311,7 +363,6 @@ export async function signAndExecuteTransaction(
         transactionList: _u8ToBase64(transactionBytes),
       },
     },
-    sessionConfig: { disableDeepLink: true },
   });
 }
 
@@ -326,7 +377,7 @@ export async function signTransactionViaWC(
   const chainId = getHederaChainId(network);
 
   try {
-    const result = await client.request({
+    const result = await _safeRequest(client, {
       topic,
       chainId,
       request: {
@@ -336,7 +387,6 @@ export async function signTransactionViaWC(
           transactionList: _u8ToBase64(transactionBytes),
         },
       },
-      sessionConfig: { disableDeepLink: true },
     });
 
     if (typeof result === "string") return _base64ToU8(result);
@@ -363,7 +413,7 @@ export async function signMessageViaWC(
   const chainId = getHederaChainId(network);
 
   try {
-    const result = await client.request({
+    const result = await _safeRequest(client, {
       topic,
       chainId,
       request: {
@@ -373,7 +423,6 @@ export async function signMessageViaWC(
           message,
         },
       },
-      sessionConfig: { disableDeepLink: true },
     });
 
     console.log("[WC] signMessage raw result:", typeof result,
@@ -444,6 +493,8 @@ export async function forceResetSignClient(): Promise<void> {
   _signClient = null;
   _initPromise = null;
   _initFailed = false;
+  delete _G[_WC_KEY];
+  delete _G[_WC_INIT_KEY];
   cleanStaleStorage(true);
   console.log("[WC] SignClient force-reset complete");
 }
@@ -624,25 +675,33 @@ function _parseSignMessageResponse(result: any): string[] {
   if (!result) return [];
 
   // Case 1: Direct string (some wallets return just the sig)
-  if (typeof result === "string") return [result];
+  if (typeof result === "string") {
+    console.log("[WC] parseSignMsg: direct string, length=" + result.length);
+    return [result];
+  }
 
   // Case 2: Array of strings
   if (Array.isArray(result)) {
-    return result.filter((s: any) => typeof s === "string" && s.length > 0);
+    const filtered = result.filter((s: any) => typeof s === "string" && s.length > 0);
+    console.log("[WC] parseSignMsg: array of " + result.length + " items, " + filtered.length + " valid strings");
+    return filtered;
   }
 
   // Case 3: Object with signatureMap
   if (result.signatureMap != null) {
     const sm = result.signatureMap;
+    console.log("[WC] parseSignMsg: has signatureMap, type=" + typeof sm);
 
     // 3a: signatureMap is a base64 string (protobuf-encoded SignatureMap)
     if (typeof sm === "string") {
       const extracted = _extractED25519FromProtobuf(sm);
       if (extracted) {
-        console.log("[WC] Extracted ED25519 sig from protobuf SignatureMap");
+        console.log("[WC] Extracted ED25519 sig from protobuf SignatureMap: " + extracted.length + " hex chars");
         return [extracted];
       }
-      // If protobuf parse fails, pass the raw base64 for downstream handling
+      // Protobuf extraction failed — pass the raw base64 string through.
+      // The server's decodeSigTo64Bytes will try to extract it server-side.
+      console.warn("[WC] Protobuf extraction failed — passing raw signatureMap string (" + sm.length + " chars) to server");
       return [sm];
     }
 
@@ -653,19 +712,28 @@ function _parseSignMessageResponse(result: any): string[] {
         const sig = pair?.ed25519 || pair?.ECDSA_secp256k1 || pair?.signature;
         if (typeof sig === "string") sigs.push(sig);
       }
-      if (sigs.length > 0) return sigs;
+      if (sigs.length > 0) {
+        console.log("[WC] parseSignMsg: sigPair array, extracted " + sigs.length + " sigs, first=" + sigs[0].length + " chars");
+        return sigs;
+      }
     }
 
     // 3c: signatureMap is a flat key-value map { accountId/pubkey: sigString }
     if (typeof sm === "object" && sm !== null) {
       const vals = Object.values(sm).filter((v: any) => typeof v === "string" && v.length > 0) as string[];
-      if (vals.length > 0) return vals;
+      if (vals.length > 0) {
+        console.log("[WC] parseSignMsg: flat signatureMap, " + vals.length + " string values");
+        return vals;
+      }
 
       // Nested objects: { key: { ed25519: sigHex } }
       for (const v of Object.values(sm)) {
         if (v && typeof v === "object") {
           const nested = (v as any).ed25519 || (v as any).signature || (v as any).sig;
-          if (typeof nested === "string") return [nested];
+          if (typeof nested === "string") {
+            console.log("[WC] parseSignMsg: nested object sig, " + nested.length + " chars");
+            return [nested];
+          }
         }
       }
     }
@@ -675,11 +743,13 @@ function _parseSignMessageResponse(result: any): string[] {
   if (typeof result === "object") {
     for (const key of ["signature", "sig", "ed25519", "data"]) {
       if (typeof result[key] === "string" && result[key].length > 0) {
+        console.log("[WC] parseSignMsg: found result." + key + ", " + result[key].length + " chars");
         return [result[key]];
       }
     }
   }
 
+  console.warn("[WC] parseSignMsg: no signatures found in result, keys=" + (typeof result === "object" ? Object.keys(result).join(",") : "N/A"));
   return [];
 }
 
@@ -687,6 +757,8 @@ function _parseSignMessageResponse(result: any): string[] {
  * Try to extract a raw ED25519 signature from a base64-encoded protobuf
  * SignatureMap. Scans for protobuf field tag 0x1A (field 3 = ed25519,
  * wire type 2 = length-delimited) followed by length byte 0x40 (64 bytes).
+ * Falls back to extracting the LAST 64 bytes if no tag is found (some
+ * wallets return a simplified format).
  * Returns the signature as a hex string, or null if not found.
  */
 function _extractED25519FromProtobuf(base64Str: string): string | null {
@@ -695,13 +767,36 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-    // Scan for ED25519 field: tag 0x1A, length 0x40, then 64 bytes
+    console.log("[WC] Protobuf decode: " + bytes.length + " bytes, first 8: " +
+      Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join(" "));
+
+    // Primary: scan for ED25519 field tag 0x1A with length 0x40 (64 bytes)
     for (let i = 0; i < bytes.length - 65; i++) {
       if (bytes[i] === 0x1A && bytes[i + 1] === 0x40) {
         const sig = bytes.slice(i + 2, i + 66);
+        console.log("[WC] Found ED25519 tag at offset " + i);
         return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
       }
     }
-  } catch { /* not valid base64 or not parseable */ }
+
+    // Fallback: if total is exactly 64 bytes, it IS the signature (no wrapper)
+    if (bytes.length === 64) {
+      console.log("[WC] Protobuf decode: exactly 64 bytes — treating as raw signature");
+      return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    // Fallback: if total length suggests [pubKeyPrefix + signature] format
+    // (e.g., 4-byte prefix + 64-byte sig = 68+ bytes with protobuf overhead)
+    // Try extracting last 64 bytes as a heuristic
+    if (bytes.length > 64 && bytes.length <= 128) {
+      console.log("[WC] Protobuf: no 0x1A 0x40 tag found — trying last 64 bytes as heuristic (" + bytes.length + "B total)");
+      const sig = bytes.slice(bytes.length - 64);
+      return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    console.warn("[WC] Protobuf: no ED25519 field tag found in " + bytes.length + " bytes");
+  } catch (e: any) {
+    console.warn("[WC] Protobuf decode error:", e?.message);
+  }
   return null;
 }

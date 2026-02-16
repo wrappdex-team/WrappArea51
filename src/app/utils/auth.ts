@@ -187,6 +187,14 @@ async function signChallengeMessage(accountId: string, message: string): Promise
   }
 
   log.info("Auth", `Final signature: ${sigHex.length} hex chars, preview=${sigHex.slice(0, 32)}...`);
+  
+  // Expected: 128 hex chars = 64 bytes (raw ED25519 signature).
+  // If longer, the server's decodeSigTo64Bytes will extract the ED25519
+  // field from the protobuf structure. Log for diagnostics.
+  if (sigHex.length !== 128) {
+    log.warn("Auth", `Signature is ${sigHex.length} hex chars (expected 128 for raw ED25519). Server will attempt protobuf extraction.`);
+  }
+  
   return sigHex;
 }
 

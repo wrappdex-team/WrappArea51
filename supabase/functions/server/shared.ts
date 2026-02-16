@@ -8,7 +8,7 @@ import * as kv from "./kv_store.tsx";
 // L1: in-memory cache for hot-path speed. L2: KV for persistence.
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 10;
+const RATE_LIMIT_MAX_REQUESTS = 30;
 const RATE_LIMIT_PREFIX = "rl_";
 const _rateLimitL1 = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_L1_MAX_SIZE = 10_000; // Cap in-memory map to prevent unbounded growth

@@ -55,14 +55,14 @@ export function useDynamicBridge() {
 
     if (isLoggedIn && primaryWallet) {
       const address = primaryWallet.address;
-      if (!address || address === lastSyncedRef.current) return;
+      if (!address || typeof address !== "string" || address === lastSyncedRef.current) return;
 
       const chain = (primaryWallet as any).chain || (primaryWallet as any).network || "";
       const walletType = resolveWalletType(chain);
 
       // Check if this address is already tracked (could be from MetaMask/HashPack direct)
       const alreadyTracked = connectedWallets.some(
-        (w) => w.address.toLowerCase() === address.toLowerCase(),
+        (w) => typeof w.address === "string" && w.address.toLowerCase() === address.toLowerCase(),
       );
 
       if (!alreadyTracked) {
@@ -86,6 +86,7 @@ export function useDynamicBridge() {
       const trackedWallet = connectedWallets.find(
         (w) =>
           w.connector.startsWith("Dynamic") &&
+          typeof w.address === "string" &&
           w.address.toLowerCase() === prevAddress.toLowerCase(),
       );
       if (trackedWallet) {
