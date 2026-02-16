@@ -289,3 +289,9 @@ export async function withKvLock<T>(cfg: KvLockConfig, fn: () => Promise<T>): Pr
 // ── Shared Lock Constants ───────────────────────────────────────────
 
 export const POOL_LOCK_RETRY_INTERVAL_MS = 40;    // Spin-wait interval
+
+// ── Route Prefix ────────────────────────────────────────────────────
+// All Hono routes are registered under this path prefix.
+// Single source of truth — eliminates 30+ hardcoded repetitions across modules.
+
+export const ROUTE_PREFIX = "/make-server-54299934";

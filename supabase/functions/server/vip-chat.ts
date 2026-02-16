@@ -13,7 +13,7 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS,
+  isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
@@ -59,12 +59,12 @@ function generateChatMsgId(): string {
 
 export function registerVipChatRoutes(app: Hono): void {
 
-  app.get("/make-server-54299934/vip-chat/messages", async (c) => {
+  app.get(`${ROUTE_PREFIX}/vip-chat/messages`, async (c) => {
     try {
       const msgs: VipChatMessage[] = (await kv.get(VIP_CHAT_MSGS_KEY)) ?? [];
       return c.json({ messages: msgs });
     } catch (err) {
-      console.log(`[VIP-CHAT] Error fetching messages: ${err}`);
+      console.error(`[VIP-CHAT] Error fetching messages: ${err}`);
       return c.json({ messages: [], error: "Failed to fetch messages" }, 500);
     }
   });
@@ -78,7 +78,7 @@ export function registerVipChatRoutes(app: Hono): void {
   // actually holds 100M+ HBAR.h or a VIP NFT. Combined with IP rate
   // limiting, per-account cooldowns, and the ban list, the chat is
   // protected against impersonation spam without requiring a signed session.
-  app.post("/make-server-54299934/vip-chat/messages", async (c) => {
+  app.post(`${ROUTE_PREFIX}/vip-chat/messages`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Too many requests" }, 429);
@@ -129,12 +129,12 @@ export function registerVipChatRoutes(app: Hono): void {
       return c.json({ message: result });
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "Chat is busy — please retry in a moment", code: "CHAT_BUSY" }, 503);
-      console.log(`[VIP-CHAT] Send error: ${err}`);
+      console.error(`[VIP-CHAT] Send error: ${err}`);
       return c.json({ error: "Failed to send message" }, 500);
     }
   });
 
-  app.delete("/make-server-54299934/vip-chat/messages/:id", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/vip-chat/messages/:id`, async (c) => {
     if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
     try {
       const id = c.req.param("id");
@@ -154,7 +154,7 @@ export function registerVipChatRoutes(app: Hono): void {
     }
   });
 
-  app.post("/make-server-54299934/vip-chat/ban", async (c) => {
+  app.post(`${ROUTE_PREFIX}/vip-chat/ban`, async (c) => {
     if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
     try {
       const { accountId, action } = await c.req.json();
@@ -182,7 +182,7 @@ export function registerVipChatRoutes(app: Hono): void {
     }
   });
 
-  app.delete("/make-server-54299934/vip-chat/messages", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/vip-chat/messages`, async (c) => {
     if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
     try {
       await kv.set(VIP_CHAT_MSGS_KEY, []);

@@ -5,6 +5,7 @@
 import type { Hono } from "npm:hono@4.6.3";
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
+import { ROUTE_PREFIX } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -52,7 +53,7 @@ async function probeApiV2(url: string): Promise<HealthCheckResultV2> {
 
 export function registerHealthRoutes(app: Hono): void {
 
-  app.get("/make-server-54299934/health", async (c) => {
+  app.get(`${ROUTE_PREFIX}/health`, async (c) => {
     const forceRefresh = c.req.query("refresh") === "1";
 
     // Serve from cache when valid

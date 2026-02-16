@@ -8,7 +8,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { getClientIp, isRateLimited } from "./shared.ts";
+import { getClientIp, isRateLimited, ROUTE_PREFIX } from "./shared.ts";
 import { requireAuth } from "./auth.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ export async function verifyVipEligibilityFull(accountId: string): Promise<VipSt
 export function registerVipRoutes(app: Hono): void {
 
   // GET /vip/status — Authenticated eligibility check (token + NFT, fail-closed)
-  app.get("/make-server-54299934/vip/status", async (c) => {
+  app.get(`${ROUTE_PREFIX}/vip/status`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -134,7 +134,7 @@ export function registerVipRoutes(app: Hono): void {
         accountId,
       });
     } catch (err) {
-      console.log(`[VIP-GATE] Status check error: ${err}`);
+      console.error(`[VIP-GATE] Status check error: ${err}`);
       return c.json({ eligible: false, error: "VIP verification failed" }, 500);
     }
   });

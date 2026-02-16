@@ -125,4 +125,14 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
     description: "Cross-chain bridge aggregator for transferring assets between Hedera and other blockchain networks.",
     path: "/bridges",
   },
+  "/terms": {
+    title: "Terms of Service",
+    description: "WRAPpDEX Terms of Service — legal terms governing use of the WRAPpDEX decentralized exchange platform on the Hedera network.",
+    path: "/terms",
+  },
+  "/privacy": {
+    title: "Privacy Policy",
+    description: "WRAPpDEX Privacy Policy — how we collect, use, and protect your information on the WRAPpDEX decentralized exchange platform.",
+    path: "/privacy",
+  },
 };

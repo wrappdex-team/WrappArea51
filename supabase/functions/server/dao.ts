@@ -16,7 +16,7 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  withKvLock, POOL_LOCK_RETRY_INTERVAL_MS,
+  withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
 import { requireAuth, AUTH_SESSION_PREFIX } from "./auth.ts";
@@ -264,19 +264,19 @@ async function migrateLegacyDaoProposals(proposals: DAOProposal[]): Promise<void
 export function registerDaoRoutes(app: Hono): void {
 
   // GET /dao/proposals — Public read
-  app.get("/make-server-54299934/dao/proposals", async (c) => {
+  app.get(`${ROUTE_PREFIX}/dao/proposals`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
       return c.json({ proposals: await loadDaoProposals() });
     } catch (err) {
-      console.log(`[DAO] Error loading proposals: ${err}`);
+      console.error(`[DAO] Error loading proposals: ${err}`);
       return c.json({ proposals: [], error: "Failed to load proposals" }, 500);
     }
   });
 
   // POST /dao/proposals — Admin-only create
-  app.post("/make-server-54299934/dao/proposals", async (c) => {
+  app.post(`${ROUTE_PREFIX}/dao/proposals`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -322,13 +322,13 @@ export function registerDaoRoutes(app: Hono): void {
       return result;
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
-      console.log(`[DAO] Error creating proposal: ${err}`);
+      console.error(`[DAO] Error creating proposal: ${err}`);
       return c.json({ error: "Failed to create proposal" }, 500);
     }
   });
 
   // PUT /dao/proposals/:id — Admin/proposer edit
-  app.put("/make-server-54299934/dao/proposals/:id", async (c) => {
+  app.put(`${ROUTE_PREFIX}/dao/proposals/:id`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -362,13 +362,13 @@ export function registerDaoRoutes(app: Hono): void {
       return result;
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
-      console.log(`[DAO] Error editing proposal: ${err}`);
+      console.error(`[DAO] Error editing proposal: ${err}`);
       return c.json({ error: "Failed to edit proposal" }, 500);
     }
   });
 
   // DELETE /dao/proposals/:id — Admin/proposer delete
-  app.delete("/make-server-54299934/dao/proposals/:id", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/dao/proposals/:id`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -394,13 +394,13 @@ export function registerDaoRoutes(app: Hono): void {
       return result;
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
-      console.log(`[DAO] Error deleting proposal: ${err}`);
+      console.error(`[DAO] Error deleting proposal: ${err}`);
       return c.json({ error: "Failed to delete proposal" }, 500);
     }
   });
 
   // POST /dao/proposals/:id/vote — Authenticated + eligible, weight from Mirror Node
-  app.post("/make-server-54299934/dao/proposals/:id/vote", async (c) => {
+  app.post(`${ROUTE_PREFIX}/dao/proposals/:id/vote`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -444,13 +444,13 @@ export function registerDaoRoutes(app: Hono): void {
       return result;
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
-      console.log(`[DAO] Error casting vote: ${err}`);
+      console.error(`[DAO] Error casting vote: ${err}`);
       return c.json({ error: "Failed to cast vote" }, 500);
     }
   });
 
   // POST /dao/proposals/:id/comment — Authenticated + eligible comment
-  app.post("/make-server-54299934/dao/proposals/:id/comment", async (c) => {
+  app.post(`${ROUTE_PREFIX}/dao/proposals/:id/comment`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -487,13 +487,13 @@ export function registerDaoRoutes(app: Hono): void {
       return result;
     } catch (err: any) {
       if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
-      console.log(`[DAO] Error adding comment: ${err}`);
+      console.error(`[DAO] Error adding comment: ${err}`);
       return c.json({ error: "Failed to add comment" }, 500);
     }
   });
 
   // GET /dao/voting-power — Authenticated: server-verified voting power
-  app.get("/make-server-54299934/dao/voting-power", async (c) => {
+  app.get(`${ROUTE_PREFIX}/dao/voting-power`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -505,7 +505,7 @@ export function registerDaoRoutes(app: Hono): void {
       const isAdmin = await isDaoAdminAsync(accountId);
       return c.json({ accountId, eligible: vipStatus.eligible, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount, votingPower, isAdmin, verifiedAt: vipStatus.verifiedAt, cached: vipStatus.cached });
     } catch (err) {
-      console.log(`[DAO] Error fetching voting power: ${err}`);
+      console.error(`[DAO] Error fetching voting power: ${err}`);
       return c.json({ error: "Failed to fetch voting power" }, 500);
     }
   });
@@ -519,7 +519,7 @@ export function registerDaoRoutes(app: Hono): void {
   // ═══════════════════════════════════════════════════════════════════════
 
   // GET /dao/admins — Admin-only: list current admins
-  app.get("/make-server-54299934/dao/admins", async (c) => {
+  app.get(`${ROUTE_PREFIX}/dao/admins`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -532,13 +532,13 @@ export function registerDaoRoutes(app: Hono): void {
       const admins = await loadDaoAdmins();
       return c.json({ admins, founder: DAO_FOUNDER_ACCOUNT, maxAdmins: DAO_MAX_ADMINS });
     } catch (err) {
-      console.log(`[DAO-ADMIN] Error listing admins: ${err}`);
+      console.error(`[DAO-ADMIN] Error listing admins: ${err}`);
       return c.json({ error: "Failed to load admin list" }, 500);
     }
   });
 
   // POST /dao/admins — Admin-only: add a new admin (requires FRESH session)
-  app.post("/make-server-54299934/dao/admins", async (c) => {
+  app.post(`${ROUTE_PREFIX}/dao/admins`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -569,13 +569,13 @@ export function registerDaoRoutes(app: Hono): void {
       console.log(`[DAO-ADMIN] Admin added by ${accountId}: ${newAdminAccountId} (total: ${admins.length})`);
       return c.json({ success: true, admins, addedBy: accountId });
     } catch (err) {
-      console.log(`[DAO-ADMIN] Error adding admin: ${err}`);
+      console.error(`[DAO-ADMIN] Error adding admin: ${err}`);
       return c.json({ error: "Failed to add admin" }, 500);
     }
   });
 
   // DELETE /dao/admins/:accountId — Admin-only: remove an admin (requires FRESH session)
-  app.delete("/make-server-54299934/dao/admins/:accountId", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/dao/admins/:accountId`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -602,7 +602,7 @@ export function registerDaoRoutes(app: Hono): void {
       console.log(`[DAO-ADMIN] Admin removed by ${accountId}: ${targetAccountId} (remaining: ${updated.length})`);
       return c.json({ success: true, admins: updated, removedBy: accountId });
     } catch (err) {
-      console.log(`[DAO-ADMIN] Error removing admin: ${err}`);
+      console.error(`[DAO-ADMIN] Error removing admin: ${err}`);
       return c.json({ error: "Failed to remove admin" }, 500);
     }
   });

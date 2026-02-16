@@ -4,7 +4,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2.49.8";
-import { isAdminAuthorized } from "./shared.ts";
+import { isAdminAuthorized, ROUTE_PREFIX } from "./shared.ts";
 
 // ── Holiday Logos ───────────────────────────────────────────────────
 const HOLIDAY_BUCKET = "make-54299934-holiday-logos";
@@ -29,7 +29,7 @@ export function registerStorageRoutes(app: Hono): void {
   // Checks: make-54299934-holiday-logos (preferred) → "Holiday Wrapp Logos" (legacy)
   // ═══════════════════════════════════════════════════════════════════════
 
-  app.get("/make-server-54299934/holiday-logos", async (c) => {
+  app.get(`${ROUTE_PREFIX}/holiday-logos`, async (c) => {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -123,7 +123,7 @@ export function registerStorageRoutes(app: Hono): void {
 
       return c.json({ logos, bucket: activeBucket, urlType: "signed" });
     } catch (err) {
-      console.log(`[Holiday Logos] Unexpected error: ${err}`);
+      console.error(`[Holiday Logos] Unexpected error: ${err}`);
       return c.json({ error: `Unexpected error: ${String(err)}` }, 500);
     }
   });
@@ -132,7 +132,7 @@ export function registerStorageRoutes(app: Hono): void {
   // Lists files from "WRAPP LOGOS" and returns public + signed URLs.
   // Supports both public and private bucket configurations.
 
-  app.get("/make-server-54299934/brand-logos", async (c) => {
+  app.get(`${ROUTE_PREFIX}/brand-logos`, async (c) => {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -199,7 +199,7 @@ export function registerStorageRoutes(app: Hono): void {
       console.log(`[Brand Logos] Private bucket — ${logos.length} signed URL(s): [${logos.map((l: any) => l.name).join(", ")}]`);
       return c.json({ logos, bucket: BRAND_BUCKET, urlType: "signed" });
     } catch (err) {
-      console.log(`[Brand Logos] Unexpected error: ${err}`);
+      console.error(`[Brand Logos] Unexpected error: ${err}`);
       return c.json({ error: String(err) }, 500);
     }
   });
@@ -208,7 +208,7 @@ export function registerStorageRoutes(app: Hono): void {
   // Lists files from "Partnered logos" bucket and returns public/signed URLs.
   // The frontend matches filenames to partner keys (metamask, hashpack, etc.).
 
-  app.get("/make-server-54299934/partnered-logos", async (c) => {
+  app.get(`${ROUTE_PREFIX}/partnered-logos`, async (c) => {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -311,13 +311,13 @@ export function registerStorageRoutes(app: Hono): void {
       console.log(`[Partnered Logos] Signed — ${logos.length} URL(s): [${logos.map((l: any) => l.name).join(", ")}]`);
       return c.json({ logos, bucket: PARTNER_BUCKET, urlType: "signed", isPublic: false });
     } catch (err) {
-      console.log(`[Partnered Logos] Unexpected error: ${err}`);
+      console.error(`[Partnered Logos] Unexpected error: ${err}`);
       return c.json({ error: String(err) }, 500);
     }
   });
 
   // Diagnostic endpoint — admin-only raw bucket listing for debugging
-  app.get("/make-server-54299934/partnered-logos/debug", async (c) => {
+  app.get(`${ROUTE_PREFIX}/partnered-logos/debug`, async (c) => {
     if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");

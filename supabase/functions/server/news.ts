@@ -4,6 +4,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
+import { ROUTE_PREFIX } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -148,12 +149,12 @@ async function fetchCryptoNews(): Promise<CachedNews["items"]> {
 // ── Route Registration ──────────────────────────────────────────────
 
 export function registerNewsRoutes(app: Hono): void {
-  app.get("/make-server-54299934/news", async (c) => {
+  app.get(`${ROUTE_PREFIX}/news`, async (c) => {
     try {
       const items = await fetchCryptoNews();
       return c.json({ items });
     } catch (err) {
-      console.log("Error fetching news:", err);
+      console.error("[NEWS] Error fetching news:", err);
       return c.json({ items: [], error: "Failed to fetch news" }, 500);
     }
   });

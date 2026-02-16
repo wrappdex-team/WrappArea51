@@ -551,17 +551,34 @@ export function Layout() {
       </main>
 
       {/* Footer – Copyright */}
-      <footer className={`py-4 px-3 text-center mb-16 lg:mb-0 ${
+      <footer className={`py-4 px-4 md:px-6 mb-16 lg:mb-0 ${
         isDark
           ? "bg-[#080a12]"
           : "bg-[#f8fafc]"
       }`} style={{ border: 'none', borderTop: 'none', outline: 'none', boxShadow: 'none' }}>
-        <p className={`text-[10px] md:text-[11px] leading-relaxed ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-          &copy; {new Date().getFullYear()} Wrappdex. All rights reserved. Wrappdex is a decentralized exchange built on the Hedera network. Trading digital assets involves significant risk of loss. This platform does not constitute financial, investment, or legal advice. Past performance is not indicative of future results.
-        </p>
-        <p className={`text-[9px] md:text-[10px] mt-1.5 ${isDark ? "text-slate-700" : "text-gray-300"}`}>
-          Stage 1 security audit completed &middot; Use at your own risk &middot; Not available in all jurisdictions.
-        </p>
+        <div className="container mx-auto flex items-center justify-between">
+          <p className={`text-[10px] md:text-[11px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+            &copy; 2026 WRAPpDEX
+          </p>
+          <div className="flex items-center gap-3 md:gap-4">
+            <Link
+              to="/terms"
+              className={`text-[10px] md:text-[11px] transition-colors ${
+                isDark ? "text-slate-600 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              Terms of Service
+            </Link>
+            <Link
+              to="/privacy"
+              className={`text-[10px] md:text-[11px] transition-colors ${
+                isDark ? "text-slate-600 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              Privacy Policy
+            </Link>
+          </div>
+        </div>
       </footer>
 
       {/* Mobile Bottom Navigation */}

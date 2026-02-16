@@ -25,7 +25,7 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  generateTicketId, isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS,
+  generateTicketId, isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
 import { requireAuth, validateSession } from "./auth.ts";
@@ -394,7 +394,7 @@ async function withPoolLock<T>(poolId: string, fn: () => Promise<T>): Promise<T>
   }
 }
 
-// ── Pool Creation Lock ──────────────────────────────────────────────
+// ── Pool Creation Lock ────────────────────────────────────��─────────
 // Serializes all pool creation requests to prevent:
 //   1. Duplicate-pair race (two requests for same pair both pass check)
 //   2. Pool index corruption (concurrent read-modify-write on index key)
@@ -438,7 +438,7 @@ async function getAllPools(poolIds: string[]): Promise<PoolState[]> {
 export function registerAmmRoutes(app: Hono): void {
 
   // GET /oracle/fallback — Current fallback config (public — price is not secret)
-  app.get("/make-server-54299934/oracle/fallback", async (c) => {
+  app.get(`${ROUTE_PREFIX}/oracle/fallback`, async (c) => {
     try {
       const cfg = await getOracleFallbackConfig();
       const ageMs = Date.now() - cfg.updatedAt;
@@ -452,7 +452,7 @@ export function registerAmmRoutes(app: Hono): void {
         stale,
       });
     } catch (err) {
-      console.log("Error in GET /oracle/fallback:", err);
+      console.error("[AMM] Error in GET /oracle/fallback:", err);
       return c.json({ error: "Failed to read fallback config" }, 500);
     }
   });
@@ -460,7 +460,7 @@ export function registerAmmRoutes(app: Hono): void {
   // PUT /oracle/fallback — Admin-only: update fallback HBAR price at runtime.
   // Body: { "price": 0.30 }  (optional: "maxAgeDays": 90)
   // updatedAt is auto-set to now. Requires SUPABASE_SERVICE_ROLE_KEY.
-  app.put("/make-server-54299934/oracle/fallback", async (c) => {
+  app.put(`${ROUTE_PREFIX}/oracle/fallback`, async (c) => {
     if (!isAdminAuthorized(c)) return c.json({ error: "Admin access required" }, 403);
     try {
       const body = await c.req.json();
@@ -490,13 +490,13 @@ export function registerAmmRoutes(app: Hono): void {
         maxAgeDays,
       });
     } catch (err) {
-      console.log("Error in PUT /oracle/fallback:", err);
+      console.error("[AMM] Error in PUT /oracle/fallback:", err);
       return c.json({ error: "Failed to update fallback config" }, 500);
     }
   });
 
   // GET /pools — List all active pools with real-time state + oracle prices
-  app.get("/make-server-54299934/pools", async (c) => {
+  app.get(`${ROUTE_PREFIX}/pools`, async (c) => {
     try {
       const poolIds = await getPoolIndex();
       const prices = await fetchOraclePrices();
@@ -509,25 +509,25 @@ export function registerAmmRoutes(app: Hono): void {
 
       return c.json({ pools, tokens: ACTIVE_TOKENS, prices, updatedAt: Math.floor(Date.now() / 1000) });
     } catch (err) {
-      console.log("Error in GET /pools:", err);
+      console.error("[AMM] Error in GET /pools:", err);
       return c.json({ error: "Failed to fetch pools" }, 500);
     }
   });
 
   // GET /pools/prices — Oracle prices for display
-  app.get("/make-server-54299934/pools/prices", async (c) => {
+  app.get(`${ROUTE_PREFIX}/pools/prices`, async (c) => {
     try {
       const prices = await fetchOraclePrices();
       return c.json({ prices, updatedAt: Math.floor(Date.now() / 1000) });
     } catch (err) {
-      console.log("Error in GET /pools/prices:", err);
+      console.error("[AMM] Error in GET /pools/prices:", err);
       return c.json({ error: "Failed to fetch prices" }, 500);
     }
   });
 
   // POST /pools/create — Authenticated. Tier 1 tokens only. Fee is protocol-fixed.
   // Protected by POOL_CREATION_LOCK to prevent duplicate-pair races and index corruption.
-  app.post("/make-server-54299934/pools/create", async (c) => {
+  app.post(`${ROUTE_PREFIX}/pools/create`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -598,14 +598,14 @@ export function registerAmmRoutes(app: Hono): void {
       if (err?.code === "LOCK_TIMEOUT") {
         return c.json({ error: "Pool creation service is busy — please retry in a few seconds", code: "CREATION_BUSY" }, 503);
       }
-      console.log("Error in POST /pools/create:", err);
+      console.error("[AMM] Error in POST /pools/create:", err);
       return c.json({ error: "Pool creation failed" }, 500);
     }
   });
 
   // POST /pools/liquidity/add — Authenticated. Lock + CAS protected.
   // First deposit burns MINIMUM_LIQUIDITY. Subsequent deposits proportional.
-  app.post("/make-server-54299934/pools/liquidity/add", async (c) => {
+  app.post(`${ROUTE_PREFIX}/pools/liquidity/add`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -617,9 +617,7 @@ export function registerAmmRoutes(app: Hono): void {
       const body = await c.req.json();
       const { poolId, amountA, amountB } = body;
 
-      const addLiqResult = await (async () => {
-        try {
-          return await withPoolLock(poolId, async () => {
+      return await withPoolLock(poolId, async () => {
             const pool = await getPool(poolId);
             if (!pool) return c.json({ error: "Pool not found" }, 404);
             if (pool.status !== "active") return c.json({ error: "Pool is paused" }, 400);
@@ -663,21 +661,16 @@ export function registerAmmRoutes(app: Hono): void {
 
             console.log(`[SmartLiquidity] +Liquidity v${expectedVersion}→v${expectedVersion + 1}: ${accountId} → ${poolId} (${rawA}/${rawB}, shares=${sharesMinted})`);
             return c.json({ success: true, sharesMinted: sharesMinted.toString(), totalShares: newShares, pool: { reserveA: pool.reserveA, reserveB: pool.reserveB, lpTotalSupply: pool.lpTotalSupply, version: pool.version } });
-          });
-        } catch (lockErr: any) {
-          if (lockErr?.code === "POOL_BUSY") return c.json({ error: lockErr.message, code: "POOL_BUSY" }, 503);
-          throw lockErr;
-        }
-      })();
-      return addLiqResult;
-    } catch (err) {
-      console.log("Error in POST /pools/liquidity/add:", err);
+      });
+    } catch (err: any) {
+      if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
+      console.error("[AMM] Error in POST /pools/liquidity/add:", err);
       return c.json({ error: "Add liquidity failed" }, 500);
     }
   });
 
   // POST /pools/liquidity/remove — Authenticated. Lock + CAS protected.
-  app.post("/make-server-54299934/pools/liquidity/remove", async (c) => {
+  app.post(`${ROUTE_PREFIX}/pools/liquidity/remove`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -689,9 +682,7 @@ export function registerAmmRoutes(app: Hono): void {
       const body = await c.req.json();
       const { poolId, shares } = body;
 
-      const removeLiqResult = await (async () => {
-        try {
-          return await withPoolLock(poolId, async () => {
+      return await withPoolLock(poolId, async () => {
             const pool = await getPool(poolId);
             if (!pool) return c.json({ error: "Pool not found" }, 404);
             const expectedVersion = pool.version;
@@ -722,21 +713,16 @@ export function registerAmmRoutes(app: Hono): void {
 
             console.log(`[SmartLiquidity] -Liquidity v${expectedVersion}→v${expectedVersion + 1}: ${accountId} ← ${poolId} (${outA}/${outB})`);
             return c.json({ success: true, amountA: outA.toString(), amountB: outB.toString(), sharesRemaining: remaining, pool: { version: pool.version } });
-          });
-        } catch (lockErr: any) {
-          if (lockErr?.code === "POOL_BUSY") return c.json({ error: lockErr.message, code: "POOL_BUSY" }, 503);
-          throw lockErr;
-        }
-      })();
-      return removeLiqResult;
-    } catch (err) {
-      console.log("Error in POST /pools/liquidity/remove:", err);
+      });
+    } catch (err: any) {
+      if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
+      console.error("[AMM] Error in POST /pools/liquidity/remove:", err);
       return c.json({ error: "Remove liquidity failed" }, 500);
     }
   });
 
   // GET /pools/position/:poolId/:accountId — Get LP position
-  app.get("/make-server-54299934/pools/position/:poolId/:accountId", async (c) => {
+  app.get(`${ROUTE_PREFIX}/pools/position/:poolId/:accountId`, async (c) => {
     try {
       const poolId = c.req.param("poolId");
       const accountId = c.req.param("accountId");
@@ -744,13 +730,13 @@ export function registerAmmRoutes(app: Hono): void {
       const position = await getLPPosition(poolId, accountId);
       return c.json({ position: position || null });
     } catch (err) {
-      console.log("Error fetching LP position:", err);
+      console.error("[AMM] Error fetching LP position:", err);
       return c.json({ position: null, error: "Failed to fetch LP position" }, 500);
     }
   });
 
   // POST /pools/quote — AMM quote with smart routing (direct + USDC-hop).
-  app.post("/make-server-54299934/pools/quote", async (c) => {
+  app.post(`${ROUTE_PREFIX}/pools/quote`, async (c) => {
     try {
       const body = await c.req.json();
       const { tokenIn, tokenOut, amountIn } = body;
@@ -853,13 +839,13 @@ export function registerAmmRoutes(app: Hono): void {
         timestamp: Date.now(),
       });
     } catch (err) {
-      console.log("Error in POST /pools/quote:", err);
+      console.error("[AMM] Error in POST /pools/quote:", err);
       return c.json({ error: "Quote failed" }, 500);
     }
   });
 
   // POST /pools/swap — Authenticated. Lock + CAS protected. Private mempool.
-  app.post("/make-server-54299934/pools/swap", async (c) => {
+  app.post(`${ROUTE_PREFIX}/pools/swap`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -876,9 +862,7 @@ export function registerAmmRoutes(app: Hono): void {
         return c.json({ error: "Multi-hop execution is not yet available. Use direct pools." }, 501);
       }
 
-      const swapResult = await (async () => {
-        try {
-          return await withPoolLock(poolId, async () => {
+      return await withPoolLock(poolId, async () => {
             const pool = await getPool(poolId);
             if (!pool) return c.json({ error: "Pool not found" }, 404);
             if (pool.status !== "active") return c.json({ error: "Pool is paused" }, 400);
@@ -919,7 +903,7 @@ export function registerAmmRoutes(app: Hono): void {
             const kNew = BigInt(pool.reserveA) * BigInt(pool.reserveB);
             const kOld = resA * resB;
             if (kNew < kOld) {
-              console.log(`[CRITICAL] K-invariant violated! kOld=${kOld} kNew=${kNew} pool=${poolId}`);
+              console.error(`[CRITICAL] K-invariant violated! kOld=${kOld} kNew=${kNew} pool=${poolId}`);
               return c.json({ error: "K-invariant violated — swap aborted (report to developers)" }, 500);
             }
 
@@ -999,24 +983,17 @@ export function registerAmmRoutes(app: Hono): void {
               pool: { reserveA: pool.reserveA, reserveB: pool.reserveB, version: pool.version },
               protocolFee: { totalTinybar: protocolFeeTinybar, treasuryTinybar: treasuryFeeTinybar, treasuryAccount: PROTOCOL_TREASURY_ACCOUNT },
             });
-          });
-        } catch (lockErr: any) {
-          if (lockErr?.code === "POOL_BUSY") {
-            return c.json({ error: lockErr.message, code: "POOL_BUSY" }, 503);
-          }
-          throw lockErr;
-        }
-      })();
-      return swapResult;
-    } catch (err) {
-      console.log("Error in POST /pools/swap:", err);
+      });
+    } catch (err: any) {
+      if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
+      console.error("[AMM] Error in POST /pools/swap:", err);
       return c.json({ error: "Swap failed" }, 500);
     }
   });
 
   // GET /pools/swaps/:accountId — Per-user swap history (O(1) index read, rate-limited).
   // Authenticated: session accountId must match the URL param.
-  app.get("/make-server-54299934/pools/swaps/:accountId", async (c) => {
+  app.get(`${ROUTE_PREFIX}/pools/swaps/:accountId`, async (c) => {
     try {
       const accountId = c.req.param("accountId");
       if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid accountId" }, 400);
@@ -1049,20 +1026,20 @@ export function registerAmmRoutes(app: Hono): void {
       // No history — user either hasn't swapped or swapped before indexing was deployed
       return c.json({ swaps: [] });
     } catch (err) {
-      console.log("Error in GET /pools/swaps:", err);
+      console.error("[AMM] Error in GET /pools/swaps:", err);
       return c.json({ swaps: [], error: "Failed to fetch swap history" }, 500);
     }
   });
 
   // GET /pools/recent-swaps — Public anonymized activity feed (no wallet data).
-  app.get("/make-server-54299934/pools/recent-swaps", async (c) => {
+  app.get(`${ROUTE_PREFIX}/pools/recent-swaps`, async (c) => {
     try {
       const recentSwaps: SwapRecord[] = (await kv.get(GLOBAL_RECENT_SWAPS_KEY)) ?? [];
       // Newest first
       recentSwaps.sort((a, b) => (b?.timestamp || 0) - (a?.timestamp || 0));
       return c.json({ swaps: recentSwaps });
     } catch (err) {
-      console.log("Error in GET /pools/recent-swaps:", err);
+      console.error("[AMM] Error in GET /pools/recent-swaps:", err);
       return c.json({ swaps: [] }, 500);
     }
   });

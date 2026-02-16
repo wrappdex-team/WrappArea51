@@ -15,7 +15,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { getClientIp, isRateLimited, isValidHederaAccountId } from "./shared.ts";
+import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ export async function requireAuth(c: any): Promise<{ accountId: string } | Respo
 export function registerAuthRoutes(app: Hono): void {
 
   // GET /auth/challenge/:accountId — Issue a time-limited challenge nonce
-  app.get("/make-server-54299934/auth/challenge/:accountId", async (c) => {
+  app.get(`${ROUTE_PREFIX}/auth/challenge/:accountId`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -271,7 +271,7 @@ export function registerAuthRoutes(app: Hono): void {
       console.log(`[AUTH] Challenge issued: ${challengeId} for ${accountId}`);
       return c.json({ challengeId, message, expiresAt: challenge.expiresAt, keyType: keyResult.type });
     } catch (err) {
-      console.log("Error in GET /auth/challenge:", err);
+      console.error("[AUTH] Error in GET /auth/challenge:", err);
       return c.json({ error: "Challenge generation failed" }, 500);
     }
   });
@@ -295,7 +295,7 @@ export function registerAuthRoutes(app: Hono): void {
   //   is practically unreachable. Both sessions would bind to the same
   //   accountId with no privilege escalation.
 
-  app.post("/make-server-54299934/auth/session", async (c) => {
+  app.post(`${ROUTE_PREFIX}/auth/session`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -389,20 +389,20 @@ export function registerAuthRoutes(app: Hono): void {
       console.log(`[AUTH] Session created for ${accountId} (expires ${AUTH_SESSION_TTL_MS / 60000}min)`);
       return c.json({ sessionToken: token, accountId, expiresAt: session.expiresAt, ttlMs: AUTH_SESSION_TTL_MS });
     } catch (err) {
-      console.log("Error in POST /auth/session:", err);
+      console.error("[AUTH] Error in POST /auth/session:", err);
       return c.json({ error: "Session creation failed" }, 500);
     }
   });
 
   // GET /auth/session/validate — Check session validity
-  app.get("/make-server-54299934/auth/session/validate", async (c) => {
+  app.get(`${ROUTE_PREFIX}/auth/session/validate`, async (c) => {
     const session = await validateSession(c);
     if (!session) return c.json({ valid: false }, 401);
     return c.json({ valid: true, accountId: session.accountId });
   });
 
   // DELETE /auth/session — Revoke session (logout)
-  app.delete("/make-server-54299934/auth/session", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/auth/session`, async (c) => {
     const token = c.req.header("x-session-token") || "";
     if (token) {
       // Read session to get accountId for per-account index cleanup

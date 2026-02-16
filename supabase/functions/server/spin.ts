@@ -6,7 +6,7 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  secureRandomFloat, secureRandomInt, generateTicketId, isAdminAuthorized,
+  secureRandomFloat, secureRandomInt, generateTicketId, isAdminAuthorized, ROUTE_PREFIX,
 } from "./shared.ts";
 import { validateSession } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
@@ -32,12 +32,12 @@ interface WinnerRecord {
 export function registerSpinRoutes(app: Hono): void {
 
   // GET /winners — public read-only, returns last 10 winners
-  app.get("/make-server-54299934/winners", async (c) => {
+  app.get(`${ROUTE_PREFIX}/winners`, async (c) => {
     try {
       const winners: WinnerRecord[] = (await kv.get(WINNERS_KEY)) ?? [];
       return c.json({ winners });
     } catch (err) {
-      console.log("Error fetching winners:", err);
+      console.error("[SPIN] Error fetching winners:", err);
       return c.json({ error: "Failed to fetch winners" }, 500);
     }
   });
@@ -45,7 +45,7 @@ export function registerSpinRoutes(app: Hono): void {
   // POST /spin — Server-determined outcome via CSPRNG.
   // accountId from session token (preferred) OR from body with Mirror Node VIP gate.
 
-  app.post("/make-server-54299934/spin", async (c) => {
+  app.post(`${ROUTE_PREFIX}/spin`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) {
@@ -157,13 +157,13 @@ export function registerSpinRoutes(app: Hono): void {
         winners: winners ?? undefined,
       });
     } catch (err) {
-      console.log("Error in /spin:", err);
+      console.error("[SPIN] Error in /spin:", err);
       return c.json({ error: "Spin failed" }, 500);
     }
   });
 
   // POST /winners — Disabled. All recording happens inside POST /spin.
-  app.post("/make-server-54299934/winners", (c) => {
+  app.post(`${ROUTE_PREFIX}/winners`, (c) => {
     return c.json(
       { error: "Direct winner recording is disabled. Use POST /spin instead." },
       405,
@@ -171,7 +171,7 @@ export function registerSpinRoutes(app: Hono): void {
   });
 
   // DELETE /winners — Admin-only reset. Requires SUPABASE_SERVICE_ROLE_KEY.
-  app.delete("/make-server-54299934/winners", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/winners`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) {
@@ -190,13 +190,13 @@ export function registerSpinRoutes(app: Hono): void {
       console.log(`[SECURITY] Winner history cleared by authorized admin from IP: ${ip}`);
       return c.json({ success: true, winners: [] });
     } catch (err) {
-      console.log("Error clearing winners:", err);
+      console.error("[SPIN] Error clearing winners:", err);
       return c.json({ error: "Failed to clear winners" }, 500);
     }
   });
 
-  // ── GET /spin/cooldown/:accountId — check remaining cooldown ─────────
-  app.get("/make-server-54299934/spin/cooldown/:accountId", async (c) => {
+  // ── GET /spin/cooldown/:accountId — check remaining cooldown ──────��──
+  app.get(`${ROUTE_PREFIX}/spin/cooldown/:accountId`, async (c) => {
     try {
       const accountId = c.req.param("accountId");
       if (!accountId || !isValidHederaAccountId(accountId)) {
@@ -210,7 +210,7 @@ export function registerSpinRoutes(app: Hono): void {
       }
       return c.json({ canSpin: false, cooldownMs: SPIN_COOLDOWN_MS - (now - lastSpin) });
     } catch (err) {
-      console.log("Error checking cooldown:", err);
+      console.error("[SPIN] Error checking cooldown:", err);
       // Fail closed — if KV is down, deny spins to prevent cooldown bypass
       return c.json({ canSpin: false, cooldownMs: SPIN_COOLDOWN_MS, error: "Service temporarily unavailable" }, 503);
     }
@@ -218,7 +218,7 @@ export function registerSpinRoutes(app: Hono): void {
 
   // DELETE /spin/cooldown — Admin-only: clears spin cooldown for a specific account.
   // Requires SUPABASE_SERVICE_ROLE_KEY (same pattern as DELETE /winners).
-  app.delete("/make-server-54299934/spin/cooldown", async (c) => {
+  app.delete(`${ROUTE_PREFIX}/spin/cooldown`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) {
@@ -240,7 +240,7 @@ export function registerSpinRoutes(app: Hono): void {
       console.log(`[SECURITY] Spin cooldown reset by admin for ${accountId} (IP: ${ip})`);
       return c.json({ success: true, accountId, message: "Spin cooldown cleared (admin)" });
     } catch (err) {
-      console.log("Error resetting spin cooldown:", err);
+      console.error("[SPIN] Error resetting spin cooldown:", err);
       return c.json({ error: "Failed to reset cooldown" }, 500);
     }
   });
