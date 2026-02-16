@@ -21,6 +21,7 @@ import {
   fetchEthPrice,
   fetchSolPrice,
   CHAIN_INFO,
+  signPersonalMessage,
 } from "../utils/metamask";
 import type {
   HashPackSession,
@@ -83,6 +84,7 @@ interface WalletContextType {
   connectMetaMask: () => Promise<boolean>;
   disconnectMetaMask: () => void;
   refreshMetaMaskBalance: () => Promise<void>;
+  signEvmMessage: (message: string) => Promise<string>;
 
   // HSuite
   hSuiteNFTStatus: HSuiteNFTStatus | null;
@@ -122,6 +124,7 @@ const DEFAULT_WALLET: WalletContextType = {
   connectMetaMask: async () => false,
   disconnectMetaMask: () => {},
   refreshMetaMaskBalance: async () => {},
+  signEvmMessage: async () => "",
   hSuiteNFTStatus: null,
   isConnectingHSuite: false,
   hSuiteConnectionError: null,
@@ -209,28 +212,39 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const wasConnected = localStorage.getItem("hbarh-metamask-connected");
     if (wasConnected === "true" && isMetaMaskInstalled()) {
-      getConnectedAccounts().then(async (accounts) => {
-        if (accounts.length > 0) {
-          const address = accounts[0];
-          const chainId = await getChainId();
-          const { balanceWei, balanceEth } = await getBalance(address);
-          const chain = CHAIN_INFO[chainId];
-          const info: MetaMaskAccountInfo = {
-            address,
-            balanceWei,
-            balanceEth,
-            chainId,
-            chainName: chain?.name || `Chain ${chainId}`,
-            nativeSymbol: chain?.symbol || "ETH",
-            explorerUrl: chain?.explorer || "",
-          };
-          setMetaMaskAccount(info);
-          setConnectedWallets((prev) => {
-            const filtered = prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask"));
-            return [...filtered, { address, type: "ethereum", connector: "MetaMask" }];
-          });
-        }
-      });
+      getConnectedAccounts()
+        .then(async (accounts) => {
+          if (accounts.length > 0) {
+            const address = accounts[0];
+            const chainId = await getChainId();
+            const { balanceWei, balanceEth } = await getBalance(address);
+            const chain = CHAIN_INFO[chainId];
+            const info: MetaMaskAccountInfo = {
+              address,
+              balanceWei,
+              balanceEth,
+              chainId,
+              chainName: chain?.name || `Chain ${chainId}`,
+              nativeSymbol: chain?.symbol || "ETH",
+              explorerUrl: chain?.explorer || "",
+            };
+            setMetaMaskAccount(info);
+            setConnectedWallets((prev) => {
+              const filtered = prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask"));
+              return [...filtered, { address, type: "ethereum", connector: "MetaMask" }];
+            });
+          }
+          // If accounts is empty, MetaMask is locked or user revoked permission.
+          // Keep the localStorage flag — the connection will restore when the
+          // user unlocks MetaMask and we receive an accountsChanged event.
+        })
+        .catch((err) => {
+          // MetaMask provider threw during auto-restore (extension disabled,
+          // corrupted state, etc.). Clear the flag to prevent retry loops and
+          // log the error for diagnostics.
+          log.warn("WalletContext", `MetaMask auto-restore failed: ${err?.message || err}`);
+          localStorage.removeItem("hbarh-metamask-connected");
+        });
     }
     fetchEthPrice().then(setEthPrice);
     fetchSolPrice().then(setSolPrice);
@@ -357,7 +371,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // ─── MetaMask ───────────────────────────────────────────────
+  // ─── MetaMask ────────────��──────────────────────────────────
 
   const connectMetaMask = useCallback(async (): Promise<boolean> => {
     // Abort any in-flight connection attempt (prevents stacked eth_requestAccounts)
@@ -420,6 +434,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (!metaMaskAccount) return;
     const { balanceWei, balanceEth } = await getBalance(metaMaskAccount.address);
     setMetaMaskAccount((prev) => (prev ? { ...prev, balanceWei, balanceEth } : prev));
+  }, [metaMaskAccount]);
+
+  const signEvmMessage = useCallback(async (message: string) => {
+    if (!metaMaskAccount) return "";
+    try {
+      const signature = await signPersonalMessage(metaMaskAccount.address, message);
+      return signature;
+    } catch (error: any) {
+      setMetaMaskError(error.message || "Failed to sign message.");
+      return "";
+    }
   }, [metaMaskAccount]);
 
   // ─── Hedera (WalletConnect v2) ──────────────────────────────
@@ -613,6 +638,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         connectMetaMask,
         disconnectMetaMask: handleDisconnectMetaMask,
         refreshMetaMaskBalance,
+        signEvmMessage,
         hSuiteNFTStatus,
         isConnectingHSuite,
         hSuiteConnectionError,

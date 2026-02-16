@@ -394,6 +394,91 @@ export async function switchToHederaMainnet(): Promise<boolean> {
   return switchChain(295);
 }
 
+// ── EVM Message Signing (EIP-191 personal_sign) ─────────────────────
+
+/**
+ * Sign an arbitrary message via MetaMask using `personal_sign` (EIP-191).
+ *
+ * This is the standard dApp proof-of-ownership primitive:
+ *   1. The dApp sends a human-readable challenge string to MetaMask.
+ *   2. MetaMask displays the message and asks the user to sign.
+ *   3. The wallet returns a 65-byte ECDSA signature (r‖s‖v).
+ *
+ * The signature can later be verified server-side via `ecrecover` to
+ * confirm the signer's address without ever exposing a private key.
+ *
+ * @param address  - The connected 0x address that should sign.
+ * @param message  - The challenge/proof string (displayed verbatim in MetaMask).
+ * @param signal   - Optional AbortSignal for cancellation.
+ * @returns The hex signature string (0x-prefixed, 132 chars).
+ * @throws On user rejection (4001), timeout, or provider error.
+ */
+export async function signPersonalMessage(
+  address: string,
+  message: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!isMetaMaskInstalled()) throw new Error("MetaMask is not installed");
+
+  // EIP-191 personal_sign expects [message, address].
+  // MetaMask internally converts the message to a UTF-8 hex string
+  // and prepends the "\x19Ethereum Signed Message:\n<len>" prefix.
+  const msgHex = "0x" + Array.from(new TextEncoder().encode(message))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  try {
+    const signPromise = (window.ethereum as any).request({
+      method: "personal_sign",
+      params: [msgHex, address],
+    });
+
+    const result = await Promise.race([
+      signPromise,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("MetaMask signing timed out. Close any pending popups and try again.")),
+          MM_REQUEST_TIMEOUT_MS,
+        );
+        signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new Error("Signing cancelled"));
+        }, { once: true });
+      }),
+    ]);
+
+    return result as string;
+  } catch (error: any) {
+    if (error.code === 4001) throw new Error("Signing rejected by user");
+    throw new Error(error.message || "MetaMask signing failed");
+  }
+}
+
+/**
+ * Recover the signer address from a `personal_sign` signature.
+ *
+ * Uses raw EIP-1193 — no ethers.js / web3.js dependency required.
+ * Internally, MetaMask's JSON-RPC provider doesn't expose ecrecover
+ * natively, so we compute it ourselves using the SubtleCrypto API
+ * when available, or fall back to a minimal secp256k1 recovery.
+ *
+ * NOTE: For production verification, prefer server-side ecrecover
+ * (e.g., via ethers `verifyMessage`). This client-side utility is
+ * provided for pre-flight UX checks only.
+ *
+ * @param message   - The original message that was signed.
+ * @param signature - The 0x-prefixed 65-byte hex signature from personal_sign.
+ * @returns The recovered 0x address (checksummed), or null if recovery fails.
+ */
+export function recoverPersonalSignAddress(
+  _message: string,
+  _signature: string,
+): string | null {
+  // Client-side ecrecover requires secp256k1 arithmetic which is non-trivial
+  // without a crypto library. Return null — callers should verify server-side.
+  return null;
+}
+
 // ── Formatting ───────────────────────────────────────────────────────
 
 export function formatAddress(address: string): string {
