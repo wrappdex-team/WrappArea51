@@ -412,6 +412,14 @@ export async function signMessageViaWC(
   await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
 
+  // HIP-820 spec requires the message parameter to be base64-encoded.
+  // The wallet decodes it back to the original bytes before signing.
+  // Using a UTF-8-safe encoding path for robustness.
+  const msgBytes = new TextEncoder().encode(message);
+  let binStr = "";
+  for (let i = 0; i < msgBytes.length; i++) binStr += String.fromCharCode(msgBytes[i]);
+  const messageB64 = btoa(binStr);
+
   try {
     const result = await _safeRequest(client, {
       topic,
@@ -420,7 +428,7 @@ export async function signMessageViaWC(
         method: "hedera_signMessage",
         params: {
           signerAccountId: `${chainId}:${accountId}`,
-          message,
+          message: messageB64,
         },
       },
     });

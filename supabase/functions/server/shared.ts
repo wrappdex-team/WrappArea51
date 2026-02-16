@@ -125,6 +125,28 @@ export function isValidHederaAccountId(id: string): boolean {
   return /^0\.0\.\d{1,10}$/.test(id);
 }
 
+/**
+ * Validate that a string is a safe non-negative integer suitable for BigInt conversion.
+ * Rejects: empty, negative, decimal, scientific notation, non-digit chars, leading zeros
+ * (except bare "0"), and strings longer than maxDigits (default 78 — max uint256).
+ */
+export function isValidBigIntString(s: unknown, maxDigits = 78): boolean {
+  if (typeof s !== "string" || s.length === 0 || s.length > maxDigits) return false;
+  if (!/^\d+$/.test(s)) return false;
+  // Reject leading zeros (except bare "0")
+  if (s.length > 1 && s[0] === "0") return false;
+  return true;
+}
+
+/**
+ * Validate a pool ID matches the expected deterministic format: sl-{symbol}-{symbol}
+ * or a multi-hop composite: sl-{sym}-{sym}+sl-{sym}-{sym}
+ */
+export function isValidPoolId(id: unknown): boolean {
+  if (typeof id !== "string" || id.length === 0 || id.length > 80) return false;
+  return /^sl-[a-z]{2,10}-[a-z]{2,10}(\+sl-[a-z]{2,10}-[a-z]{2,10})?$/.test(id);
+}
+
 // ── Crypto-safe helpers ──────────────────────────────────────────────
 
 export function secureRandomFloat(): number {

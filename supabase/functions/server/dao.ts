@@ -98,7 +98,7 @@ async function isDaoAdminAsync(accountId: string): Promise<boolean> {
 /** Require a "fresh" session (created <2 min ago) for admin management ops */
 async function requireFreshAdminAuth(c: any): Promise<{ accountId: string } | Response> {
   const token = c.req.header("x-session-token") || "";
-  if (!token || token.length < 32) return c.json({ error: "Authentication required — sign a fresh challenge", code: "AUTH_REQUIRED" }, 401);
+  if (!token || !/^[0-9a-f]{64}$/.test(token)) return c.json({ error: "Authentication required — sign a fresh challenge", code: "AUTH_REQUIRED" }, 401);
   try {
     const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
     if (!session) return c.json({ error: "Session expired — re-sign in wallet", code: "SESSION_EXPIRED" }, 401);

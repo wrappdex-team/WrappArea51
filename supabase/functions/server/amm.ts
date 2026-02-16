@@ -25,7 +25,8 @@ import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
-  generateTicketId, isAdminAuthorized, withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
+  generateTicketId, isAdminAuthorized, withKvLock, isValidBigIntString, isValidPoolId,
+  POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
 import { requireAuth, validateSession } from "./auth.ts";
@@ -394,7 +395,7 @@ async function withPoolLock<T>(poolId: string, fn: () => Promise<T>): Promise<T>
   }
 }
 
-// ── Pool Creation Lock ────────────────────────────────────��─────────
+// ── Pool Creation Lock ─────────────────────────────────────────────
 // Serializes all pool creation requests to prevent:
 //   1. Duplicate-pair race (two requests for same pair both pass check)
 //   2. Pool index corruption (concurrent read-modify-write on index key)
@@ -617,14 +618,19 @@ export function registerAmmRoutes(app: Hono): void {
       const body = await c.req.json();
       const { poolId, amountA, amountB } = body;
 
+      // Input validation: poolId format + BigInt-safe amount strings
+      if (!isValidPoolId(poolId)) return c.json({ error: "Invalid pool ID format" }, 400);
+      if (!isValidBigIntString(amountA)) return c.json({ error: "amountA must be a non-negative integer string" }, 400);
+      if (!isValidBigIntString(amountB)) return c.json({ error: "amountB must be a non-negative integer string" }, 400);
+
       return await withPoolLock(poolId, async () => {
             const pool = await getPool(poolId);
             if (!pool) return c.json({ error: "Pool not found" }, 404);
             if (pool.status !== "active") return c.json({ error: "Pool is paused" }, 400);
             const expectedVersion = pool.version;
 
-            const rawA = BigInt(amountA || "0");
-            const rawB = BigInt(amountB || "0");
+            const rawA = BigInt(amountA);
+            const rawB = BigInt(amountB);
             if (rawA <= 0n || rawB <= 0n) return c.json({ error: "Both amounts must be positive" }, 400);
 
             const reserveA = BigInt(pool.reserveA);
@@ -682,12 +688,16 @@ export function registerAmmRoutes(app: Hono): void {
       const body = await c.req.json();
       const { poolId, shares } = body;
 
+      // Input validation: poolId format + BigInt-safe shares string
+      if (!isValidPoolId(poolId)) return c.json({ error: "Invalid pool ID format" }, 400);
+      if (!isValidBigIntString(shares)) return c.json({ error: "shares must be a non-negative integer string" }, 400);
+
       return await withPoolLock(poolId, async () => {
             const pool = await getPool(poolId);
             if (!pool) return c.json({ error: "Pool not found" }, 404);
             const expectedVersion = pool.version;
 
-            const sharesToBurn = BigInt(shares || "0");
+            const sharesToBurn = BigInt(shares);
             if (sharesToBurn <= 0n) return c.json({ error: "Shares must be positive" }, 400);
 
             const position = await getLPPosition(poolId, accountId);
@@ -746,6 +756,12 @@ export function registerAmmRoutes(app: Hono): void {
       const defOut = TOKEN_BY_SYMBOL.get(tokenOut);
       if (!defIn || !defOut) return c.json({ error: `Unknown token. Available: ${ACTIVE_TOKENS.map(t => t.symbol).join(", ")}` }, 400);
 
+      // Validate amountIn is a finite positive number before any math
+      const parsedAmountIn = parseFloat(amountIn);
+      if (!Number.isFinite(parsedAmountIn) || parsedAmountIn <= 0) {
+        return c.json({ error: "amountIn must be a finite positive number" }, 400);
+      }
+
       // Single oracle fetch + batch pool read
       const [prices, poolIds] = await Promise.all([fetchOraclePrices(), getPoolIndex()]);
       const allPools = await getAllPools(poolIds);
@@ -755,7 +771,7 @@ export function registerAmmRoutes(app: Hono): void {
       interface RouteCandidate { path: string[]; amountOut: bigint; priceImpactBps: number; feeBps: number; poolId: string; }
       const routes: RouteCandidate[] = [];
 
-      const rawIn = BigInt(Math.floor(parseFloat(amountIn) * (10 ** defIn.decimals)));
+      const rawIn = BigInt(Math.floor(parsedAmountIn * (10 ** defIn.decimals)));
       if (rawIn <= 0n) return c.json({ error: "Amount must be positive" }, 400);
 
       // Direct routes — uses pre-fetched pool array (no individual KV reads)
@@ -856,6 +872,23 @@ export function registerAmmRoutes(app: Hono): void {
 
       const body = await c.req.json();
       const { poolId, tokenIn, tokenOut, amountInRaw, minAmountOutRaw } = body;
+
+      // Input validation
+      if (!isValidPoolId(poolId) && !(poolId || "").includes("+")) {
+        return c.json({ error: "Invalid pool ID format" }, 400);
+      }
+      if (!tokenIn || typeof tokenIn !== "string" || !TOKEN_BY_SYMBOL.has(tokenIn)) {
+        return c.json({ error: "Invalid tokenIn" }, 400);
+      }
+      if (!tokenOut || typeof tokenOut !== "string" || !TOKEN_BY_SYMBOL.has(tokenOut)) {
+        return c.json({ error: "Invalid tokenOut" }, 400);
+      }
+      if (!isValidBigIntString(amountInRaw)) {
+        return c.json({ error: "amountInRaw must be a non-negative integer string" }, 400);
+      }
+      if (minAmountOutRaw !== undefined && minAmountOutRaw !== null && !isValidBigIntString(String(minAmountOutRaw))) {
+        return c.json({ error: "minAmountOutRaw must be a non-negative integer string" }, 400);
+      }
 
       // Multi-hop execution not yet supported
       if ((poolId || "").includes("+")) {

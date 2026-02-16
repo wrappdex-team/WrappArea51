@@ -44,6 +44,8 @@ interface PublicKeyError { type?: undefined; rawKeyHex?: undefined; error: strin
 
 // ── Hex/Byte Helpers ────────────────────────────────────────────────
 
+const SESSION_TOKEN_RE = /^[0-9a-f]{64}$/;
+
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
   const bytes = new Uint8Array(clean.length / 2);
@@ -222,7 +224,7 @@ async function verifyED25519Signature(
 /** Validate session token and return bound accountId. */
 export async function validateSession(c: any): Promise<{ accountId: string } | null> {
   const token = c.req.header("x-session-token") || "";
-  if (!token || token.length < 32) return null;
+  if (!token || !SESSION_TOKEN_RE.test(token)) return null;
   try {
     const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
     if (!session) return null;
