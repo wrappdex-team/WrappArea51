@@ -15,7 +15,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX } from "./shared.ts";
+import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -27,7 +27,6 @@ const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_SESSION_TTL_MS = 30 * 60 * 1000;
 const AUTH_PUBKEY_CACHE_TTL_MS = 10 * 60 * 1000;
 const AUTH_VERSION = "wrappdex:auth:v1";
-const HEDERA_MIRROR_NODE = "https://mainnet-public.mirrornode.hedera.com";
 const ED25519_DER_PREFIX = "302a300506032b6570032100";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -98,7 +97,7 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
   } catch { /* cache miss */ }
 
   try {
-    const res = await fetch(`${HEDERA_MIRROR_NODE}/api/v1/accounts/${accountId}`, {
+    const res = await fetch(`${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}`, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10000),
     });
@@ -125,7 +124,8 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
     try { await kv.set(cacheKey, { key: result, ts: Date.now() }); } catch { /* non-critical */ }
     return result;
   } catch (err: any) {
-    return { error: `Mirror Node fetch failed: ${err?.message || err}` };
+    console.log(`[AUTH] Mirror Node fetch failed for ${accountId}: ${err?.message || err}`);
+    return { error: "Mirror Node temporarily unavailable — please retry" };
   }
 }
 
@@ -248,7 +248,7 @@ export async function requireAuth(c: any): Promise<{ accountId: string } | Respo
   return { accountId: session.accountId };
 }
 
-// ── Route Registration ──────────────────────────────────────────────
+// ── Route Registration ─────────────────────────────────────────────
 
 export function registerAuthRoutes(app: Hono): void {
 

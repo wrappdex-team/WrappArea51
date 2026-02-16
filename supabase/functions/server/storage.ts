@@ -15,10 +15,18 @@ const HOLIDAY_SIGNED_URL_TTL = 3600; // 1 hour
 const BRAND_BUCKET = "WRAPP LOGOS";
 const BRAND_SIGNED_TTL = 3600; // 1 hour
 
-// ── Partnered Logos Bucket ──────────────────────────────────────────
+// ── Partnered Logos Bucket ──────────────���───────────────────────────
 const PARTNER_BUCKET = "Partnered logos";
 const PARTNER_SIGNED_TTL = 3600; // 1 hour
 const IMG_RE = /\.(png|jpg|jpeg|webp|svg|avif|gif)$/i;
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+/** Classify an error for server-side logging without leaking internals. */
+function safeErrorClass(err: unknown): string {
+  if (err instanceof Error) return err.constructor.name;
+  return typeof err === "string" ? "StringError" : "UnknownError";
+}
 
 // ── Route Registration ──────────────────────────────────────────────
 
@@ -44,7 +52,7 @@ export function registerStorageRoutes(app: Hono): void {
       const { data: buckets, error: listBucketsErr } = await supabase.storage.listBuckets();
       if (listBucketsErr) {
         console.log(`[Holiday Logos] Failed to list buckets: ${listBucketsErr.message}`);
-        return c.json({ error: `Failed to list buckets: ${listBucketsErr.message}` }, 502);
+        return c.json({ error: "Failed to list storage buckets" }, 502);
       }
 
       // Determine which bucket to use — prefer the prefixed one, fall back to legacy
@@ -66,7 +74,7 @@ export function registerStorageRoutes(app: Hono): void {
         if (createErr) {
           console.log(`[Holiday Logos] Bucket creation failed: ${createErr.message}`);
           return c.json({
-            error: `Bucket creation failed: ${createErr.message}`,
+            error: "Holiday logo bucket creation failed",
             hint: `Upload a valentine logo to the "${HOLIDAY_BUCKET}" bucket in your Supabase dashboard.`,
           }, 502);
         }
@@ -82,7 +90,7 @@ export function registerStorageRoutes(app: Hono): void {
 
       if (listErr) {
         console.log(`[Holiday Logos] File list failed on "${activeBucket}": ${listErr.message}`);
-        return c.json({ error: `File list failed: ${listErr.message}`, bucket: activeBucket }, 502);
+        return c.json({ error: "Failed to list holiday logo files", bucket: activeBucket }, 502);
       }
 
       const realFiles = (files || []).filter(
@@ -123,8 +131,8 @@ export function registerStorageRoutes(app: Hono): void {
 
       return c.json({ logos, bucket: activeBucket, urlType: "signed" });
     } catch (err) {
-      console.error(`[Holiday Logos] Unexpected error: ${err}`);
-      return c.json({ error: `Unexpected error: ${String(err)}` }, 500);
+      console.error(`[Holiday Logos] Unexpected error (${safeErrorClass(err)}):`, err);
+      return c.json({ error: "Holiday logo service temporarily unavailable" }, 500);
     }
   });
 
@@ -143,7 +151,7 @@ export function registerStorageRoutes(app: Hono): void {
       const { data: buckets, error: bucketsErr } = await supabase.storage.listBuckets();
       if (bucketsErr) {
         console.log(`[Brand Logos] Failed to list buckets: ${bucketsErr.message}`);
-        return c.json({ error: bucketsErr.message }, 502);
+        return c.json({ error: "Failed to list storage buckets" }, 502);
       }
       const bucket = buckets?.find((b: any) => b.name === BRAND_BUCKET);
       if (!bucket) {
@@ -155,7 +163,7 @@ export function registerStorageRoutes(app: Hono): void {
       const { data: files, error: listErr } = await supabase.storage
         .from(BRAND_BUCKET)
         .list("", { limit: 200, sortBy: { column: "name", order: "asc" } });
-      if (listErr) return c.json({ error: listErr.message, bucket: BRAND_BUCKET }, 502);
+      if (listErr) return c.json({ error: "Failed to list brand logo files", bucket: BRAND_BUCKET }, 502);
       const realFiles = (files || []).filter((f: any) => f.name && !f.name.endsWith("/") && f.id);
 
       if (realFiles.length === 0) {
@@ -199,8 +207,8 @@ export function registerStorageRoutes(app: Hono): void {
       console.log(`[Brand Logos] Private bucket — ${logos.length} signed URL(s): [${logos.map((l: any) => l.name).join(", ")}]`);
       return c.json({ logos, bucket: BRAND_BUCKET, urlType: "signed" });
     } catch (err) {
-      console.error(`[Brand Logos] Unexpected error: ${err}`);
-      return c.json({ error: String(err) }, 500);
+      console.error(`[Brand Logos] Unexpected error (${safeErrorClass(err)}):`, err);
+      return c.json({ error: "Brand logo service temporarily unavailable" }, 500);
     }
   });
 
@@ -219,7 +227,7 @@ export function registerStorageRoutes(app: Hono): void {
       const { data: buckets, error: bucketsErr } = await supabase.storage.listBuckets();
       if (bucketsErr) {
         console.log(`[Partnered Logos] Failed to list buckets: ${bucketsErr.message}`);
-        return c.json({ error: bucketsErr.message }, 502);
+        return c.json({ error: "Failed to list storage buckets" }, 502);
       }
       const allBucketNames = (buckets || []).map((b: any) => b.name);
       console.log(`[Partnered Logos] Available buckets: [${allBucketNames.join(", ")}]`);
@@ -238,7 +246,7 @@ export function registerStorageRoutes(app: Hono): void {
         .list("", { limit: 200, sortBy: { column: "name", order: "asc" } });
       if (listErr) {
         console.log(`[Partnered Logos] List error: ${listErr.message}`);
-        return c.json({ error: listErr.message, bucket: PARTNER_BUCKET }, 502);
+        return c.json({ error: "Failed to list partner logo files", bucket: PARTNER_BUCKET }, 502);
       }
 
       console.log(`[Partnered Logos] Raw entries: ${JSON.stringify((files || []).map((f: any) => ({ n: f.name, id: !!f.id })))}`);
@@ -311,8 +319,8 @@ export function registerStorageRoutes(app: Hono): void {
       console.log(`[Partnered Logos] Signed — ${logos.length} URL(s): [${logos.map((l: any) => l.name).join(", ")}]`);
       return c.json({ logos, bucket: PARTNER_BUCKET, urlType: "signed", isPublic: false });
     } catch (err) {
-      console.error(`[Partnered Logos] Unexpected error: ${err}`);
-      return c.json({ error: String(err) }, 500);
+      console.error(`[Partnered Logos] Unexpected error (${safeErrorClass(err)}):`, err);
+      return c.json({ error: "Partner logo service temporarily unavailable" }, 500);
     }
   });
 
@@ -353,7 +361,8 @@ export function registerStorageRoutes(app: Hono): void {
 
       return c.json({ buckets: allBuckets, targetBucket: PARTNER_BUCKET, rootFiles: rawFiles, subFiles, listError: listErr?.message || null });
     } catch (err) {
-      return c.json({ error: String(err) }, 500);
+      console.error(`[Partnered Logos Debug] Unexpected error (${safeErrorClass(err)}):`, err);
+      return c.json({ error: "Debug query failed" }, 500);
     }
   });
 }

@@ -4,7 +4,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { ROUTE_PREFIX } from "./shared.ts";
+import { ROUTE_PREFIX, HEDERA_MIRROR_MAINNET } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ async function fetchCryptoNews(): Promise<CachedNews["items"]> {
 
   // Source 3: Hedera-specific data from Mirror Node
   try {
-    const hbarResp = await fetch("https://mainnet-public.mirrornode.hedera.com/api/v1/network/supply", {
+    const hbarResp = await fetch(`${HEDERA_MIRROR_MAINNET}/api/v1/network/supply`, {
       signal: AbortSignal.timeout(5000),
     });
     if (hbarResp.ok) {

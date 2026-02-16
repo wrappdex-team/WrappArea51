@@ -8,7 +8,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { getClientIp, isRateLimited, ROUTE_PREFIX } from "./shared.ts";
+import { getClientIp, isRateLimited, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET } from "./shared.ts";
 import { requireAuth } from "./auth.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ export interface VipStatusResult {
 
 async function verifyVipBalance(accountId: string): Promise<{ eligible: boolean; balance: number }> {
   try {
-    const url = `https://mainnet.mirrornode.hedera.com/api/v1/accounts/${accountId}/tokens?token.id=${VIP_HBARH_TOKEN_ID}&limit=1`;
+    const url = `${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}/tokens?token.id=${VIP_HBARH_TOKEN_ID}&limit=1`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return { eligible: false, balance: 0 };
     const data = await res.json();
@@ -58,7 +58,7 @@ async function verifyVipBalance(accountId: string): Promise<{ eligible: boolean;
 
 async function verifyVipNftOwnership(accountId: string): Promise<{ hasNft: boolean; nftCount: number }> {
   try {
-    const url = `https://mainnet.mirrornode.hedera.com/api/v1/accounts/${accountId}/tokens?token.id=${VIP_NFT_TOKEN_ID}&limit=1`;
+    const url = `${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}/tokens?token.id=${VIP_NFT_TOKEN_ID}&limit=1`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return { hasNft: false, nftCount: 0 };
     const data = await res.json();

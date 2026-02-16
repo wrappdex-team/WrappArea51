@@ -29,6 +29,17 @@ interface HealthSnapshotV2 {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/** Extract a safe, non-leaky error summary for health probe detail fields. */
+function safeProbeDetail(err: unknown): string {
+  if (err instanceof Error) {
+    // Return the error class + a truncated message stripped of file paths.
+    // Pattern: remove anything that looks like a file:///… or /home/… path segment.
+    const msg = (err.message || "").replace(/(?:file:\/\/\/|\/[\w./-]+\/)[^\s)]+/g, "<path>").slice(0, 80);
+    return `${err.constructor.name}: ${msg}`;
+  }
+  return "Unknown error";
+}
+
 async function probeApiV2(url: string): Promise<HealthCheckResultV2> {
   const t0 = Date.now();
   const ac = new AbortController();
@@ -44,7 +55,7 @@ async function probeApiV2(url: string): Promise<HealthCheckResultV2> {
     return {
       status: "error",
       latencyMs: Date.now() - t0,
-      detail: err?.name === "AbortError" ? `Timeout (>${HEALTH_API_TIMEOUT_MS_V2}ms)` : String(err).slice(0, 120),
+      detail: err?.name === "AbortError" ? `Timeout (>${HEALTH_API_TIMEOUT_MS_V2}ms)` : safeProbeDetail(err),
     };
   }
 }
@@ -79,7 +90,8 @@ export function registerHealthRoutes(app: Hono): void {
         if (readback?.ok) return { status: "ok", latencyMs, detail: "Read/write verified" };
         return { status: "degraded", latencyMs, detail: "Write ok, readback mismatch" };
       } catch (err: any) {
-        return { status: "error", latencyMs: Date.now() - t0, detail: String(err).slice(0, 120) };
+        console.log(`[Health] KV probe error:`, err);
+        return { status: "error", latencyMs: Date.now() - t0, detail: safeProbeDetail(err) };
       }
     };
 
@@ -90,10 +102,11 @@ export function registerHealthRoutes(app: Hono): void {
         const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
         const supabase = createSupabaseClient(supabaseUrl, supabaseKey);
         const { data, error } = await supabase.storage.listBuckets();
-        if (error) return { status: "error", latencyMs: Date.now() - t0, detail: error.message };
+        if (error) return { status: "error", latencyMs: Date.now() - t0, detail: "Storage API returned error" };
         return { status: "ok", latencyMs: Date.now() - t0, detail: `${data?.length ?? 0} bucket(s)` };
       } catch (err: any) {
-        return { status: "error", latencyMs: Date.now() - t0, detail: String(err).slice(0, 120) };
+        console.log(`[Health] Storage probe error:`, err);
+        return { status: "error", latencyMs: Date.now() - t0, detail: safeProbeDetail(err) };
       }
     };
 

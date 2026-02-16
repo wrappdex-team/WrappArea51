@@ -312,6 +312,15 @@ export async function withKvLock<T>(cfg: KvLockConfig, fn: () => Promise<T>): Pr
 
 export const POOL_LOCK_RETRY_INTERVAL_MS = 40;    // Spin-wait interval
 
+// ── Hedera Mirror Node ──────────────────────────────────────────────
+// Canonical hostnames — single source of truth for every server module.
+// Always use mainnet-public (the community-facing public endpoint).
+// `mainnet.mirrornode.hedera.com` also resolves but is not the canonical
+// hostname; mixing the two causes independent failure modes (P7 audit).
+
+export const HEDERA_MIRROR_MAINNET = "https://mainnet-public.mirrornode.hedera.com";
+export const HEDERA_MIRROR_TESTNET = "https://testnet.mirrornode.hedera.com";
+
 // ── Route Prefix ────────────────────────────────────────────────────
 // All Hono routes are registered under this path prefix.
 // Single source of truth — eliminates 30+ hardcoded repetitions across modules.
