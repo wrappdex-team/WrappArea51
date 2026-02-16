@@ -373,7 +373,7 @@ export function WhitePaper() {
     { id: "bridges", label: "Bridges" },
     { id: "dao", label: "Governance" },
     { id: "vip", label: "VIP System" },
-    { id: "token", label: "HBAR.h Token" },
+    { id: "token", label: "HBAR.ħ Token" },
     { id: "security", label: "Security" },
     { id: "roadmap", label: "Roadmap" },
     { id: "team", label: "Team" },
@@ -775,7 +775,7 @@ export function WhitePaper() {
                   <span
                     className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}
                   >
-                    0.3% fee
+                    0.10% fee
                   </span>
                 </div>
                 <div
@@ -1268,7 +1268,7 @@ export function WhitePaper() {
                 <div
                   className={`flex items-center justify-between text-xs md:text-sm ${isDark ? "text-slate-300" : "text-slate-600"}`}
                 >
-                  <span>100M HBAR.h = 1 vote</span>
+                  <span>100M HBAR.ħ = 1 vote</span>
                   <span
                     className={`font-bold ${isDark ? "text-slate-500" : "text-gray-400"}`}
                   >
@@ -1388,7 +1388,7 @@ export function WhitePaper() {
                 <div
                   className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
                 >
-                  Hold 100M+ HBAR.h
+                  Hold 100M+ HBAR.ħ
                 </div>
               </div>
               <div
@@ -1427,9 +1427,9 @@ export function WhitePaper() {
           </GlassCard>
         </Section>
 
-        {/* ═══ HBAR.h TOKEN ═══ */}
+        {/* ═══ HBAR.ħ TOKEN ═══ */}
         <Section id="token" className="mb-16">
-          <h2 className={h2}>HBAR.h Protocol Token</h2>
+          <h2 className={h2}>HBAR.ħ Protocol Token</h2>
           <p className={subtitle}>
             The key to governance, VIP access, and pool creation.
           </p>
@@ -1477,7 +1477,7 @@ export function WhitePaper() {
                   },
                   {
                     t: "Pool Creation",
-                    d: "Pay $50 in HBAR.h to create weighted pools (free for VIPs)",
+                    d: "Pay $50 in HBAR.ħ to create weighted pools (free for VIPs)",
                   },
                   {
                     t: "Protocol Fee Sink",
@@ -1485,7 +1485,7 @@ export function WhitePaper() {
                   },
                   {
                     t: "Liquidity Pairing",
-                    d: "WHBAR/HBAR.h pool on SaucerSwap V1",
+                    d: "WHBAR/HBAR.ħ pool on SaucerSwap V1",
                   },
                   {
                     t: "NFT Alternative",
@@ -1609,7 +1609,7 @@ export function WhitePaper() {
                 "Formal smart contract audit",
                 "HSuite SmartNode integration",
                 "Native staking contracts",
-                "HBAR.h lending market on Bonzo",
+                "HBAR.ħ lending market on Bonzo",
                 "Limit order types",
                 "Portfolio P&L analytics",
               ]}
@@ -1656,14 +1656,14 @@ export function WhitePaper() {
             <TeamCard
               name="Natalie"
               role="Chief Marketing Officer"
-              desc="Leads brand strategy, growth marketing, and market positioning for WRAPpDEX and the HBAR.h ecosystem."
+              desc="Leads brand strategy, growth marketing, and market positioning for WRAPpDEX and the HBAR.ħ ecosystem."
               accent="bg-gradient-to-br from-violet-500 to-pink-500"
               href="/branding"
             />
             <TeamCard
               name="Carlos"
               role="Community & Brand Ambassador"
-              desc="Drives community engagement, moderates governance channels, and represents the HBAR.h brand across the Hedera ecosystem."
+              desc="Drives community engagement, moderates governance channels, and represents the HBAR.ħ brand across the Hedera ecosystem."
               accent="bg-gradient-to-br from-blue-500 to-cyan-500"
             />
           </div>
@@ -1750,15 +1750,15 @@ export function WhitePaper() {
             {[
               {
                 title: "AMM Swap Fees",
-                desc: "5\u2013100 bps per swap, configurable per pool. Accrues to liquidity providers.",
+                desc: "0.10% (10 bps) per swap, fixed across all pools. Stays in the pool and accrues to liquidity providers.",
               },
               {
-                title: "Protocol Fee Share",
-                desc: "DAO-governed percentage of swap fees routable to the treasury.",
+                title: "Protocol Micro-Fee",
+                desc: "$0.0007 flat per swap in HBAR. Split 50/50 between LP rewards and the protocol treasury.",
               },
               {
                 title: "Pool Creation Fees",
-                desc: "$50 in HBAR.h per weighted pool for non-VIP users.",
+                desc: "$50 in HBAR.ħ per weighted pool for non-VIP users.",
               },
               {
                 title: "Fiat On-Ramp Affiliate",
@@ -1785,10 +1785,11 @@ export function WhitePaper() {
               className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
             >
               <span className="font-bold">Conservative projection:</span> At
-              $100M TVL and $5M daily volume with a 5 bps protocol fee, annual
-              revenue exceeds <span className="font-bold">$1.1M</span>. At
-              Phase 4 scale ($500M TVL), that figure passes{" "}
-              <span className="font-bold">$5M annually</span>.
+              $5M daily volume across all pools, the 0.10% in-pool fee
+              generates $5,000/day for LPs. The flat $0.0007 protocol
+              micro-fee at 50,000 daily swaps yields ~$35/day for the
+              treasury. Pool creation fees and fiat affiliate revenue
+              layer on top as the user base scales.
             </p>
           </GlassCard>
         </Section>
@@ -1844,7 +1845,7 @@ export function WhitePaper() {
           <p
             className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}
           >
-            &copy; 2026 HBAR.h Protocol. All rights reserved.
+            &copy; 2026 HBAR.ħ Protocol. All rights reserved.
           </p>
           <p
             className={`text-xs mt-2 ${isDark ? "text-slate-600" : "text-gray-400"}`}

@@ -10,6 +10,7 @@ import {
   Image,
   Layers,
   Shield,
+  XCircle,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import {
@@ -21,8 +22,12 @@ import {
 } from "../assets/brand";
 
 /* ─── Real Logo Assets ─────────────────────────────────────────────── */
-import wrappdexLogoDark from "figma:asset/6b6744b10bc6c8265e179367058c60874f7766e0.png";
-import wrappdexLogoLight from "figma:asset/c6c302ce31a9e8fa54acb2e857abd8073dfbcfa6.png";
+// The figma:asset scheme only works inside Figma Make's dev server.
+// For Vercel / Railway / Netlify production builds, use the data-URI
+// fallbacks exported from brand.ts. Swap these for CDN-hosted logos
+// once the final PNGs land in the Supabase storage bucket.
+const wrappdexLogoDark = HBARH_BRANDING_DARK;
+const wrappdexLogoLight = HBARH_BRANDING_LIGHT;
 
 /* ─── Helpers ──────────────────────────────────────────────────────── */
 
@@ -102,6 +107,21 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 /* ─── Brand Color Card (Premium tall-swatch style) ─────────────────── */
 
+/**
+ * Determines if a given color string represents a "light" color where dark
+ * overlay text would be more legible than white text.
+ */
+function isLightColor(hex: string): boolean {
+  if (hex.startsWith("rgba")) return true; // transparent = light against card bg
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return false;
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  // Perceived luminance formula
+  return (r * 299 + g * 587 + b * 114) / 1000 > 180;
+}
+
 function BrandColorCard({
   name,
   hex,
@@ -147,10 +167,14 @@ function BrandColorCard({
           >
             <button
               onClick={handleCopy}
-              className={`flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-xl transition-all duration-200 ${
+              className={`flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-xl transition-all duration-200 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
                 copied
-                  ? "bg-emerald-500/30 text-emerald-300"
-                  : "bg-black/20 backdrop-blur-sm text-white/80 opacity-0 group-hover:opacity-100 hover:bg-black/30 hover:text-white"
+                  ? isLightColor(hex)
+                    ? "bg-emerald-600/30 text-emerald-800"
+                    : "bg-emerald-500/30 text-emerald-300"
+                  : isLightColor(hex)
+                    ? "bg-white/20 backdrop-blur-sm text-slate-800 opacity-0 group-hover:opacity-100 hover:bg-white/30 hover:text-slate-900"
+                    : "bg-black/20 backdrop-blur-sm text-white/80 opacity-0 group-hover:opacity-100 hover:bg-black/30 hover:text-white"
               }`}
             >
               {copied ? (
@@ -327,7 +351,7 @@ export function Branding() {
                   White WRAPP &middot; Blue p &middot; Silver DEX &mdash; use on dark backgrounds, glass cards, hero sections
                 </p>
               </div>
-              <CopyButton text="WRAPpDEX Logo (Dark)" label="Label" />
+              <CopyButton text="WRAPpDEX Logo (Dark)" label="Copy Name" />
             </div>
           </GlassCard>
 
@@ -349,7 +373,7 @@ export function Branding() {
                   Black WRAPP &middot; Blue p &middot; Gray DEX &mdash; use on white/light backgrounds, print, docs
                 </p>
               </div>
-              <CopyButton text="WRAPpDEX Logo (Light)" label="Label" />
+              <CopyButton text="WRAPpDEX Logo (Light)" label="Copy Name" />
             </div>
           </GlassCard>
 
@@ -813,7 +837,7 @@ export function Branding() {
 
             <GlassCard className="p-5 md:p-6" hover={false}>
               <h4 className={`font-bold text-sm mb-3 flex items-center gap-2 ${isDark ? "text-red-400" : "text-red-600"}`}>
-                <Shield className="w-4 h-4" /> Don't
+                <XCircle className="w-4 h-4" /> Don't
               </h4>
               <ul className={`text-xs leading-relaxed space-y-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                 <li>Never use Hedera's HBAR logo in place of the HBAR.ħ token icon.</li>
@@ -976,7 +1000,7 @@ export function Branding() {
                 selling for you.
               </p>
 
-              <div className="mt-6 pt-6 border-t border-white/[0.06]">
+              <div className={`mt-6 pt-6 border-t ${isDark ? "border-white/[0.06]" : "border-gray-200"}`}>
                 <p className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
                   Natalie
                 </p>

@@ -27,14 +27,14 @@ const metamaskLogoOfficial = `data:image/svg+xml,${encodeURIComponent(
 // ── Wrappdex main logos (light & dark mode) ──────────────────────────
 // Data-URI SVG wordmarks — zero network requests, instant render.
 // Swap for CDN-hosted brand kit assets (PNG / SVG) when available.
-// Dark mode wordmark — light text on transparent, for dark backgrounds
+// Dark mode wordmark — white WRAP, blue p (#1D63ED), silver DEX (#94A3B8)
 const wrappdexLogoDark = `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60"><rect width="280" height="60" rx="8" fill="none"/><text x="140" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-0.5" fill="#e2e8f0">WRAPP<tspan fill="#ec4899">DEX</tspan></text></svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 60"><rect width="320" height="60" rx="8" fill="none"/><text x="160" y="42" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="36" font-weight="800" letter-spacing="-0.5" fill="#ffffff">WRAP<tspan fill="#1D63ED">p</tspan><tspan fill="#94A3B8">DEX</tspan></text></svg>`
 )}`;
 
-// Light mode wordmark — dark text on transparent, for light backgrounds
+// Light mode wordmark — dark WRAP, blue p (#1D63ED), gray DEX (#64748B)
 const wrappdexLogoLight = `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60"><rect width="280" height="60" rx="8" fill="none"/><text x="140" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-0.5" fill="#0f172a">WRAPP<tspan fill="#db2777">DEX</tspan></text></svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 60"><rect width="320" height="60" rx="8" fill="none"/><text x="160" y="42" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="36" font-weight="800" letter-spacing="-0.5" fill="#0f172a">WRAP<tspan fill="#1D63ED">p</tspan><tspan fill="#64748B">DEX</tspan></text></svg>`
 )}`;
 
 // HashPack — official logo from their public GitHub assets
