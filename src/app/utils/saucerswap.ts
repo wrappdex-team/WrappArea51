@@ -825,8 +825,7 @@ export async function fetchHbarhTokenPrice(): Promise<{ price: number; source: s
     return { price: _liveTokenPricesUsd["HBAR.ħ"], source: "saucerswap-cache" };
   }
 
-  // Strategy 2: DexScreener API — most accurate for DEX-traded tokens
-  // Pair address: 0x31d6b803a960b818cce3a85f0bef7c4c566b7919
+  // Strategy 2a: DexScreener pairs endpoint
   try {
     const dexRes = await fetch(
       "https://api.dexscreener.com/latest/dex/pairs/hedera/0x31d6b803a960b818cce3a85f0bef7c4c566b7919",
@@ -840,12 +839,38 @@ export async function fetchHbarhTokenPrice(): Promise<{ price: number; source: s
         if (p > 0) {
           _liveTokenPricesUsd["HBAR.ħ"] = p;
           _liveTokenPricesTimestamp = Date.now();
-          console.log(`[HBAR.ħ] DexScreener price: $${p}`);
           return { price: p, source: "dexscreener" };
         }
       }
     }
-  } catch { /* continue */ }
+  } catch (err: any) {
+    console.warn("[HBAR.h] fetchHbarhTokenPrice DexScreener pairs error:", err?.message || err);
+  }
+
+  // Strategy 2b: DexScreener token search (EVM address of 0.0.9356476)
+  try {
+    const dexTokenRes = await fetch(
+      "https://api.dexscreener.com/latest/dex/tokens/0x00000000000000000000000000000000008ecf5c",
+      { signal: makeAbort(10000) }
+    );
+    if (dexTokenRes.ok) {
+      const dexTokenData = await dexTokenRes.json();
+      const pairs = dexTokenData?.pairs;
+      if (Array.isArray(pairs) && pairs.length > 0) {
+        const best = pairs.reduce((a: any, b: any) =>
+          (parseFloat(b.liquidity?.usd || "0") > parseFloat(a.liquidity?.usd || "0")) ? b : a
+        , pairs[0]);
+        const p = parseFloat(best.priceUsd || "0");
+        if (p > 0) {
+          _liveTokenPricesUsd["HBAR.ħ"] = p;
+          _liveTokenPricesTimestamp = Date.now();
+          return { price: p, source: "dexscreener-tokens" };
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[HBAR.h] fetchHbarhTokenPrice DexScreener tokens error:", err?.message || err);
+  }
 
   // Strategy 3: check live price cache (populated by fetchLiveTokenPrices)
   // NOTE: Do NOT call fetchLiveTokenPrices() here — it calls us back,
@@ -866,10 +891,13 @@ export async function fetchHbarhTokenPrice(): Promise<{ price: number; source: s
         return { price: p, source: "saucerswap-direct" };
       }
     }
-  } catch { /* continue */ }
+  } catch (err: any) {
+    console.warn("[HBAR.h] fetchHbarhTokenPrice SaucerSwap direct error:", err?.message || err);
+  }
 
   // Strategy 5: hardcoded fallback
   const fallback = FALLBACK_TOKEN_PRICES_USD["HBAR.ħ"] || 0.008;
+  console.warn(`[HBAR.h] All live strategies exhausted — using fallback: $${fallback}`);
   return { price: fallback, source: "fallback" };
 }
 
@@ -3912,29 +3940,73 @@ export async function fetchHbarhPrice(): Promise<HbarhTokenData> {
   let change24h = FALLBACK_DATA.change24h;
   let priceSource = "fallback";
 
-  // Strategy 1: DexScreener API — most accurate for DEX-traded tokens
+  console.log("[HBAR.h] fetchHbarhPrice() called — starting price strategies");
+
+  // Strategy 1a: DexScreener pairs endpoint
   try {
     const dexRes = await fetch(
       "https://api.dexscreener.com/latest/dex/pairs/hedera/0x31d6b803a960b818cce3a85f0bef7c4c566b7919",
       { signal: makeAbort(10000) }
     );
+    console.log(`[HBAR.h] DexScreener pairs status: ${dexRes.status}`);
     if (dexRes.ok) {
       const dexData = await dexRes.json();
+      console.log("[HBAR.h] DexScreener pairs keys:", Object.keys(dexData));
       const pair = dexData?.pair || dexData?.pairs?.[0];
       if (pair) {
         const p = parseFloat(pair.priceUsd || "0");
+        console.log(`[HBAR.h] DexScreener pairs price: $${p}`);
         if (p > 0) {
           priceUsd = p;
           volume = parseFloat(pair.volume?.h24 || "0");
           liquidity = parseFloat(pair.liquidity?.usd || "0");
           change24h = parseFloat(pair.priceChange?.h24 || "0");
-          priceSource = "dexscreener";
+          priceSource = "dexscreener-pairs";
         }
+      } else {
+        console.warn("[HBAR.h] DexScreener pairs: no pair object found in response");
       }
     }
-  } catch { /* continue to fallback strategies */ }
+  } catch (err: any) {
+    console.warn("[HBAR.h] DexScreener pairs error:", err?.message || err);
+  }
 
-  // Strategy 2: Try SaucerSwap direct token endpoint
+  // Strategy 1b: DexScreener token search (uses EVM token address — more resilient than pair address)
+  // 0.0.9356476 → EVM = 0x00000000000000000000000000000000008ecf5c
+  if (priceUsd <= 0) {
+    try {
+      const dexTokenRes = await fetch(
+        "https://api.dexscreener.com/latest/dex/tokens/0x00000000000000000000000000000000008ecf5c",
+        { signal: makeAbort(10000) }
+      );
+      console.log(`[HBAR.h] DexScreener tokens status: ${dexTokenRes.status}`);
+      if (dexTokenRes.ok) {
+        const dexTokenData = await dexTokenRes.json();
+        const pairs = dexTokenData?.pairs;
+        if (Array.isArray(pairs) && pairs.length > 0) {
+          // Pick the pair with highest liquidity for most accurate price
+          const best = pairs.reduce((a: any, b: any) =>
+            (parseFloat(b.liquidity?.usd || "0") > parseFloat(a.liquidity?.usd || "0")) ? b : a
+          , pairs[0]);
+          const p = parseFloat(best.priceUsd || "0");
+          console.log(`[HBAR.h] DexScreener tokens price: $${p} (${pairs.length} pairs found)`);
+          if (p > 0) {
+            priceUsd = p;
+            volume = parseFloat(best.volume?.h24 || "0");
+            liquidity = parseFloat(best.liquidity?.usd || "0");
+            change24h = parseFloat(best.priceChange?.h24 || "0");
+            priceSource = "dexscreener-tokens";
+          }
+        } else {
+          console.warn("[HBAR.h] DexScreener tokens: no pairs array in response");
+        }
+      }
+    } catch (err: any) {
+      console.warn("[HBAR.h] DexScreener tokens error:", err?.message || err);
+    }
+  }
+
+  // Strategy 2: SaucerSwap direct token endpoint
   if (priceUsd <= 0) {
     try {
       const res = await saucerFetch("/tokens/" + HBARH_TOKEN_ID, 8000);
@@ -3945,11 +4017,16 @@ export async function fetchHbarhPrice(): Promise<HbarhTokenData> {
         liquidity = parseFloat(data.liquidity || data.tvl || "0");
         change24h = data.priceChangePercentage24h ?? data.change24h ?? change24h;
         if (priceUsd > 0) priceSource = "saucerswap";
+        console.log(`[HBAR.h] SaucerSwap direct price: $${priceUsd}`);
+      } else {
+        console.warn("[HBAR.h] SaucerSwap direct: null response");
       }
-    } catch { /* continue to fallback strategies */ }
+    } catch (err: any) {
+      console.warn("[HBAR.h] SaucerSwap direct error:", err?.message || err);
+    }
   }
 
-  // Strategy 3: Use the multi-strategy price fetcher
+  // Strategy 3: Multi-strategy price fetcher (has its own DexScreener + SaucerSwap cascade)
   if (priceUsd <= 0) {
     try {
       const result = await fetchHbarhTokenPrice();
@@ -3957,12 +4034,15 @@ export async function fetchHbarhPrice(): Promise<HbarhTokenData> {
         priceUsd = result.price;
         priceSource = result.source;
       }
-    } catch { /* continue */ }
+      console.log(`[HBAR.h] Multi-strategy result: $${result.price} (${result.source})`);
+    } catch (err: any) {
+      console.warn("[HBAR.h] Multi-strategy error:", err?.message || err);
+    }
   }
 
   const finalPrice = priceUsd > 0 ? priceUsd : FALLBACK_DATA.price;
 
-  console.log(`[HBAR.h] Price: $${finalPrice} (source: ${priceSource})`);
+  console.log(`[HBAR.h] FINAL price: $${finalPrice} (source: ${priceSource})`);
 
   return {
     price: finalPrice,
