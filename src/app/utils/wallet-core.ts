@@ -311,6 +311,7 @@ export async function signAndExecuteTransaction(
         transactionList: _u8ToBase64(transactionBytes),
       },
     },
+    sessionConfig: { disableDeepLink: true },
   });
 }
 
@@ -335,6 +336,7 @@ export async function signTransactionViaWC(
           transactionList: _u8ToBase64(transactionBytes),
         },
       },
+      sessionConfig: { disableDeepLink: true },
     });
 
     if (typeof result === "string") return _base64ToU8(result);
@@ -371,6 +373,7 @@ export async function signMessageViaWC(
           message,
         },
       },
+      sessionConfig: { disableDeepLink: true },
     });
 
     if (result?.signatureMap) return { signatures: Object.values(result.signatureMap) };
