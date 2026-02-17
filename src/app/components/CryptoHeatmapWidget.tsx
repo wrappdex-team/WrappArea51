@@ -41,33 +41,6 @@ const INITIAL_VERIFICATION: VipVerification = {
   error: null,
 };
 
-// ── Shared iframe styles ─────────────────────────────────────────────
-
-function baseStyles(bg: string): string {
-  return `
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      background: ${bg};
-      overflow: hidden;
-      min-height: 100%;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
-    /* Hide scrollbar on body */
-    body::-webkit-scrollbar { display: none; }
-    body { -ms-overflow-style: none; scrollbar-width: none; }
-    /* Style scrollbars on all inner elements for dark/light compatibility */
-    *:not(html):not(body) {
-      scrollbar-width: thin;
-      scrollbar-color: rgba(255,255,255,0.10) transparent;
-    }
-    *:not(html):not(body)::-webkit-scrollbar { width: 4px; height: 4px; }
-    *:not(html):not(body)::-webkit-scrollbar-track { background: transparent; }
-    *:not(html):not(body)::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
-    *:not(html):not(body)::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
-    *:not(html):not(body)::-webkit-scrollbar-corner { background: transparent; }
-  `;
-}
-
 // ── Stable heatmap grid lightness values (pre-computed, no Math.random per render) ──
 const GRID_LIGHTNESS_DARK = [27, 31, 24, 29, 33, 26, 22, 30, 28, 25, 32, 23, 34, 27, 31, 29, 26, 33, 24, 28, 30, 22, 35, 27, 25, 31, 29, 23, 34, 28, 26, 32];
 const GRID_LIGHTNESS_LIGHT = [78, 82, 73, 80, 85, 75, 71, 81, 77, 74, 83, 72, 84, 78, 82, 79, 75, 83, 73, 77, 80, 71, 85, 76, 74, 81, 79, 72, 84, 77, 75, 82];
@@ -246,58 +219,23 @@ export function CryptoHeatmapWidget() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
 
-  // ── Iframe srcdocs (only built if VIP) ─────────────────────────
+  // ── Iframe URLs (static HTML files with their own permissive CSP) ──
+  // Served from /public/widgets/ as same-origin static files.
+  // Each file has its own <meta> CSP with `img-src *` so coin logos
+  // load from any upstream CDN — completely independent of the parent
+  // page's restrictive policy. (srcdoc iframes inherit the parent CSP;
+  // src= iframes do NOT — they use their own response-level CSP.)
 
-  const tickerSrcdoc = useMemo(() => {
+  const tickerUrl = useMemo(() => {
     if (vip.state !== "eligible") return "";
-    const bg = isDark ? "#080a12" : "#f8fafc";
     const theme = isDark ? "dark" : "light";
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <style>${baseStyles(bg)}
-    qc-price-ticker-widget { display: block; width: 100%; }
-  </style>
-</head>
-<body>
-  <qc-price-ticker-widget
-    mode="custom"
-    top-coins="true"
-    gainers-and-losers="true"
-    bg="${bg}"
-    theme="${theme}"
-    currency="USD">
-  </qc-price-ticker-widget>
-  <script src="https://quantifycrypto.com/widgets/marquee/js/qc-price-ticker-widget.js"><\/script>
-</body>
-</html>`;
+    return `/widgets/ticker.html?theme=${theme}`;
   }, [isDark, vip.state]);
 
-  const heatmapSrcdoc = useMemo(() => {
+  const heatmapUrl = useMemo(() => {
     if (vip.state !== "eligible") return "";
-    const bg = isDark ? "#080a12" : "#f8fafc";
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <style>${baseStyles(bg)}
-    qc-heatmap { display: block; width: 100%; }
-  </style>
-</head>
-<body>
-  <qc-heatmap
-    height="400px"
-    num-of-coins="50"
-    currency-code="USD">
-  </qc-heatmap>
-  <script src="https://quantifycrypto.com/widgets/heatmaps/js/qc-heatmap-widget.js"><\/script>
-</body>
-</html>`;
+    const theme = isDark ? "dark" : "light";
+    return `/widgets/heatmap.html?theme=${theme}`;
   }, [isDark, vip.state]);
 
   // ── Iframe event handlers ──────────────────────────────────────
@@ -497,7 +435,7 @@ export function CryptoHeatmapWidget() {
       {!tickerError && (
         <div className="w-full overflow-hidden">
           <iframe
-            srcDoc={tickerSrcdoc}
+            src={tickerUrl}
             sandbox={SANDBOX}
             scrolling="no"
             title="Crypto Price Ticker"
@@ -526,7 +464,7 @@ export function CryptoHeatmapWidget() {
           }`}
         >
           <iframe
-            srcDoc={heatmapSrcdoc}
+            src={heatmapUrl}
             sandbox={SANDBOX}
             scrolling="no"
             title="Top 50 Crypto Heatmap"
