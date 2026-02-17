@@ -436,16 +436,23 @@ export async function fetchDaoAdmins(
  * The caller must use forceReauthenticate() first to get a fresh session,
  * which triggers a new HashPack signing prompt as confirmation.
  * Server enforces owner-only — other admins will receive OWNER_REQUIRED error.
+ *
+ * @param freshToken - Optional session token from forceReauthenticate().
+ *   Preferred over getSessionToken() to guarantee the just-signed token is used
+ *   and not lost to an intervening React effect or session clear.
  */
 export async function addDaoAdmin(
   accountId: string,
-  newAdminAccountId: string
-): Promise<{ admins: string[]; error?: string }> {
+  newAdminAccountId: string,
+  freshToken?: string
+): Promise<{ admins: string[]; error?: string; code?: string }> {
   try {
-    const token = getSessionToken();
+    const token = freshToken || getSessionToken();
     if (!token) {
-      return { admins: [], error: "No session — please re-sign in wallet first" };
+      log.error("DAO", "addDaoAdmin: No session token available (freshToken was not provided and getSessionToken() returned null)");
+      return { admins: [], error: "No session — please re-sign in wallet first", code: "NO_SESSION" };
     }
+    log.info("DAO", `addDaoAdmin: Sending POST /dao/admins for ${newAdminAccountId} (token=${token.slice(0, 8)}…)`);
     const res = await fetch(`${API_BASE}/dao/admins`, {
       method: "POST",
       headers: authHeaders(token),
@@ -454,29 +461,36 @@ export async function addDaoAdmin(
     });
     const data = await res.json();
     if (!res.ok) {
-      return { admins: data.admins || [], error: data.error || "Failed to add admin" };
+      log.error("DAO", `addDaoAdmin failed: HTTP ${res.status} code=${data.code} error=${data.error}`);
+      return { admins: data.admins || [], error: data.error || "Failed to add admin", code: data.code };
     }
+    log.info("DAO", `addDaoAdmin success: ${data.admins?.length} admins`);
     setAdminListCache(data.admins);
     return { admins: data.admins };
   } catch (err: any) {
     log.error("DAO", "Error adding admin", err);
-    return { admins: [], error: err?.message || "Network error" };
+    return { admins: [], error: err?.message || "Network error", code: "NETWORK_ERROR" };
   }
 }
 
 /**
  * Remove a DAO admin. OWNER-ONLY (0.0.518487). Same fresh-session requirement as add.
  * Founder (0.0.518487) can never be removed (server-enforced).
+ *
+ * @param freshToken - Optional session token from forceReauthenticate().
  */
 export async function removeDaoAdmin(
   accountId: string,
-  targetAccountId: string
-): Promise<{ admins: string[]; error?: string }> {
+  targetAccountId: string,
+  freshToken?: string
+): Promise<{ admins: string[]; error?: string; code?: string }> {
   try {
-    const token = getSessionToken();
+    const token = freshToken || getSessionToken();
     if (!token) {
-      return { admins: [], error: "No session — please re-sign in wallet first" };
+      log.error("DAO", "removeDaoAdmin: No session token available");
+      return { admins: [], error: "No session — please re-sign in wallet first", code: "NO_SESSION" };
     }
+    log.info("DAO", `removeDaoAdmin: Sending DELETE /dao/admins/${targetAccountId} (token=${token.slice(0, 8)}…)`);
     const res = await fetch(`${API_BASE}/dao/admins/${targetAccountId}`, {
       method: "DELETE",
       headers: authHeaders(token),
@@ -484,13 +498,15 @@ export async function removeDaoAdmin(
     });
     const data = await res.json();
     if (!res.ok) {
-      return { admins: data.admins || [], error: data.error || "Failed to remove admin" };
+      log.error("DAO", `removeDaoAdmin failed: HTTP ${res.status} code=${data.code} error=${data.error}`);
+      return { admins: data.admins || [], error: data.error || "Failed to remove admin", code: data.code };
     }
+    log.info("DAO", `removeDaoAdmin success: ${data.admins?.length} admins remaining`);
     setAdminListCache(data.admins);
     return { admins: data.admins };
   } catch (err: any) {
     log.error("DAO", "Error removing admin", err);
-    return { admins: [], error: err?.message || "Network error" };
+    return { admins: [], error: err?.message || "Network error", code: "NETWORK_ERROR" };
   }
 }
 

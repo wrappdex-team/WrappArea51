@@ -1652,11 +1652,19 @@ function AdminManagementPanel({
     setError(null);
     setActionLoading(true);
     try {
-      await forceReauthenticate(accountId);
-      // Now make the API call with the fresh session
-      const result = await addDaoAdmin(accountId, newAdminId.trim());
+      // Step 1: Force re-authentication — clears old session, issues new challenge,
+      // user signs in wallet, server verifies ED25519 sig → fresh session token
+      console.log("[DAO-Admin] Starting forceReauthenticate for add admin…");
+      const freshToken = await forceReauthenticate(accountId);
+      console.log(`[DAO-Admin] forceReauthenticate succeeded, token=${freshToken.slice(0, 8)}…`);
+
+      // Step 2: Use the fresh token DIRECTLY (not getSessionToken()) to guarantee
+      // the just-signed token is used — eliminates any race with React effects
+      // or session state that could clear _currentSession between calls
+      const result = await addDaoAdmin(accountId, newAdminId.trim(), freshToken);
       if (result.error) {
-        setError(result.error);
+        console.error(`[DAO-Admin] addDaoAdmin error: code=${result.code} msg=${result.error}`);
+        setError(`${result.error}${result.code ? ` [${result.code}]` : ""}`);
         setStep("idle");
       } else {
         setAdminList(result.admins);
@@ -1665,7 +1673,20 @@ function AdminManagementPanel({
         toast.success(`Admin added: ${newAdminId.trim()}`, { duration: 4000 });
       }
     } catch (err: any) {
-      setError(err?.message || "Failed to add admin");
+      console.error("[DAO-Admin] handleConfirmAdd exception:", err);
+      const msg = err?.message || "Failed to add admin";
+      // Show actionable guidance based on common failure modes
+      if (msg.includes("Signing failed") || msg.includes("rejected")) {
+        setError("Wallet signing was rejected or timed out. Please try again and approve the signing prompt in HashPack.");
+      } else if (msg.includes("Could not extract signature")) {
+        setError("Could not read signature from wallet. Try disconnecting and reconnecting your wallet, then retry.");
+      } else if (msg.includes("Signature verification failed")) {
+        setError("Server could not verify the wallet signature. Disconnect wallet, reconnect, and retry.");
+      } else if (msg.includes("not connected")) {
+        setError("Wallet is not connected. Please reconnect HashPack and try again.");
+      } else {
+        setError(msg);
+      }
       setStep("idle");
     } finally {
       setActionLoading(false);
@@ -1685,10 +1706,14 @@ function AdminManagementPanel({
     setError(null);
     setActionLoading(true);
     try {
-      await forceReauthenticate(accountId);
-      const result = await removeDaoAdmin(accountId, removeTarget);
+      console.log(`[DAO-Admin] Starting forceReauthenticate for remove ${removeTarget}…`);
+      const freshToken = await forceReauthenticate(accountId);
+      console.log(`[DAO-Admin] forceReauthenticate succeeded, token=${freshToken.slice(0, 8)}…`);
+
+      const result = await removeDaoAdmin(accountId, removeTarget, freshToken);
       if (result.error) {
-        setError(result.error);
+        console.error(`[DAO-Admin] removeDaoAdmin error: code=${result.code} msg=${result.error}`);
+        setError(`${result.error}${result.code ? ` [${result.code}]` : ""}`);
         setStep("idle");
       } else {
         setAdminList(result.admins);
@@ -1697,7 +1722,17 @@ function AdminManagementPanel({
         toast.success(`Admin removed: ${removeTarget}`, { duration: 4000 });
       }
     } catch (err: any) {
-      setError(err?.message || "Failed to remove admin");
+      console.error("[DAO-Admin] handleConfirmRemove exception:", err);
+      const msg = err?.message || "Failed to remove admin";
+      if (msg.includes("Signing failed") || msg.includes("rejected")) {
+        setError("Wallet signing was rejected or timed out. Please try again and approve the signing prompt in HashPack.");
+      } else if (msg.includes("Signature verification failed")) {
+        setError("Server could not verify the wallet signature. Disconnect wallet, reconnect, and retry.");
+      } else if (msg.includes("not connected")) {
+        setError("Wallet is not connected. Please reconnect HashPack and try again.");
+      } else {
+        setError(msg);
+      }
       setStep("idle");
     } finally {
       setActionLoading(false);

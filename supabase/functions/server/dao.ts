@@ -98,17 +98,32 @@ async function isDaoAdminAsync(accountId: string): Promise<boolean> {
 /** Require a "fresh" session (created <2 min ago) for admin management ops */
 async function requireFreshAdminAuth(c: any): Promise<{ accountId: string } | Response> {
   const token = c.req.header("x-session-token") || "";
-  if (!token || !/^[0-9a-f]{64}$/.test(token)) return c.json({ error: "Authentication required — sign a fresh challenge", code: "AUTH_REQUIRED" }, 401);
+  if (!token || !/^[0-9a-f]{64}$/.test(token)) {
+    console.log(`[DAO-ADMIN] requireFreshAdminAuth: no valid token header (got ${token.length} chars)`);
+    return c.json({ error: "Authentication required — sign a fresh challenge", code: "AUTH_REQUIRED" }, 401);
+  }
   try {
     const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
-    if (!session) return c.json({ error: "Session expired — re-sign in wallet", code: "SESSION_EXPIRED" }, 401);
-    if (Date.now() > session.expiresAt) { kv.del(AUTH_SESSION_PREFIX + token).catch(() => {}); return c.json({ error: "Session expired", code: "SESSION_EXPIRED" }, 401); }
+    if (!session) {
+      console.log(`[DAO-ADMIN] requireFreshAdminAuth: session not found in KV for token=${token.slice(0, 8)}…`);
+      return c.json({ error: "Session not found in server store — it may have been revoked. Please re-sign.", code: "SESSION_NOT_FOUND" }, 401);
+    }
+    if (Date.now() > session.expiresAt) {
+      console.log(`[DAO-ADMIN] requireFreshAdminAuth: session expired for ${session.accountId} (expired ${Date.now() - session.expiresAt}ms ago)`);
+      kv.del(AUTH_SESSION_PREFIX + token).catch(() => {});
+      return c.json({ error: "Session expired", code: "SESSION_EXPIRED" }, 401);
+    }
     const age = Date.now() - session.createdAt;
     if (age > DAO_ADMIN_FRESH_SESSION_MS) {
+      console.log(`[DAO-ADMIN] requireFreshAdminAuth: session too old for ${session.accountId} (age=${age}ms, max=${DAO_ADMIN_FRESH_SESSION_MS}ms)`);
       return c.json({ error: "Admin operations require a fresh wallet signature. Please re-sign to confirm.", code: "SESSION_NOT_FRESH", sessionAgeMs: age, maxAgeMs: DAO_ADMIN_FRESH_SESSION_MS }, 403);
     }
+    console.log(`[DAO-ADMIN] requireFreshAdminAuth: OK — ${session.accountId} session age=${age}ms`);
     return { accountId: session.accountId };
-  } catch { return c.json({ error: "Authentication failed" }, 401); }
+  } catch (err) {
+    console.log(`[DAO-ADMIN] requireFreshAdminAuth exception: ${err}`);
+    return c.json({ error: "Authentication check failed", code: "AUTH_CHECK_FAILED" }, 401);
+  }
 }
 
 // ── Voting Power ────────────────────────────────────────────────────
@@ -512,7 +527,7 @@ export function registerDaoRoutes(app: Hono): void {
 
   // ═══════════════════════════════════════════════════════════════════════
   // DAO ADMIN MANAGEMENT
-  // ═══════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════��════════════════════
   //
   // OWNER-ONLY add/remove. Only 0.0.518487 can modify the admin list.
   // This prevents admin chain escalation (compromised admin adding hostile
