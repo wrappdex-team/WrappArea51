@@ -642,6 +642,8 @@ const VIP_NAV_SCALE: { freq: number; name: string }[] = [
  */
 export function playVipNavNote(index: number): void {
   if (isMuted()) return;
+  // Suppress piano hover notes on mobile — they clash with tap/interaction sounds
+  if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) return;
   try {
     const ctx = getAudioContext();
     const now = ctx.currentTime;
