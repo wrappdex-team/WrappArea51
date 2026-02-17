@@ -20,14 +20,15 @@ import {
   HBARH_BRANDING_LIGHT,
   HBAR_LOGO,
 } from "../assets/brand";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 /* ─── Real Logo Assets ─────────────────────────────────────────────── */
-// The figma:asset scheme only works inside Figma Make's dev server.
-// For Vercel / Railway / Netlify production builds, use the data-URI
-// fallbacks exported from brand.ts. Swap these for CDN-hosted logos
-// once the final PNGs land in the Supabase storage bucket.
-const wrappdexLogoDark = HBARH_BRANDING_DARK;
-const wrappdexLogoLight = HBARH_BRANDING_LIGHT;
+// On mount the Branding page fetches real logos from the "WRAPP LOGOS"
+// Supabase storage bucket via the /brand-logos server endpoint.
+// The data-URI SVGs from brand.ts are used as instant placeholders while
+// the fetch resolves (or as permanent fallbacks if the fetch fails).
+const fallbackDark = HBARH_BRANDING_DARK;
+const fallbackLight = HBARH_BRANDING_LIGHT;
 
 /* ─── Helpers ──────────────────────────────────────────────────────── */
 
@@ -267,8 +268,47 @@ function LogoPreview({
 export function Branding() {
   const { isDark } = useTheme();
 
+  // ── Fetch real logos from Supabase "WRAPP LOGOS" bucket ──
+  const [logoDark, setLogoDark] = useState(fallbackDark);
+  const [logoLight, setLogoLight] = useState(fallbackLight);
+
   useEffect(() => {
     window.scrollTo(0, 0);
+  }, []);
+
+  useEffect(() => {
+    const base = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
+    fetch(`${base}/brand-logos`, {
+      headers: { Authorization: `Bearer ${publicAnonKey}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const logos: { name: string; publicUrl: string }[] = data?.logos ?? [];
+        if (logos.length === 0) return;
+
+        // Match filenames: anything containing "dark" goes to dark slot,
+        // anything containing "light" (or "white") goes to light slot.
+        // If only 2 files and neither matches, assign alphabetically (first=dark, second=light).
+        const darkMatch = logos.find((l) => /dark/i.test(l.name));
+        const lightMatch = logos.find((l) => /light|white/i.test(l.name));
+
+        if (darkMatch && lightMatch) {
+          setLogoDark(darkMatch.publicUrl);
+          setLogoLight(lightMatch.publicUrl);
+        } else if (logos.length >= 2) {
+          // Alphabetical fallback
+          const sorted = [...logos].sort((a, b) => a.name.localeCompare(b.name));
+          setLogoDark(sorted[0].publicUrl);
+          setLogoLight(sorted[1].publicUrl);
+        } else if (logos.length === 1) {
+          // Single image — use for both
+          setLogoDark(logos[0].publicUrl);
+          setLogoLight(logos[0].publicUrl);
+        }
+      })
+      .catch((err) => {
+        console.log("[Branding] Failed to fetch brand logos, using SVG fallbacks:", err);
+      });
   }, []);
 
   const h2 = `text-2xl md:text-3xl font-bold mb-2 bg-gradient-to-r bg-clip-text text-transparent ${
@@ -337,7 +377,7 @@ export function Branding() {
           <GlassCard className="p-6 md:p-10 mb-3" hover={false}>
             <div className="bg-[#0F172A] rounded-2xl p-8 md:p-14 flex items-center justify-center border border-white/[0.06]">
               <img
-                src={wrappdexLogoDark}
+                src={logoDark}
                 alt="WRAPpDEX Logo — Dark Background"
                 className="w-full max-w-xl h-auto"
               />
@@ -359,7 +399,7 @@ export function Branding() {
           <GlassCard className="p-6 md:p-10 mb-6" hover={false}>
             <div className="bg-white rounded-2xl p-8 md:p-14 flex items-center justify-center border border-gray-200">
               <img
-                src={wrappdexLogoLight}
+                src={logoLight}
                 alt="WRAPpDEX Logo — Light Background"
                 className="w-full max-w-xl h-auto"
               />
@@ -416,7 +456,7 @@ export function Branding() {
           <div className="grid sm:grid-cols-2 gap-3 mb-6">
             <GlassCard className="p-5 text-center">
               <div className="bg-[#0F172A] rounded-xl p-6 mb-3 flex items-center justify-center min-h-[80px] border border-white/[0.06]">
-                <img src={wrappdexLogoDark} alt="WRAPpDEX Dark" className="w-48 h-auto" />
+                <img src={logoDark} alt="WRAPpDEX Dark" className="w-48 h-auto" />
               </div>
               <p className={`text-xs font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                 Dark Background
@@ -424,7 +464,7 @@ export function Branding() {
             </GlassCard>
             <GlassCard className="p-5 text-center">
               <div className="bg-white rounded-xl p-6 mb-3 flex items-center justify-center min-h-[80px] border border-gray-200">
-                <img src={wrappdexLogoLight} alt="WRAPpDEX Light" className="w-48 h-auto" />
+                <img src={logoLight} alt="WRAPpDEX Light" className="w-48 h-auto" />
               </div>
               <p className={`text-xs font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                 Light Background
