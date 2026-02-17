@@ -387,7 +387,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
               }}
             />
             <div className={`text-[9px] font-medium ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              sl-usdc-wbtc · 10 bps
+              sl-usdc-wbtc · 25 bps
             </div>
             <div
               className={`text-[9px] px-2 py-0.5 rounded-full ${
@@ -440,7 +440,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
           <TokenBadge symbol="WETH" color="#627eea" isDark={isDark} size="sm" />
         </div>
         <div className={`text-[9px] text-center mt-2 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-          2× 10 bps = 20 bps total · Combined price impact evaluated
+          2× 25 bps = 50 bps total · Combined price impact evaluated
         </div>
       </motion.div>
 
@@ -855,15 +855,15 @@ function FeesDiagram({ isDark }: { isDark: boolean }) {
             <Zap className="w-4 h-4 text-emerald-400" />
             <div>
               <span className={`text-lg font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
-                0.10%
+                0.25%
               </span>
               <span className={`text-[10px] ml-1.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                (10 bps) swap fee
+                (25 bps) swap fee
               </span>
             </div>
           </div>
           <p className={`text-[10px] mt-1.5 ${isDark ? "text-slate-600" : "text-gray-300"}`}>
-            Protocol-fixed · non-adjustable · stays in pool reserves (increases k)
+            0.20% LP + 0.05% protocol · Phase&nbsp;1 fixed · DAO-adjustable later
           </p>
         </div>
 

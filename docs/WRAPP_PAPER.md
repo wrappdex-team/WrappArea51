@@ -929,10 +929,10 @@ both contribute to governance.
   | Pool Creation Fees            | $50 in HBAR.h per weighted pool          |
   |                               | (non-VIP) -> treasury                    |
   +-------------------------------+------------------------------------------+
-  | AMM In-Pool Fee               | Fixed 10 bps (0.10%) per swap            |
-  |                               | Stays in pool, accrues to LPs            |
+  | AMM Swap Fee (0.25%)          | Total 25 bps per swap, split:            |
+  |                               | 20 bps (0.20%) LP + 5 bps (0.05%) proto  |
   +-------------------------------+------------------------------------------+
-  | Protocol Micro-Fee            | Flat $0.0007 per swap (in HBAR)          |
+  | Flat Micro-Fee                | $0.0007 per swap (in HBAR, additive)     |
   |                               | 50% LP bonus + 50% treasury              |
   +-------------------------------+------------------------------------------+
   | Fiat On-Ramp Affiliate        | ChangeNOW partner referral revenue       |
@@ -947,8 +947,8 @@ both contribute to governance.
   pool as a flywheel, expand token whitelist via DAO governance.
 
   PHASE 2 -- PROTOCOL REVENUE
-  Enable DAO-governed protocol fee (5-10 bps on swaps). Scale pool
-  creation fees. Launch premium API for institutional traders.
+  Scale via DAO governance: adjust protocol fee share (currently 5 bps),
+  scale pool creation fees. Launch premium API for institutional traders.
 
   PHASE 3 -- ECOSYSTEM EXPANSION
   HSuite SmartNode deep integration for cross-DEX aggregation. Native

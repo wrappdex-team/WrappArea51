@@ -208,10 +208,11 @@ export function FounderLetter({ open, onClose }: FounderLetterProps) {
                   The Smart Liquidity Engine at the heart of WRAPpDEX exists because we are
                   traders ourselves, and we were tired of being the product. Server-side pool
                   state means there is no public mempool for bots to exploit. No sandwich
-                  attacks. No MEV extraction. The 0.10% flat swap fee is transparent, protocol-fixed,
-                  and immutable &mdash; not a variable that governance whales can manipulate to
-                  their advantage. We built the exchange we wanted to trade on, then
-                  open-sourced the thesis so you could verify every claim.
+                  attacks. No MEV extraction. The 0.25% swap fee is transparent and
+                  protocol-fixed &mdash; 0.20% rewards LPs, 0.05% sustains the protocol,
+                  and nobody can manipulate it to their advantage. We built the exchange
+                  we wanted to trade on, then open-sourced the thesis so you could verify
+                  every claim.
                 </p>
 
                 {/* The institutional quality paragraph */}

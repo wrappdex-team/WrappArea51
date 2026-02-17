@@ -785,7 +785,7 @@ export function WhitePaper() {
                   <span
                     className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}
                   >
-                    0.10% fee
+                    0.25% fee
                   </span>
                 </div>
                 <div
@@ -908,12 +908,16 @@ export function WhitePaper() {
                 </span>
                 . When you submit a swap the engine calculates your exact
                 output amount, deducts a{" "}
-                <span className={`font-semibold ${isDark ? "text-pink-400" : "text-pink-600"}`}>0.10&nbsp;%</span>{" "}
-                in-pool fee (which stays in the pool and increases{" "}
-                <span className="font-mono">k</span>, benefiting all LP
-                holders), and settles instantly &mdash; all in a single
-                atomic step. Because the entire process happens server-side,
-                no third party can see or interfere with your trade.
+                <span className={`font-semibold ${isDark ? "text-pink-400" : "text-pink-600"}`}>0.25&nbsp;%</span>{" "}
+                swap fee &mdash;{" "}
+                <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>0.20&nbsp;%</span>{" "}
+                stays in the pool (increasing{" "}
+                <span className="font-mono">k</span> for LP holders) and{" "}
+                <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>0.05&nbsp;%</span>{" "}
+                accrues to the protocol treasury &mdash; and settles
+                instantly in a single atomic step. Because the entire
+                process happens server-side, no third party can see or
+                interfere with your trade.
               </p>
             </GlassCard>
 
@@ -1000,30 +1004,34 @@ export function WhitePaper() {
               </p>
               <ol className={`list-decimal list-inside space-y-1.5 pl-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                 <li>
-                  The 0.10&nbsp;% in-pool fee is applied first: 1,000 &times;
-                  0.999 ={" "}
-                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>999 HBAR</span>{" "}
-                  enters the pricing formula.
+                  The 0.25&nbsp;% swap fee is applied first: 1,000 &times;
+                  0.9975 ={" "}
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>997.5 HBAR</span>{" "}
+                  enters the pricing formula. Of the 2.5 HBAR fee,{" "}
+                  <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>2.0</span>{" "}
+                  stays in the pool (LP share) and{" "}
+                  <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>0.5</span>{" "}
+                  accrues to the protocol treasury.
                 </li>
                 <li>
                   The engine applies{" "}
                   <span className={`font-mono font-bold ${isDark ? "text-pink-400" : "text-pink-600"}`}>x &times; y = k</span>:{" "}
-                  (999 &times; 50,000) / (500,000 + 999) ={" "}
-                  <span className={`font-semibold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>~99.70 USDC</span>.
+                  (997.5 &times; 50,000) / (500,000 + 997.5) ={" "}
+                  <span className={`font-semibold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>~99.50 USDC</span>.
                 </li>
                 <li>
                   Your slippage tolerance is checked. At 0.5&nbsp;%, you
-                  need at least 99.20 USDC &mdash; the quote passes.
+                  need at least 99.00 USDC &mdash; the quote passes.
                 </li>
                 <li>
-                  A flat protocol fee of{" "}
+                  A flat micro-fee of{" "}
                   <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>$0.0007</span>{" "}
                   (~2.5 tinybar) is assessed separately in HBAR &mdash;
                   split 50/50 between LP rewards and the protocol treasury.
                 </li>
                 <li>
                   The swap settles atomically. Pool balances update to
-                  501,000 HBAR / 49,900.30 USDC. A post-swap k-invariant
+                  501,000 HBAR / 49,900.50 USDC. A post-swap k-invariant
                   check confirms reserves never decreased. No front-running
                   window ever existed.
                 </li>
@@ -1036,37 +1044,38 @@ export function WhitePaper() {
             </div>
           </GlassCard>
 
-          {/* Dual-Fee Structure */}
+          {/* Fee Structure */}
           <h4
             className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
           >
-            Dual-Fee Structure
+            Fee Structure
           </h4>
           <p
             className={`text-xs md:text-sm leading-relaxed mb-4 max-w-3xl ${isDark ? "text-slate-400" : "text-gray-500"}`}
           >
-            WRAPpDEX uses a two-layer fee model designed to keep trading
-            costs near zero while sustaining the protocol and rewarding
-            liquidity providers:
+            WRAPpDEX uses a dual-layer fee model: a percentage-based
+            swap fee split between LPs and the protocol, plus a flat
+            micro-fee that prevents trade-splitting manipulation.
+            Total cost to the trader: 0.25&nbsp;% + $0.0007 &mdash;
+            17&nbsp;% cheaper than SaucerSwap&rsquo;s 0.30&nbsp;%.
           </p>
           <div className="grid md:grid-cols-3 gap-3 mb-4">
             <GlassCard className="p-5 md:p-6">
               <h4
                 className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
               >
-                In-Pool Fee
+                LP Fee
               </h4>
               <p className="text-2xl font-bold mb-1 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                0.10%
+                0.20%
               </p>
               <p
                 className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                Applied per trade (10 bps). The fee stays inside the pool,
-                increasing <span className="font-mono">k</span> and
-                benefiting all LP holders proportional to their share. This
-                rate is protocol-fixed and cannot be changed by pool
-                creators.
+                Applied per trade (20 bps of the 25 bps total). This
+                portion stays inside the pool, increasing{" "}
+                <span className="font-mono">k</span> and benefiting all LP
+                holders proportional to their share.
               </p>
             </GlassCard>
             <GlassCard className="p-5 md:p-6">
@@ -1076,15 +1085,16 @@ export function WhitePaper() {
                 Protocol Fee
               </h4>
               <p className="text-2xl font-bold mb-1 bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
-                $0.0007
+                0.05%
               </p>
               <p
                 className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                A flat micro-fee per swap (~0.07 cents), paid in HBAR.
-                Split 50/50: half goes to LP providers as a bonus reward,
-                half accrues to the protocol treasury (0.0.9695738). Flat
-                fees prevent manipulation via trade splitting.
+                5 bps of the 25 bps total swap fee accrues to the protocol
+                treasury (0.0.9695738). Plus a flat $0.0007 micro-fee per
+                swap in HBAR (split 50/50 LP / treasury) to prevent
+                trade-splitting manipulation. DAO governance can adjust the
+                protocol share in Phase 2+.
               </p>
             </GlassCard>
             <GlassCard className="p-5 md:p-6">
@@ -1173,7 +1183,7 @@ export function WhitePaper() {
               while still offering deep, tradable liquidity. Token weights
               must sum to exactly 100&nbsp;% (validated on-chain), and each
               token must carry at least a 1&nbsp;% weight to prevent
-              degenerate configurations. The fixed 0.10&nbsp;% swap fee
+              degenerate configurations. The fixed 0.25&nbsp;% swap fee
               applies uniformly across all pools.
             </p>
             <div className="flex items-center gap-4 flex-wrap mb-3">
@@ -1763,12 +1773,12 @@ export function WhitePaper() {
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
             {[
               {
-                title: "AMM Swap Fees",
-                desc: "0.10% (10 bps) per swap, fixed across all pools. Stays in the pool and accrues to liquidity providers.",
+                title: "LP Swap Fee (0.20%)",
+                desc: "20 bps per swap stays in the pool, increasing k and accruing to all liquidity providers proportionally.",
               },
               {
-                title: "Protocol Micro-Fee",
-                desc: "$0.0007 flat per swap in HBAR. Split 50/50 between LP rewards and the protocol treasury.",
+                title: "Protocol Fee (0.05% + $0.0007)",
+                desc: "5 bps per swap accrues to the protocol treasury. Plus a flat $0.0007 micro-fee in HBAR (50/50 LP/treasury). DAO-adjustable in Phase 2.",
               },
               {
                 title: "Pool Creation Fees",
@@ -1799,10 +1809,11 @@ export function WhitePaper() {
               className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
             >
               <span className="font-bold">Conservative projection:</span> At
-              $5M daily volume across all pools, the 0.10% in-pool fee
-              generates $5,000/day for LPs. The flat $0.0007 protocol
-              micro-fee at 50,000 daily swaps yields ~$35/day for the
-              treasury. Pool creation fees and fiat affiliate revenue
+              $1M daily volume across all pools, the 0.20% LP fee
+              generates $2,000/day for LPs. The 0.05% protocol share
+              generates $500/day (~$182K/year) for the treasury, plus
+              the flat $0.0007 micro-fee adds ~$2.50/day at 3,500
+              swaps. Pool creation fees and fiat affiliate revenue
               layer on top as the user base scales.
             </p>
           </GlassCard>

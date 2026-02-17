@@ -172,8 +172,24 @@ async function getOracleFallbackConfig(): Promise<OracleFallbackConfig> {
 // Max protocol fee in tinybar — safety ceiling if oracle + fallback are both stale
 const MAX_PROTOCOL_FEE_TINYBAR = 500; // ~$0.0014 at $0.28/HBAR — 2× normal fee
 
-// Swap fee: 0.1% (10 bps) — protocol-fixed, non-adjustable by pool creators.
-const FIXED_SWAP_FEE_BPS = 10;
+// ── Fee Structure (Phase 1) ─────────────────────────────────────────
+// Total swap fee: 0.25% (25 bps) — applied in AMM formula.
+//
+//   LP share:       0.20% (20 bps) — stays in pool, increases k
+//   Protocol share: 0.05% (5 bps)  — accrued to treasury for on-chain sweep
+//
+// The full 25 bps is applied in getAmountOut() and stays in reserves.
+// The protocol's 5 bps share is tracked in the treasury accumulator as
+// a USD-denominated accounting entry. On-chain extraction via LP token
+// minting or reserve withdrawal is a Phase 2 feature.
+//
+// This mirrors the Uniswap V2 protocol fee model (fee switch). DAO
+// governance can vote to adjust the protocol share in Phase 2+.
+//
+// The flat $0.0007 micro-fee (Layer 2) is SEPARATE and additive.
+const TOTAL_SWAP_FEE_BPS = 25;       // 0.25% total — applied in AMM formula
+const LP_FEE_BPS = 20;               // 0.20% — LP portion (conceptual split)
+const PROTOCOL_FEE_BPS = 5;          // 0.05% — Protocol portion (treasury accrual)
 
 // ── Token Whitelist ─────────────────────────────────────────────────
 // Only whitelisted tokens can be used in pools.
@@ -687,7 +703,7 @@ export function registerAmmRoutes(app: Hono): void {
           tokenA: sA.symbol, tokenB: sB.symbol, tokenIdA: sA.tokenId, tokenIdB: sB.tokenId,
           decimalsA: sA.decimals, decimalsB: sB.decimals,
           reserveA: "0", reserveB: "0", lpTotalSupply: "0",
-          swapFeeBps: FIXED_SWAP_FEE_BPS, creator: sanitizeString(accountId, 20), createdAt: Date.now(),
+          swapFeeBps: TOTAL_SWAP_FEE_BPS, creator: sanitizeString(accountId, 20), createdAt: Date.now(),
           cumulativeVolumeUsd: "0", swapCount: 0, status: "active",
           version: 1,
         };
@@ -695,7 +711,7 @@ export function registerAmmRoutes(app: Hono): void {
         await savePool(pool);
         poolIds.push(poolId);
         await kv.set(POOL_INDEX_KEY, poolIds);
-        console.log(`[SmartLiquidity] Pool created: ${poolId} by ${accountId} (fee=${FIXED_SWAP_FEE_BPS}bps fixed)`);
+        console.log(`[SmartLiquidity] Pool created: ${poolId} by ${accountId} (fee=${TOTAL_SWAP_FEE_BPS}bps fixed)`);
         return c.json({ success: true, pool: poolToApi(pool) });
       });
 
@@ -898,9 +914,10 @@ export function registerAmmRoutes(app: Hono): void {
         const inputUsd = parseFloat(amountIn) * (prices[defIn.tokenId] || 0);
         if (tvl > 0 && inputUsd > tvl * maxSwapFraction(tvl)) continue; // Depth cap
 
-        const out = getAmountOut(rawIn, rIn, rOut, pool.swapFeeBps);
+        // Always use protocol-fixed fee (ignores any legacy stored value)
+        const out = getAmountOut(rawIn, rIn, rOut, TOTAL_SWAP_FEE_BPS);
         if (out <= 0n) continue;
-        routes.push({ path: [tokenIn, tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, rIn), feeBps: pool.swapFeeBps, poolId: pool.id });
+        routes.push({ path: [tokenIn, tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, rIn), feeBps: TOTAL_SWAP_FEE_BPS, poolId: pool.id });
       }
 
       // USDC-hop routes (A→USDC→B) — uses pre-fetched pool array
@@ -912,7 +929,7 @@ export function registerAmmRoutes(app: Hono): void {
           if (f1) { r1In = BigInt(p1.reserveA); r1Out = BigInt(p1.reserveB); }
           else if (v1) { r1In = BigInt(p1.reserveB); r1Out = BigInt(p1.reserveA); }
           else continue;
-          const mid = getAmountOut(rawIn, r1In, r1Out, p1.swapFeeBps);
+          const mid = getAmountOut(rawIn, r1In, r1Out, TOTAL_SWAP_FEE_BPS);
           if (mid <= 0n) continue;
 
           for (const p2 of activePools) {
@@ -923,9 +940,9 @@ export function registerAmmRoutes(app: Hono): void {
             if (f2) { r2In = BigInt(p2.reserveA); r2Out = BigInt(p2.reserveB); }
             else if (v2) { r2In = BigInt(p2.reserveB); r2Out = BigInt(p2.reserveA); }
             else continue;
-            const out = getAmountOut(mid, r2In, r2Out, p2.swapFeeBps);
+            const out = getAmountOut(mid, r2In, r2Out, TOTAL_SWAP_FEE_BPS);
             if (out <= 0n) continue;
-            routes.push({ path: [tokenIn, "USDC", tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, r1In) + getPriceImpactBps(mid, r2In), feeBps: p1.swapFeeBps + p2.swapFeeBps, poolId: `${p1.id}+${p2.id}` });
+            routes.push({ path: [tokenIn, "USDC", tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, r1In) + getPriceImpactBps(mid, r2In), feeBps: TOTAL_SWAP_FEE_BPS * 2, poolId: `${p1.id}+${p2.id}` });
           }
         }
       }
@@ -945,14 +962,26 @@ export function registerAmmRoutes(app: Hono): void {
       const lpRewardTinybar = Math.floor(protocolFeeTinybar / 2);
       const treasuryFeeTinybar = protocolFeeTinybar - lpRewardTinybar;
 
+      // Calculate percentage-based protocol fee (0.05% of swap value)
+      const swapValueUsd = inDisplay * (prices[defIn.tokenId] || 0);
+      const pctProtocolFeeUsd = swapValueUsd * PROTOCOL_FEE_BPS / 10000;
+
       return c.json({
         poolId: best.poolId, tokenIn, tokenOut, amountIn: inDisplay, amountOut: outDisplay,
         amountOutRaw: best.amountOut.toString(), amountInRaw: rawIn.toString(),
         route: best.path.join(" → "), priceImpactBps: best.priceImpactBps, feeBps: best.feeBps,
-        feeUsd: inDisplay * (prices[defIn.tokenId] || 0) * best.feeBps / 10000,
+        feeUsd: swapValueUsd * best.feeBps / 10000,
         effectiveRate: outDisplay / inDisplay, minAmountOut: outDisplay * 0.995,
         routeCount: routes.length, inPrice: prices[defIn.tokenId] || 0, outPrice: prices[defOut.tokenId] || 0,
-        // Protocol fee breakdown
+        // Fee structure breakdown (Phase 1)
+        feeStructure: {
+          totalFeeBps: TOTAL_SWAP_FEE_BPS,
+          lpFeeBps: LP_FEE_BPS,
+          protocolFeeBps: PROTOCOL_FEE_BPS,
+          lpFeeUsd: swapValueUsd * LP_FEE_BPS / 10000,
+          protocolFeeUsd: pctProtocolFeeUsd,
+        },
+        // Flat micro-fee breakdown (Layer 2 — additive)
         protocolFee: {
           totalTinybar: protocolFeeTinybar,
           totalHbar: protocolFeeTinybar / 1e8,
@@ -1028,7 +1057,8 @@ export function registerAmmRoutes(app: Hono): void {
             const rawIn = BigInt(amountInRaw || "0");
             if (rawIn <= 0n) return c.json({ error: "Invalid amount" }, 400);
 
-            const rawOut = getAmountOut(rawIn, rIn, rOut, pool.swapFeeBps);
+            // Always use protocol-fixed fee (ignores any legacy stored value)
+            const rawOut = getAmountOut(rawIn, rIn, rOut, TOTAL_SWAP_FEE_BPS);
             if (rawOut <= 0n) return c.json({ error: "Output too small" }, 400);
             if (minAmountOutRaw && rawOut < BigInt(minAmountOutRaw)) return c.json({ error: "Slippage exceeded" }, 400);
 
@@ -1070,7 +1100,8 @@ export function registerAmmRoutes(app: Hono): void {
               return c.json({ error: "Pool state changed during swap — please retry", code: "VERSION_CONFLICT" }, 409);
             }
 
-            // Protocol fee: $0.0007 per swap, split 50/50 LP rewards / treasury (clamped)
+            // Layer 2: Flat micro-fee — $0.0007 per swap, split 50/50 LP / treasury (clamped)
+            // (Layer 1: 0.25% AMM fee already applied in getAmountOut above)
             const swapFbCfg = await getOracleFallbackConfig();
             const hbarPriceForFee = prices["0.0.1456986"] || swapFbCfg.price;
             const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round((PROTOCOL_FEE_USD / hbarPriceForFee) * 1e8)));
@@ -1125,10 +1156,11 @@ export function registerAmmRoutes(app: Hono): void {
               await kv.set(GLOBAL_RECENT_SWAPS_KEY, recentSwaps);
             } catch { /* non-critical — activity feed is best-effort */ }
 
-            console.log(`[SmartLiquidity] Swap v${expectedVersion}→v${expectedVersion + 1}: ${accountId} ${tokenIn}→${tokenOut} in=${amountInRaw} out=${rawOut} fee=${protocolFeeTinybar}tb`);
+            console.log(`[SmartLiquidity] Swap v${expectedVersion}→v${expectedVersion + 1}: ${accountId} ${tokenIn}→${tokenOut} in=${amountInRaw} out=${rawOut} ammFee=${TOTAL_SWAP_FEE_BPS}bps microFee=${protocolFeeTinybar}tb`);
             return c.json({
               success: true, amountOut: rawOut.toString(),
               pool: { reserveA: pool.reserveA, reserveB: pool.reserveB, version: pool.version },
+              feeStructure: { totalFeeBps: TOTAL_SWAP_FEE_BPS, lpFeeBps: LP_FEE_BPS, protocolFeeBps: PROTOCOL_FEE_BPS },
               protocolFee: { totalTinybar: protocolFeeTinybar, treasuryTinybar: treasuryFeeTinybar, treasuryAccount: PROTOCOL_TREASURY_ACCOUNT },
             });
       });

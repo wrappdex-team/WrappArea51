@@ -705,7 +705,7 @@ export function Branding() {
                   0.0.9356476
                 </p>
                 <p className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                  FIXED_SWAP_FEE_BPS = 10
+                  TOTAL_SWAP_FEE_BPS = 25
                 </p>
               </div>
               <p className={`text-xs mt-4 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
@@ -796,8 +796,8 @@ export function Branding() {
               { label: "Token Standard", value: "HTS (Hedera Token Service)", mono: false },
               { label: "LP Pool (SaucerSwap V1)", value: "WHBAR / HBAR.ħ", mono: false },
               { label: "LP Token ID", value: "0.0.9356724", mono: true },
-              { label: "In-Pool Swap Fee", value: "0.10% (10 bps, fixed)", mono: false },
-              { label: "Protocol Micro-Fee", value: "$0.0007 flat per swap", mono: false },
+              { label: "Total Swap Fee", value: "0.25% (25 bps) — 0.20% LP + 0.05% protocol", mono: false },
+              { label: "Flat Micro-Fee", value: "$0.0007 per swap (additive, anti-splitting)", mono: false },
               { label: "VIP Gate", value: "100M+ HBAR.ħ or 1+ VIP NFT", mono: false },
               { label: "Max DAO Votes / Wallet", value: "11 (10 token + 1 NFT)", mono: false },
               { label: "Network Finality", value: "~2 seconds (aBFT)", mono: false },
@@ -914,10 +914,10 @@ export function Branding() {
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Dual-fee model at near-zero cost.</strong>{" "}
-                  A fixed 0.10% in-pool fee that stays with liquidity providers,
-                  plus a flat $0.0007 protocol micro-fee per swap. No hidden
-                  spreads, no variable gas, no surprise extraction. Users see
-                  exactly what they pay before they confirm.
+                  A 0.25% swap fee (0.20% to LPs, 0.05% to protocol treasury)
+                  plus a flat $0.0007 micro-fee per swap — 17% cheaper than
+                  SaucerSwap. No hidden spreads, no variable gas, no surprise
+                  extraction. Users see exactly what they pay before they confirm.
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Smart routing finds the best path automatically.</strong>{" "}

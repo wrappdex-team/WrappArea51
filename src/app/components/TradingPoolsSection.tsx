@@ -152,7 +152,7 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
 
         <div className={`flex items-center justify-between rounded-lg px-3 py-2.5 mb-4 ${inputClass}`}>
           <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>Swap Fee</span>
-          <span className={`text-xs font-mono font-bold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>0.1% <span className={`font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>(fixed)</span></span>
+          <span className={`text-xs font-mono font-bold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>0.25% <span className={`font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>(0.20% LP + 0.05% protocol)</span></span>
         </div>
 
         {error && <div className="text-red-400 text-xs mb-3"><AlertCircle className="w-3 h-3 inline mr-1" />{error}</div>}
