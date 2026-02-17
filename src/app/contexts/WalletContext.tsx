@@ -18,6 +18,7 @@ import {
   getChainId,
   subscribeToMetaMaskEvents,
   isMetaMaskInstalled,
+  isMobileBrowser,
   fetchEthPrice,
   fetchSolPrice,
   CHAIN_INFO,
@@ -371,7 +372,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // ─── MetaMask ────────────��──────────────────────────────────
+  // ─── MetaMask ──────────────────────────────────────────────
 
   const connectMetaMask = useCallback(async (): Promise<boolean> => {
     // Abort any in-flight connection attempt (prevents stacked eth_requestAccounts)
@@ -383,7 +384,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setIsConnectingMetaMask(true);
     setMetaMaskError(null);
     if (!isMetaMaskInstalled()) {
-      setMetaMaskError("MetaMask is not installed. Please install the MetaMask browser extension.");
+      // On mobile, there's no browser extension — the user needs to open
+      // this dApp inside MetaMask Mobile's in-app browser via deep link.
+      // WalletConnectModal reads this specific error to show "Open in MetaMask".
+      if (isMobileBrowser()) {
+        setMetaMaskError("MOBILE_NO_PROVIDER");
+      } else {
+        setMetaMaskError("MetaMask is not installed. Please install the MetaMask browser extension.");
+      }
       setIsConnectingMetaMask(false);
       return false;
     }

@@ -99,6 +99,32 @@ export interface MetaMaskAccountInfo {
 
 // ── Provider Detection ───────────────────────────────────────────────
 
+/**
+ * Detect mobile browsers (iOS Safari, Android Chrome, etc.).
+ * Used to determine whether to deep-link into MetaMask Mobile
+ * instead of expecting the browser extension.
+ */
+export function isMobileBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent,
+  );
+}
+
+/**
+ * Build a MetaMask Mobile deep link that opens the current dApp URL
+ * inside MetaMask's in-app browser, where `window.ethereum` is injected.
+ *
+ * If MetaMask is installed → opens the app and loads the dApp.
+ * If MetaMask is NOT installed → metamask.app.link redirects to the app store.
+ *
+ * Ref: https://docs.metamask.io/wallet/how-to/connect/set-up-sdk/#deeplinking
+ */
+export function getMetaMaskDeepLink(): string {
+  const { host, pathname, search, hash } = window.location;
+  return `https://metamask.app.link/dapp/${host}${pathname}${search}${hash}`;
+}
+
 export function isMetaMaskInstalled(): boolean {
   return typeof window !== "undefined" && typeof window.ethereum !== "undefined";
 }

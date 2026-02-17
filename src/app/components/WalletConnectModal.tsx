@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { playConnectionSuccess } from "../utils/sounds";
-import { isMetaMaskInstalled, formatAddress } from "../utils/metamask";
+import { isMetaMaskInstalled, formatAddress, isMobileBrowser, getMetaMaskDeepLink } from "../utils/metamask";
 import type { HashPackSession } from "../utils/hashpack";
 import {
   clearWCStorage,
@@ -388,24 +388,51 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                 <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
                   <AlertCircle className="w-8 h-8 text-red-400" />
                 </div>
-                <p className="text-white/90 mb-2">Connection Failed</p>
-                <p className="text-white/30 text-sm mb-6">{metaMaskError}</p>
-                {!isMetaMaskInstalled() && (
-                  <a
-                    href="https://metamask.io/download/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 text-white text-sm mb-3 hover:bg-orange-400 transition-colors"
-                  >
-                    Install MetaMask <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                {metaMaskError === "MOBILE_NO_PROVIDER" ? (
+                  /* ── Mobile: deep-link into MetaMask's in-app browser ── */
+                  <>
+                    <p className="text-white/90 mb-2">Open in MetaMask</p>
+                    <p className="text-white/30 text-sm mb-6 max-w-xs mx-auto">
+                      On mobile, MetaMask connects through its in-app browser. Tap below to open this dApp inside the MetaMask app.
+                    </p>
+                    <a
+                      href={getMetaMaskDeepLink()}
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-sm transition-colors mb-3"
+                    >
+                      <img src={partnerLogos.metamask} alt="" className="w-5 h-5 rounded" />
+                      Open in MetaMask
+                    </a>
+                    <button
+                      onClick={handleMetaMaskBack}
+                      className="block mx-auto px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+                    >
+                      Back
+                    </button>
+                  </>
+                ) : (
+                  /* ── Desktop: standard error with install / retry ── */
+                  <>
+                    <p className="text-white/90 mb-2">Connection Failed</p>
+                    <p className="text-white/30 text-sm mb-6">{metaMaskError}</p>
+                    {!isMetaMaskInstalled() && (
+                      <a
+                        href="https://metamask.io/download/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 text-white text-sm mb-3 hover:bg-orange-400 transition-colors"
+                      >
+                        Install MetaMask <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                    <button
+                      onClick={handleMetaMaskConnect}
+                      className="block mx-auto px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
+                    >
+                      Try Again
+                    </button>
+                  </>
                 )}
-                <button
-                  onClick={handleMetaMaskConnect}
-                  className="block mx-auto px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
-                >
-                  Try Again
-                </button>
               </>
             ) : null}
           </div>
@@ -566,7 +593,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <span className="text-sm text-white/90">MetaMask</span>
               <Badge color="orange">Ethereum</Badge>
             </div>
-            <p className="text-xs text-white/30">Browser extension</p>
+            <p className="text-xs text-white/30">{isMobileBrowser() ? "Mobile app" : "Browser extension"}</p>
           </div>
           <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-orange-500/10 transition-colors">
             <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-orange-400 transition-colors" />
