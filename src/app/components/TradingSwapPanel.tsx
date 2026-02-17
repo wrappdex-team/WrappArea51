@@ -95,9 +95,11 @@ function ParticleBurst({ show }: { show: boolean }) {
 
 interface TradingSwapPanelProps {
   isDark: boolean;
+  /** Fired when the user changes either the "pay" or "receive" token */
+  onTokenChange?: (symbol: string) => void;
 }
 
-export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
+export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProps) {
   const { hashPackSession } = useWallet();
   const accountId = hashPackSession?.accountId || null;
 
@@ -209,6 +211,8 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
       setAmount("");
       setQuote(null);
       setIsFlipping(false);
+      // After flip, the "You Pay" token is what was previously "You Receive"
+      if (onTokenChange) onTokenChange(tokens[tokenOutIdx].symbol);
     }, 200);
   };
 
@@ -279,6 +283,7 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
                       const idx = Number(e.target.value);
                       setTokenInIdx(idx);
                       if (idx === tokenOutIdx) setTokenOutIdx(tokenInIdx);
+                      if (onTokenChange) onTokenChange(tokens[idx].symbol);
                     }}
                     className={`text-xs font-bold px-1.5 py-0.5 rounded-lg outline-none cursor-pointer ${isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"}`}
                   >
@@ -323,6 +328,7 @@ export function TradingSwapPanel({ isDark }: TradingSwapPanelProps) {
                       const idx = Number(e.target.value);
                       setTokenOutIdx(idx);
                       if (idx === tokenInIdx) setTokenInIdx(tokenOutIdx);
+                      if (onTokenChange) onTokenChange(tokens[idx].symbol);
                     }}
                     className={`text-xs font-bold px-1.5 py-0.5 rounded-lg outline-none cursor-pointer ${isDark ? "bg-slate-700/50 text-white" : "bg-white text-gray-900 border border-gray-200"}`}
                   >

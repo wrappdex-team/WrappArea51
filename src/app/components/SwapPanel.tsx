@@ -19,7 +19,6 @@ import {
   ArrowDownUp,
   ChevronDown,
   Search,
-  Zap,
   AlertCircle,
   CheckCircle2,
   Loader2,
@@ -37,6 +36,7 @@ import { toast } from "sonner";
 import { playVipCashRegister } from "../utils/sounds";
 import { loadVipPrefs, isVipEligible } from "../utils/vip";
 import { motion } from "motion/react";
+import larryLogo from "figma:asset/6e6e23fc43a05b079a06cb2f572f4aa4b962a61d.png";
 import {
   SAUCERSWAP_TOKENS,
   estimateSwapQuote,
@@ -777,10 +777,23 @@ export function SwapPanel() {
             <div className={`flex items-center justify-center gap-2 mt-3 text-xs flex-wrap ${isDark ? "text-slate-500" : "text-gray-400"}`}>
               {isWalletConnected ? (
                 <>
-                  <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-emerald-900/20 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
-                    <Zap className="w-2.5 h-2.5" />
+                  <a
+                    href="https://www.saucerswap.finance"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all ${isDark ? "bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-900/30 hover:border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"}`}
+                  >
+                    <img
+                      src={larryLogo}
+                      alt="SaucerSwap Larry"
+                      className="w-4 h-4 rounded-full object-cover"
+                      loading="eager"
+                      decoding="async"
+                      width={16}
+                      height={16}
+                    />
                     {isWrapUnwrap ? (isWrapping ? "Wrap HBAR" : "Unwrap WHBAR") : "SaucerSwap V1"}
-                  </span>
+                  </a>
                   <span>Live execution via HashPack</span>
                 </>
               ) : (

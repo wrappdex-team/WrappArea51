@@ -8,14 +8,17 @@
  *   - Manages LP positions (add/remove liquidity)
  *   - Displays oracle prices for UI only (swaps use reserves)
  *
- * Token Whitelist (Tier 1 — Top 7 by MC on Hedera):
- *   WBTC:  0.0.1969769  (8 decimals,  HashPort bridge)
- *   WETH:  0.0.1969757  (18 decimals, HashPort bridge)
- *   USDC:  0.0.456858   (6 decimals,  native)
- *   USDT:  0.0.4291336  (6 decimals,  native)
- *   LINK:  0.0.1970030  (8 decimals,  HashPort bridge)
- *   AAVE:  0.0.1055498  (8 decimals,  HashPort bridge)
- *   DAI:   0.0.1055477  (8 decimals,  HashPort bridge)
+ * Token Whitelist (Tier 1 — Canonical Bridge HTS IDs for WRAPpDEX AMM):
+ *   WHBAR:  0.0.1456986  (8 decimals,  routing hub)
+ *   USDC:   0.0.456858   (6 decimals,  native Circle)
+ *   USDT:   0.0.4291336  (6 decimals,  native Tether)
+ *   DAI:    0.0.1055477  (8 decimals,  HashPort bridge)
+ *   WBTC:   0.0.1055483  (8 decimals,  HashPort/LayerZero bridge)
+ *   WETH:   0.0.541564   (18 decimals, HashPort bridge — verify on HashScan)
+ *   LINK:   0.0.1055495  (8 decimals,  HashPort bridge)
+ *   AAVE:   0.0.1055498  (8 decimals,  HashPort bridge — verify on HashScan)
+ *   WBNB:   0.0.1157005  (8 decimals,  LayerZero bridge)
+ *   WAVAX:  0.0.1157020  (8 decimals,  LayerZero bridge)
  *
  * HSuite Smart Node Integration (future):
  *   Pool creation and on-chain execution will route through HSuite validators.
@@ -174,13 +177,20 @@ export interface WrappedTokenSeed {
 }
 
 export const WRAPPED_TOKENS: WrappedTokenSeed[] = [
-  { tokenId: "0.0.1969769", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, fallbackPrice: 97000, logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png", bridge: "HashPort" },
-  { tokenId: "0.0.1969757", symbol: "WETH", name: "Wrapped Ether", decimals: 18, fallbackPrice: 3600, logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png", bridge: "HashPort" },
+  // ── Routing Hub ─────────────────────────────────────────────────────
+  { tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, fallbackPrice: 0.28, logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" },
+  // ── Stablecoins ─────────────────────────────────────────────────────
   { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
   { tokenId: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" },
-  { tokenId: "0.0.1970030", symbol: "LINK", name: "Chainlink", decimals: 8, fallbackPrice: 19.0, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png", bridge: "HashPort" },
-  { tokenId: "0.0.1055498", symbol: "AAVE", name: "Aave", decimals: 8, fallbackPrice: 180.0, logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png", bridge: "HashPort" },
   { tokenId: "0.0.1055477", symbol: "DAI", name: "Dai Stablecoin", decimals: 8, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png", bridge: "HashPort" },
+  // ── Major Wrapped Assets (HashPort / LayerZero canonical HTS IDs) ──
+  { tokenId: "0.0.1055483", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, fallbackPrice: 104000, logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png", bridge: "HashPort" },
+  { tokenId: "0.0.541564", symbol: "WETH", name: "Wrapped Ether", decimals: 18, fallbackPrice: 2650, logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055495", symbol: "LINK", name: "Chainlink", decimals: 8, fallbackPrice: 16.50, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055498", symbol: "AAVE", name: "Aave", decimals: 8, fallbackPrice: 180.0, logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png", bridge: "HashPort" },
+  // ── Cross-Chain (LayerZero / BiT Global) ────────────────────────────
+  { tokenId: "0.0.1157005", symbol: "WBNB", name: "Wrapped BNB", decimals: 8, fallbackPrice: 660, logo: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png", bridge: "LayerZero" },
+  { tokenId: "0.0.1157020", symbol: "WAVAX", name: "Wrapped AVAX", decimals: 8, fallbackPrice: 25, logo: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png", bridge: "LayerZero" },
 ];
 
 const TOKEN_BY_SYMBOL = new Map(WRAPPED_TOKENS.map(t => [t.symbol, t]));

@@ -192,7 +192,7 @@ const BONZO_SUPPORTED_TOKENS: BonzoTokenDef[] = [
   {
     symbol: "WBTC",
     name: "Wrapped Bitcoin",
-    hederaTokenId: "0.0.1969769",
+    hederaTokenId: "0.0.1055483",
     decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
     canBeCollateral: true,
@@ -204,7 +204,7 @@ const BONZO_SUPPORTED_TOKENS: BonzoTokenDef[] = [
   {
     symbol: "WETH",
     name: "Wrapped Ether",
-    hederaTokenId: "0.0.1969757",
+    hederaTokenId: "0.0.541564",
     decimals: 18,
     logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
     canBeCollateral: true,

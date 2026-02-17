@@ -50,7 +50,7 @@ import {
 function SwapPanel({ pools, isDark, accountId }: { pools: PoolState[]; isDark: boolean; accountId: string | null }) {
   const tokens = WRAPPED_TOKENS;
   const [tokenInIdx, setTokenInIdx] = useState(0);
-  const [tokenOutIdx, setTokenOutIdx] = useState(2); // default USDC
+  const [tokenOutIdx, setTokenOutIdx] = useState(1); // default USDC
   const [amount, setAmount] = useState("");
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [status, setStatus] = useState<"idle" | "quoting" | "swapping" | "success" | "error">("idle");
@@ -625,7 +625,7 @@ export function SmartLiquidity() {
             <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
               Pools start at zero reserves. Users provide all liquidity. Swaps use constant-product math (x &times; y = k)
               on real reserves — oracle prices are display-only. Rate limits scale with pool depth.
-              Top 7 tokens: <strong>WBTC, WETH, USDC, USDT, LINK, AAVE, DAI</strong>.
+              Top 10 tokens: <strong>WHBAR, WBTC, WETH, USDC, USDT, DAI, LINK, AAVE, WBNB, WAVAX</strong>.
             </div>
           </div>
         </div>

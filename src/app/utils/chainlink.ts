@@ -16,7 +16,7 @@ import { log } from "./logger";
 // (coingecko.ts imports from chainlink.ts at runtime)
 import type { CoinPrice, OracleSource } from "./coingecko";
 
-// ── ABI Function Selector ───────────��────────────────────────────
+// ── ABI Function Selector ──────────��────────────────────────────
 // latestRoundData() → (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
 const LATEST_ROUND_DATA = "0xfeaf968c";
 
@@ -76,6 +76,7 @@ export interface ChainlinkPriceData {
 
 // ── Oracle Stats (for UI display) ──────────────────────────────────
 export interface OracleStats {
+  networkCount: number;
   chainlinkCount: number;
   binanceCount: number;
   coincapCount: number;
@@ -87,6 +88,7 @@ export interface OracleStats {
 }
 
 let _lastStats: OracleStats = {
+  networkCount: 0,
   chainlinkCount: 0,
   binanceCount: 0,
   coincapCount: 0,

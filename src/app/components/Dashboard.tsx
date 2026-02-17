@@ -145,6 +145,7 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
 
 /** Oracle-source badge metadata */
 const ORACLE_BADGE: Record<OracleSource, { label: string; dotColor: string }> = {
+  network:    { label: "Hedera Network (0x168)", dotColor: "bg-purple-500" },
   chainlink:  { label: "Chainlink",  dotColor: "bg-blue-500" },
   binance:    { label: "Binance",    dotColor: "bg-yellow-500" },
   coincap:    { label: "CoinCap",    dotColor: "bg-amber-500" },
@@ -156,6 +157,7 @@ const ORACLE_BADGE: Record<OracleSource, { label: string; dotColor: string }> = 
 function OracleDot({ source, isDark }: { source?: OracleSource; isDark: boolean }) {
   if (!source) return null;
   const colors: Record<OracleSource, string> = {
+    network:   "bg-purple-500",
     chainlink: "bg-blue-500",
     binance:   "bg-yellow-500",
     coincap:   "bg-amber-500",
@@ -163,6 +165,7 @@ function OracleDot({ source, isDark }: { source?: OracleSource; isDark: boolean 
     fallback:  "bg-slate-500",
   };
   const labels: Record<OracleSource, string> = {
+    network:   "Hedera Network Rate (0x168)",
     chainlink: "Chainlink Oracle",
     binance:   "Binance API",
     coincap:   "CoinCap API",

@@ -3,6 +3,7 @@ const COINGECKO_API = "https://api.coingecko.com/api/v3";
 
 import { fetchChainlinkPrices, chainlinkToCoinPrices, updateOracleStats } from "./chainlink";
 import type { ChainlinkPriceData } from "./chainlink";
+import { fetchNetworkExchangeRate } from "./exchange-rate";
 import { log } from "./logger";
 
 // ── Binance Symbol Map ─────────────────────────────────────────────
@@ -37,6 +38,9 @@ export const COINCAP_ID_MAP: Record<string, string> = {
   LTC: "litecoin", PAXG: "pax-gold", EURC: "euro-coin",
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "multi-collateral-dai",
+  // Wrapped bridge tokens (map to parent asset)
+  WHBAR: "hedera-hashgraph", WBTC: "bitcoin", WETH: "ethereum",
+  WBNB: "binance-coin", WAVAX: "avalanche", WMATIC: "matic-network",
 };
 
 // CoinGecko IDs (used for market cap enrichment + tokens Binance doesn't cover)
@@ -48,6 +52,9 @@ export const COIN_ID_MAP: Record<string, string> = {
   LTC: "litecoin", PAXG: "pax-gold", EURC: "euro-coin-2",
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "dai",
+  // Wrapped bridge tokens (map to parent asset CoinGecko ID)
+  WHBAR: "hedera-hashgraph", WBTC: "wrapped-bitcoin", WETH: "weth",
+  WBNB: "binancecoin", WAVAX: "avalanche-2", WMATIC: "matic-network",
 };
 
 export const TOKEN_LOGOS: Record<string, string> = {
@@ -73,10 +80,17 @@ export const TOKEN_LOGOS: Record<string, string> = {
   USDCh: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
   AAVE: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
   DAI: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+  // Wrapped bridge tokens (AMM-specific — reuse parent asset logos)
+  WHBAR: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
+  WBTC: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
+  WETH: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  WBNB: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+  WAVAX: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
+  WMATIC: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
 };
 
 // ── Oracle Source Types ────────────────────────────────────────────
-export type OracleSource = "chainlink" | "binance" | "coincap" | "coingecko" | "fallback";
+export type OracleSource = "network" | "chainlink" | "binance" | "coincap" | "coingecko" | "fallback";
 
 export interface CoinPrice {
   id: string;
@@ -120,17 +134,18 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// SIMPLIFIED PRICE PIPELINE
+// 5-TIER ORACLE PRICE PIPELINE
 // ─────────────────────────────────────────────────────────────────────
 //
-// Tier 1 — Chainlink  : On-chain decentralized oracles (most reliable)
-// Tier 2 — Binance    : Centralized exchange ticker (real-time, CORS-friendly)
-// Tier 3 — CoinGecko  : Market aggregator (enriches with mcap/volume)
-// Fallback            : Hardcoded data above (offline resilience)
+// T0 — Network Rate : Hedera 0x168 exchange rate (HBAR only, consensus-derived)
+// T1 — Chainlink    : On-chain decentralized oracles (most reliable for majors)
+// T2 — Binance      : Centralized exchange ticker (real-time, CORS-friendly)
+// T3 — CoinGecko    : Market aggregator (enriches with mcap/volume)
+// Fallback          : Hardcoded data above (offline resilience)
 //
-// Each tier merges with the previous, with T1 prices taking priority
-// over T2, and T2 over T3. CoinGecko always enriches mcap/volume
-// even when Chainlink/Binance provides the price.
+// Each tier merges with the previous, with higher tiers taking priority.
+// T0 overrides HBAR price from all other tiers. CoinGecko always enriches
+// mcap/volume even when a higher tier provides the price.
 // ─────────────────────────────────────────────────────────────────────
 
 // ── Price Cache ────────────────────────────────────────────────────
@@ -301,8 +316,15 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
 }
 
 // ── Main Pipeline: fetchCoinPrices ────────────────────────────────
-// Merges three oracle tiers + HBAR fast-path + fallback.
+// Merges five oracle tiers + HBAR fast-path + fallback.
 // Returns Record<symbol, CoinPrice>.
+//
+// T0: Network Exchange Rate (0x168) — HBAR only, consensus-derived
+// T1: Chainlink (19 decentralized feeds via Ethereum RPC)
+// T2: Binance (22 WebSocket pairs, real-time)
+// T3: CoinGecko (market data enrichment, 24h change, mcap, volume)
+// T4: SaucerSwap (server-side only, TVL/depth calculations)
+// Fallback: Hardcoded data (offline resilience)
 export async function fetchCoinPrices(
   symbols: string[]
 ): Promise<Record<string, CoinPrice>> {
@@ -311,12 +333,15 @@ export async function fetchCoinPrices(
     return { ..._priceCache.data };
   }
 
-  // Start all tiers in parallel
-  const [chainlinkData, binancePrices, geckoData, hbarFast] = await Promise.all([
+  // Start all tiers in parallel (T0 through T2 + fast-path)
+  const needsHbar = symbols.includes("HBAR");
+  const [chainlinkData, binancePrices, geckoData, hbarFast, networkRate] = await Promise.all([
     fetchChainlinkPrices(symbols).catch(() => ({} as Record<string, ChainlinkPriceData>)),
     fetchBinancePrices(symbols).catch(() => ({} as Record<string, CoinPrice>)),
     fetchCoinGeckoPrices(symbols).catch(() => ({} as Record<string, CoinPrice>)),
     fetchHbarFastPath().catch(() => null),
+    // T0: Network Exchange Rate — only fetched if HBAR is in requested symbols
+    needsHbar ? fetchNetworkExchangeRate().catch(() => null) : Promise.resolve(null),
   ]);
 
   // Convert Chainlink data to CoinPrice format
@@ -400,6 +425,22 @@ export async function fetchCoinPrices(
     }
   }
 
+  // ── T0: Network Exchange Rate (0x168) — HBAR ONLY ──────────────
+  // Highest-priority tier: consensus-derived from Hedera file 0.0.112.
+  // Overrides ALL other tiers for HBAR price. Only provides price —
+  // keeps 24h change from Binance/CoinGecko and market_cap from CoinGecko.
+  if (networkRate && networkRate.priceUsd > 0 && merged["HBAR"]) {
+    merged["HBAR"] = {
+      ...merged["HBAR"],
+      current_price: networkRate.priceUsd,
+      oracle_source: "network",
+      oracle_updated_at: Math.floor(networkRate.fetchedAt / 1000),
+      // Preserve 24h change from lower tiers (network rate doesn't provide it)
+      // Preserve market_cap, volume, image from CoinGecko/Binance
+    };
+    log.debug("T0-ExRate", `HBAR price set to $${networkRate.priceUsd.toFixed(6)} from network exchange rate (${networkRate.rateUsed} rate: ${networkRate.centEquivalent}c/${networkRate.hbarEquivalent}hbar)`);
+  }
+
   updateOracleStats({
     fallbackCount,
     totalFeeds: symbols.length,
@@ -408,12 +449,12 @@ export async function fetchCoinPrices(
   // Cache
   _priceCache = { data: merged, timestamp: Date.now() };
 
-  const sources = { chainlink: 0, binance: 0, coingecko: 0, fallback: 0 };
+  const sources: Record<string, number> = { network: 0, chainlink: 0, binance: 0, coingecko: 0, fallback: 0 };
   for (const cp of Object.values(merged)) {
     const s = cp.oracle_source || "fallback";
-    if (s in sources) sources[s as keyof typeof sources]++;
+    if (s in sources) sources[s]++;
   }
-  log.debug("Pipeline", `Prices: CL=${sources.chainlink} BN=${sources.binance} CG=${sources.coingecko} FB=${sources.fallback}`);
+  log.debug("Pipeline", `Prices: T0=${sources.network} CL=${sources.chainlink} BN=${sources.binance} CG=${sources.coingecko} FB=${sources.fallback}`);
 
   return merged;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -42,6 +42,12 @@ import { Tip } from "./Tip";
 const TOKENS = TRADING_TOKENS;
 const TIMEFRAMES = ["1m", "5m", "30m", "1H", "4H", "1D", "1W", "1M", "1Y", "All"] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
+
+// Maps AMM wrapped-token symbols to chart-registry equivalents.
+// Direct matches (USDC, LINK, AAVE, DAI) fall through automatically.
+const AMM_TO_CHART: Record<string, string> = {
+  WHBAR: "HBAR", WBTC: "BTC", WETH: "ETH", WBNB: "BNB", WAVAX: "AVAX",
+};
 
 // Adaptive priceFormat: ~20 incremental ticks between each "unit" at the token's price scale
 function getAdaptivePriceFormat(price: number): { type: "price"; precision: number; minMove: number } {
@@ -194,6 +200,20 @@ export function Trading() {
   const currentChainlinkFeed = prices[selectedToken.symbol]?.chainlink_feed;
   const feedInfo = getFeedInfo(selectedToken.symbol);
   const currentMarketCap = prices[selectedToken.symbol]?.market_cap;
+
+  // ── AMM → Chart bridge ──────────────────────────────────────────────
+  // Maps wrapped HTS token symbols from the AMM panel to their chart-registry
+  // equivalents (e.g., WBTC→BTC, WETH→ETH, WHBAR→HBAR, WBNB→BNB, WAVAX→AVAX).
+  // Stablecoins (USDC, USDT, DAI) map directly when present in TRADING_TOKENS.
+  const handleAmmTokenChange = useCallback((ammSymbol: string) => {
+    const chartSymbol = AMM_TO_CHART[ammSymbol] || ammSymbol;
+    const match = TOKENS.find(
+      (t) => t.symbol.toLowerCase() === chartSymbol.toLowerCase()
+    );
+    if (match && match.symbol !== selectedToken.symbol) {
+      setSelectedToken(match);
+    }
+  }, [selectedToken.symbol]);
 
   // Use real data if available, otherwise generate synthetic candles
   const syntheticData = useMemo(() => {
@@ -592,6 +612,15 @@ export function Trading() {
                     CHAINLINK
                   </a>
                   </Tip>
+                ) : currentOracleSource === "network" ? (
+                  <Tip content="Hedera Network Exchange Rate (0x168 / file 0.0.112)">
+                  <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    isDark ? "bg-purple-500/15 text-purple-400 border border-purple-500/30" : "bg-purple-100 text-purple-700 border border-purple-200"
+                  }`}>
+                    <Zap className="w-2.5 h-2.5" />
+                    NETWORK
+                  </span>
+                  </Tip>
                 ) : (
                   <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-700/50 text-slate-500" : "bg-gray-100 text-gray-400"}`}>
                     {currentOracleSource === "binance" ? "BINANCE" : currentOracleSource === "coincap" ? "COINCAP" : currentOracleSource === "coingecko" ? "COINGECKO" : "CACHED"}
@@ -903,7 +932,7 @@ export function Trading() {
 
         {/* Right Column — AMM Swap Panel */}
         <div className="lg:w-72 xl:w-80 flex-shrink-0 lg:rounded-br-xl overflow-hidden">
-          <TradingSwapPanel isDark={isDark} />
+          <TradingSwapPanel isDark={isDark} onTokenChange={handleAmmTokenChange} />
         </div>
       </div>
 

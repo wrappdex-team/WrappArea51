@@ -1,6 +1,7 @@
 const MIRROR_NODE = "https://mainnet-public.mirrornode.hedera.com";
 const HASHSCAN_URL = "https://hashscan.io/mainnet";
 import { log } from "./logger";
+import { getCachedExchangeRate, fetchNetworkExchangeRate } from "./exchange-rate";
 
 export type HederaNetwork = "mainnet" | "testnet";
 
@@ -322,6 +323,7 @@ async function _raceOracles(timeoutMs: number): Promise<number> {
     };
 
     const oracles = [
+      _fetchPriceNetworkRate,
       _fetchPriceBinance,
       _fetchPriceCoinGecko,
       _fetchPriceCoinCap,
@@ -357,6 +359,16 @@ async function _timedFetch(url: string, ms: number): Promise<Response> {
     clearTimeout(tid);
     throw err;
   }
+}
+
+// ── Oracle: Network Exchange Rate (T0 — 0x168 / file 0.0.112) ──
+async function _fetchPriceNetworkRate(_ms: number): Promise<number> {
+  // Check cached rate first (instant, no network call)
+  const cached = getCachedExchangeRate();
+  if (cached && cached.priceUsd > 0.001) return cached.priceUsd;
+  // Otherwise fetch fresh
+  const rate = await fetchNetworkExchangeRate();
+  return rate?.priceUsd ?? 0;
 }
 
 // ── Oracle: Binance (most reliable, great CORS support) ──

@@ -284,10 +284,10 @@ export interface PoolableToken {
  * Excludes native HBAR (pools use WHBAR).
  */
 function buildPoolableTokens(): PoolableToken[] {
-  const stables = new Set(["USDC", "USDT"]);
-  const majors = new Set(["WHBAR", "WBTC", "WETH", "LINK", "WPOL"]);
+  const stables = new Set(["USDC", "USDT", "DAI", "USDCh", "USDTh"]);
+  const majors = new Set(["WHBAR", "WBTC", "WETH", "LINK", "WPOL", "WBNB", "WAVAX", "WMATIC"]);
   const protocol = new Set(["HBAR.ħ"]);
-  const defi = new Set(["SAUCE", "HBARX"]);
+  const defi = new Set(["SAUCE", "HBARX", "AAVE"]);
 
   return SAUCERSWAP_TOKENS
     .filter((t) => !t.isNative) // Exclude native HBAR

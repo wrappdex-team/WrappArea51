@@ -7,7 +7,7 @@
 //   - All pool state in KV (multi-instance safe, cold-start resilient)
 //   - LP share tracking per user per pool
 //   - Smart routing: direct → USDC-hop, selects lowest price impact
-//   - Oracle prices (SaucerSwap) for UI/TVL only — swaps use reserves
+//   - Oracle prices (T0 Network Rate → SaucerSwap fallback) for UI/TVL only — swaps use reserves
 //
 // Security design:
 //   - First-depositor attack mitigated by MINIMUM_LIQUIDITY lock (1000 units)
@@ -50,6 +50,75 @@ const POOL_INDEX_KEY = "sl_pool_index";
 const ORACLE_CACHE_KEY = "sl_oracle_cache";
 const ORACLE_CACHE_TTL_MS = 60_000;
 const ORACLE_FALLBACK_CONFIG_KEY = "sl_oracle_fallback_cfg";
+
+// ── T0: Network Exchange Rate (0x168 / file 0.0.112) ────────────────
+// The canonical HBAR/USD rate from Hedera's consensus layer.
+// Used as the primary HBAR price source for micro-fee conversion.
+// Falls back to SaucerSwap oracle if Mirror Node is unreachable.
+
+const MIRROR_NODE_URL = "https://mainnet-public.mirrornode.hedera.com";
+const WHBAR_TOKEN_ID = "0.0.1456986"; // WHBAR on Hedera mainnet
+
+interface NetworkExchangeRateCache {
+  priceUsd: number;
+  centEquivalent: number;
+  hbarEquivalent: number;
+  fetchedAt: number;
+}
+
+let _networkRateCache: NetworkExchangeRateCache | null = null;
+const _NETWORK_RATE_CACHE_TTL_MS = 30_000; // 30s cache
+
+async function fetchNetworkExchangeRate(): Promise<number> {
+  // Return cache if fresh
+  if (_networkRateCache && (Date.now() - _networkRateCache.fetchedAt) < _NETWORK_RATE_CACHE_TTL_MS) {
+    return _networkRateCache.priceUsd;
+  }
+
+  try {
+    const res = await fetch(`${MIRROR_NODE_URL}/api/v1/network/exchangerate`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      console.log(`[T0-ExRate] Mirror Node HTTP ${res.status}`);
+      return _networkRateCache?.priceUsd ?? 0;
+    }
+
+    const data = await res.json();
+    const current = data?.current_rate;
+    if (!current || typeof current.cent_equivalent !== "number" || typeof current.hbar_equivalent !== "number") {
+      console.log("[T0-ExRate] Invalid response structure");
+      return _networkRateCache?.priceUsd ?? 0;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    let rate = current;
+    if (current.expiration_time && now > current.expiration_time && data?.next_rate) {
+      rate = data.next_rate;
+    }
+
+    const priceUsd = rate.cent_equivalent / rate.hbar_equivalent / 100;
+
+    // Sanity check
+    if (priceUsd < 0.001 || priceUsd > 50) {
+      console.log(`[T0-ExRate] Implausible price $${priceUsd} — rejecting`);
+      return _networkRateCache?.priceUsd ?? 0;
+    }
+
+    _networkRateCache = {
+      priceUsd,
+      centEquivalent: rate.cent_equivalent,
+      hbarEquivalent: rate.hbar_equivalent,
+      fetchedAt: Date.now(),
+    };
+
+    console.log(`[T0-ExRate] HBAR $${priceUsd.toFixed(6)} (${rate.cent_equivalent}c/${rate.hbar_equivalent}hbar)`);
+    return priceUsd;
+  } catch (err) {
+    console.log(`[T0-ExRate] Fetch failed: ${(err as Error).message}`);
+    return _networkRateCache?.priceUsd ?? 0;
+  }
+}
 const TREASURY_FEE_KEY = "sl_treasury_fees";
 const TREASURY_FEE_LOCK_KEY = "sl_treasury_lock";
 const PROTOCOL_FEE_ACCUM_PREFIX = "sl_pfee_";   // Per-pool protocol fee accumulator
@@ -210,6 +279,20 @@ export const PROTOCOL_FEE_BPS = 5;          // 0.05% — tracked per pool, extra
 
 // ── Token Whitelist ─────────────────────────────────────────────────
 // Only whitelisted tokens can be used in pools.
+// Token IDs are canonical HTS IDs on Hedera mainnet.
+// Bridge tokens use HashPort / LayerZero bridged HTS token IDs.
+//
+// IMPORTANT — decimal verification:
+//   HashPort typically bridges ERC-20 tokens to 8-decimal HTS tokens,
+//   but some older bridge tokens may preserve original decimals (e.g. 18
+//   for WETH). All decimals below MUST be confirmed on HashScan before
+//   mainnet trading goes live. Wrong decimals = wrong swap amounts.
+//
+// Oracle price resolution:
+//   fetchOraclePrices() fetches from SaucerSwap API (keyed by token ID).
+//   Some bridge token IDs differ from SaucerSwap-listed token IDs. For
+//   those tokens, `saucerswapId` maps to the SaucerSwap-listed ID for
+//   price lookup. The oracle also falls back by symbol matching.
 
 interface TokenDef {
   tokenId: string;
@@ -219,22 +302,63 @@ interface TokenDef {
   fallbackPrice: number;
   bridge?: string;
   tier: 1 | 2;
+  /** SaucerSwap-listed HTS ID (when different from `tokenId`). Used for oracle price lookup. */
+  saucerswapId?: string;
+  /** EVM address (derived from tokenId unless overridden — e.g. WHBAR smart contract). */
+  evmAddress?: string;
 }
 
 const TOKEN_WHITELIST: TokenDef[] = [
-  { tokenId: "0.0.1969769", symbol: "WBTC",  name: "Wrapped Bitcoin",        decimals: 8,  fallbackPrice: 97000, bridge: "HashPort", tier: 1 },
-  { tokenId: "0.0.1969757", symbol: "WETH",  name: "Wrapped Ether",         decimals: 18, fallbackPrice: 3600,  bridge: "HashPort", tier: 1 },
-  { tokenId: "0.0.456858",  symbol: "USDC",  name: "USD Coin",              decimals: 6,  fallbackPrice: 1.00,  tier: 1 },
-  { tokenId: "0.0.4291336", symbol: "USDT",  name: "Tether USD",            decimals: 6,  fallbackPrice: 1.00,  tier: 1 },
-  { tokenId: "0.0.1970030", symbol: "LINK",  name: "Chainlink",             decimals: 8,  fallbackPrice: 19.0,  bridge: "HashPort", tier: 1 },
-  { tokenId: "0.0.1055498", symbol: "AAVE",  name: "Aave",                  decimals: 8,  fallbackPrice: 180.0, bridge: "HashPort", tier: 1 },
-  { tokenId: "0.0.1055477", symbol: "DAI",   name: "Dai Stablecoin",        decimals: 8,  fallbackPrice: 1.00,  bridge: "HashPort", tier: 1 },
-  { tokenId: "0.0.3306241", symbol: "WPOL",  name: "Wrapped POL (Polygon)", decimals: 8,  fallbackPrice: 0.40,  bridge: "HashPort", tier: 2 },
+  // ── Routing Hub ───────────────────────────────────────────────────
+  // WHBAR is the ERC-20 wrapper for native HBAR, required for EVM pool routing.
+  // SaucerSwap canonical WHBAR — used for all pool routing involving HBAR.
+  { tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, fallbackPrice: 0.28, tier: 1,
+    evmAddress: "0x000000000000000000000000000000000011F6bF" },
+
+  // ── Stablecoins ───────────────────────────────────────────────────
+  // Native Circle USDC (canonical, highest liquidity on Hedera)
+  { tokenId: "0.0.456858",  symbol: "USDC",   name: "USD Coin",              decimals: 6,  fallbackPrice: 1.00,   tier: 1 },
+  // Native Tether (canonical)
+  { tokenId: "0.0.4291336", symbol: "USDT",   name: "Tether USD",            decimals: 6,  fallbackPrice: 1.00,   tier: 1 },
+  // HashPort-bridged DAI (ERC-20 → HTS, 8 dec — needs HashScan confirmation)
+  { tokenId: "0.0.1055477", symbol: "DAI",    name: "Dai Stablecoin",        decimals: 8,  fallbackPrice: 1.00,   bridge: "HashPort", tier: 1 },
+  // HashPort-bridged USDC (distinct from native Circle USDC — lower liquidity)
+  { tokenId: "0.0.1055459", symbol: "USDCh",  name: "USDC (HashPort)",       decimals: 6,  fallbackPrice: 1.00,   bridge: "HashPort", tier: 2 },
+  // HashPort-bridged USDT (distinct from native Tether — lower liquidity)
+  { tokenId: "0.0.1055472", symbol: "USDTh",  name: "USDT (HashPort)",       decimals: 6,  fallbackPrice: 1.00,   bridge: "HashPort", tier: 2 },
+
+  // ── Major Wrapped Assets (HashPort / LayerZero bridges) ───────────
+  // WBTC: HashPort/LayerZero bridge. SaucerSwap lists a different WBTC (0.0.1969769).
+  { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPrice: 104000, bridge: "HashPort", tier: 1,
+    saucerswapId: "0.0.1969769" },
+  // WETH: HashPort bridge (token ID 0.0.541564). SaucerSwap lists 0.0.1969757 (18 dec).
+  // NOTE: Decimals MUST be confirmed on HashScan — HashPort may bridge at 8 or 18.
+  { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPrice: 2650,   bridge: "HashPort", tier: 1,
+    saucerswapId: "0.0.1969757" },
+  // LINK: HashPort bridge. SaucerSwap lists 0.0.1970030.
+  { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPrice: 16.50,  bridge: "HashPort", tier: 1,
+    saucerswapId: "0.0.1970030" },
+  // AAVE: HashPort bridge (same ID as SaucerSwap — no alias needed)
+  // NOTE: Decimals (8) need HashScan confirmation — could be 18 if HashPort preserved ERC-20 decimals.
+  { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPrice: 180.0,  bridge: "HashPort", tier: 1 },
+
+  // ── Cross-Chain Wrapped Assets (LayerZero / BiT Global) ───────────
+  // WBNB: LayerZero bridge from BNB Chain
+  { tokenId: "0.0.1157005", symbol: "WBNB",   name: "Wrapped BNB",           decimals: 8,  fallbackPrice: 660,    bridge: "LayerZero", tier: 1 },
+  // WAVAX: LayerZero bridge from Avalanche
+  { tokenId: "0.0.1157020", symbol: "WAVAX",  name: "Wrapped AVAX",          decimals: 8,  fallbackPrice: 25,     bridge: "LayerZero", tier: 1 },
+  // WMATIC: HashPort bridge from Polygon
+  { tokenId: "0.0.540318",  symbol: "WMATIC", name: "Wrapped MATIC",         decimals: 8,  fallbackPrice: 0.40,   bridge: "HashPort", tier: 2 },
 ];
 
 const ACTIVE_TOKENS = TOKEN_WHITELIST.filter(t => t.tier === 1);
 const TOKEN_BY_SYMBOL = new Map(TOKEN_WHITELIST.map(t => [t.symbol, t]));
 const TOKEN_BY_ID = new Map(TOKEN_WHITELIST.map(t => [t.tokenId, t]));
+// Secondary lookup: SaucerSwap alias IDs → our canonical token ID (for oracle price resolution)
+const SAUCERSWAP_ALIAS_MAP = new Map<string, string>();
+for (const t of TOKEN_WHITELIST) {
+  if (t.saucerswapId) SAUCERSWAP_ALIAS_MAP.set(t.saucerswapId, t.tokenId);
+}
 
 // ── Pool State Types ────────────────────────────────────────────────
 
@@ -350,8 +474,12 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
   } catch { /* cache miss */ }
 
   const prices: Record<string, number> = {};
-  prices["0.0.456858"] = 1.0;
-  prices["0.0.4291336"] = 1.0;
+  // Default stablecoin prices (always $1)
+  prices["0.0.456858"] = 1.0;   // USDC (native Circle)
+  prices["0.0.4291336"] = 1.0;  // USDT (native Tether)
+  prices["0.0.1055477"] = 1.0;  // DAI (HashPort bridge)
+  prices["0.0.1055459"] = 1.0;  // USDCh (HashPort bridge)
+  prices["0.0.1055472"] = 1.0;  // USDTh (HashPort bridge)
 
   // Try cached working variant first, then fallback to all variants
   const allVariants = ["/tokens", "/v1/tokens", "/v2/tokens"];
@@ -370,11 +498,30 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
       if (!res.ok) continue;
       const data = await res.json();
       if (Array.isArray(data)) {
+        // Build symbol → price map for secondary resolution
+        const symPrices: Record<string, number> = {};
         for (const token of data) {
           const id = token.id || token.tokenId;
           const price = parseFloat(token.priceUsd || token.price || "0");
-          if (id && price > 0 && TOKEN_BY_ID.has(id)) {
+          if (!id || price <= 0) continue;
+          const sym = (token.symbol || "").toUpperCase();
+          if (sym) symPrices[sym] = price;
+          // Primary: exact token ID match
+          if (TOKEN_BY_ID.has(id)) {
             prices[id] = price;
+            continue;
+          }
+          // Secondary: SaucerSwap alias → our canonical token ID
+          // (e.g. SaucerSwap WBTC 0.0.1969769 → our WBTC 0.0.1055483)
+          const aliasTarget = SAUCERSWAP_ALIAS_MAP.get(id);
+          if (aliasTarget && !prices[aliasTarget]) {
+            prices[aliasTarget] = price;
+          }
+        }
+        // Tertiary: symbol-based fallback for tokens not yet resolved
+        for (const t of TOKEN_WHITELIST) {
+          if (!prices[t.tokenId] && symPrices[t.symbol]) {
+            prices[t.tokenId] = symPrices[t.symbol];
           }
         }
       }
@@ -383,6 +530,14 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
         break;
       }
     } catch { continue; }
+  }
+
+  // T0: Network Exchange Rate — trustless HBAR price from file 0.0.112
+  // Overrides SaucerSwap WHBAR price if available (consensus-derived)
+  const networkHbarPrice = await fetchNetworkExchangeRate();
+  if (networkHbarPrice > 0) {
+    prices[WHBAR_TOKEN_ID] = networkHbarPrice;
+    console.log(`[Oracle] T0 network rate applied for WHBAR: $${networkHbarPrice.toFixed(6)}`);
   }
 
   let usedFallback = false;
@@ -701,7 +856,7 @@ export function registerAmmRoutes(app: Hono): void {
       const defA = TOKEN_BY_SYMBOL.get(tokenA);
       const defB = TOKEN_BY_SYMBOL.get(tokenB);
       if (!defA || !defB) return c.json({ error: `Unknown token. Available: ${ACTIVE_TOKENS.map(t => t.symbol).join(", ")}` }, 400);
-      if (defA.tier !== 1 || defB.tier !== 1) return c.json({ error: "Only Tier 1 tokens (top 5 by MC) are currently enabled" }, 400);
+      if (defA.tier !== 1 || defB.tier !== 1) return c.json({ error: "Only Tier 1 tokens are currently enabled for pool creation" }, 400);
       if (tokenA === tokenB) return c.json({ error: "Cannot create pool with identical tokens" }, 400);
 
       // Fee is protocol-fixed. Any client-supplied feeBps is ignored.
@@ -959,12 +1114,17 @@ export function registerAmmRoutes(app: Hono): void {
         routes.push({ path: [tokenIn, tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, rIn), feeBps: TOTAL_SWAP_FEE_BPS, poolId: pool.id });
       }
 
-      // USDC-hop routes (A→USDC→B) — uses pre-fetched pool array
-      if (tokenIn !== "USDC" && tokenOut !== "USDC") {
+      // ── Multi-hop routing (A→HUB→B) ──────────────────────────────────
+      // Tries two routing hubs: USDC (stablecoin path) and WHBAR (native path).
+      // WHBAR is the primary routing hub on Hedera — most pools pair against it.
+      // Both hubs are attempted; the best output across all routes wins.
+      const ROUTING_HUBS = ["USDC", "WHBAR"];
+      for (const hub of ROUTING_HUBS) {
+        if (tokenIn === hub || tokenOut === hub) continue;
         for (const p1 of activePools) {
           let r1In: bigint, r1Out: bigint;
-          const f1 = p1.tokenA === tokenIn && p1.tokenB === "USDC";
-          const v1 = p1.tokenA === "USDC" && p1.tokenB === tokenIn;
+          const f1 = p1.tokenA === tokenIn && p1.tokenB === hub;
+          const v1 = p1.tokenA === hub && p1.tokenB === tokenIn;
           if (f1) { r1In = BigInt(p1.reserveA); r1Out = BigInt(p1.reserveB); }
           else if (v1) { r1In = BigInt(p1.reserveB); r1Out = BigInt(p1.reserveA); }
           else continue;
@@ -974,14 +1134,14 @@ export function registerAmmRoutes(app: Hono): void {
           for (const p2 of activePools) {
             if (p2.id === p1.id) continue;
             let r2In: bigint, r2Out: bigint;
-            const f2 = p2.tokenA === "USDC" && p2.tokenB === tokenOut;
-            const v2 = p2.tokenA === tokenOut && p2.tokenB === "USDC";
+            const f2 = p2.tokenA === hub && p2.tokenB === tokenOut;
+            const v2 = p2.tokenA === tokenOut && p2.tokenB === hub;
             if (f2) { r2In = BigInt(p2.reserveA); r2Out = BigInt(p2.reserveB); }
             else if (v2) { r2In = BigInt(p2.reserveB); r2Out = BigInt(p2.reserveA); }
             else continue;
             const out = getAmountOut(mid, r2In, r2Out, TOTAL_SWAP_FEE_BPS);
             if (out <= 0n) continue;
-            routes.push({ path: [tokenIn, "USDC", tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, r1In) + getPriceImpactBps(mid, r2In), feeBps: TOTAL_SWAP_FEE_BPS * 2, poolId: `${p1.id}+${p2.id}` });
+            routes.push({ path: [tokenIn, hub, tokenOut], amountOut: out, priceImpactBps: getPriceImpactBps(rawIn, r1In) + getPriceImpactBps(mid, r2In), feeBps: TOTAL_SWAP_FEE_BPS * 2, poolId: `${p1.id}+${p2.id}` });
           }
         }
       }
@@ -993,9 +1153,11 @@ export function registerAmmRoutes(app: Hono): void {
       const outDisplay = Number(best.amountOut) / (10 ** defOut.decimals);
       const inDisplay = parseFloat(amountIn);
 
-      // Protocol fee in HBAR (WHBAR oracle price or KV-backed fallback, clamped to safety ceiling)
+      // Protocol fee in HBAR — T0 Network Rate (0x168) is primary, SaucerSwap/fallback is backup
+      // The network exchange rate from file 0.0.112 is consensus-derived and always current.
       const fbCfg = await getOracleFallbackConfig();
-      const hbarPrice = prices["0.0.1456986"] || fbCfg.price;
+      const t0HbarPrice = await fetchNetworkExchangeRate();
+      const hbarPrice = t0HbarPrice > 0 ? t0HbarPrice : (prices[WHBAR_TOKEN_ID] || fbCfg.price);
       const protocolFeeHbar = PROTOCOL_FEE_USD / hbarPrice;
       const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round(protocolFeeHbar * 1e8)));
       const lpRewardTinybar = Math.floor(protocolFeeTinybar / 2);
@@ -1148,8 +1310,10 @@ export function registerAmmRoutes(app: Hono): void {
 
             // Layer 2: Flat micro-fee — $0.0007 per swap, split 50/50 LP / treasury (clamped)
             // (Layer 1: 0.25% AMM fee already applied in getAmountOut above)
+            // T0 Network Rate (0x168) is primary — trustless, consensus-derived
             const swapFbCfg = await getOracleFallbackConfig();
-            const hbarPriceForFee = prices["0.0.1456986"] || swapFbCfg.price;
+            const t0SwapHbarPrice = await fetchNetworkExchangeRate();
+            const hbarPriceForFee = t0SwapHbarPrice > 0 ? t0SwapHbarPrice : (prices[WHBAR_TOKEN_ID] || swapFbCfg.price);
             const protocolFeeTinybar = Math.min(MAX_PROTOCOL_FEE_TINYBAR, Math.max(1, Math.round((PROTOCOL_FEE_USD / hbarPriceForFee) * 1e8)));
             const treasuryFeeTinybar = protocolFeeTinybar - Math.floor(protocolFeeTinybar / 2);
             // Lock-protected fee increment — serializes across concurrent swaps on

@@ -81,6 +81,8 @@ export interface AllowedToken {
   isWrapped: boolean;
   bridge?: string;
   isNative?: boolean;
+  /** SaucerSwap-listed HTS ID when different from htsId (for oracle price lookup) */
+  saucerswapAliasId?: string;
 }
 
 export function htsIdToEvmAddress(htsId: string): string {
@@ -121,16 +123,18 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 3, isWrapped: false,
   },
   {
-    symbol: "WBTC", name: "Wrapped Bitcoin", htsId: "0.0.1969769",
-    evmAddress: htsIdToEvmAddress("0.0.1969769"), decimals: 8,
+    symbol: "WBTC", name: "Wrapped Bitcoin", htsId: "0.0.1055483",
+    evmAddress: htsIdToEvmAddress("0.0.1055483"), decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
-    rank: 4, isWrapped: true, bridge: "Hashport",
+    rank: 4, isWrapped: true, bridge: "HashPort",
+    saucerswapAliasId: "0.0.1969769",
   },
   {
-    symbol: "LINK", name: "Chainlink", htsId: "0.0.1970030",
-    evmAddress: htsIdToEvmAddress("0.0.1970030"), decimals: 8,
+    symbol: "LINK", name: "Chainlink", htsId: "0.0.1055495",
+    evmAddress: htsIdToEvmAddress("0.0.1055495"), decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
-    rank: 5, isWrapped: true, bridge: "Hashport",
+    rank: 5, isWrapped: true, bridge: "HashPort",
+    saucerswapAliasId: "0.0.1970030",
   },
   {
     symbol: "SAUCE", name: "SaucerSwap", htsId: "0.0.731861",
@@ -169,22 +173,23 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 11, isWrapped: false,
   },
   {
-    symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.1969757",
-    evmAddress: htsIdToEvmAddress("0.0.1969757"), decimals: 18,
+    symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.541564",
+    evmAddress: htsIdToEvmAddress("0.0.541564"), decimals: 18,
     logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-    rank: 12, isWrapped: true, bridge: "Hashport",
+    rank: 12, isWrapped: true, bridge: "HashPort",
+    saucerswapAliasId: "0.0.1969757",
   },
   {
     symbol: "AAVE", name: "Aave", htsId: "0.0.1055498",
     evmAddress: htsIdToEvmAddress("0.0.1055498"), decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
-    rank: 13, isWrapped: true, bridge: "Hashport",
+    rank: 13, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "DAI", name: "Dai Stablecoin", htsId: "0.0.1055477",
     evmAddress: htsIdToEvmAddress("0.0.1055477"), decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
-    rank: 14, isWrapped: true, bridge: "Hashport",
+    rank: 14, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "HBAR.ħ", name: "HBAR.ħ Protocol", htsId: HBARH_TOKEN_ID,
@@ -196,12 +201,66 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     symbol: "WPOL", name: "Wrapped POL (Polygon)", htsId: "0.0.3306241",
     evmAddress: htsIdToEvmAddress("0.0.3306241"), decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
-    rank: 16, isWrapped: true, bridge: "Hashport",
+    rank: 16, isWrapped: true, bridge: "HashPort",
+  },
+  // ── HashPort / LayerZero Bridge Stablecoins (distinct from native Circle/Tether) ──
+  {
+    symbol: "USDCh", name: "USDC (HashPort)", htsId: "0.0.1055459",
+    evmAddress: htsIdToEvmAddress("0.0.1055459"), decimals: 6,
+    logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+    rank: 20, isWrapped: true, bridge: "HashPort",
+  },
+  {
+    symbol: "USDTh", name: "USDT (HashPort)", htsId: "0.0.1055472",
+    evmAddress: htsIdToEvmAddress("0.0.1055472"), decimals: 6,
+    logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
+    rank: 21, isWrapped: true, bridge: "HashPort",
+  },
+  {
+    symbol: "WBNB", name: "Wrapped BNB", htsId: "0.0.1157005",
+    evmAddress: htsIdToEvmAddress("0.0.1157005"), decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+    rank: 22, isWrapped: true, bridge: "LayerZero",
+  },
+  {
+    symbol: "WAVAX", name: "Wrapped AVAX", htsId: "0.0.1157020",
+    evmAddress: htsIdToEvmAddress("0.0.1157020"), decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
+    rank: 23, isWrapped: true, bridge: "LayerZero",
+  },
+  {
+    symbol: "WMATIC", name: "Wrapped MATIC", htsId: "0.0.540318",
+    evmAddress: htsIdToEvmAddress("0.0.540318"), decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+    rank: 24, isWrapped: true, bridge: "HashPort",
   },
 ];
 
 export const TOKEN_BY_SYMBOL = new Map(SAUCERSWAP_TOKENS.map((t) => [t.symbol, t]));
 export const TOKEN_BY_HTS_ID = new Map(SAUCERSWAP_TOKENS.map((t) => [t.htsId, t]));
+
+/**
+ * Get the HTS ID to use when calling SaucerSwap APIs / on-chain router.
+ * For bridge tokens whose canonical HTS ID differs from the SaucerSwap-listed
+ * pool token, returns the saucerswapAliasId. For all others, returns htsId.
+ *
+ * Use this for quote fetching and router path building — NOT for token
+ * association, balance checks, or approval transactions (those need the
+ * real bridge token htsId the user actually holds).
+ */
+export function getSaucerswapRoutingId(token: AllowedToken): string {
+  return token.saucerswapAliasId || token.htsId;
+}
+
+/**
+ * Get the EVM address for SaucerSwap routing (uses alias if available).
+ */
+export function getSaucerswapRoutingEvmAddress(token: AllowedToken): string {
+  const routingId = getSaucerswapRoutingId(token);
+  return routingId === "native"
+    ? "0x0000000000000000000000000000000000000000"
+    : htsIdToEvmAddress(routingId);
+}
 
 export function resolveToken(symbol: string): AllowedToken | undefined {
   // Check exact match first — critical for symbols with non-ASCII characters
@@ -210,7 +269,12 @@ export function resolveToken(symbol: string): AllowedToken | undefined {
   if (exact) return exact;
 
   // HBAR (native) is its own token now — not aliased to WHBAR
-  const aliases: Record<string, string> = { ETH: "WETH", BTC: "WBTC", MATIC: "WPOL", POL: "WPOL", POLY: "WPOL" };
+  const aliases: Record<string, string> = {
+    ETH: "WETH", BTC: "WBTC", MATIC: "WMATIC", POL: "WPOL", POLY: "WPOL",
+    BNB: "WBNB", AVAX: "WAVAX",
+    // Legacy "h" suffixed symbols (removed from registry, kept for backward compat)
+    WBTCH: "WBTC", WETHH: "WETH", LINKH: "LINK",
+  };
   const upper = symbol.toUpperCase();
   const resolved = aliases[upper] || upper;
   return TOKEN_BY_SYMBOL.get(resolved);
@@ -658,9 +722,11 @@ async function fetchRouterQuote(
 // "All quote strategies failed — using minOutput=1" error for every swap
 // involving HBAR whenever live prices were stale or not yet fetched.
 const FALLBACK_TOKEN_PRICES_USD: Record<string, number> = {
-  HBAR: 0.28, WHBAR: 0.28, USDC: 1.0, USDT: 1.0, WBTC: 97000, WETH: 3600,
-  LINK: 19.0, WPOL: 0.40, SAUCE: 0.045, HBARX: 0.30, KARATE: 0.0003,
+  HBAR: 0.28, WHBAR: 0.28, USDC: 1.0, USDT: 1.0, WBTC: 104000, WETH: 2650,
+  LINK: 16.50, WPOL: 0.40, SAUCE: 0.045, HBARX: 0.30, KARATE: 0.0003,
   PACK: 0.015, DOVU: 0.002, HST: 0.018, "HBAR.ħ": 0.000001,
+  AAVE: 180.0, DAI: 1.0, WBNB: 660, WAVAX: 25, WMATIC: 0.40,
+  USDCh: 1.0, USDTh: 1.0,
 };
 
 // Live price cache — updated by fetchLiveTokenPrices()
@@ -2714,9 +2780,9 @@ async function executeSaucerSwapV2Direct(
     const v2RouterId = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
     const fee = poolInfo.feeTier || 3000;
 
-    // Token EVM addresses for the V2 pool
-    const tokenInEvm = (isInputNative ? whbar : inputToken).evmAddress;
-    const tokenOutEvm = (isOutputNative ? whbar : outputToken).evmAddress;
+    // Token EVM addresses for the V2 pool (use SaucerSwap alias for bridge tokens)
+    const tokenInEvm = getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken);
+    const tokenOutEvm = getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken);
 
     // ── V2 Quote: try V2 QuoterV2 first, then fall back to price estimation ──
     // V1 getAmountsOut does NOT work for V2-only pools, so we use the V2 QuoterV2
@@ -2743,9 +2809,10 @@ async function executeSaucerSwapV2Direct(
     }
 
     // Strategy 2: Price-based estimation fallback
+    // Use SaucerSwap alias IDs for API/router calls (bridge tokens have different pool IDs)
     if (!quote) {
-      const quoteInputId = isInputNative ? whbar.htsId : inputToken.htsId;
-      const quoteOutputId = isOutputNative ? whbar.htsId : outputToken.htsId;
+      const quoteInputId = isInputNative ? whbar.htsId : getSaucerswapRoutingId(inputToken);
+      const quoteOutputId = isOutputNative ? whbar.htsId : getSaucerswapRoutingId(outputToken);
       quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
         pathAddresses: [tokenInEvm, tokenOutEvm],
         routerHtsId: getSaucerSwapRouter(network, "v1"),
@@ -3316,7 +3383,8 @@ async function executeSaucerSwapDirect(
       isInputNative ? whbar : inputToken,
       isOutputNative ? whbar : outputToken
     );
-    const pathAddresses = logicalPath.map((t) => t.evmAddress);
+    // Use SaucerSwap alias EVM addresses for routing (bridge tokens have different pool IDs)
+    const pathAddresses = logicalPath.map((t) => getSaucerswapRoutingEvmAddress(t));
 
     // ── Resolve the recipient's REAL EVM address via Mirror Node ──
     // Critical fix: htsIdToEvmAddress(accountId) creates a synthetic long-zero
@@ -3392,9 +3460,10 @@ async function executeSaucerSwapDirect(
       console.warn(`[HBAR.h] Router discovery found no verified candidate — using configured default: ${v1Router}`);
     }
 
-    // For quote fetching, use WHBAR's htsId when input is native HBAR
-    const quoteInputId = isInputNative ? whbar.htsId : inputToken.htsId;
-    const quoteOutputId = isOutputNative ? whbar.htsId : outputToken.htsId;
+    // For quote fetching, use WHBAR's htsId when input is native HBAR.
+    // Use SaucerSwap alias IDs for bridge tokens (their pool IDs differ from canonical bridge IDs).
+    const quoteInputId = isInputNative ? whbar.htsId : getSaucerswapRoutingId(inputToken);
+    const quoteOutputId = isOutputNative ? whbar.htsId : getSaucerswapRoutingId(outputToken);
 
     // Multi-strategy quote: router view → API → price estimate → fallback
     const quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
@@ -3928,13 +3997,13 @@ const FALLBACK_POOLS: SaucerSwapPool[] = [
   {
     id: "pool-hbar-link",
     tokenA: { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8 },
-    tokenB: { id: "0.0.1970030", symbol: "LINK", name: "Chainlink", decimals: 8 },
+    tokenB: { id: "0.0.1055495", symbol: "LINK", name: "Chainlink", decimals: 8 },
     tvlUsd: 2340000, volume24hUsd: 780000, fee: 0.3, apr: 18.7, tickSpacing: 60,
   },
   {
     id: "pool-hbar-wbtc",
     tokenA: { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8 },
-    tokenB: { id: "0.0.1969769", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8 },
+    tokenB: { id: "0.0.1055483", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8 },
     tvlUsd: 3560000, volume24hUsd: 1120000, fee: 0.3, apr: 15.3, tickSpacing: 60,
   },
   {

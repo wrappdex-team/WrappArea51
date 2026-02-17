@@ -452,11 +452,11 @@ invariant calculation, ensuring LPs earn fees proportional to volume.
   +---------+------------------+----------+-------------------+
   | Symbol  | HTS Token ID     | Decimals | Bridge            |
   +---------+------------------+----------+-------------------+
-  | WBTC    | 0.0.1969769      | 8        | HashPort          |
-  | WETH    | 0.0.1969757      | 18       | HashPort          |
+  | WBTC    | 0.0.1055483      | 8        | HashPort          |
+  | WETH    | 0.0.541564       | 18       | HashPort          |
   | USDC    | 0.0.456858       | 6        | Native            |
   | USDT    | 0.0.4291336      | 6        | Native            |
-  | LINK    | 0.0.1970030      | 8        | HashPort          |
+  | LINK    | 0.0.1055495      | 8        | HashPort          |
   +---------+------------------+----------+-------------------+
 
 
@@ -650,9 +650,9 @@ and feature badges matching the bridge's brand identity.
     +--------+-------------------+
     | HBAR   | native            |
     | USDC   | 0.0.456858        |
-    | WBTC   | 0.0.1969769       |
-    | WETH   | 0.0.1969757       |
-    | LINK   | 0.0.1970030       |
+    | WBTC   | 0.0.1055483       |
+    | WETH   | 0.0.541564        |
+    | LINK   | 0.0.1055495       |
     | BONZO  | (Bonzo native)    |
     +--------+-------------------+
 

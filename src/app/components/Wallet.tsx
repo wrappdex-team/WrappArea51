@@ -66,13 +66,41 @@ const HBARH_TOKEN_ID = "0.0.9356476";
 const WBTC_TOKEN_ID = "0.0.1055483";
 const AAVE_TOKEN_ID = "0.0.1055498";
 const DAI_TOKEN_ID = "0.0.1055477";
+const WETH_TOKEN_ID = "0.0.541564";
+const LINK_TOKEN_ID = "0.0.1055495";
+const WBNB_TOKEN_ID = "0.0.1157005";
+const WAVAX_TOKEN_ID = "0.0.1157020";
+const WMATIC_TOKEN_ID = "0.0.540318";
+const USDC_BRIDGE_TOKEN_ID = "0.0.1055459";
+const USDT_BRIDGE_TOKEN_ID = "0.0.1055472";
 const SS_LP_TOKEN_ID = LP_TOKEN_WHBAR_HBARH.tokenId; // "0.0.9356724"
 
 const TOKEN_LOGOS: Record<string, string> = {
   HBAR: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
   WBTC: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
+  WETH: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
   AAVE: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
   DAI: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+  LINK: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
+  USDC: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+  USDT: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
+  WBNB: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+  WAVAX: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
+  WMATIC: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+};
+
+// Map HTS token IDs to logo keys for bridge tokens the user may hold
+const TOKEN_ID_TO_LOGO: Record<string, string> = {
+  [WBTC_TOKEN_ID]: "WBTC",
+  [AAVE_TOKEN_ID]: "AAVE",
+  [DAI_TOKEN_ID]: "DAI",
+  [WETH_TOKEN_ID]: "WETH",
+  [LINK_TOKEN_ID]: "LINK",
+  [WBNB_TOKEN_ID]: "WBNB",
+  [WAVAX_TOKEN_ID]: "WAVAX",
+  [WMATIC_TOKEN_ID]: "WMATIC",
+  [USDC_BRIDGE_TOKEN_ID]: "USDC",
+  [USDT_BRIDGE_TOKEN_ID]: "USDT",
 };
 
 function getTokenLogo(
@@ -83,9 +111,12 @@ function getTokenLogo(
   hbarLight = HBARH_LOGO_LIGHT,
 ): string | null {
   if (tokenId === HBARH_TOKEN_ID || tokenId === SS_LP_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? hbarDark : hbarLight;
-  if (tokenId === WBTC_TOKEN_ID || symbol === "WBTC") return TOKEN_LOGOS.WBTC;
-  if (tokenId === AAVE_TOKEN_ID || symbol === "AAVE") return TOKEN_LOGOS.AAVE;
-  if (tokenId === DAI_TOKEN_ID || symbol === "DAI") return TOKEN_LOGOS.DAI;
+  // Match by token ID first (handles bridge tokens with non-standard symbols)
+  if (tokenId) {
+    const logoKey = TOKEN_ID_TO_LOGO[tokenId];
+    if (logoKey && TOKEN_LOGOS[logoKey]) return TOKEN_LOGOS[logoKey];
+  }
+  // Then by symbol
   return TOKEN_LOGOS[symbol] || null;
 }
 

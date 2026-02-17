@@ -789,8 +789,8 @@ export async function fetchValidators(): Promise<ValidatorNode[]> {
 //     server-side and NOT dependent on SmartNode availability.
 //
 // [HSUITE-05] Top 5 tokens (Tier 1, active now):
-//   WBTC (0.0.1969769), WETH (0.0.1969757), USDC (0.0.456858),
-//   USDT (0.0.4291336), LINK (0.0.1970030)
+//   WBTC (0.0.1055483), WETH (0.0.541564), USDC (0.0.456858),
+//   USDT (0.0.4291336), LINK (0.0.1055495)
 //   Expanding to top 50 by MC via community governance vote.
 //
 // [HSUITE-06] API keys still needed (leave out for now):
@@ -803,9 +803,9 @@ const FALLBACK_HEDERA_TOKENS: HSuiteTokenInfo[] = [
   { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, priceUsd: 0.28, totalSupply: "50000000000000000", treasuryAccount: "0.0.98", verified: true },
   { id: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, priceUsd: 1.0, totalSupply: "1000000000000", treasuryAccount: "0.0.456858", verified: true },
   { id: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, priceUsd: 1.0, totalSupply: "500000000000", treasuryAccount: "0.0.4291336", verified: true },
-  { id: "0.0.1969769", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, priceUsd: 97000, totalSupply: "2100000000000000", treasuryAccount: "0.0.1969769", verified: true },
-  { id: "0.0.1969757", symbol: "WETH", name: "Wrapped Ether", decimals: 18, priceUsd: 3600, totalSupply: "120000000000000000000000000", treasuryAccount: "0.0.1969757", verified: true },
-  { id: "0.0.1970030", symbol: "LINK", name: "Chainlink", decimals: 8, priceUsd: 19.0, totalSupply: "100000000000000000", treasuryAccount: "0.0.1970030", verified: true },
+  { id: "0.0.1055483", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, priceUsd: 97000, totalSupply: "2100000000000000", treasuryAccount: "0.0.1055483", verified: true },
+  { id: "0.0.541564", symbol: "WETH", name: "Wrapped Ether", decimals: 18, priceUsd: 3600, totalSupply: "120000000000000000000000000", treasuryAccount: "0.0.541564", verified: true },
+  { id: "0.0.1055495", symbol: "LINK", name: "Chainlink", decimals: 8, priceUsd: 19.0, totalSupply: "100000000000000000", treasuryAccount: "0.0.1055495", verified: true },
   { id: "0.0.3306241", symbol: "WPOL", name: "Wrapped POL (Polygon)", decimals: 8, priceUsd: 0.40, totalSupply: "1000000000000000000", treasuryAccount: "0.0.3306241", verified: true },
   { id: "0.0.731861", symbol: "SAUCE", name: "SaucerSwap", decimals: 6, priceUsd: 0.045, totalSupply: "1000000000000000", treasuryAccount: "0.0.731861", verified: true },
   { id: "0.0.9356476", symbol: "HBAR.ħ", name: "HBAR.ħ Protocol", decimals: 8, priceUsd: 0.0081, totalSupply: "10000000000000000", treasuryAccount: "0.0.9356476", verified: true },
