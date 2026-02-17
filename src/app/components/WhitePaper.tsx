@@ -94,10 +94,10 @@ function StatBadge({ value, label }: { value: string; label: string }) {
   return (
     <div className="text-center">
       <div
-        className={`text-2xl md:text-3xl font-bold bg-gradient-to-r bg-clip-text text-transparent ${
+        className={`text-2xl md:text-3xl font-bold ${
           isDark
-            ? "from-pink-400 to-purple-400"
-            : "from-pink-600 to-purple-600"
+            ? "bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent"
+            : "text-purple-700"
         }`}
       >
         {value}
@@ -1786,6 +1786,93 @@ export function WhitePaper() {
           </GlassCard>
         </Section>
 
+        {/* ═══ REVENUE MODEL ═══ */}
+        <Section id="revenue" className="mb-16">
+          <h2 className={h2}>Revenue Model</h2>
+          <p className={subtitle}>
+            Five revenue streams. Fully DAO-governed. Sustainable from day one.
+          </p>
+
+          <div className="grid sm:grid-cols-2 gap-3 mb-4">
+            {[
+              {
+                title: "1. LP Swap Fee (0.25% — all to pool)",
+                desc: "The full 25 bps stays in pool reserves on every swap, compounding k for LP holders. This is the primary incentive for liquidity providers — competitive with Uniswap V2 (0.30%) while being 17% cheaper for traders.",
+              },
+              {
+                title: "2. Protocol Share (0.05% extractable)",
+                desc: "5 bps of every swap is tracked per pool in a dedicated accumulator. The DAO votes on extraction timing. Until extracted, LPs earn the full 0.25%. Extraction deducts from reserves and credits the treasury (0.0.9695738).",
+              },
+              {
+                title: "3. Flat Micro-Fee ($0.0007 per swap)",
+                desc: "A flat $0.0007 fee in HBAR assessed on every swap, split 50/50 between LP rewards and protocol treasury. Flat (not proportional) to prevent trade-splitting manipulation. Clamped to a safety ceiling of 500K tinybar.",
+              },
+              {
+                title: "4. Pool Creation Fees",
+                desc: "$50 in HBAR.ħ per weighted pool for non-VIP users. VIP holders (100M+ HBAR.ħ or VIP NFT) create pools free. Creation fees flow to the protocol treasury as a deflationary token sink.",
+              },
+              {
+                title: "5. Affiliate & Bridge Revenue",
+                desc: "ChangeNOW fiat on-ramp referral commissions, plus potential cross-chain bridge affiliate revenue from Squid (Axelar) and Stargate (LayerZero) integrations as volume scales.",
+              },
+            ].map((r) => (
+              <GlassCard key={r.title} className="p-5">
+                <h4
+                  className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
+                >
+                  {r.title}
+                </h4>
+                <p
+                  className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
+                >
+                  {r.desc}
+                </p>
+              </GlassCard>
+            ))}
+          </div>
+
+          <GlassCard className="p-5 md:p-6" hover={false}>
+            <p
+              className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
+            >
+              <span className="font-bold">Revenue projections at scale:</span>
+            </p>
+            <div className={`grid sm:grid-cols-3 gap-3 mt-3 mb-3`}>
+              {[
+                { vol: "$100K/day", lp: "$250/day", protocol: "$50/day", annual: "~$18K" },
+                { vol: "$1M/day", lp: "$2,500/day", protocol: "$500/day", annual: "~$182K" },
+                { vol: "$10M/day", lp: "$25,000/day", protocol: "$5,000/day", annual: "~$1.8M" },
+              ].map((tier) => (
+                <div
+                  key={tier.vol}
+                  className={`p-3 rounded-xl text-center ${isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-gray-50 border border-gray-100"}`}
+                >
+                  <div className={`text-xs font-bold mb-1 ${isDark ? "text-pink-400" : "text-pink-600"}`}>
+                    {tier.vol} volume
+                  </div>
+                  <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    LP: {tier.lp}
+                  </div>
+                  <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    Protocol: {tier.protocol}
+                  </div>
+                  <div className={`text-xs font-semibold mt-1 ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>
+                    {tier.annual}/yr treasury
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p
+              className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
+            >
+              The flat $0.0007 micro-fee adds ~$2.50/day at 3,500 daily
+              swaps. Pool creation fees and fiat affiliate revenue layer
+              on top as the user base scales. All protocol revenue
+              parameters are DAO-adjustable via governance vote.
+            </p>
+          </GlassCard>
+        </Section>
+
         {/* ═══ ROADMAP ═══ */}
         <Section id="roadmap" className="mb-16">
           <h2 className={h2}>Roadmap</h2>
@@ -1958,93 +2045,6 @@ export function WhitePaper() {
               </GlassCard>
             ))}
           </div>
-        </Section>
-
-        {/* ═══ REVENUE MODEL ═══ */}
-        <Section id="revenue" className="mb-16">
-          <h2 className={h2}>Revenue Model</h2>
-          <p className={subtitle}>
-            Five revenue streams. Fully DAO-governed. Sustainable from day one.
-          </p>
-
-          <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            {[
-              {
-                title: "1. LP Swap Fee (0.25% — all to pool)",
-                desc: "The full 25 bps stays in pool reserves on every swap, compounding k for LP holders. This is the primary incentive for liquidity providers — competitive with Uniswap V2 (0.30%) while being 17% cheaper for traders.",
-              },
-              {
-                title: "2. Protocol Share (0.05% extractable)",
-                desc: "5 bps of every swap is tracked per pool in a dedicated accumulator. The DAO votes on extraction timing. Until extracted, LPs earn the full 0.25%. Extraction deducts from reserves and credits the treasury (0.0.9695738).",
-              },
-              {
-                title: "3. Flat Micro-Fee ($0.0007 per swap)",
-                desc: "A flat $0.0007 fee in HBAR assessed on every swap, split 50/50 between LP rewards and protocol treasury. Flat (not proportional) to prevent trade-splitting manipulation. Clamped to a safety ceiling of 500K tinybar.",
-              },
-              {
-                title: "4. Pool Creation Fees",
-                desc: "$50 in HBAR.ħ per weighted pool for non-VIP users. VIP holders (100M+ HBAR.ħ or VIP NFT) create pools free. Creation fees flow to the protocol treasury as a deflationary token sink.",
-              },
-              {
-                title: "5. Affiliate & Bridge Revenue",
-                desc: "ChangeNOW fiat on-ramp referral commissions, plus potential cross-chain bridge affiliate revenue from Squid (Axelar) and Stargate (LayerZero) integrations as volume scales.",
-              },
-            ].map((r) => (
-              <GlassCard key={r.title} className="p-5">
-                <h4
-                  className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
-                >
-                  {r.title}
-                </h4>
-                <p
-                  className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
-                >
-                  {r.desc}
-                </p>
-              </GlassCard>
-            ))}
-          </div>
-
-          <GlassCard className="p-5 md:p-6" hover={false}>
-            <p
-              className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
-            >
-              <span className="font-bold">Revenue projections at scale:</span>
-            </p>
-            <div className={`grid sm:grid-cols-3 gap-3 mt-3 mb-3`}>
-              {[
-                { vol: "$100K/day", lp: "$250/day", protocol: "$50/day", annual: "~$18K" },
-                { vol: "$1M/day", lp: "$2,500/day", protocol: "$500/day", annual: "~$182K" },
-                { vol: "$10M/day", lp: "$25,000/day", protocol: "$5,000/day", annual: "~$1.8M" },
-              ].map((tier) => (
-                <div
-                  key={tier.vol}
-                  className={`p-3 rounded-xl text-center ${isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-gray-50 border border-gray-100"}`}
-                >
-                  <div className={`text-xs font-bold mb-1 ${isDark ? "text-pink-400" : "text-pink-600"}`}>
-                    {tier.vol} volume
-                  </div>
-                  <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                    LP: {tier.lp}
-                  </div>
-                  <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                    Protocol: {tier.protocol}
-                  </div>
-                  <div className={`text-xs font-semibold mt-1 ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>
-                    {tier.annual}/yr treasury
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p
-              className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
-            >
-              The flat $0.0007 micro-fee adds ~$2.50/day at 3,500 daily
-              swaps. Pool creation fees and fiat affiliate revenue layer
-              on top as the user base scales. All protocol revenue
-              parameters are DAO-adjustable via governance vote.
-            </p>
-          </GlassCard>
         </Section>
 
         {/* ═══ CTA ═══ */}
