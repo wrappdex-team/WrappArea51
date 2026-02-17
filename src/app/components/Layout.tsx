@@ -8,7 +8,7 @@ import { WalletConnectModal } from "./WalletConnectModal";
 import { formatHbar } from "../utils/hedera";
 import { formatAddress } from "../utils/metamask";
 import { NewsTicker } from "./NewsTicker";
-import { playTabChime, getSoundVolume, cycleSoundVolume, playVipNavNote } from "../utils/sounds";
+import { playTabChime, getSoundVolume, cycleSoundVolume, playVipNavNote, playVipWalletWave } from "../utils/sounds";
 import { Toaster } from "sonner";
 import { VIPPanel } from "./VIPPanel";
 import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
@@ -121,6 +121,36 @@ export function Layout() {
   useEffect(() => {
     trackRouteChange(location.pathname);
   }, [location.pathname]);
+
+  // ── Desktop hover-to-open wallet menu ──────────────────────────────
+  const walletMenuTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDesktop = typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
+  const handleWalletMouseEnter = useCallback(() => {
+    if (!isDesktop) return;
+    if (walletMenuTimeoutRef.current) {
+      clearTimeout(walletMenuTimeoutRef.current);
+      walletMenuTimeoutRef.current = null;
+    }
+    setShowWalletMenu(true);
+    // VIP ocean wave sound — gated by VIP active + vip_sounds toggle
+    if (vipActive && vipPrefs.features.vip_sounds) playVipWalletWave();
+  }, [isDesktop, vipActive, vipPrefs.features.vip_sounds]);
+
+  const handleWalletMouseLeave = useCallback(() => {
+    if (!isDesktop) return;
+    walletMenuTimeoutRef.current = setTimeout(() => {
+      setShowWalletMenu(false);
+      walletMenuTimeoutRef.current = null;
+    }, 200); // small grace period so cursor can travel to the dropdown
+  }, [isDesktop]);
+
+  // Cleanup hover timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (walletMenuTimeoutRef.current) clearTimeout(walletMenuTimeoutRef.current);
+    };
+  }, []);
 
   return (
     <div className={`min-h-screen flex flex-col ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`} style={{ border: 'none', outline: 'none' }}>
@@ -370,7 +400,10 @@ export function Layout() {
               {/* Wallet Connection */}
               <div className="relative">
                 {primaryWallet ? (
-                  <div>
+                  <div
+                    onMouseEnter={handleWalletMouseEnter}
+                    onMouseLeave={handleWalletMouseLeave}
+                  >
                     <button
                       onClick={() => setShowWalletMenu(!showWalletMenu)}
                       aria-label="Wallet menu"
@@ -436,12 +469,13 @@ export function Layout() {
                         transition={{ duration: 0.15, ease: "easeOut" }}
                         role="menu"
                         aria-label="Connected wallets"
-                        className={`absolute right-0 mt-2 w-72 rounded-xl shadow-xl overflow-hidden z-50 ${
+                        className="absolute right-0 mt-0 pt-2 w-72 z-50"
+                      >
+                        <div className={`rounded-xl shadow-xl overflow-hidden ${
                           isDark
                             ? "bg-slate-900 border border-pink-500/30 shadow-pink-500/10"
                             : "bg-white border border-gray-200 shadow-gray-200/50"
-                        }`}
-                      >
+                        }`}>
                         <div className={`p-3 border-b ${isDark ? "border-pink-500/20" : "border-gray-100"}`}>
                           <div className={`text-xs mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                             Connected Wallets ({connectedWallets.length})
@@ -527,6 +561,7 @@ export function Layout() {
                         >
                           + Connect Another Wallet
                         </button>
+                        </div>
                       </motion.div>
                     )}
                     </AnimatePresence>

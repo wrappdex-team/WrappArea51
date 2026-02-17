@@ -400,6 +400,16 @@ export function registerAuthRoutes(app: Hono): void {
       console.log(`[AUTH] Verifying sig for ${accountId}: sigLen=${cleanSig.length} chars, msgLen=${messageBytes.length} bytes, pubKey=${keyResult.rawKeyHex.slice(0, 16)}...`);
       console.log(`[AUTH] Sig preview: ${cleanSig.slice(0, 40)}...`);
       console.log(`[AUTH] Message first 80 chars: ${challenge.message.slice(0, 80)}`);
+      console.log(`[AUTH] Message hex (first 60): ${bytesToHex(messageBytes).slice(0, 60)}...`);
+      console.log(`[AUTH] Full pubKey: ${keyResult.rawKeyHex}`);
+
+      // Pre-decode signature so we can log what decodeSigTo64Bytes produces
+      const preDecodedSig = decodeSigTo64Bytes(cleanSig);
+      if (preDecodedSig) {
+        console.log(`[AUTH] Decoded sig (64B hex): ${bytesToHex(preDecodedSig).slice(0, 40)}...`);
+      } else {
+        console.log(`[AUTH] WARNING: decodeSigTo64Bytes returned null — sig extraction failed entirely`);
+      }
 
       // Primary: verify against original challenge message (UTF-8 bytes)
       let isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, cleanSig);
@@ -423,6 +433,57 @@ export function registerAuthRoutes(app: Hono): void {
         console.log(`[AUTH] Base64 variant failed — trying nonce-only variant (${nonceBytes.length}B)`);
         isValid = await verifyED25519Signature(keyResult.rawKeyHex, nonceBytes, cleanSig);
         if (isValid) console.log("[AUTH] Signature verified via nonce-only fallback");
+      }
+
+      // Fallback C: Some OS / wallet combos normalise \n → \r\n in the message
+      // before the signing function sees the bytes. Try CRLF line endings.
+      if (!isValid) {
+        const crlfMessage = challenge.message.replace(/\n/g, "\r\n");
+        const crlfBytes = new TextEncoder().encode(crlfMessage);
+        if (crlfBytes.length !== messageBytes.length) {
+          console.log(`[AUTH] Nonce-only failed — trying CRLF line-ending variant (${crlfBytes.length}B)`);
+          isValid = await verifyED25519Signature(keyResult.rawKeyHex, crlfBytes, cleanSig);
+          if (isValid) console.log("[AUTH] Signature verified via CRLF line-ending fallback");
+        }
+      }
+
+      // Fallback D: If the signature is >64 bytes (protobuf-wrapped), the
+      // 0x1A-0x40 tag scanner may have missed the actual ED25519 field due to
+      // a wallet-specific protobuf layout variation. As a last resort, try
+      // every 64-byte window from the raw signature bytes against the primary
+      // message. ED25519's cryptographic security (2^128 collision resistance)
+      // makes a false positive astronomically impossible, so this is safe.
+      // Runs whenever raw sig data is > 64 bytes (i.e., there's a wrapper).
+      if (!isValid) {
+        // Re-decode raw bytes without the 64-byte constraint
+        let rawSigBytes: Uint8Array | null = null;
+        if (/^[0-9a-fA-F]+$/.test(cleanSig)) {
+          const decoded = hexToBytes(cleanSig);
+          if (decoded.length > 64) rawSigBytes = decoded;
+        }
+        if (!rawSigBytes) {
+          try {
+            const bin = atob(cleanSig);
+            const decoded = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) decoded[i] = bin.charCodeAt(i);
+            if (decoded.length > 64) rawSigBytes = decoded;
+          } catch { /* not decodable */ }
+        }
+        if (rawSigBytes) {
+          console.log(`[AUTH] All standard fallbacks failed — trying brute-force 64B window scan (${rawSigBytes.length} total bytes, ${rawSigBytes.length - 63} windows)`);
+          for (let offset = 0; offset <= rawSigBytes.length - 64; offset++) {
+            const window64 = rawSigBytes.slice(offset, offset + 64);
+            const windowHex = bytesToHex(window64);
+            const windowValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, windowHex);
+            if (windowValid) {
+              console.log(`[AUTH] Brute-force window MATCH at byte offset ${offset} — protobuf layout differs from expected 0x1A-0x40 pattern`);
+              console.log(`[AUTH] Surrounding bytes at offset ${Math.max(0, offset - 2)}: ${bytesToHex(rawSigBytes.slice(Math.max(0, offset - 2), Math.min(rawSigBytes.length, offset + 66))).slice(0, 20)}...`);
+              isValid = true;
+              break;
+            }
+          }
+          if (!isValid) console.log("[AUTH] Brute-force window scan found no match");
+        }
       }
 
       if (!isValid) {

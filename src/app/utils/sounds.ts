@@ -782,3 +782,88 @@ export function playVipFeatureBass(index: number): void {
     h5.stop(now + 0.3);
   } catch { /* audio not supported */ }
 }
+
+// ── VIP Wallet Hover — Ocean Wave ────────────────────────────────────
+// A short, synthesised ocean wave that swells and recedes (~1s).
+// Built from three layers:
+//   1. Broadband noise swept through a bandpass filter that climbs then
+//      falls (simulates the frequency content of a real wave crest).
+//   2. Sub-bass sine at 55 Hz — the deep body of the wave you *feel*.
+//   3. High-frequency shimmer — the sparkling foam at the peak.
+// Internally gated: plays only when global sound is on.
+// VIP-feature gating (vip_sounds toggle) is handled at the call site.
+
+/** Gentle ocean-wave wash — plays on wallet menu hover for VIP users */
+export function playVipWalletWave(): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const dur = 0.95;
+
+    // ── Layer 1: Broadband wave body (filtered noise) ──
+    const noiseSrc = ctx.createBufferSource();
+    const noiseLen = Math.floor(ctx.sampleRate * dur);
+    const noiseBuf = ctx.createBuffer(1, noiseLen, ctx.sampleRate);
+    const noiseData = noiseBuf.getChannelData(0);
+    for (let i = 0; i < noiseLen; i++) noiseData[i] = Math.random() * 2 - 1;
+    noiseSrc.buffer = noiseBuf;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.Q.setValueAtTime(0.8, now);
+    // Sweep: 200 Hz → 1400 Hz (crest at ~40%) → 250 Hz (recede)
+    bp.frequency.setValueAtTime(200, now);
+    bp.frequency.exponentialRampToValueAtTime(1400, now + dur * 0.4);
+    bp.frequency.exponentialRampToValueAtTime(250, now + dur);
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0, now);
+    noiseGain.gain.linearRampToValueAtTime(0.10, now + dur * 0.15);
+    noiseGain.gain.linearRampToValueAtTime(0.14, now + dur * 0.38);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    noiseSrc.connect(bp);
+    bp.connect(noiseGain);
+    noiseGain.connect(getMasterOutput());
+    noiseSrc.start(now);
+
+    // ── Layer 2: Sub-bass rumble (55 Hz) ──
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(55, now);
+    sub.frequency.exponentialRampToValueAtTime(52, now + dur);
+    subG.gain.setValueAtTime(0, now);
+    subG.gain.linearRampToValueAtTime(0.16, now + dur * 0.3);
+    subG.gain.setValueAtTime(0.13, now + dur * 0.5);
+    subG.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    sub.connect(subG);
+    subG.connect(getMasterOutput());
+    sub.start(now);
+    sub.stop(now + dur + 0.05);
+
+    // ── Layer 3: Foam shimmer (high-passed noise) ──
+    const foamSrc = ctx.createBufferSource();
+    const foamLen = Math.floor(ctx.sampleRate * dur * 0.5);
+    const foamBuf = ctx.createBuffer(1, foamLen, ctx.sampleRate);
+    const foamData = foamBuf.getChannelData(0);
+    for (let i = 0; i < foamLen; i++) foamData[i] = Math.random() * 2 - 1;
+    foamSrc.buffer = foamBuf;
+
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.setValueAtTime(4000, now + dur * 0.25);
+    hp.Q.setValueAtTime(0.5, now);
+
+    const foamGain = ctx.createGain();
+    foamGain.gain.setValueAtTime(0, now + dur * 0.25);
+    foamGain.gain.linearRampToValueAtTime(0.035, now + dur * 0.4);
+    foamGain.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.75);
+
+    foamSrc.connect(hp);
+    hp.connect(foamGain);
+    foamGain.connect(getMasterOutput());
+    foamSrc.start(now + dur * 0.25);
+  } catch { /* audio not supported */ }
+}
