@@ -25,6 +25,72 @@ import { DashboardStatsSkeleton, MarketListSkeleton } from "./Skeletons";
 import { Tip } from "./Tip";
 import { PriceFlash } from "./PriceFlash";
 
+// ── Module-level caches ────────────────────────────────────────────
+// Persist across component unmount/remount cycles (tab switches,
+// Vite HMR reconnects, route changes). Avoids re-fetching everything
+// from scratch every time the Dashboard mounts.
+
+interface DashboardCache {
+  marketData: MarketAsset[];
+  globalData: GlobalMarketData | null;
+  headerRsi: number | null;
+  headerFng: number | null;
+  hbarhData: HbarhTokenData | null;
+  btcSparkHistory: number[];
+  hbarSparkHistory: number[];
+  oracleStats: OracleStats | null;
+  timestamp: number;
+}
+
+const _dashCache: DashboardCache = {
+  marketData: [],
+  globalData: null,
+  headerRsi: null,
+  headerFng: null,
+  hbarhData: null,
+  btcSparkHistory: [],
+  hbarSparkHistory: [],
+  oracleStats: null,
+  timestamp: 0,
+};
+
+/** Fear & Greed with timeout — the bare fetch() had none, could hang forever */
+async function fetchFearGreed(timeoutMs = 6000): Promise<number | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const r = await fetch("https://api.alternative.me/fng/?limit=1", {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const j = await r.json();
+    return j.data?.[0] ? parseInt(j.data[0].value) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Batch chart fetches in groups to avoid rate-limiting cascades */
+async function fetchChartsThrottled(
+  symbols: string[],
+  prices: Record<string, CoinPrice>,
+  batchSize = 4,
+): Promise<{ sym: string; candles: CandlestickData[] }[]> {
+  const results: { sym: string; candles: CandlestickData[] }[] = [];
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    const batch = symbols.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(sym =>
+        fetchRealCandles(sym, "1D", prices[sym]?.current_price)
+          .then(candles => ({ sym, candles }))
+          .catch(() => ({ sym, candles: [] as CandlestickData[] }))
+      )
+    );
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 // ── Types & Helpers ────────────────────────────────────────────────
 
 interface MarketAsset {
@@ -116,10 +182,11 @@ export function Dashboard() {
   const { isDark, isSky } = useTheme();
   const partnerLogos = usePartneredLogos();
   const [marketFilter, setMarketFilter] = useState<"all" | "defi" | "layer1" | "stablecoin">("all");
-  const [marketData, setMarketData] = useState<MarketAsset[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Hydrate from module-level cache on remount — prevents blank loading flash
+  const [marketData, setMarketData] = useState<MarketAsset[]>(_dashCache.marketData);
+  const [loading, setLoading] = useState(_dashCache.marketData.length === 0);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-  const [oracleStats, setOracleStats] = useState<OracleStats | null>(null);
+  const [oracleStats, setOracleStats] = useState<OracleStats | null>(_dashCache.oracleStats);
 
   // VIP eligibility for iridescent buttons
   const { hederaAccount, hederaNetwork } = useWallet();
@@ -147,16 +214,17 @@ export function Dashboard() {
   }, [hederaAccount?.tokens, hederaNetwork, vipPrefsState]);
 
   // HBAR.ħ protocol token — live price from DexScreener/SaucerSwap API
-  const [hbarhData, setHbarhData] = useState<HbarhTokenData | null>(null);
+  const [hbarhData, setHbarhData] = useState<HbarhTokenData | null>(_dashCache.hbarhData);
 
   // Real sparkline history for BTC & HBAR ticker cards (24h hourly from CoinCap history API)
-  const [btcSparkHistory, setBtcSparkHistory] = useState<number[]>([]);
-  const [hbarSparkHistory, setHbarSparkHistory] = useState<number[]>([]);
+  const [btcSparkHistory, setBtcSparkHistory] = useState<number[]>(_dashCache.btcSparkHistory);
+  const [hbarSparkHistory, setHbarSparkHistory] = useState<number[]>(_dashCache.hbarSparkHistory);
 
   useEffect(() => {
     const loadHbarh = async () => {
       const data = await fetchHbarhPrice();
       setHbarhData(data);
+      _dashCache.hbarhData = data;
     };
     loadHbarh();
     const iv = setInterval(loadHbarh, 60000);
@@ -164,23 +232,24 @@ export function Dashboard() {
   }, []);
 
   // Global crypto market data — total market cap & volume
-  const [globalData, setGlobalData] = useState<GlobalMarketData | null>(null);
-  const [headerRsi, setHeaderRsi] = useState<number | null>(null);
-  const [headerFng, setHeaderFng] = useState<number | null>(null);
+  const [globalData, setGlobalData] = useState<GlobalMarketData | null>(_dashCache.globalData);
+  const [headerRsi, setHeaderRsi] = useState<number | null>(_dashCache.headerRsi);
+  const [headerFng, setHeaderFng] = useState<number | null>(_dashCache.headerFng);
 
   useEffect(() => {
     const loadGlobal = async () => {
       const [data, rsiData, fngVal] = await Promise.all([
         fetchGlobalMarketData(),
         fetchMarketRSI(),
-        fetch("https://api.alternative.me/fng/?limit=1")
-          .then(r => r.json())
-          .then(j => (j.data?.[0] ? parseInt(j.data[0].value) : null))
-          .catch(() => null),
+        fetchFearGreed(),
       ]);
       setGlobalData(data);
       setHeaderRsi(rsiData.rsi);
       setHeaderFng(fngVal);
+      // Persist to module cache
+      _dashCache.globalData = data;
+      _dashCache.headerRsi = rsiData.rsi;
+      _dashCache.headerFng = fngVal;
     };
     loadGlobal();
     const iv = setInterval(loadGlobal, 120000);
@@ -197,22 +266,30 @@ export function Dashboard() {
       const assets = buildMarketAssets(prices);
 
       // Update oracle stats after fetch
-      setOracleStats(getOracleStats());
+      const stats = getOracleStats();
+      setOracleStats(stats);
 
-      // Fetch real chart data in background for non-stablecoin tokens
-      Promise.all(
-        CHART_SYMBOLS.map(sym =>
-          fetchRealCandles(sym, "1D", prices[sym]?.current_price).then(candles => ({ sym, candles }))
-        )
-      ).then(results => {
-        setMarketData(prev => prev.map(asset => {
-          const real = results.find(r => r.sym === asset.symbol);
-          return real && real.candles.length >= 5 ? { ...asset, chartData: real.candles } : asset;
-        }));
-      }).catch(() => {});
-
+      // Show data immediately — don't wait for chart candles
       setMarketData(assets);
       setLoading(false);
+
+      // Persist to module cache
+      _dashCache.marketData = assets;
+      _dashCache.oracleStats = stats;
+      _dashCache.timestamp = Date.now();
+
+      // Fetch real chart data in BACKGROUND (non-blocking) for non-stablecoin tokens
+      // Throttled in batches of 4 to avoid rate-limiting cascades
+      fetchChartsThrottled(CHART_SYMBOLS, prices).then(results => {
+        setMarketData(prev => {
+          const updated = prev.map(asset => {
+            const real = results.find(r => r.sym === asset.symbol);
+            return real && real.candles.length >= 5 ? { ...asset, chartData: real.candles } : asset;
+          });
+          _dashCache.marketData = updated;
+          return updated;
+        });
+      }).catch(() => {});
     };
 
     loadPrices();
@@ -243,8 +320,16 @@ export function Dashboard() {
         fetchCoinCapHistory("BTC", "h1", 7),
         fetchCoinCapHistory("HBAR", "h1", 7),
       ]);
-      if (btcHistory.length > 0) setBtcSparkHistory(btcHistory.map(p => p.priceUsd));
-      if (hbarHistory.length > 0) setHbarSparkHistory(hbarHistory.map(p => p.priceUsd));
+      if (btcHistory.length > 0) {
+        const pts = btcHistory.map(p => p.priceUsd);
+        setBtcSparkHistory(pts);
+        _dashCache.btcSparkHistory = pts;
+      }
+      if (hbarHistory.length > 0) {
+        const pts = hbarHistory.map(p => p.priceUsd);
+        setHbarSparkHistory(pts);
+        _dashCache.hbarSparkHistory = pts;
+      }
     };
 
     loadSparkHistory();

@@ -428,14 +428,23 @@ export interface GlobalMarketData {
   activeCryptos: number;
 }
 
+// Cache for global market data (60s TTL — refreshes every 120s from Dashboard)
+let _globalCache: { data: GlobalMarketData; ts: number } | null = null;
+const GLOBAL_CACHE_TTL = 60_000;
+
 export async function fetchGlobalMarketData(): Promise<GlobalMarketData | null> {
+  // Return cache if fresh
+  if (_globalCache && Date.now() - _globalCache.ts < GLOBAL_CACHE_TTL) {
+    return _globalCache.data;
+  }
+
   try {
     const res = await fetchWithTimeout(`${COINGECKO_API}/global`, 8000);
-    if (!res.ok) return null;
+    if (!res.ok) return _globalCache?.data ?? null;
     const json = await res.json();
     const d = json.data;
-    if (!d) return null;
-    return {
+    if (!d) return _globalCache?.data ?? null;
+    const result: GlobalMarketData = {
       totalMarketCap: d.total_market_cap?.usd ?? 0,
       totalVolume24h: d.total_volume?.usd ?? 0,
       marketCapChange24h: d.market_cap_change_percentage_24h_usd ?? 0,
@@ -443,9 +452,11 @@ export async function fetchGlobalMarketData(): Promise<GlobalMarketData | null> 
       ethDominance: d.market_cap_percentage?.eth ?? 0,
       activeCryptos: d.active_cryptocurrencies ?? 0,
     };
+    _globalCache = { data: result, ts: Date.now() };
+    return result;
   } catch (err) {
     log.debug("CoinGecko", "Global market data fetch failed", (err as Error).message);
-    return null;
+    return _globalCache?.data ?? null;
   }
 }
 

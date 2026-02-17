@@ -343,6 +343,7 @@ export function WhitePaper() {
     const ids = [
       "intro",
       "why-hedera",
+      "legal",
       "features",
       "swap-flow",
       "oracles",
@@ -352,6 +353,7 @@ export function WhitePaper() {
       "vip",
       "token",
       "security",
+      "revenue",
       "roadmap",
       "team",
       "partners",
@@ -376,6 +378,7 @@ export function WhitePaper() {
   const tocItems = [
     { id: "intro", label: "Overview" },
     { id: "why-hedera", label: "Why Hedera" },
+    { id: "legal", label: "Legal Structure" },
     { id: "features", label: "Features" },
     { id: "swap-flow", label: "How Swaps Work" },
     { id: "oracles", label: "Price Oracles" },
@@ -385,6 +388,7 @@ export function WhitePaper() {
     { id: "vip", label: "VIP System" },
     { id: "token", label: "HBAR.ħ Token" },
     { id: "security", label: "Security" },
+    { id: "revenue", label: "Revenue Model" },
     { id: "roadmap", label: "Roadmap" },
     { id: "team", label: "Team" },
     { id: "partners", label: "Partners" },
@@ -494,7 +498,8 @@ export function WhitePaper() {
           >
             Trade smarter. Not harder. One platform for swaps, pro charting,
             lending, bridging, and governance &mdash; built on the fastest
-            enterprise-grade public ledger.
+            enterprise-grade public ledger. Structured as a Wyoming DUNA for
+            regulatory clarity from day one.
           </p>
 
           {/* Hero stats */}
@@ -503,6 +508,7 @@ export function WhitePaper() {
             <StatBadge value="~2s" label="Finality" />
             <StatBadge value="~$0.0001" label="Per transaction" />
             <StatBadge value="0" label="MEV / Front-running" />
+            <StatBadge value="DUNA" label="Wyoming Legal Entity" />
           </div>
         </motion.div>
 
@@ -515,25 +521,35 @@ export function WhitePaper() {
 
           <GlassCard className="p-6 md:p-8 mb-6" hover={false}>
             <p className={`${prose} mb-4`}>
-              WRAPpDEX is a decentralized exchange built natively on Hedera. It
-              combines token swapping, professional-grade trading charts,
-              liquidity pools, lending &amp; borrowing, cross-chain bridges, a
-              fiat on-ramp, and community governance into a single platform.
+              WRAPpDEX is a decentralized exchange built natively on Hedera
+              and structured as a Wyoming DUNA (Decentralized Unincorporated
+              Nonprofit Association). It combines token swapping,
+              professional-grade trading charts, liquidity pools, lending
+              &amp; borrowing, cross-chain bridges, a fiat on-ramp, DEX
+              aggregation, and community governance into a single platform.
             </p>
-            <p className={prose}>
+            <p className={`${prose} mb-4`}>
               No account registration. No custody of your assets. Connect your
               wallet, and you're in. Every transaction settles on Hedera's
               hashgraph with sub-cent fees and provable finality in seconds
               &mdash; not minutes, not hours.
             </p>
+            <p className={prose}>
+              The protocol features a custom constant-product AMM with
+              server-side execution (zero MEV, zero front-running), a 4-tier
+              oracle pipeline backed by Chainlink decentralized feeds, a
+              dual-layer fee model 17% cheaper than competitors, and
+              full DAO governance where every proposal vote carries real
+              legal weight under Wyoming law.
+            </p>
           </GlassCard>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { v: "16", l: "Price Feeds" },
-              { v: "16", l: "Liquidity Pools" },
+              { v: "22", l: "Price Feeds" },
+              { v: "7", l: "AMM Tokens" },
               { v: "60+", l: "Bridge Chains" },
-              { v: "6", l: "Lending Markets" },
+              { v: "10", l: "Chart Timeframes" },
             ].map((s) => (
               <GlassCard key={s.l} className="p-4 text-center">
                 <div
@@ -625,41 +641,107 @@ export function WhitePaper() {
           </div>
         </Section>
 
+        {/* ═══ LEGAL STRUCTURE ═══ */}
+        <Section id="legal" className="mb-16">
+          <h2 className={h2}>Wyoming DUNA</h2>
+          <p className={subtitle}>
+            The first DEX structured as a Decentralized Unincorporated
+            Nonprofit Association under Wyoming law.
+          </p>
+
+          <GlassCard className="p-6 md:p-8 mb-4" hover={false}>
+            <p className={`${prose} mb-4`}>
+              WRAPpDEX operates as a Wyoming DUNA &mdash; a legal entity class
+              created by Wyoming statute (W.S. 17-32) specifically for DAOs
+              and decentralized protocols. This structure provides
+              limited-liability protection for DAO members and token holders
+              while preserving the permissionless, non-custodial nature of the
+              protocol.
+            </p>
+            <p className={prose}>
+              Unlike offshore foundations or anonymous teams, the DUNA
+              structure anchors WRAPpDEX in a clear legal jurisdiction with
+              established corporate law, giving investors, liquidity providers,
+              and institutional partners confidence that the protocol operates
+              within a recognized regulatory framework. DAO proposals can bind
+              the entity &mdash; governance votes have real legal weight.
+            </p>
+          </GlassCard>
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            {[
+              {
+                icon: Shield,
+                title: "Limited Liability",
+                desc: "DAO members and token holders are shielded from personal liability for protocol operations under Wyoming statute.",
+              },
+              {
+                icon: Vote,
+                title: "Binding Governance",
+                desc: "DAO proposals adopted through on-chain voting carry legal authority over the entity's operations and treasury.",
+              },
+              {
+                icon: Building2,
+                title: "Institutional Ready",
+                desc: "A U.S.-domiciled legal entity with established banking and compliance pathways for enterprise partnerships.",
+              },
+            ].map((item) => (
+              <GlassCard key={item.title} className="p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <item.icon
+                    className={`w-5 h-5 ${isDark ? "text-pink-400" : "text-pink-600"}`}
+                  />
+                  <h4
+                    className={`font-bold text-sm ${isDark ? "text-white" : "text-slate-900"}`}
+                  >
+                    {item.title}
+                  </h4>
+                </div>
+                <p
+                  className={`text-xs md:text-sm leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}
+                >
+                  {item.desc}
+                </p>
+              </GlassCard>
+            ))}
+          </div>
+        </Section>
+
         {/* ═══ FEATURES ═══ */}
         <Section id="features" className="mb-16">
           <h2 className={h2}>Platform Features</h2>
-          <p className={subtitle}>Eight modules. One interface. Zero compromise.</p>
+          <p className={subtitle}>Ten modules. One interface. Zero compromise.</p>
 
           <div className="grid sm:grid-cols-2 gap-3">
             {[
               {
                 icon: TrendingUp,
                 title: "Markets",
-                desc: "Live dashboards with market caps, Fear & Greed Index, RSI gauges, BTC dominance, sparkline charts, and 20+ asset tickers.",
+                desc: "Live dashboards with 22 asset tickers, Fear & Greed Index, RSI gauges, BTC dominance, crypto heatmap, news ticker, sparkline charts, and real-time site activity feed.",
                 color: "from-blue-500 to-cyan-500",
               },
               {
                 icon: BarChart3,
                 title: "Trading Terminal",
-                desc: "Pro-grade candlestick charts with 9 timeframes, 6 technical indicators, persistent drawing tools, and a watchlist.",
+                desc: "Pro-grade candlestick and line charts with 10 timeframes (1m to All), 6 technical indicators (SMA, EMA, Bollinger Bands, RSI, MACD), sub-cent price granularity, persistent drawing tools, and a live watchlist.",
                 color: "from-purple-500 to-pink-500",
               },
               {
                 icon: ArrowRightLeft,
                 title: "Swap",
-                desc: "SaucerSwap-powered token swaps with route visualization, configurable slippage, and auto-refreshing quotes.",
+                desc: "Dual-engine swaps: Smart Liquidity AMM (direct + USDC-hop routing) and SaucerSwap integration. Configurable slippage, route visualization, and auto-refreshing quotes.",
                 color: "from-pink-500 to-rose-500",
               },
               {
                 icon: DollarSign,
                 title: "Buy / Sell",
-                desc: "Fiat on-ramp via ChangeNOW. Buy HBAR directly with a credit card from 100+ supported currencies.",
+                desc: "Fiat on-ramp via ChangeNOW with 100+ supported currencies, plus a CEX-style trade panel for familiar order-book-style interactions.",
                 color: "from-emerald-500 to-teal-500",
               },
               {
                 icon: Layers,
                 title: "DeFi Suite",
-                desc: "16 liquidity pools, Bonzo Finance lending/borrowing (Aave V2 on Hedera), and staking infrastructure.",
+                desc: "Constant-product AMM with 7 whitelisted tokens (WBTC, WETH, USDC, USDT, LINK, AAVE, DAI), Bonzo Finance lending/borrowing (Aave V2 on Hedera), and smart routing with USDC-hop discovery.",
                 color: "from-amber-500 to-orange-500",
               },
               {
@@ -675,9 +757,15 @@ export function WhitePaper() {
                 color: "from-cyan-500 to-blue-500",
               },
               {
-                icon: Shield,
-                title: "Security Audit",
-                desc: "WalletConnect health reports, authentication status, and infrastructure monitoring in one view.",
+                icon: Activity,
+                title: "1inch Aggregation",
+                desc: "Cross-chain DEX aggregation via 1inch API with circuit-breaker protection. Access deep EVM liquidity from inside the Hedera interface.",
+                color: "from-red-500 to-orange-500",
+              },
+              {
+                icon: Users,
+                title: "Live Activity Feed",
+                desc: "Anonymized real-time swap feed, swap history per wallet, site-wide health monitoring, and infrastructure circuit-breaker dashboards.",
                 color: "from-slate-500 to-slate-600",
               },
             ].map((item) => (
@@ -808,32 +896,57 @@ export function WhitePaper() {
         <Section id="oracles" className="mb-16">
           <h2 className={h2}>Price Oracle Pipeline</h2>
           <p className={subtitle}>
-            Three tiers of price data, plus chart history. Every price shows its source.
+            Four tiers of price data with circuit-breaker protection. Every price shows its source.
           </p>
 
           <div className="grid gap-3">
             <OracleTier
               tier="T1"
-              name="Chainlink"
-              desc="Decentralized oracle feeds from Ethereum. 17 price feeds, batched via JSON-RPC. The gold standard for on-chain price data. Non-blocking — runs in background with 4s race timer."
+              name="Chainlink Decentralized Oracles"
+              desc="On-chain price feeds from Ethereum via batch JSON-RPC. 19 feeds (including AAVE and DAI) read in a single HTTP request across 5 redundant RPC endpoints. The gold standard for tamper-proof price data."
               color=""
               dotColor="bg-blue-500"
             />
             <OracleTier
               tier="T2"
-              name="Binance"
-              desc="Primary market data from the world's most liquid exchange. Bulk ticker API returns price, 24h change, and volume for 16 tokens in a single HTTP request (~200ms)."
+              name="Binance Market Data"
+              desc="Primary market data from the world's most liquid exchange. Bulk ticker API returns price, 24h change, and volume for 22 tokens in a single request (~200ms). Also powers the 4-source chart kline waterfall."
               color=""
               dotColor="bg-yellow-500"
             />
             <OracleTier
               tier="T3"
-              name="CoinGecko"
-              desc="Market cap enrichment and coverage for tokens not on Binance (EURC). Also provides global market stats and Top 20 composite index data."
+              name="CoinCap + CoinGecko"
+              desc="CoinCap provides extended chart history (up to 5 years for the All timeframe) with adaptive interval selection. CoinGecko enriches market cap data and covers tokens not on Binance (EURC, PAXG). Global market stats and Top 20 composite index data."
               color=""
               dotColor="bg-green-500"
             />
+            <OracleTier
+              tier="T4"
+              name="SaucerSwap Oracle (Server-Side)"
+              desc="The AMM server fetches live token prices from SaucerSwap's API with auto-path discovery (/tokens, /v1/tokens, /v2/tokens). Used for pool TVL calculations, depth caps, and volume tracking. Protected by a dedicated circuit breaker with 30s cooldown."
+              color=""
+              dotColor="bg-purple-500"
+            />
           </div>
+
+          <GlassCard className="p-5 mt-3" hover={false}>
+            <h4
+              className={`font-bold text-xs mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
+            >
+              Chart Data Pipeline (4-Source Waterfall)
+            </h4>
+            <p
+              className={`text-xs leading-relaxed mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}
+            >
+              Every trading chart is powered by a cascading 4-source waterfall: Binance
+              klines (primary) &rarr; CoinGecko OHLC &rarr; CoinCap history &rarr;
+              deterministic synthetic fallback. Each source has per-timeframe
+              configs (interval, limit, days) and adaptive cache TTL (30s for 1m
+              charts, 5 min for 1Y). The synthetic fallback uses a seeded PRNG
+              for reproducible candles across page reloads.
+            </p>
+          </GlassCard>
 
           <GlassCard className="p-5 mt-3" hover={false}>
             <div className="flex items-center gap-3 flex-wrap">
@@ -846,6 +959,7 @@ export function WhitePaper() {
                 { c: "bg-blue-500", l: "Chainlink" },
                 { c: "bg-yellow-500", l: "Binance" },
                 { c: "bg-green-500", l: "CoinGecko" },
+                { c: "bg-purple-500", l: "SaucerSwap" },
                 { c: "bg-slate-500", l: "Cached" },
               ].map((b) => (
                 <span key={b.l} className="flex items-center gap-1.5">
@@ -888,6 +1002,45 @@ export function WhitePaper() {
             compare-and-swap versioning, and a post-swap k-invariant
             assertion guarantees that reserves can never decrease.
           </p>
+
+          {/* Token Whitelist Callout */}
+          <GlassCard className="p-5 mb-6" hover={false}>
+            <h4
+              className={`font-bold text-xs mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
+            >
+              Whitelisted AMM Tokens (Tier 1)
+            </h4>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {[
+                { s: "WBTC", d: "8 dec", b: "HashPort" },
+                { s: "WETH", d: "18 dec", b: "HashPort" },
+                { s: "USDC", d: "6 dec", b: "Native" },
+                { s: "USDT", d: "6 dec", b: "Native" },
+                { s: "LINK", d: "8 dec", b: "HashPort" },
+                { s: "AAVE", d: "8 dec", b: "HashPort" },
+                { s: "DAI", d: "8 dec", b: "HashPort" },
+              ].map((t) => (
+                <span
+                  key={t.s}
+                  className={`text-xs px-2.5 py-1 rounded-lg font-mono font-semibold ${isDark ? "bg-white/[0.05] text-slate-300 border border-white/[0.08]" : "bg-gray-50 text-slate-700 border border-gray-200"}`}
+                >
+                  {t.s}{" "}
+                  <span className={`font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    {t.d} &middot; {t.b}
+                  </span>
+                </span>
+              ))}
+            </div>
+            <p
+              className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}
+            >
+              All pool reserves are stored as raw integer strings (no floating-point
+              precision loss). Volume is tracked in micro-USD integer strings to
+              prevent IEEE 754 drift over millions of accumulations. Only Tier 1
+              tokens can be used in pools &mdash; pool creation is restricted to
+              whitelisted assets for security.
+            </p>
+          </GlassCard>
 
           {/* How It Works + Slippage */}
           <div className="grid md:grid-cols-2 gap-3 mb-4">
@@ -1161,10 +1314,19 @@ export function WhitePaper() {
                   trade.
                 </li>
                 <li>
-                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Circuit breaker</span>{" "}
-                  &mdash; an owner-only kill switch can halt all swaps
-                  instantly. LP withdrawals always remain available so users
-                  can exit at any time.
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Optimistic CAS versioning</span>{" "}
+                  &mdash; every pool mutation re-reads state, verifies the
+                  version matches, bumps the counter, and writes. Concurrent
+                  requests that arrive with a stale version are rejected and
+                  retried automatically.
+                </li>
+                <li>
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Circuit breaker &amp; kill switch</span>{" "}
+                  &mdash; an owner-only kill switch can halt all swaps and new
+                  deposits instantly. LP withdrawals always remain available
+                  so users can exit at any time. Service-level circuit
+                  breakers (SaucerSwap, Mirror Node, CoinGecko, 1inch)
+                  prevent cascading failures during outages.
                 </li>
               </ul>
             </div>
@@ -1335,7 +1497,7 @@ export function WhitePaper() {
                   },
                   {
                     step: "2",
-                    label: "Community votes For or Against during the 3\u201314 day window",
+                    label: "Community votes For or Against during the 1\u201330 day window (8 categories: Fees, Staking, Listing, Tokenomics, Features, Partnership, Governance, Other)",
                   },
                   {
                     step: "3",
@@ -1367,9 +1529,14 @@ export function WhitePaper() {
             <p
               className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
             >
-              <span className="font-bold">Anti-whale design:</span> The 10-vote
+              <span className="font-bold">Anti-whale &amp; anti-escalation design:</span> The 10-vote
               cap per wallet prevents any single holder from dominating
-              governance, no matter how many tokens they own.
+              governance. Admin list management is restricted to the protocol
+              owner (0.0.518487) with fresh-session verification (&lt;2 min),
+              preventing compromised admins from adding hostile accounts.
+              The founder account is permanently protected from removal.
+              Per-proposal locks ensure votes on one proposal never block
+              activity on another.
             </p>
           </GlassCard>
         </Section>
@@ -1432,12 +1599,15 @@ export function WhitePaper() {
 
             <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
               {[
+                "DAO governance voting",
+                "Proposal commenting",
+                "VIP chat room",
+                "Prize spin wheel",
                 "Emerald theme",
                 "Trading terminal",
-                "VIP chat room",
                 "Premium sound FX",
-                "Prize spin wheel",
                 "Iridescent glow",
+                "Free pool creation",
               ].map((f) => (
                 <div key={f} className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
@@ -1551,23 +1721,33 @@ export function WhitePaper() {
             {[
               {
                 icon: Lock,
-                title: "Cryptographic Auth",
-                desc: "Challenge-response protocol: the server proves you own your wallet without ever seeing your private key.",
+                title: "ED25519 Challenge-Response Auth",
+                desc: "CSPRNG nonce challenge with 5-min TTL, delete-before-verify replay protection, 4-strategy signature extraction (hex, base64, protobuf, sliding window), and single-session-per-account enforcement.",
               },
               {
                 icon: Shield,
-                title: "Rate Limiting",
-                desc: "Multi-layer rate limiting on every endpoint to prevent abuse and DDoS attacks.",
+                title: "Circuit Breakers",
+                desc: "3-state circuit breakers (Closed/Open/Half-Open) protect every external service: SaucerSwap, Mirror Node, CoinGecko, 1inch. Prevents cascading failures and connection pool saturation during outages.",
+              },
+              {
+                icon: Activity,
+                title: "Distributed Locking",
+                desc: "KV-backed pessimistic locks with double-verify pattern and crypto-random fencing tokens. Per-pool lock isolation ensures swap contention on one pool never blocks another.",
               },
               {
                 icon: Eye,
                 title: "Input Hardening",
-                desc: "Comprehensive validation and sanitization of all user inputs before processing.",
+                desc: "BigInt-safe amount parsing via string manipulation (no IEEE 754 loss), zero-width character stripping, bidi-override filtering, combining diacritical defense, and 512KB body size limits.",
               },
               {
                 icon: Layers,
                 title: "Transport Security",
-                desc: "CSP headers, HSTS, anti-clickjacking, restrictive permissions. No cookies \u2014 token-based auth only.",
+                desc: "CSP default-src 'none', HSTS with includeSubDomains, X-Frame-Options DENY, Permissions-Policy, and no cookies. Token-based auth only.",
+              },
+              {
+                icon: Target,
+                title: "Rate Limiting & Depth Caps",
+                desc: "Two-layer rate limiting (in-memory L1 + KV L2) with conservative fallback on KV failure. Depth-proportional swap caps: 2% for small pools, 5% mid-size, 10% large. Low-TVL pools excluded from routing.",
               },
             ].map((s) => (
               <GlassCard key={s.title} className="p-5">
@@ -1597,7 +1777,11 @@ export function WhitePaper() {
               <span className="font-bold">Non-custodial by design.</span>{" "}
               WRAPpDEX never holds, controls, or has access to your assets,
               private keys, or seed phrases. All transactions are signed by you
-              in your own wallet.
+              in your own wallet. Every administrative action is written to a
+              500-entry append-only audit trail. The AMM includes an owner-only
+              kill switch for emergency halts &mdash; LP withdrawals always
+              remain available so users can exit at any time, even during a
+              protocol-wide pause.
             </p>
           </GlassCard>
         </Section>
@@ -1610,20 +1794,24 @@ export function WhitePaper() {
           <div className="grid sm:grid-cols-2 gap-3">
             <RoadmapQ
               quarter="Q1 2026"
-              title="Foundation"
+              title="Foundation — Shipped"
               icon={Rocket}
               current
               items={[
-                "Production AMM with persistent state",
-                "Multi-source oracle pipeline",
-                "SaucerSwap swap integration",
-                "Cryptographic authentication",
-                "DAO governance with weighted voting",
-                "VIP token-gated system",
-                "Cross-chain bridges (3 protocols)",
-                "Bonzo Finance lending integration",
-                "Pro charting with 6 indicators",
-                "Mobile-optimized responsive design",
+                "Constant-product AMM with KV-backed persistent state",
+                "4-tier oracle pipeline (Chainlink, Binance, CoinCap, CoinGecko)",
+                "SaucerSwap swap integration with auto-path discovery",
+                "ED25519 challenge-response authentication",
+                "DAO governance with weighted voting & 8 categories",
+                "VIP token-gated system (token + NFT dual-path)",
+                "Cross-chain bridges (Squid, HashPort, Stargate)",
+                "Bonzo Finance lending (Aave V2 on Hedera)",
+                "Pro charting: 10 timeframes, 6 indicators, adaptive price format",
+                "AAVE & DAI token onboarding (HashPort-bridged)",
+                "Circuit breakers for all external services",
+                "1inch DEX aggregator integration",
+                "Wyoming DUNA legal entity formation",
+                "Anonymized site-wide activity feed",
               ]}
             />
             <RoadmapQ
@@ -1631,11 +1819,12 @@ export function WhitePaper() {
               title="Expansion"
               icon={Target}
               items={[
-                "Formal smart contract audit",
-                "HSuite SmartNode integration",
+                "Formal smart contract audit (Weighted Pool Factory)",
+                "HSuite SmartNode integration for on-chain execution",
                 "Native staking contracts",
                 "HBAR.ħ lending market on Bonzo",
                 "Limit order types",
+                "Multi-hop swap execution (USDC-hop routes)",
                 "Portfolio P&L analytics",
               ]}
             />
@@ -1645,10 +1834,10 @@ export function WhitePaper() {
               icon={Activity}
               items={[
                 "Institutional API with WebSocket feeds",
-                "Multi-sig treasury management",
+                "Multi-sig treasury management (DAO-controlled extraction)",
                 "Additional bridge integrations",
                 "Automated yield strategies",
-                "Mobile app",
+                "Mobile app (React Native)",
               ]}
             />
             <RoadmapQ
@@ -1656,9 +1845,10 @@ export function WhitePaper() {
               title="Institutional"
               icon={Building2}
               items={[
-                "Regulatory compliance framework",
-                "Enterprise partnerships",
+                "Regulatory compliance framework (DUNA + FinCEN guidance)",
+                "Enterprise partnerships & API licensing",
                 "Cross-chain liquidity aggregation",
+                "Institutional custody integrations",
               ]}
             />
           </div>
@@ -1743,6 +1933,8 @@ export function WhitePaper() {
               { name: "Stargate", desc: "LayerZero bridge", color: "from-purple-600 to-indigo-600" },
               { name: "ChangeNOW", desc: "Fiat on-ramp", color: "from-lime-500 to-green-500" },
               { name: "WalletConnect", desc: "Wallet comms", color: "from-blue-500 to-sky-500" },
+              { name: "1inch", desc: "DEX aggregation", color: "from-red-500 to-orange-500" },
+              { name: "CoinCap", desc: "Chart history", color: "from-teal-500 to-cyan-500" },
               { name: "Dynamic", desc: "Multi-wallet SDK", color: "from-violet-500 to-purple-500" },
               { name: "Hedera", desc: "Mainnet", color: "from-slate-600 to-slate-500" },
               { name: "Supabase", desc: "Edge infrastructure", color: "from-emerald-600 to-green-600" },
@@ -1769,29 +1961,33 @@ export function WhitePaper() {
         </Section>
 
         {/* ═══ REVENUE MODEL ═══ */}
-        <Section className="mb-16">
+        <Section id="revenue" className="mb-16">
           <h2 className={h2}>Revenue Model</h2>
           <p className={subtitle}>
-            Multiple streams. Sustainable growth.
+            Five revenue streams. Fully DAO-governed. Sustainable from day one.
           </p>
 
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
             {[
               {
-                title: "Swap Fee (0.25% — all to pool)",
-                desc: "The full 25 bps stays in reserves, increasing k for LPs. The protocol's 5 bps share is tracked per pool and extractable — until extraction, LPs earn the full 0.25%.",
+                title: "1. LP Swap Fee (0.25% — all to pool)",
+                desc: "The full 25 bps stays in pool reserves on every swap, compounding k for LP holders. This is the primary incentive for liquidity providers — competitive with Uniswap V2 (0.30%) while being 17% cheaper for traders.",
               },
               {
-                title: "Protocol Share (0.05% tracked + $0.0007)",
-                desc: "5 bps per swap tracked in a per-pool accumulator, extractable by DAO. Plus a flat $0.0007 micro-fee in HBAR (50/50 LP/treasury). DAO-adjustable.",
+                title: "2. Protocol Share (0.05% extractable)",
+                desc: "5 bps of every swap is tracked per pool in a dedicated accumulator. The DAO votes on extraction timing. Until extracted, LPs earn the full 0.25%. Extraction deducts from reserves and credits the treasury (0.0.9695738).",
               },
               {
-                title: "Pool Creation Fees",
-                desc: "$50 in HBAR.ħ per weighted pool for non-VIP users.",
+                title: "3. Flat Micro-Fee ($0.0007 per swap)",
+                desc: "A flat $0.0007 fee in HBAR assessed on every swap, split 50/50 between LP rewards and protocol treasury. Flat (not proportional) to prevent trade-splitting manipulation. Clamped to a safety ceiling of 500K tinybar.",
               },
               {
-                title: "Fiat On-Ramp Affiliate",
-                desc: "Partner referral revenue from ChangeNOW fiat transactions.",
+                title: "4. Pool Creation Fees",
+                desc: "$50 in HBAR.ħ per weighted pool for non-VIP users. VIP holders (100M+ HBAR.ħ or VIP NFT) create pools free. Creation fees flow to the protocol treasury as a deflationary token sink.",
+              },
+              {
+                title: "5. Affiliate & Bridge Revenue",
+                desc: "ChangeNOW fiat on-ramp referral commissions, plus potential cross-chain bridge affiliate revenue from Squid (Axelar) and Stargate (LayerZero) integrations as volume scales.",
               },
             ].map((r) => (
               <GlassCard key={r.title} className="p-5">
@@ -1813,13 +2009,40 @@ export function WhitePaper() {
             <p
               className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
             >
-              <span className="font-bold">Conservative projection:</span> At
-              $1M daily volume, the full 0.25% stays in pools
-              ($2,500/day for LPs). The protocol&rsquo;s tracked 0.05%
-              share accrues ~$500/day (~$182K/year) extractable by DAO
-              governance. The flat $0.0007 micro-fee adds ~$2.50/day
-              at 3,500 swaps. Pool creation fees and fiat affiliate
-              revenue layer on top as the user base scales.
+              <span className="font-bold">Revenue projections at scale:</span>
+            </p>
+            <div className={`grid sm:grid-cols-3 gap-3 mt-3 mb-3`}>
+              {[
+                { vol: "$100K/day", lp: "$250/day", protocol: "$50/day", annual: "~$18K" },
+                { vol: "$1M/day", lp: "$2,500/day", protocol: "$500/day", annual: "~$182K" },
+                { vol: "$10M/day", lp: "$25,000/day", protocol: "$5,000/day", annual: "~$1.8M" },
+              ].map((tier) => (
+                <div
+                  key={tier.vol}
+                  className={`p-3 rounded-xl text-center ${isDark ? "bg-white/[0.03] border border-white/[0.06]" : "bg-gray-50 border border-gray-100"}`}
+                >
+                  <div className={`text-xs font-bold mb-1 ${isDark ? "text-pink-400" : "text-pink-600"}`}>
+                    {tier.vol} volume
+                  </div>
+                  <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    LP: {tier.lp}
+                  </div>
+                  <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    Protocol: {tier.protocol}
+                  </div>
+                  <div className={`text-xs font-semibold mt-1 ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>
+                    {tier.annual}/yr treasury
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p
+              className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
+            >
+              The flat $0.0007 micro-fee adds ~$2.50/day at 3,500 daily
+              swaps. Pool creation fees and fiat affiliate revenue layer
+              on top as the user base scales. All protocol revenue
+              parameters are DAO-adjustable via governance vote.
             </p>
           </GlassCard>
         </Section>
