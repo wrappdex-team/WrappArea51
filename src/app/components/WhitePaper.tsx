@@ -808,28 +808,28 @@ export function WhitePaper() {
         <Section id="oracles" className="mb-16">
           <h2 className={h2}>Price Oracle Pipeline</h2>
           <p className={subtitle}>
-            Three tiers of redundancy. Every price shows its source.
+            Three tiers of price data, plus chart history. Every price shows its source.
           </p>
 
           <div className="grid gap-3">
             <OracleTier
               tier="T1"
               name="Chainlink"
-              desc="Decentralized oracle feeds from Ethereum. 16 price feeds, batched for efficiency. The gold standard for on-chain price data."
+              desc="Decentralized oracle feeds from Ethereum. 17 price feeds, batched via JSON-RPC. The gold standard for on-chain price data. Non-blocking — runs in background with 4s race timer."
               color=""
               dotColor="bg-blue-500"
             />
             <OracleTier
               tier="T2"
-              name="CoinCap"
-              desc="Activates when Chainlink is unreachable. Real-time prices, 24h changes, and 7-day sparkline history."
+              name="Binance"
+              desc="Primary market data from the world's most liquid exchange. Bulk ticker API returns price, 24h change, and volume for 16 tokens in a single HTTP request (~200ms)."
               color=""
-              dotColor="bg-amber-500"
+              dotColor="bg-yellow-500"
             />
             <OracleTier
               tier="T3"
               name="CoinGecko"
-              desc="Final fallback. Market cap, volume, and 24h change data with comprehensive token coverage."
+              desc="Market cap enrichment and coverage for tokens not on Binance (EURC). Also provides global market stats and Top 20 composite index data."
               color=""
               dotColor="bg-green-500"
             />
@@ -844,7 +844,7 @@ export function WhitePaper() {
               </span>
               {[
                 { c: "bg-blue-500", l: "Chainlink" },
-                { c: "bg-amber-500", l: "CoinCap" },
+                { c: "bg-yellow-500", l: "Binance" },
                 { c: "bg-green-500", l: "CoinGecko" },
                 { c: "bg-slate-500", l: "Cached" },
               ].map((b) => (

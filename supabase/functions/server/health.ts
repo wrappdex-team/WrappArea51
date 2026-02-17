@@ -110,9 +110,10 @@ export function registerHealthRoutes(app: Hono): void {
       }
     };
 
-    const [kvResult, storageResult, coingecko, coincap, fng, dexscreener] = await Promise.all([
+    const [kvResult, storageResult, binance, coingecko, coincap, fng, dexscreener] = await Promise.all([
       kvProbe(),
       storageProbe(),
+      probeApiV2("https://api.binance.com/api/v3/ping"),
       probeApiV2("https://api.coingecko.com/api/v3/ping"),
       probeApiV2("https://api.coincap.io/v2/assets?limit=1"),
       probeApiV2("https://api.alternative.me/fng/?limit=1"),
@@ -125,6 +126,7 @@ export function registerHealthRoutes(app: Hono): void {
       checks: {
         kvStore: kvResult,
         storage: storageResult,
+        binance,
         coingecko,
         coincap,
         fearGreed: fng,

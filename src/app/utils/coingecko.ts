@@ -2,8 +2,31 @@ const COINCAP_API = "https://api.coincap.io/v2";
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
 
 import { fetchChainlinkPrices, chainlinkToCoinPrices, updateOracleStats } from "./chainlink";
+import type { ChainlinkPriceData } from "./chainlink";
 import { log } from "./logger";
 
+// ── Binance Symbol Map ─────────────────────────────────────────────
+// Maps canonical symbol to Binance USDT trading pair.
+// Free, no API key, excellent CORS, real-time, covers all majors.
+//
+// IMPORTANT: Every pair here MUST exist on Binance. The batch
+// ticker/24hr endpoint returns HTTP 400 if ANY symbol is invalid,
+// killing the ENTIRE request. EURC is intentionally excluded
+// (no EURCUSDT pair on Binance).
+const BINANCE_PAIR_MAP: Record<string, string> = {
+  BTC: "BTCUSDT", ETH: "ETHUSDT", BNB: "BNBUSDT", SOL: "SOLUSDT",
+  XRP: "XRPUSDT", HBAR: "HBARUSDT", DOGE: "DOGEUSDT", ADA: "ADAUSDT",
+  AVAX: "AVAXUSDT", TRX: "TRXUSDT", TON: "TONUSDT", LINK: "LINKUSDT",
+  SHIB: "SHIBUSDT", DOT: "DOTUSDT", LTC: "LTCUSDT", PAXG: "PAXGUSDT",
+};
+
+// Reverse map: Binance pair -> our symbol
+const BINANCE_REVERSE: Record<string, string> = {};
+for (const [sym, pair] of Object.entries(BINANCE_PAIR_MAP)) {
+  if (pair) BINANCE_REVERSE[pair] = sym;
+}
+
+// CoinCap IDs (used for chart history ONLY, not price pipeline)
 export const COINCAP_ID_MAP: Record<string, string> = {
   BTC: "bitcoin", ETH: "ethereum", USDT: "tether", BNB: "binance-coin",
   SOL: "solana", USDC: "usd-coin", XRP: "xrp", HBAR: "hedera-hashgraph",
@@ -13,6 +36,7 @@ export const COINCAP_ID_MAP: Record<string, string> = {
   USDCh: "usd-coin",
 };
 
+// CoinGecko IDs (used for market cap enrichment + tokens Binance doesn't cover)
 export const COIN_ID_MAP: Record<string, string> = {
   BTC: "bitcoin", ETH: "ethereum", USDT: "tether", BNB: "binancecoin",
   SOL: "solana", USDC: "usd-coin", XRP: "ripple", HBAR: "hedera-hashgraph",
@@ -46,7 +70,7 @@ export const TOKEN_LOGOS: Record<string, string> = {
 };
 
 // ── Oracle Source Types ────────────────────────────────────────────
-export type OracleSource = "chainlink" | "coincap" | "coingecko" | "fallback";
+export type OracleSource = "chainlink" | "binance" | "coincap" | "coingecko" | "fallback";
 
 export interface CoinPrice {
   id: string;
@@ -57,87 +81,138 @@ export interface CoinPrice {
   market_cap: number;
   total_volume: number;
   image: string;
-  // Oracle source tracking (added for Chainlink integration)
   oracle_source?: OracleSource;
-  oracle_updated_at?: number;  // unix timestamp from on-chain feed
-  chainlink_feed?: string;     // Chainlink feed contract address
-  // Tracks where the 24h % change came from (may differ from price source)
-  // When Chainlink provides price but APIs fail, change stays "fallback" (stale/cached data)
+  oracle_updated_at?: number;
+  chainlink_feed?: string;
   change_source?: OracleSource;
 }
 
+// ── Hardcoded Fallback (last resort) ──────────────────────────────
 const FALLBACK_DATA: Record<string, CoinPrice> = {
-  BTC:  { id: "bitcoin",    symbol: "btc",  name: "Bitcoin",    current_price: 97845.32, price_change_percentage_24h: 3.24,  market_cap: 1930000000000, total_volume: 28500000000, image: TOKEN_LOGOS.BTC },
-  ETH:  { id: "ethereum",   symbol: "eth",  name: "Ethereum",   current_price: 3678.45,  price_change_percentage_24h: 2.87,  market_cap: 442000000000,  total_volume: 14200000000, image: TOKEN_LOGOS.ETH },
-  USDT: { id: "tether",     symbol: "usdt", name: "Tether",     current_price: 1.0001,   price_change_percentage_24h: 0.01,  market_cap: 138000000000,  total_volume: 52000000000, image: TOKEN_LOGOS.USDT },
-  BNB:  { id: "binancecoin",symbol: "bnb",  name: "BNB",        current_price: 634.21,   price_change_percentage_24h: 1.45,  market_cap: 91300000000,   total_volume: 1800000000,  image: TOKEN_LOGOS.BNB },
-  SOL:  { id: "solana",     symbol: "sol",  name: "Solana",     current_price: 186.73,   price_change_percentage_24h: 5.67,  market_cap: 89200000000,   total_volume: 3200000000,  image: TOKEN_LOGOS.SOL },
-  USDC: { id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0002,   price_change_percentage_24h: 0.01,  market_cap: 58400000000,   total_volume: 6400000000,  image: TOKEN_LOGOS.USDC },
-  XRP:  { id: "ripple",     symbol: "xrp",  name: "XRP",        current_price: 2.43,     price_change_percentage_24h: -1.23, market_cap: 138500000000,  total_volume: 4500000000,  image: TOKEN_LOGOS.XRP },
-  HBAR: { id: "hedera",     symbol: "hbar", name: "Hedera",     current_price: 0.28,     price_change_percentage_24h: 2.5,   market_cap: 11200000000,   total_volume: 420000000,   image: TOKEN_LOGOS.HBAR },
-  DOGE: { id: "dogecoin",   symbol: "doge", name: "Dogecoin",   current_price: 0.3421,   price_change_percentage_24h: 4.23,  market_cap: 50300000000,   total_volume: 2100000000,  image: TOKEN_LOGOS.DOGE },
-  ADA:  { id: "cardano",    symbol: "ada",  name: "Cardano",    current_price: 0.9234,   price_change_percentage_24h: 2.34,  market_cap: 32400000000,   total_volume: 890000000,   image: TOKEN_LOGOS.ADA },
-  AVAX: { id: "avalanche",  symbol: "avax", name: "Avalanche",  current_price: 38.67,    price_change_percentage_24h: 6.78,  market_cap: 16800000000,   total_volume: 620000000,   image: TOKEN_LOGOS.AVAX },
-  TRX:  { id: "tron",       symbol: "trx",  name: "TRON",       current_price: 0.2456,   price_change_percentage_24h: 1.89,  market_cap: 21300000000,   total_volume: 780000000,   image: TOKEN_LOGOS.TRX },
-  TON:  { id: "toncoin",    symbol: "ton",  name: "Toncoin",    current_price: 5.82,     price_change_percentage_24h: 3.15,  market_cap: 20100000000,   total_volume: 380000000,   image: TOKEN_LOGOS.TON },
-  LINK: { id: "chainlink",  symbol: "link", name: "Chainlink",  current_price: 18.92,    price_change_percentage_24h: 5.34,  market_cap: 11800000000,   total_volume: 890000000,   image: TOKEN_LOGOS.LINK },
-  SHIB: { id: "shiba-inu",  symbol: "shib", name: "Shiba Inu",  current_price: 0.00002234, price_change_percentage_24h: 6.12, market_cap: 13200000000, total_volume: 1100000000,  image: TOKEN_LOGOS.SHIB },
-  DOT:  { id: "polkadot",   symbol: "dot",  name: "Polkadot",   current_price: 7.89,     price_change_percentage_24h: 4.12,  market_cap: 10800000000,   total_volume: 450000000,   image: TOKEN_LOGOS.DOT },
-  LTC:  { id: "litecoin",   symbol: "ltc",  name: "Litecoin",   current_price: 95.43,    price_change_percentage_24h: 2.15,  market_cap: 7100000000,    total_volume: 580000000,   image: TOKEN_LOGOS.LTC },
-  EURC: { id: "euro-coin",  symbol: "eurc", name: "EURC",       current_price: 1.0856,   price_change_percentage_24h: 0.12,  market_cap: 142000000,     total_volume: 18000000,    image: TOKEN_LOGOS.EURC },
-  PAXG: { id: "pax-gold",   symbol: "paxg", name: "PAX Gold",   current_price: 2678.45,  price_change_percentage_24h: 0.89,  market_cap: 524000000,     total_volume: 32000000,    image: TOKEN_LOGOS.PAXG },
-  USDCh:{ id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0002,   price_change_percentage_24h: 0.01,  market_cap: 58400000000,   total_volume: 6400000000,  image: TOKEN_LOGOS.USDCh },
+  BTC:  { id: "bitcoin",    symbol: "btc",  name: "Bitcoin",    current_price: 104000,   price_change_percentage_24h: 1.2,   market_cap: 2060000000000, total_volume: 35000000000, image: TOKEN_LOGOS.BTC },
+  ETH:  { id: "ethereum",   symbol: "eth",  name: "Ethereum",   current_price: 2650,     price_change_percentage_24h: 0.8,   market_cap: 320000000000,  total_volume: 18000000000, image: TOKEN_LOGOS.ETH },
+  USDT: { id: "tether",     symbol: "usdt", name: "Tether",     current_price: 1.0001,   price_change_percentage_24h: 0.01,  market_cap: 145000000000,  total_volume: 55000000000, image: TOKEN_LOGOS.USDT },
+  BNB:  { id: "binancecoin",symbol: "bnb",  name: "BNB",        current_price: 660,      price_change_percentage_24h: 0.5,   market_cap: 96000000000,   total_volume: 2000000000,  image: TOKEN_LOGOS.BNB },
+  SOL:  { id: "solana",     symbol: "sol",  name: "Solana",     current_price: 172,      price_change_percentage_24h: 2.1,   market_cap: 84000000000,   total_volume: 4000000000,  image: TOKEN_LOGOS.SOL },
+  USDC: { id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0000,   price_change_percentage_24h: 0.0,   market_cap: 60000000000,   total_volume: 8000000000,  image: TOKEN_LOGOS.USDC },
+  XRP:  { id: "ripple",     symbol: "xrp",  name: "XRP",        current_price: 2.45,     price_change_percentage_24h: -0.3,  market_cap: 142000000000,  total_volume: 5000000000,  image: TOKEN_LOGOS.XRP },
+  HBAR: { id: "hedera",     symbol: "hbar", name: "Hedera",     current_price: 0.21,     price_change_percentage_24h: 1.0,   market_cap: 8500000000,    total_volume: 250000000,   image: TOKEN_LOGOS.HBAR },
+  DOGE: { id: "dogecoin",   symbol: "doge", name: "Dogecoin",   current_price: 0.23,     price_change_percentage_24h: 1.5,   market_cap: 34000000000,   total_volume: 2500000000,  image: TOKEN_LOGOS.DOGE },
+  ADA:  { id: "cardano",    symbol: "ada",  name: "Cardano",    current_price: 0.78,     price_change_percentage_24h: 0.9,   market_cap: 28000000000,   total_volume: 700000000,   image: TOKEN_LOGOS.ADA },
+  AVAX: { id: "avalanche",  symbol: "avax", name: "Avalanche",  current_price: 25,       price_change_percentage_24h: 1.8,   market_cap: 10500000000,   total_volume: 500000000,   image: TOKEN_LOGOS.AVAX },
+  TRX:  { id: "tron",       symbol: "trx",  name: "TRON",       current_price: 0.27,     price_change_percentage_24h: 0.4,   market_cap: 23000000000,   total_volume: 600000000,   image: TOKEN_LOGOS.TRX },
+  TON:  { id: "toncoin",    symbol: "ton",  name: "Toncoin",    current_price: 3.20,     price_change_percentage_24h: 1.1,   market_cap: 11000000000,   total_volume: 300000000,   image: TOKEN_LOGOS.TON },
+  LINK: { id: "chainlink",  symbol: "link", name: "Chainlink",  current_price: 16.50,    price_change_percentage_24h: 2.0,   market_cap: 10500000000,   total_volume: 700000000,   image: TOKEN_LOGOS.LINK },
+  SHIB: { id: "shiba-inu",  symbol: "shib", name: "Shiba Inu",  current_price: 0.0000155, price_change_percentage_24h: 1.3,  market_cap: 9200000000,    total_volume: 600000000,   image: TOKEN_LOGOS.SHIB },
+  DOT:  { id: "polkadot",   symbol: "dot",  name: "Polkadot",   current_price: 4.80,     price_change_percentage_24h: 1.5,   market_cap: 7500000000,    total_volume: 300000000,   image: TOKEN_LOGOS.DOT },
+  LTC:  { id: "litecoin",   symbol: "ltc",  name: "Litecoin",   current_price: 100,      price_change_percentage_24h: 0.7,   market_cap: 7600000000,    total_volume: 500000000,   image: TOKEN_LOGOS.LTC },
+  EURC: { id: "euro-coin",  symbol: "eurc", name: "EURC",       current_price: 1.12,     price_change_percentage_24h: 0.05,  market_cap: 200000000,     total_volume: 20000000,    image: TOKEN_LOGOS.EURC },
+  PAXG: { id: "pax-gold",   symbol: "paxg", name: "PAX Gold",   current_price: 3300,     price_change_percentage_24h: 0.3,   market_cap: 600000000,     total_volume: 40000000,    image: TOKEN_LOGOS.PAXG },
+  USDCh:{ id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0000,   price_change_percentage_24h: 0.0,   market_cap: 60000000000,   total_volume: 8000000000,  image: TOKEN_LOGOS.USDCh },
 };
 
-async function fetchFromCoinCap(symbols: string[]): Promise<Record<string, CoinPrice>> {
-  const ids = [...new Set(symbols.map(s => COINCAP_ID_MAP[s]).filter(Boolean))].join(",");
-  if (!ids) return {};
+// ─────────────────────────────────────────────────────────────────────
+// SIMPLIFIED PRICE PIPELINE
+// ─────────────────────────────────────────────────────────────────────
+//
+// Architecture (Binance-primary):
+//   1. Binance     (T1) — 16 tokens in ONE HTTP call, ~200ms, covers all majors
+//   2. CoinGecko   (T2) — market cap enrichment + EURC (not on Binance)
+//   3. Chainlink   (BG) — background on-chain oracle, non-blocking 4s race
+//   4. HBAR        (LW) — dedicated lone-wolf fast-path
+//   5. Fallback    (FB) — hardcoded safety net
+//
+// CoinCap v2 removed from price pipeline (deprecated API, stale data).
+// CoinCap v2 is ONLY used for chart history (fetchCoinCapHistory).
+// ─────────────────────────────────────────────────────────────────────
+
+// ── Binance Bulk Fetch ────────────────────────────────────────────
+let _binanceCache: { data: Record<string, CoinPrice>; ts: number } | null = null;
+const BINANCE_CACHE_TTL = 8_000;
+
+async function fetchFromBinance(symbols: string[]): Promise<Record<string, CoinPrice>> {
+  // Build pairs list — ONLY valid Binance symbols
+  const pairs = symbols
+    .map(s => BINANCE_PAIR_MAP[s])
+    .filter((p): p is string => !!p);
+  const uniquePairs = [...new Set(pairs)];
+  if (uniquePairs.length === 0) return {};
+
+  // Short-lived cache
+  if (_binanceCache && Date.now() - _binanceCache.ts < BINANCE_CACHE_TTL) {
+    const cached: Record<string, CoinPrice> = {};
+    for (const s of symbols) {
+      if (_binanceCache.data[s]) cached[s] = _binanceCache.data[s];
+    }
+    if (Object.keys(cached).length > 0) {
+      log.debug("Oracle", `Binance: ${Object.keys(cached).length} from cache`);
+      return cached;
+    }
+  }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6000);
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
 
   try {
-    const res = await fetch(`${COINCAP_API}/assets?ids=${ids}`, { signal: controller.signal });
+    // JSON array format: ["BTCUSDT","ETHUSDT",...]
+    const symbolsParam = JSON.stringify(uniquePairs);
+    const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(symbolsParam)}`;
+    const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
+
     if (!res.ok) {
-      log.debug("Oracle", `CoinCap HTTP ${res.status}`);
+      log.debug("Oracle", `Binance HTTP ${res.status} — batch rejected`);
       return {};
     }
 
-    const json = await res.json();
-    const assets: any[] = json.data || [];
+    const tickers: any[] = await res.json();
+    if (!Array.isArray(tickers)) return {};
+
     const priceMap: Record<string, CoinPrice> = {};
 
-    symbols.forEach(symbol => {
-      const capId = COINCAP_ID_MAP[symbol];
-      const asset = assets.find((a: any) => a.id === capId);
-      if (asset) {
-        priceMap[symbol] = {
-          id: asset.id,
-          symbol: asset.symbol?.toLowerCase() || symbol.toLowerCase(),
-          name: asset.name,
-          current_price: parseFloat(asset.priceUsd) || 0,
-          price_change_percentage_24h: parseFloat(asset.changePercent24Hr) || 0,
-          market_cap: parseFloat(asset.marketCapUsd) || 0,
-          total_volume: parseFloat(asset.volumeUsd24Hr) || 0,
-          image: TOKEN_LOGOS[symbol] || "",
-          oracle_source: "coincap",
-        };
-      }
-    });
+    for (const t of tickers) {
+      const sym = BINANCE_REVERSE[t.symbol];
+      if (!sym) continue;
+
+      const price = parseFloat(t.lastPrice);
+      if (!price || price <= 0 || !isFinite(price)) continue;
+
+      const change = parseFloat(t.priceChangePercent);
+      const vol = parseFloat(t.quoteVolume);
+      const fb = FALLBACK_DATA[sym];
+
+      priceMap[sym] = {
+        id: fb?.id || sym.toLowerCase(),
+        symbol: sym.toLowerCase(),
+        name: fb?.name || sym,
+        current_price: price,
+        price_change_percentage_24h: isFinite(change) ? change : 0,
+        market_cap: 0,
+        total_volume: isFinite(vol) ? vol : 0,
+        image: TOKEN_LOGOS[sym] || "",
+        oracle_source: "binance",
+        change_source: "binance",
+      };
+    }
+
+    log.debug("Oracle", `Binance: ${Object.keys(priceMap).length}/${uniquePairs.length} tickers OK`);
+
+    if (Object.keys(priceMap).length > 0) {
+      _binanceCache = { data: priceMap, ts: Date.now() };
+    }
     return priceMap;
   } catch (err) {
     clearTimeout(timeoutId);
-    // Network errors (CORS, blocked, offline) are expected in sandboxed environments
-    if (err instanceof TypeError && (err as TypeError).message === "Failed to fetch") {
-      log.debug("Oracle", "CoinCap unreachable (network/CORS) — using fallback");
+    if (err instanceof TypeError && err.message === "Failed to fetch") {
+      log.debug("Oracle", "Binance unreachable (network/CORS)");
     } else {
-      log.debug("Oracle", "CoinCap fetch error", (err as Error).message);
+      log.debug("Oracle", "Binance error:", (err as Error).message);
     }
     return {};
   }
 }
 
+// ── CoinGecko Fetch (market cap enrichment + EURC) ────────────────
 async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, CoinPrice>> {
   const coinIds = [...new Set(symbols.map(s => COIN_ID_MAP[s]).filter(Boolean))].join(",");
   if (!coinIds) return {};
@@ -173,50 +248,36 @@ async function fetchFromCoinGecko(symbols: string[]): Promise<Record<string, Coi
           total_volume: coin.total_volume || 0,
           image: TOKEN_LOGOS[symbol] || coin.image || "",
           oracle_source: "coingecko",
+          change_source: "coingecko",
         };
       }
     });
+
+    log.debug("Oracle", `CoinGecko: ${Object.keys(priceMap).length}/${symbols.length} tickers`);
     return priceMap;
   } catch (err) {
     clearTimeout(timeoutId);
-    if (err instanceof TypeError && (err as TypeError).message === "Failed to fetch") {
-      log.debug("Oracle", "CoinGecko unreachable (network/CORS) — using fallback");
+    if (err instanceof TypeError && err.message === "Failed to fetch") {
+      log.debug("Oracle", "CoinGecko unreachable (network/CORS)");
     } else {
-      log.debug("Oracle", "CoinGecko fetch error", (err as Error).message);
+      log.debug("Oracle", "CoinGecko error:", (err as Error).message);
     }
     return {};
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// TRIPLE-ORACLE PRICE PIPELINE
-// ─────────────────────────────────────────────────────────────────────
-// Priority: Chainlink (on-chain) → CoinCap → CoinGecko → Hardcoded
-//
-// All three sources are fetched in PARALLEL for maximum speed.
-// Chainlink provides the most accurate current price (decentralized oracle).
-// CoinCap/CoinGecko provide auxiliary data (24h change, volume, market cap).
-// The merge logic uses Chainlink for `current_price` and CoinCap/CoinGecko
-// for auxiliary market data.
-// ─────────────────────────────────────────────────────────────────────
-
-// ── Fast-Path HBAR Price Fetch ─────────────────────────────────────
-// Dedicated multi-source fetch for HBAR price. Tries Binance first
-// (best CORS support), then CoinCap, then CoinGecko simple price.
-// Called automatically inside fetchCoinPrices() so ALL consumers
-// (Dashboard, Trading, etc.) get a live HBAR price even when the
-// bulk batch CoinCap/CoinGecko requests are rate-limited.
-// ─────────────────────────────────────────────────────────────────────
+// ── HBAR Lone-Wolf Fast-Path ─────────────────────────────────────
+// Dedicated multi-source fetch for HBAR. Tries Binance single-ticker
+// first (fastest), then CoinGecko simple price as backup.
+// Runs in parallel inside fetchCoinPrices so all consumers get it.
 let _hbarFastCache: { price: CoinPrice; ts: number } | null = null;
-const HBAR_FAST_CACHE_TTL = 15_000; // 15s — short so it stays fresh
+const HBAR_FAST_CACHE_TTL = 12_000;
 
 export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
-  // Return cache if still fresh
   if (_hbarFastCache && Date.now() - _hbarFastCache.ts < HBAR_FAST_CACHE_TTL) {
     return _hbarFastCache.price;
   }
 
-  // Helper: build CoinPrice from a raw numeric price + optional 24h change
   const buildResult = (
     price: number,
     change24h: number,
@@ -235,65 +296,37 @@ export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
     change_source: source,
   });
 
-  // ── Source 1: Binance (most reliable CORS, fastest) ──
+  // Source 1: Binance single-ticker (fastest, most reliable)
   try {
-    const ctrl1 = new AbortController();
-    const t1 = setTimeout(() => ctrl1.abort(), 3000);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
     const res = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=HBARUSDT", {
-      signal: ctrl1.signal,
+      signal: ctrl.signal,
     });
-    clearTimeout(t1);
+    clearTimeout(t);
     if (res.ok) {
       const data = await res.json();
       const price = parseFloat(data?.lastPrice || "0");
       const change = parseFloat(data?.priceChangePercent || "0");
       const volume = parseFloat(data?.quoteVolume || "0");
       if (price > 0.001 && price < 50) {
-        const result = buildResult(price, change, "coincap", { volume }); // label as coincap (API source)
+        const result = buildResult(price, change, "binance", { volume });
         _hbarFastCache = { price: result, ts: Date.now() };
         log.debug("Oracle", `HBAR fast-path: $${price.toFixed(4)} via Binance`);
         return result;
       }
     }
-  } catch { /* Binance failed — try next */ }
+  } catch { /* Binance failed */ }
 
-  // ── Source 2: CoinCap single-asset endpoint ──
+  // Source 2: CoinGecko simple price
   try {
-    const ctrl2 = new AbortController();
-    const t2 = setTimeout(() => ctrl2.abort(), 3000);
-    const res = await fetch(`${COINCAP_API}/assets/hedera-hashgraph`, {
-      signal: ctrl2.signal,
-    });
-    clearTimeout(t2);
-    if (res.ok) {
-      const json = await res.json();
-      const asset = json?.data;
-      if (asset) {
-        const price = parseFloat(asset.priceUsd);
-        if (price > 0) {
-          const result = buildResult(
-            price,
-            parseFloat(asset.changePercent24Hr) || 0,
-            "coincap",
-            { marketCap: parseFloat(asset.marketCapUsd) || 0, volume: parseFloat(asset.volumeUsd24Hr) || 0 }
-          );
-          _hbarFastCache = { price: result, ts: Date.now() };
-          log.debug("Oracle", `HBAR fast-path: $${price.toFixed(4)} via CoinCap`);
-          return result;
-        }
-      }
-    }
-  } catch { /* CoinCap failed — try next */ }
-
-  // ── Source 3: CoinGecko simple price ──
-  try {
-    const ctrl3 = new AbortController();
-    const t3 = setTimeout(() => ctrl3.abort(), 3000);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
     const res = await fetch(
       `${COINGECKO_API}/simple/price?ids=hedera-hashgraph&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,
-      { signal: ctrl3.signal }
+      { signal: ctrl.signal }
     );
-    clearTimeout(t3);
+    clearTimeout(t);
     if (res.ok) {
       const data = await res.json();
       const hbar = data?.["hedera-hashgraph"];
@@ -314,121 +347,124 @@ export async function fetchHbarFastPath(): Promise<CoinPrice | null> {
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// MAIN PRICE AGGREGATOR
+// ─────────────────────────────────────────────────────────────────────
 export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string, CoinPrice>> => {
-  // Fire all three oracle sources + HBAR fast-path in parallel
-  // All functions handle errors internally and always return {} or null on failure
-  const [chainlinkRaw, coincap, coingecko, hbarFast] = await Promise.all([
-    fetchChainlinkPrices(symbols),
-    fetchFromCoinCap(symbols),
+  // Chainlink runs in background — race against 4s timer.
+  // If Chainlink resolves in time, great. If not, Binance/CoinGecko
+  // render instantly. Chainlink caches for 30s so next refresh gets it.
+  const chainlinkPromise = fetchChainlinkPrices(symbols);
+  const chainlinkRace: Promise<Record<string, ChainlinkPriceData>> = Promise.race([
+    chainlinkPromise,
+    new Promise<Record<string, ChainlinkPriceData>>(r => setTimeout(() => r({}), 4000)),
+  ]);
+  // Prevent unhandled rejection if Chainlink fails after timeout
+  chainlinkPromise.catch(() => {});
+
+  // Fire all sources in parallel
+  const [chainlinkRaw, binance, coingecko, hbarFast] = await Promise.all([
+    chainlinkRace,
+    fetchFromBinance(symbols),
     fetchFromCoinGecko(symbols),
     symbols.includes("HBAR") ? fetchHbarFastPath().catch(() => null) : Promise.resolve(null),
   ]);
 
-  // Convert Chainlink data to CoinPrice format
   const chainlink = chainlinkToCoinPrices(chainlinkRaw, symbols);
 
-  // Merge with priority: Chainlink price > CoinCap > CoinGecko > Fallback
+  // ── 3-Layer Merge ───────────────────────────────────────────────
+  // Layer 1: Fallback (hardcoded baseline)
+  // Layer 2: CoinGecko (market cap + EURC)
+  // Layer 3: Binance (real-time price + 24h change + volume)
+  // Layer 4: Chainlink (on-chain price override, no 24h change)
   const merged: Record<string, CoinPrice> = {};
-  let clCount = 0, ccCount = 0, cgCount = 0, fbCount = 0;
+  let clCount = 0, bnCount = 0, cgCount = 0, fbCount = 0;
 
   for (const symbol of symbols) {
-    // Start with fallback
-    // change_source tracks where price_change_percentage_24h actually came from
-    // (may differ from oracle_source when Chainlink overrides price but not %)
+    // Start with hardcoded fallback
     let result: CoinPrice | null = FALLBACK_DATA[symbol]
       ? { ...FALLBACK_DATA[symbol], oracle_source: "fallback" as OracleSource, change_source: "fallback" as OracleSource }
       : null;
 
-    // Layer CoinGecko (lowest priority API)
-    if (coingecko[symbol]) {
-      result = { ...coingecko[symbol], change_source: "coingecko" as OracleSource };
+    // Layer CoinGecko (market cap, EURC coverage)
+    const cg = coingecko[symbol];
+    if (cg && cg.current_price > 0) {
+      result = { ...cg, change_source: "coingecko" as OracleSource };
     }
 
-    // Layer CoinCap (higher priority API)
-    if (coincap[symbol]) {
-      // If we have CoinGecko data, keep its market_cap/volume if CoinCap's are zero
-      if (result && result.oracle_source === "coingecko") {
-        result = {
-          ...result,
-          current_price: coincap[symbol].current_price,
-          price_change_percentage_24h: coincap[symbol].price_change_percentage_24h,
-          market_cap: coincap[symbol].market_cap || result.market_cap,
-          total_volume: coincap[symbol].total_volume || result.total_volume,
-          oracle_source: "coincap" as OracleSource,
-          change_source: "coincap" as OracleSource,
-        };
-      } else {
-        result = { ...coincap[symbol], change_source: "coincap" as OracleSource };
-      }
-    }
-
-    // Override ONLY the price with Chainlink data (highest priority — decentralized oracle)
-    // Keep 24h change, volume, and market cap from CoinCap/CoinGecko
-    // IMPORTANT: change_source is preserved from the layer beneath — Chainlink
-    // does NOT provide 24h change, so change_source stays whatever it was
-    if (chainlink[symbol] && chainlink[symbol].current_price > 0) {
+    // Layer Binance (real-time price — overrides CoinGecko price but keeps market_cap)
+    const bn = binance[symbol];
+    if (bn && bn.current_price > 0) {
       if (result) {
         result = {
           ...result,
-          current_price: chainlink[symbol].current_price,
-          oracle_source: "chainlink" as OracleSource,
-          oracle_updated_at: chainlink[symbol].oracle_updated_at,
-          chainlink_feed: chainlink[symbol].chainlink_feed,
-          // change_source intentionally NOT overridden — it stays from the
-          // underlying source (coincap/coingecko/fallback)
+          current_price: bn.current_price,
+          price_change_percentage_24h: bn.price_change_percentage_24h,
+          total_volume: bn.total_volume || result.total_volume,
+          // Keep CoinGecko/fallback market_cap (Binance doesn't provide it)
+          market_cap: result.market_cap || 0,
+          oracle_source: "binance" as OracleSource,
+          change_source: "binance" as OracleSource,
         };
       } else {
-        // No API data at all — use Chainlink alone with fallback metadata
+        result = { ...bn };
+      }
+    }
+
+    // Layer Chainlink (on-chain price override — highest authority)
+    // Keeps 24h change from layer beneath; Chainlink has no 24h change.
+    const cl = chainlink[symbol];
+    if (cl && cl.current_price > 0) {
+      if (result) {
+        result = {
+          ...result,
+          current_price: cl.current_price,
+          oracle_source: "chainlink" as OracleSource,
+          oracle_updated_at: cl.oracle_updated_at,
+          chainlink_feed: cl.chainlink_feed,
+          // change_source preserved from layer beneath
+        };
+      } else {
         const fb = FALLBACK_DATA[symbol];
         result = {
-          ...(fb || {
-            id: symbol.toLowerCase(),
-            symbol: symbol.toLowerCase(),
-            name: symbol,
-            price_change_percentage_24h: 0,
-            market_cap: 0,
-            total_volume: 0,
-            image: TOKEN_LOGOS[symbol] || "",
-          }),
-          current_price: chainlink[symbol].current_price,
+          id: fb?.id || symbol.toLowerCase(),
+          symbol: symbol.toLowerCase(),
+          name: fb?.name || symbol,
+          current_price: cl.current_price,
+          price_change_percentage_24h: 0,
+          market_cap: 0,
+          total_volume: 0,
+          image: TOKEN_LOGOS[symbol] || "",
           oracle_source: "chainlink" as OracleSource,
-          oracle_updated_at: chainlink[symbol].oracle_updated_at,
-          chainlink_feed: chainlink[symbol].chainlink_feed,
+          oracle_updated_at: cl.oracle_updated_at,
+          chainlink_feed: cl.chainlink_feed,
           change_source: "fallback" as OracleSource,
         };
       }
     }
 
+    // Stablecoins: ensure sensible price if no API returned data
+    if (!result && (symbol === "USDT" || symbol === "USDC" || symbol === "USDCh")) {
+      const fb = FALLBACK_DATA[symbol];
+      result = fb
+        ? { ...fb, oracle_source: "fallback" as OracleSource, change_source: "fallback" as OracleSource }
+        : null;
+    }
+
     if (result) {
-      // Ensure image is set
       result.image = result.image || TOKEN_LOGOS[symbol] || "";
       merged[symbol] = result;
 
-      // Count oracle sources for stats
       switch (result.oracle_source) {
         case "chainlink": clCount++; break;
-        case "coincap": ccCount++; break;
+        case "binance": bnCount++; break;
         case "coingecko": cgCount++; break;
         default: fbCount++; break;
       }
     }
   }
 
-  // Update global oracle stats
-  updateOracleStats({
-    chainlinkCount: clCount,
-    coincapCount: ccCount,
-    coingeckoCount: cgCount,
-    fallbackCount: fbCount,
-    totalFeeds: symbols.length,
-  });
-
-  log.debug("Oracle", `Merged ${symbols.length} tokens: ${clCount} Chainlink · ${ccCount} CoinCap · ${cgCount} CoinGecko · ${fbCount} Fallback`);
-
-  // ── HBAR fast-path patch ─────────────────────────────────────────
-  // If HBAR ended up on fallback or has no live price, override with
-  // the dedicated multi-source fetch (Binance → CoinCap → CoinGecko).
-  // This runs automatically for ALL consumers (Dashboard, Trading, etc.).
+  // HBAR lone-wolf patch — if HBAR is on fallback, override with fast-path
   if (hbarFast && hbarFast.current_price > 0) {
     const existing = merged["HBAR"];
     if (!existing || existing.oracle_source === "fallback" || existing.current_price <= 0) {
@@ -437,8 +473,23 @@ export const fetchCoinPrices = async (symbols: string[]): Promise<Record<string,
     }
   }
 
+  updateOracleStats({
+    chainlinkCount: clCount,
+    binanceCount: bnCount,
+    coincapCount: 0,
+    coingeckoCount: cgCount,
+    fallbackCount: fbCount,
+    totalFeeds: symbols.length,
+  });
+
+  log.debug("Oracle", `Merged ${symbols.length}: ${clCount} Chainlink, ${bnCount} Binance, ${cgCount} CoinGecko, ${fbCount} Fallback`);
+
   return merged;
 };
+
+// ─────────────────────────────────────────────────────────────────────
+// CHART HISTORY (CoinCap v2 — still works for historical data)
+// ─────────────────────────────────────────────────────────────────────
 
 export interface HistoryPoint {
   priceUsd: number;
@@ -475,6 +526,10 @@ export async function fetchCoinCapHistory(
     return [];
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// UTILITY FUNCTIONS
+// ─────────────────────────────────────────────────────────────────────
 
 export const formatMarketCap = (value: number): string => {
   if (value >= 1e12) return `${(value / 1e12).toFixed(2)}T`;
@@ -525,11 +580,10 @@ export async function fetchGlobalMarketData(): Promise<GlobalMarketData> {
       };
     } catch {
       clearTimeout(timeoutId);
-      /* fall through to CoinCap */
     }
   }
 
-  // Try CoinCap as fallback
+  // Try CoinCap as fallback for global data
   {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -556,7 +610,6 @@ export async function fetchGlobalMarketData(): Promise<GlobalMarketData> {
       };
     } catch {
       clearTimeout(timeoutId);
-      /* fall through to hardcoded fallback */
     }
   }
 
@@ -618,14 +671,12 @@ export async function fetchMarketRSI(): Promise<{ rsi: number; prices: number[] 
 }
 
 // ── Top 20 Composite Index ────────────────────────────────────────────
-// Market-cap-weighted composite of the top 20 cryptocurrencies.
-// Uses CoinGecko /coins/markets endpoint (free tier, no API key).
 
 export interface Top20IndexData {
-  totalMarketCap: number;          // Sum of top 20 market caps (USD)
-  weightedChange24h: number;       // Market-cap-weighted average 24h change (%)
-  topCoinCount: number;            // Number of coins in the composite
-  topCoins: Top20Coin[];           // Individual coin data for breakdown
+  totalMarketCap: number;
+  weightedChange24h: number;
+  topCoinCount: number;
+  topCoins: Top20Coin[];
 }
 
 export interface Top20Coin {
@@ -635,7 +686,7 @@ export interface Top20Coin {
   change24h: number;
   marketCap: number;
   image: string;
-  dominancePercent: number;        // Share of top-20 total market cap
+  dominancePercent: number;
 }
 
 const TOP20_FALLBACK: Top20IndexData = {
@@ -646,15 +697,13 @@ const TOP20_FALLBACK: Top20IndexData = {
 };
 
 let _top20Cache: { data: Top20IndexData; ts: number } | null = null;
-const TOP20_CACHE_TTL_MS = 120_000; // 2-minute client-side cache
+const TOP20_CACHE_TTL_MS = 120_000;
 
 export async function fetchTop20Index(): Promise<Top20IndexData> {
-  // Check client-side cache
   if (_top20Cache && Date.now() - _top20Cache.ts < TOP20_CACHE_TTL_MS) {
     return _top20Cache.data;
   }
 
-  // CoinGecko /coins/markets — top 20 by market cap
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10_000);
   try {
@@ -680,20 +729,17 @@ export async function fetchTop20Index(): Promise<Top20IndexData> {
         change24h: change,
         marketCap: mcap,
         image: c.image ?? "",
-        dominancePercent: 0, // Calculated below
+        dominancePercent: 0,
       };
     });
 
-    // Calculate dominance percentages
     if (totalMcap > 0) {
       topCoins.forEach(c => { c.dominancePercent = (c.marketCap / totalMcap) * 100; });
     }
 
-    const weightedChange = totalMcap > 0 ? weightedChangeSum / totalMcap : 0;
-
     const result: Top20IndexData = {
       totalMarketCap: totalMcap,
-      weightedChange24h: weightedChange,
+      weightedChange24h: totalMcap > 0 ? weightedChangeSum / totalMcap : 0,
       topCoinCount: topCoins.length,
       topCoins,
     };
@@ -703,7 +749,7 @@ export async function fetchTop20Index(): Promise<Top20IndexData> {
     clearTimeout(timeoutId);
   }
 
-  // Fallback: try to compute from CoinCap
+  // Fallback: CoinCap
   const cc = new AbortController();
   const ccTimeout = setTimeout(() => cc.abort(), 8000);
   try {

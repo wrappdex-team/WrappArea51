@@ -78,6 +78,7 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
 /** Oracle-source badge metadata */
 const ORACLE_BADGE: Record<OracleSource, { label: string; dotColor: string }> = {
   chainlink:  { label: "Chainlink",  dotColor: "bg-blue-500" },
+  binance:    { label: "Binance",    dotColor: "bg-yellow-500" },
   coincap:    { label: "CoinCap",    dotColor: "bg-amber-500" },
   coingecko:  { label: "CoinGecko",  dotColor: "bg-green-500" },
   fallback:   { label: "Cached",     dotColor: "bg-slate-500" },
@@ -88,12 +89,14 @@ function OracleDot({ source, isDark }: { source?: OracleSource; isDark: boolean 
   if (!source) return null;
   const colors: Record<OracleSource, string> = {
     chainlink: "bg-blue-500",
+    binance:   "bg-yellow-500",
     coincap:   "bg-amber-500",
     coingecko: "bg-green-500",
     fallback:  "bg-slate-500",
   };
   const labels: Record<OracleSource, string> = {
     chainlink: "Chainlink Oracle",
+    binance:   "Binance API",
     coincap:   "CoinCap API",
     coingecko: "CoinGecko API",
     fallback:  "Cached price",
@@ -144,7 +147,7 @@ export function Dashboard() {
   // HBAR.ħ protocol token — live price from DexScreener/SaucerSwap API
   const [hbarhData, setHbarhData] = useState<HbarhTokenData | null>(null);
 
-  // Real sparkline history for BTC & HBAR ticker cards (24h hourly from CoinCap)
+  // Real sparkline history for BTC & HBAR ticker cards (24h hourly from CoinCap history API)
   const [btcSparkHistory, setBtcSparkHistory] = useState<number[]>([]);
   const [hbarSparkHistory, setHbarSparkHistory] = useState<number[]>([]);
 
@@ -186,7 +189,7 @@ export function Dashboard() {
     const loadPrices = async () => {
       // HBAR fast-path is now integrated into fetchCoinPrices() itself,
       // so ALL consumers (Dashboard, Trading, etc.) automatically get
-      // a live HBAR price via Binance/CoinCap/CoinGecko fallback chain.
+      // a live HBAR price via Binance (lone-wolf fast-path).
       const prices = await fetchCoinPrices(ALL_SYMBOLS);
 
       const assets = buildMarketAssets(prices);
@@ -379,7 +382,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* ═══ Row 1b: Price Tickers — BTC | HBAR | HBAR.ħ ═══ */}
+      {/* ═══ Row 1b: Price Tickers — BTC | HBAR | HBAR.ħ ══ */}
       {(() => {
         const btcAsset = marketData.find(a => a.symbol === "BTC");
         const hbarAsset = marketData.find(a => a.symbol === "HBAR");
@@ -754,7 +757,7 @@ export function Dashboard() {
 
                     <div className="hidden md:block w-20 text-right">
                       {item.changeSource === "fallback" ? (
-                        <Tip content="Waiting for live 24h data from CoinCap/CoinGecko...">
+                        <Tip content="Waiting for live 24h data from Binance/CoinGecko...">
                         <div
                           className={`flex items-center justify-end gap-1 font-bold text-sm ${
                             isDark ? "text-slate-500" : "text-gray-400"

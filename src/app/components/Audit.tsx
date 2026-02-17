@@ -110,12 +110,13 @@ function formatAge(ts: number): string {
 }
 
 const SERVER_CHECK_META: Record<string, { label: string; icon: React.ReactNode }> = {
-  kvStore:      { label: "KV Store",       icon: <Database className="w-3.5 h-3.5" /> },
-  storage:      { label: "Object Storage", icon: <HardDrive className="w-3.5 h-3.5" /> },
-  coingecko:    { label: "CoinGecko API",  icon: <Activity className="w-3.5 h-3.5" /> },
-  coincap:      { label: "CoinCap API",    icon: <Activity className="w-3.5 h-3.5" /> },
-  fearGreed:    { label: "Fear & Greed",   icon: <Activity className="w-3.5 h-3.5" /> },
-  dexscreener:  { label: "DexScreener",    icon: <Activity className="w-3.5 h-3.5" /> },
+  kvStore:      { label: "KV Store",          icon: <Database className="w-3.5 h-3.5" /> },
+  storage:      { label: "Object Storage",    icon: <HardDrive className="w-3.5 h-3.5" /> },
+  binance:      { label: "Binance API",       icon: <Activity className="w-3.5 h-3.5" /> },
+  coingecko:    { label: "CoinGecko API",     icon: <Activity className="w-3.5 h-3.5" /> },
+  coincap:      { label: "CoinCap Charts",    icon: <Activity className="w-3.5 h-3.5" /> },
+  fearGreed:    { label: "Fear & Greed",      icon: <Activity className="w-3.5 h-3.5" /> },
+  dexscreener:  { label: "DexScreener",       icon: <Activity className="w-3.5 h-3.5" /> },
 };
 
 // ── Main Component ───────────────────────────────────────────────────

@@ -573,7 +573,7 @@ export function Trading() {
                   </Tip>
                 ) : (
                   <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-700/50 text-slate-500" : "bg-gray-100 text-gray-400"}`}>
-                    {currentOracleSource === "coincap" ? "COINCAP" : currentOracleSource === "coingecko" ? "COINGECKO" : "CACHED"}
+                    {currentOracleSource === "binance" ? "BINANCE" : currentOracleSource === "coincap" ? "COINCAP" : currentOracleSource === "coingecko" ? "COINGECKO" : "CACHED"}
                   </span>
                 )}
                 <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${isDark ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
@@ -582,7 +582,7 @@ export function Trading() {
               </div>
               <div className="flex items-center gap-3 flex-wrap">
                 {currentChangeSource === "fallback" ? (
-                  <Tip content="Waiting for live 24h data from CoinCap/CoinGecko...">
+                  <Tip content="Waiting for live 24h data from Binance/CoinGecko...">
                   <div className={`flex items-center gap-1 text-xs ${isDark ? "text-slate-500" : "text-gray-400"} animate-pulse`}>
                     <span>~</span> — <span className={`${isDark ? "text-slate-500" : "text-gray-400"}`}>24h</span>
                   </div>

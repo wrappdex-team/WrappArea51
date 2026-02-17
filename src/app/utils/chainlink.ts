@@ -16,7 +16,7 @@ import { log } from "./logger";
 // (coingecko.ts imports from chainlink.ts at runtime)
 import type { CoinPrice, OracleSource } from "./coingecko";
 
-// ── ABI Function Selector ──────────��───────────────────────────────
+// ── ABI Function Selector ────────────────────────────────────────
 // latestRoundData() → (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
 const LATEST_ROUND_DATA = "0xfeaf968c";
 
@@ -75,6 +75,7 @@ export interface ChainlinkPriceData {
 // ── Oracle Stats (for UI display) ──────────────────────────────────
 export interface OracleStats {
   chainlinkCount: number;
+  binanceCount: number;
   coincapCount: number;
   coingeckoCount: number;
   fallbackCount: number;
@@ -85,6 +86,7 @@ export interface OracleStats {
 
 let _lastStats: OracleStats = {
   chainlinkCount: 0,
+  binanceCount: 0,
   coincapCount: 0,
   coingeckoCount: 0,
   fallbackCount: 0,
@@ -161,7 +163,7 @@ function answerToPrice(answer: bigint, decimals: number): number {
 async function batchEthCall(
   rpcUrl: string,
   calls: { to: string; data: string }[],
-  timeoutMs: number = 8_000
+  timeoutMs: number = 3_000
 ): Promise<(string | null)[]> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -243,11 +245,13 @@ export async function fetchChainlinkPrices(
   const ethFeedIndex = feedSymbols.indexOf("ETH");
   let ethPrice = 0;
 
-  // Try each RPC endpoint
+  // Try each RPC endpoint (limit to first 3 for speed — avoid 15s+ stall)
   let lastError: Error | null = null;
   const startMs = Date.now();
+  const MAX_RPC_ATTEMPTS = 3;
 
-  for (const rpcUrl of RPC_ENDPOINTS) {
+  for (let i = 0; i < Math.min(MAX_RPC_ATTEMPTS, RPC_ENDPOINTS.length); i++) {
+    const rpcUrl = RPC_ENDPOINTS[i];
     try {
       const results = await batchEthCall(rpcUrl, calls);
 

@@ -6,7 +6,7 @@
  * is initiated by redirecting to ChangeNOW with pre-filled parameters via
  * their partner link, so no API key is required for the basic flow.
  *
- * Approximate exchange rates are calculated from CoinGecko/CoinCap prices.
+ * Approximate exchange rates are calculated from Binance/CoinGecko prices.
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
