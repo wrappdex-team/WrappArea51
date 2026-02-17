@@ -79,7 +79,7 @@ export function PoolCreator() {
   const accountId = hashPackSession?.accountId || null;
 
   // ── Live HBAR.ħ price for fee calculation ──
-  const [hbarhPrice, setHbarhPrice] = useState(0.008); // fallback default
+  const [hbarhPrice, setHbarhPrice] = useState(0.000001); // fallback default
   useEffect(() => {
     fetchHbarhTokenPrice().then((r) => {
       if (r.price > 0) setHbarhPrice(r.price);

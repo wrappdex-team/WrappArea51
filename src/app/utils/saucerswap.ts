@@ -648,7 +648,7 @@ async function fetchRouterQuote(
 const FALLBACK_TOKEN_PRICES_USD: Record<string, number> = {
   HBAR: 0.28, WHBAR: 0.28, USDC: 1.0, USDT: 1.0, WBTC: 97000, WETH: 3600,
   LINK: 19.0, WPOL: 0.40, SAUCE: 0.045, HBARX: 0.30, KARATE: 0.0003,
-  PACK: 0.015, DOVU: 0.002, HST: 0.018, "HBAR.ħ": 0.008,
+  PACK: 0.015, DOVU: 0.002, HST: 0.018, "HBAR.ħ": 0.000001,
 };
 
 // Live price cache — updated by fetchLiveTokenPrices()
@@ -765,7 +765,7 @@ export async function fetchLiveTokenPrices(): Promise<Record<string, number>> {
     }
 
     // ── Fallback: fetch HBAR.ħ price from DexScreener if still missing ──
-    // HBAR.ħ is a distinct protocol token (~$0.008), NOT a liquid-staked
+    // HBAR.ħ is a distinct protocol token (~$0.000001), NOT a liquid-staked
     // HBAR derivative. Do NOT set it to HBAR price.
     if (!prices["HBAR.ħ"]) {
       try {
@@ -896,7 +896,7 @@ export async function fetchHbarhTokenPrice(): Promise<{ price: number; source: s
   }
 
   // Strategy 5: hardcoded fallback
-  const fallback = FALLBACK_TOKEN_PRICES_USD["HBAR.ħ"] || 0.008;
+  const fallback = FALLBACK_TOKEN_PRICES_USD["HBAR.ħ"] || 0.000001;
   console.warn(`[HBAR.h] All live strategies exhausted — using fallback: $${fallback}`);
   return { price: fallback, source: "fallback" };
 }
@@ -3864,15 +3864,15 @@ export function estimateSwapQuote(
 // ══════════════════════════════════════════════════════════════════════
 
 const FALLBACK_DATA: HbarhTokenData = {
-  price: 0.00812,
-  priceUsd: 0.00812,
-  change24h: 5.34,
-  volume24h: 342600,
-  liquidity: 824000,
+  price: 0.000001,
+  priceUsd: 0.000001,
+  change24h: 0,
+  volume24h: 0,
+  liquidity: 0,
   priceHistory: [
-    0.0072, 0.0074, 0.0073, 0.0076, 0.0078, 0.0075, 0.0077, 0.0079,
-    0.0080, 0.0078, 0.0081, 0.0083, 0.0082, 0.0080, 0.0079, 0.0081,
-    0.0084, 0.0083, 0.0085, 0.0082, 0.0080, 0.0079, 0.0081, 0.0081,
+    0.0000009, 0.0000010, 0.0000009, 0.0000010, 0.0000011, 0.0000010, 0.0000010, 0.0000009,
+    0.0000010, 0.0000010, 0.0000011, 0.0000010, 0.0000009, 0.0000010, 0.0000010, 0.0000011,
+    0.0000010, 0.0000010, 0.0000009, 0.0000010, 0.0000011, 0.0000010, 0.0000010, 0.0000010,
   ],
 };
 
@@ -4721,7 +4721,7 @@ export const SAUCERSWAP_TO_ORACLE_SYMBOL: Record<string, string> = {
   PACK: "PACK",
   DOVU: "DOVU",
   HST: "HST",
-  // NOTE: HBAR.ħ is NOT mapped here — it's a distinct protocol token (~$0.008)
+  // NOTE: HBAR.ħ is NOT mapped here — it's a distinct protocol token (~$0.000001)
   // not a liquid-staked HBAR derivative. Price comes from DexScreener via
   // fetchHbarhTokenPrice(). Mapping it to "HBAR" would overwrite with HBAR price.
 };
