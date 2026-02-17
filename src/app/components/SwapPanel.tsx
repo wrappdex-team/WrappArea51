@@ -36,7 +36,7 @@ import { toast } from "sonner";
 import { playVipCashRegister } from "../utils/sounds";
 import { loadVipPrefs, isVipEligible } from "../utils/vip";
 import { motion } from "motion/react";
-import larryLogo from "figma:asset/6e6e23fc43a05b079a06cb2f572f4aa4b962a61d.png";
+import { SAUCERSWAP_LARRY_LOGO } from "../assets/brand";
 import {
   SAUCERSWAP_TOKENS,
   estimateSwapQuote,
@@ -784,7 +784,7 @@ export function SwapPanel() {
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all ${isDark ? "bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-900/30 hover:border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"}`}
                   >
                     <img
-                      src={larryLogo}
+                      src={SAUCERSWAP_LARRY_LOGO}
                       alt="SaucerSwap Larry"
                       className="w-4 h-4 rounded-full object-cover"
                       loading="eager"
