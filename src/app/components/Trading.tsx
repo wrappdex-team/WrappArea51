@@ -40,8 +40,18 @@ import { Tip } from "./Tip";
 // ── Constants ───────────────────────────────────────────────────────
 
 const TOKENS = TRADING_TOKENS;
-const TIMEFRAMES = ["1m", "5m", "30m", "1H", "4H", "1D", "1W", "1M", "All"] as const;
+const TIMEFRAMES = ["1m", "5m", "30m", "1H", "4H", "1D", "1W", "1M", "1Y", "All"] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
+
+// Adaptive priceFormat: ~20 incremental ticks between each "unit" at the token's price scale
+function getAdaptivePriceFormat(price: number): { type: "price"; precision: number; minMove: number } {
+  // 20 sub-ticks between each order-of-magnitude unit
+  if (price >= 10_000) return { type: "price", precision: 2, minMove: 0.05 };        // 20 ticks / $1
+  if (price >= 100)    return { type: "price", precision: 3, minMove: 0.005 };       // 20 ticks / $0.10
+  if (price >= 0.01)   return { type: "price", precision: 4, minMove: 0.0005 };      // 20 ticks / $0.01 (cent)
+  if (price >= 0.0001) return { type: "price", precision: 6, minMove: 0.000005 };    // 20 ticks / $0.0001
+                        return { type: "price", precision: 8, minMove: 0.00000005 };  // 20 ticks / $0.000001
+}
 
 // ── VIP-Gated CEX Trading Component ──────────────────────────────────
 
@@ -187,20 +197,26 @@ export function Trading() {
 
   // Use real data if available, otherwise generate synthetic candles
   const syntheticData = useMemo(() => {
-    const counts: Record<Timeframe, number> = { "1m": 60, "5m": 60, "30m": 60, "All": 200, "1H": 60, "4H": 48, "1D": 24, "1W": 42, "1M": 30 };
-    const intervals: Record<Timeframe, number> = { "1m": 1/60, "5m": 5/60, "30m": 0.5, "All": 10080, "1H": 1, "4H": 5, "1D": 60, "1W": 240, "1M": 1440 };
+    const counts: Record<Timeframe, number> = { "1m": 60, "5m": 60, "30m": 60, "1H": 60, "4H": 48, "1D": 24, "1W": 42, "1M": 30, "1Y": 52, "All": 200 };
+    const intervals: Record<Timeframe, number> = { "1m": 1/60, "5m": 5/60, "30m": 0.5, "1H": 1, "4H": 5, "1D": 60, "1W": 240, "1M": 1440, "1Y": 10080, "All": 10080 };
     const count = counts[timeframe];
     const secPerBar = intervals[timeframe] * 60;
     const data: CandlestickData[] = [];
     const now = Math.floor(Date.now() / 1000);
     let p = currentPrice * (1 - selectedToken.volatility * 2);
+    // Deterministic seed avoids chart jitter on re-render
+    let seed = Math.floor(currentPrice * 1000) % 10000;
+    const pseudoRand = () => {
+      seed = (seed * 16807 + 0) % 2147483647;
+      return seed / 2147483647;
+    };
     for (let i = count; i >= 0; i--) {
       const time = (now - i * secPerBar) as any;
-      const change = (Math.random() - 0.46) * (currentPrice * selectedToken.volatility * 0.5);
+      const change = (pseudoRand() - 0.46) * (currentPrice * selectedToken.volatility * 0.5);
       const open = p;
       const close = p + change;
-      const high = Math.max(open, close) + Math.random() * (currentPrice * selectedToken.volatility * 0.15);
-      const low = Math.min(open, close) - Math.random() * (currentPrice * selectedToken.volatility * 0.15);
+      const high = Math.max(open, close) + pseudoRand() * (currentPrice * selectedToken.volatility * 0.15);
+      const low = Math.min(open, close) - pseudoRand() * (currentPrice * selectedToken.volatility * 0.15);
       data.push({ time, open, high, low, close });
       p = close;
     }
@@ -269,8 +285,11 @@ export function Trading() {
       });
       localChart = chart;
 
+      // Adaptive price granularity — ~20 incremental ticks between each price unit
+      const priceFmt = getAdaptivePriceFormat(currentPrice);
+
       if (chartMode === "candle") {
-        const candles = chart.addSeries(LWC.CandlestickSeries, CANDLE_COLORS);
+        const candles = chart.addSeries(LWC.CandlestickSeries, { ...CANDLE_COLORS, priceFormat: priceFmt });
         candles.setData(chartData);
         candleSeriesRef.current = candles;
       } else {
@@ -278,12 +297,14 @@ export function Trading() {
         const lineSeries = chart.addSeries(LWC.LineSeries, {
           color: "#22c55e", lineWidth: 2 as any, priceLineVisible: true,
           lastValueVisible: true, crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
+          priceFormat: priceFmt,
         });
         lineSeries.setData(lineData);
         const areaSeries = chart.addSeries(LWC.AreaSeries, {
           topColor: "rgba(34,197,94,0.2)", bottomColor: "rgba(34,197,94,0.02)",
           lineColor: "transparent", lineWidth: 0 as any, priceLineVisible: false,
           lastValueVisible: false, crosshairMarkerVisible: false,
+          priceFormat: priceFmt,
         });
         areaSeries.setData(lineData);
         candleSeriesRef.current = null;
@@ -475,7 +496,7 @@ export function Trading() {
   const formatPrice = (p: number) => (p >= 1 ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${p < 0.001 ? p.toFixed(8) : p.toFixed(6)}`);
   const formatMcap = (v: number) => { if (v >= 1e12) return `$${(v/1e12).toFixed(1)}T`; if (v >= 1e9) return `$${(v/1e9).toFixed(1)}B`; if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`; return `$${v.toLocaleString()}`; };
 
-  const tfLabel: Record<Timeframe, string> = { "1m": "1 Min", "5m": "5 Min", "30m": "30 Min", "All": "All Time", "1H": "1 Hour", "4H": "4 Hours", "1D": "1 Day", "1W": "1 Week", "1M": "1 Month" };
+  const tfLabel: Record<Timeframe, string> = { "1m": "1 Min", "5m": "5 Min", "30m": "30 Min", "All": "All Time", "1H": "1 Hour", "4H": "4 Hours", "1D": "1 Day", "1W": "1 Week", "1M": "1 Month", "1Y": "1 Year" };
 
   const cardClass = isDark
     ? "bg-slate-900/30 border border-pink-500/20 backdrop-blur-sm"

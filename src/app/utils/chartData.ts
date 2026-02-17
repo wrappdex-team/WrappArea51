@@ -27,6 +27,7 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
   BNB: "BNBUSDT", SOL: "SOLUSDT", DOGE: "DOGEUSDT", ADA: "ADAUSDT",
   AVAX: "AVAXUSDT", TRX: "TRXUSDT", TON: "TONUSDT", LINK: "LINKUSDT",
   SHIB: "SHIBUSDT", DOT: "DOTUSDT", LTC: "LTCUSDT", PAXG: "PAXGUSDT",
+  AAVE: "AAVEUSDT", DAI: "DAIUSDT",
 };
 
 // ── Binance interval mapping ─────────────────────────────────────────
@@ -39,12 +40,13 @@ const BINANCE_INTERVALS: Record<string, { interval: string; limit: number }> = {
   "1D":  { interval: "1h",  limit: 24 },   // 24 1-hour candles = 1 day
   "1W":  { interval: "4h",  limit: 42 },   // 42 4-hour candles = 1 week
   "1M":  { interval: "1d",  limit: 30 },   // 30 daily candles = 1 month
+  "1Y":  { interval: "1d",  limit: 365 },  // 365 daily candles = 1 year
   "ALL": { interval: "1w",  limit: 200 },  // 200 weekly candles ~4 years
 };
 
 // ── CoinGecko OHLC days mapping ──────────────────────────────────────
 const COINGECKO_OHLC_DAYS: Record<string, number> = {
-  "1m": 1, "5m": 1, "30m": 1, "1H": 1, "4H": 1, "1D": 7, "1W": 30, "1M": 90, "ALL": 365,
+  "1m": 1, "5m": 1, "30m": 1, "1H": 1, "4H": 1, "1D": 7, "1W": 30, "1M": 90, "1Y": 365, "ALL": 365,
 };
 
 // ── CoinCap interval config ─────────────────────────────────────────
@@ -55,14 +57,27 @@ const COINCAP_CONFIG: Record<string, { interval: "h1" | "h6" | "h12" | "d1"; day
   "1H":  { interval: "h1", days: 1,   barMs: 60 * 1000 },            // 1-min bars from hourly data
   "4H":  { interval: "h1", days: 1,   barMs: 5 * 60 * 1000 },       // 5-min bars
   "1D":  { interval: "h1", days: 3,   barMs: 60 * 60 * 1000 },      // 1h bars
-  "1W":  { interval: "h1", days: 10,  barMs: 4 * 60 * 60 * 1000 },  // 4h bars
+  "1W":  { interval: "h6", days: 10,  barMs: 4 * 60 * 60 * 1000 },  // 4h bars (h6 gives more data density)
   "1M":  { interval: "h6", days: 35,  barMs: 24 * 60 * 60 * 1000 }, // daily bars
-  "ALL": { interval: "h12", days: 365, barMs: 7 * 24 * 60 * 60 * 1000 }, // weekly bars
+  "1Y":  { interval: "d1", days: 365, barMs: 24 * 60 * 60 * 1000 }, // daily bars (1 year)
+  "ALL": { interval: "d1", days: 1825, barMs: 7 * 24 * 60 * 60 * 1000 }, // weekly bars (5 years)
 };
 
-// ── Cache for chart data (5-minute TTL) ──────────────────────────────
+// ── Cache for chart data (adaptive TTL) ─────────────────���────────────
 const chartCache = new Map<string, { data: ChartResult; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_DEFAULT = 5 * 60 * 1000; // 5 minutes
+// Intraday views get shorter cache so data stays fresh
+const CACHE_TTL_MAP: Record<string, number> = {
+  "1m":  30_000,     // 30s — near-realtime
+  "5m":  60_000,     // 1 min
+  "30m": 2 * 60_000, // 2 min
+  "1H":  2 * 60_000, // 2 min
+  "4H":  3 * 60_000, // 3 min
+};
+
+function getCacheTTL(period: string): number {
+  return CACHE_TTL_MAP[period] || CACHE_TTL_DEFAULT;
+}
 
 function getCacheKey(symbol: string, period: string): string {
   return `${symbol}-${period}`;
@@ -268,6 +283,7 @@ const SYNTHETIC_CONFIG: Record<string, { count: number; secPerBar: number }> = {
   "1D":  { count: 24,  secPerBar: 3600 },
   "1W":  { count: 42,  secPerBar: 14400 },
   "1M":  { count: 30,  secPerBar: 86400 },
+  "1Y":  { count: 52,  secPerBar: 604800 },  // 52 weekly bars = 1 year
   "ALL": { count: 52,  secPerBar: 604800 },
 };
 
@@ -292,7 +308,7 @@ export async function fetchRealCandlesWithSource(
 
   // Check cache
   const cached = chartCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  if (cached && Date.now() - cached.timestamp < getCacheTTL(barPeriod)) {
     return cached.data;
   }
 

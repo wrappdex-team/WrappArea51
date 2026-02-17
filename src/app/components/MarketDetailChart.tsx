@@ -6,6 +6,15 @@ import { CANDLE_COLORS, fetchRealCandles, generateCandlestickData } from "../uti
 import { computeSMA, computeEMA, computeRSI } from "../utils/indicators";
 import { getTokenDef } from "../utils/tokens";
 
+// Adaptive priceFormat: ~20 incremental ticks per price-scale unit
+function getAdaptivePriceFormat(price: number): { type: "price"; precision: number; minMove: number } {
+  if (price >= 10_000) return { type: "price", precision: 2, minMove: 0.05 };
+  if (price >= 100)    return { type: "price", precision: 3, minMove: 0.005 };
+  if (price >= 0.01)   return { type: "price", precision: 4, minMove: 0.0005 };
+  if (price >= 0.0001) return { type: "price", precision: 6, minMove: 0.000005 };
+                        return { type: "price", precision: 8, minMove: 0.00000005 };
+}
+
 interface MarketDetailChartProps {
   data: CandlestickData[];
   symbol: string;
@@ -88,7 +97,11 @@ export function MarketDetailChart({ data: initialData, symbol }: MarketDetailCha
       });
       localChart = chart;
 
-      const series = chart.addSeries(LWC.CandlestickSeries, CANDLE_COLORS);
+      // Derive price from chart data for adaptive granularity
+      const lastClose = chartData.length > 0 ? (chartData[chartData.length - 1].close as number) : 100;
+      const priceFmt = getAdaptivePriceFormat(lastClose);
+
+      const series = chart.addSeries(LWC.CandlestickSeries, { ...CANDLE_COLORS, priceFormat: priceFmt });
       series.setData(chartData);
       candleSeriesRef.current = series;
       mainApiRef.current = chart;
