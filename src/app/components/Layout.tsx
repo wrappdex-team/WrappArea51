@@ -122,6 +122,11 @@ export function Layout() {
     trackRouteChange(location.pathname);
   }, [location.pathname]);
 
+  // ── Scroll to top on route change ─────────────────────────────────
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [location.pathname]);
+
   // ── Desktop hover-to-open wallet menu ──────────────────────────────
   const walletMenuTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDesktop = typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
