@@ -238,7 +238,7 @@ export function SquidBridgeWidget({ onClose, isDark }: SquidBridgeWidgetProps) {
         className="relative w-full rounded-2xl overflow-hidden"
         style={{
           backgroundColor: "#17191C",
-          height: "700px",
+          height: "626px",
         }}
       >
         {/* Loading state */}
@@ -302,7 +302,7 @@ export function SquidBridgeWidget({ onClose, isDark }: SquidBridgeWidgetProps) {
           scrolling="no"
           className="w-full border-0 overflow-hidden"
           style={{
-            height: "700px",
+            height: "626px",
             opacity: iframeLoaded && !loadError ? 1 : 0,
             transition: "opacity 0.4s ease",
             colorScheme: "dark",
