@@ -34,6 +34,7 @@ interface MarketAsset {
   change: number;
   volume: string;
   marketCap: string;
+  marketCapRaw: number;
   logo: string;
   category: "layer1" | "stablecoin" | "defi";
   chartData: CandlestickData[];
@@ -49,7 +50,7 @@ const CHART_SYMBOLS = TOKEN_REGISTRY
   .filter(t => t.category !== "stablecoin")
   .map(t => t.symbol);
 
-/** Map CoinGecko price data + TOKEN_REGISTRY into the dashboard grid rows */
+/** Map price data + TOKEN_REGISTRY into dashboard rows, sorted by market cap */
 function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
   return TOKEN_REGISTRY.map(token => {
     const p = prices[token.symbol];
@@ -60,6 +61,7 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
       change: p?.price_change_percentage_24h ?? token.fallbackChange,
       volume: p ? formatVolume(p.total_volume) : "—",
       marketCap: p ? formatMarketCap(p.market_cap) : "—",
+      marketCapRaw: p?.market_cap ?? 0,
       logo: p?.image || token.logo,
       category: token.category,
       chartData: generateCandlestickData(
@@ -72,7 +74,7 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
       chainlinkFeed: p?.chainlink_feed,
       changeSource: p?.change_source,
     };
-  });
+  }).sort((a, b) => b.marketCapRaw - a.marketCapRaw);
 }
 
 /** Oracle-source badge metadata */
@@ -259,6 +261,7 @@ export function Dashboard() {
       change: hbarhData.change24h,
       volume: formatUsdCompact(hbarhData.volume24h),
       marketCap: "—",
+      marketCapRaw: 0,
       logo: isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight,
       category: "defi",
       chartData: generateCandlestickData("HBAR.ħ", hbarhData.priceUsd, 0.18),
