@@ -29,6 +29,9 @@ import {
   LayoutGrid,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
+import { FounderLetter } from "./FounderLetter";
+import { CommunityMessage } from "./CommunityMessage";
+import { EmrakDiagrams } from "./EmrakDiagrams";
 
 /* ─── Animated Section Wrapper ─────────────────────────────────────── */
 
@@ -276,16 +279,19 @@ function TeamCard({
   desc,
   accent,
   href,
+  onClick,
 }: {
   name: string;
   role: string;
   desc: string;
   accent: string;
   href?: string;
+  onClick?: () => void;
 }) {
   const { isDark } = useTheme();
+  const interactive = !!href || !!onClick;
   const card = (
-    <GlassCard className={`p-5 md:p-6 text-center${href ? " cursor-pointer" : ""}`}>
+    <GlassCard className={`p-5 md:p-6 text-center${interactive ? " cursor-pointer" : ""}`}>
       <div
         className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-2xl font-bold text-white ${accent}`}
       >
@@ -313,6 +319,7 @@ function TeamCard({
     </GlassCard>
   );
   if (href) return <Link to={href} className="no-underline">{card}</Link>;
+  if (onClick) return <button type="button" onClick={onClick} className="text-left w-full">{card}</button>;
   return card;
 }
 
@@ -323,6 +330,9 @@ function TeamCard({
 export function WhitePaper() {
   const { isDark } = useTheme();
   const [activeSection, setActiveSection] = useState("");
+  const [founderLetterOpen, setFounderLetterOpen] = useState(false);
+  const [communityMessageOpen, setCommunityMessageOpen] = useState(false);
+  const [emrakDiagramsOpen, setEmrakDiagramsOpen] = useState(false);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -1652,6 +1662,7 @@ export function WhitePaper() {
               role="Founder"
               desc="Visionary leader in blockchain development and the architect behind the WRAPpDEX platform. Driving the future of decentralized finance on Hedera."
               accent="bg-gradient-to-br from-pink-500 to-purple-500"
+              onClick={() => setFounderLetterOpen(true)}
             />
             <TeamCard
               name="Natalie"
@@ -1665,34 +1676,37 @@ export function WhitePaper() {
               role="Community & Brand Ambassador"
               desc="Drives community engagement, moderates governance channels, and represents the HBAR.ħ brand across the Hedera ecosystem."
               accent="bg-gradient-to-br from-blue-500 to-cyan-500"
+              onClick={() => setCommunityMessageOpen(true)}
             />
           </div>
 
-          <GlassCard className="p-5 md:p-6">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold">
-                E
+          <button type="button" onClick={() => setEmrakDiagramsOpen(true)} className="text-left w-full">
+            <GlassCard className="p-5 md:p-6 cursor-pointer">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold">
+                  E
+                </div>
+                <div>
+                  <h4
+                    className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                  >
+                    Emrak
+                  </h4>
+                  <p
+                    className={`text-xs bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent font-semibold`}
+                  >
+                    Team Advisor
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4
-                  className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}
-                >
-                  Emrak
-                </h4>
-                <p
-                  className={`text-xs bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent font-semibold`}
-                >
-                  Team Advisor
-                </p>
-              </div>
-            </div>
-            <p
-              className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
-            >
-              Provides strategic advisory on protocol direction, ecosystem
-              development, and partnership opportunities.
-            </p>
-          </GlassCard>
+              <p
+                className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
+              >
+                Provides strategic advisory on protocol direction, ecosystem
+                development, and partnership opportunities.
+              </p>
+            </GlassCard>
+          </button>
         </Section>
 
         {/* ═══ PARTNERS ═══ */}
@@ -1867,6 +1881,15 @@ export function WhitePaper() {
           </p>
         </div>
       </div>
+
+      {/* Founder Letter Modal — triggered by clicking Kyle's TeamCard */}
+      <FounderLetter open={founderLetterOpen} onClose={() => setFounderLetterOpen(false)} />
+
+      {/* Community Message Modal — triggered by clicking Carlos's TeamCard */}
+      <CommunityMessage open={communityMessageOpen} onClose={() => setCommunityMessageOpen(false)} />
+
+      {/* Emrak Architecture Diagrams — triggered by clicking Emrak's card */}
+      <EmrakDiagrams open={emrakDiagramsOpen} onClose={() => setEmrakDiagramsOpen(false)} />
     </div>
   );
 }
