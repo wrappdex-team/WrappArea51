@@ -175,16 +175,28 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 12, isWrapped: true, bridge: "Hashport",
   },
   {
+    symbol: "AAVE", name: "Aave", htsId: "0.0.1055498",
+    evmAddress: htsIdToEvmAddress("0.0.1055498"), decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
+    rank: 13, isWrapped: true, bridge: "Hashport",
+  },
+  {
+    symbol: "DAI", name: "Dai Stablecoin", htsId: "0.0.1055477",
+    evmAddress: htsIdToEvmAddress("0.0.1055477"), decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+    rank: 14, isWrapped: true, bridge: "Hashport",
+  },
+  {
     symbol: "HBAR.ħ", name: "HBAR.ħ Protocol", htsId: HBARH_TOKEN_ID,
     evmAddress: htsIdToEvmAddress(HBARH_TOKEN_ID), decimals: 8,
     logo: "https://www.saucerswap.finance/images/tokens/hbar-h.svg",
-    rank: 13, isWrapped: false,
+    rank: 15, isWrapped: false,
   },
   {
     symbol: "WPOL", name: "Wrapped POL (Polygon)", htsId: "0.0.3306241",
     evmAddress: htsIdToEvmAddress("0.0.3306241"), decimals: 8,
     logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
-    rank: 14, isWrapped: true, bridge: "Hashport",
+    rank: 16, isWrapped: true, bridge: "Hashport",
   },
 ];
 

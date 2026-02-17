@@ -15,7 +15,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET } from "./shared.ts";
+import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET, mirrorNodeBreaker, isHttpFailure } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -97,10 +97,14 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
   } catch { /* cache miss */ }
 
   try {
-    const res = await fetch(`${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}`, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(10000),
-    });
+    const res = await mirrorNodeBreaker.call(
+      () => fetch(`${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}`, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10000),
+      }),
+      // 5xx/429 = breaker failure. 404 is a valid "account not found" — not a service outage.
+      isHttpFailure,
+    );
     if (!res.ok) {
       if (res.status === 404) return { error: `Account ${accountId} not found on Hedera mainnet` };
       return { error: `Mirror Node returned HTTP ${res.status}` };
@@ -367,6 +371,21 @@ export function registerAuthRoutes(app: Hono): void {
       if (!challengeId || !signature || !accountId) return c.json({ error: "Missing: challengeId, signature, accountId" }, 400);
       if (!isValidHederaAccountId(accountId)) return c.json({ error: "Invalid Hedera account ID" }, 400);
 
+      // Cap signature length to prevent DoS via the sliding window scan
+      // (Fallback D). ED25519 sigs are 64 bytes; wallet protobuf wrappers add
+      // ~100-200 bytes. 2048 chars (1024 bytes hex-encoded) is generous headroom.
+      // Without this, an attacker could send 100KB of hex and force ~50K Web
+      // Crypto verify calls (~50s CPU) per request.
+      if (typeof signature !== "string" || signature.length > 2048) {
+        return c.json({ error: "Signature too large or invalid format", code: "SIGNATURE_INVALID" }, 400);
+      }
+
+      // Validate challengeId format — must match server-issued format (ch_ + 16 hex chars).
+      // Prevents arbitrary KV key probing via crafted challengeId strings.
+      if (typeof challengeId !== "string" || !/^ch_[0-9a-f]{16}$/.test(challengeId)) {
+        return c.json({ error: "Invalid challenge ID format", code: "CHALLENGE_INVALID" }, 400);
+      }
+
       // ── Retrieve challenge ──
       const challengeKey = AUTH_CHALLENGE_PREFIX + challengeId;
       const challenge: AuthChallenge | null = await kv.get(challengeKey);
@@ -396,19 +415,12 @@ export function registerAuthRoutes(app: Hono): void {
       const messageBytes = new TextEncoder().encode(challenge.message);
       const cleanSig = signature.startsWith("0x") ? signature.slice(2) : signature;
 
-      // Diagnostic logging for signature debugging
-      console.log(`[AUTH] Verifying sig for ${accountId}: sigLen=${cleanSig.length} chars, msgLen=${messageBytes.length} bytes, pubKey=${keyResult.rawKeyHex.slice(0, 16)}...`);
-      console.log(`[AUTH] Sig preview: ${cleanSig.slice(0, 40)}...`);
-      console.log(`[AUTH] Message first 80 chars: ${challenge.message.slice(0, 80)}`);
-      console.log(`[AUTH] Message hex (first 60): ${bytesToHex(messageBytes).slice(0, 60)}...`);
-      console.log(`[AUTH] Full pubKey: ${keyResult.rawKeyHex}`);
+      // Structured verification trace (single line per attempt for log aggregation)
+      console.log(`[AUTH] Verify ${accountId}: sig=${cleanSig.length}ch msg=${messageBytes.length}B pubKey=${keyResult.rawKeyHex.slice(0, 16)}…`);
 
-      // Pre-decode signature so we can log what decodeSigTo64Bytes produces
       const preDecodedSig = decodeSigTo64Bytes(cleanSig);
-      if (preDecodedSig) {
-        console.log(`[AUTH] Decoded sig (64B hex): ${bytesToHex(preDecodedSig).slice(0, 40)}...`);
-      } else {
-        console.log(`[AUTH] WARNING: decodeSigTo64Bytes returned null — sig extraction failed entirely`);
+      if (!preDecodedSig) {
+        console.log(`[AUTH] Signature decode failed for ${accountId} — raw input ${cleanSig.length} chars could not be reduced to 64 bytes`);
       }
 
       // Primary: verify against original challenge message (UTF-8 bytes)
@@ -470,19 +482,18 @@ export function registerAuthRoutes(app: Hono): void {
           } catch { /* not decodable */ }
         }
         if (rawSigBytes) {
-          console.log(`[AUTH] All standard fallbacks failed — trying brute-force 64B window scan (${rawSigBytes.length} total bytes, ${rawSigBytes.length - 63} windows)`);
+          console.log(`[AUTH] Standard fallbacks exhausted — scanning ${rawSigBytes.length}B payload for 64B ED25519 signature (${rawSigBytes.length - 63} windows)`);
           for (let offset = 0; offset <= rawSigBytes.length - 64; offset++) {
             const window64 = rawSigBytes.slice(offset, offset + 64);
             const windowHex = bytesToHex(window64);
             const windowValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, windowHex);
             if (windowValid) {
-              console.log(`[AUTH] Brute-force window MATCH at byte offset ${offset} — protobuf layout differs from expected 0x1A-0x40 pattern`);
-              console.log(`[AUTH] Surrounding bytes at offset ${Math.max(0, offset - 2)}: ${bytesToHex(rawSigBytes.slice(Math.max(0, offset - 2), Math.min(rawSigBytes.length, offset + 66))).slice(0, 20)}...`);
+              console.log(`[AUTH] Window scan matched at offset ${offset} — non-standard protobuf layout`);
               isValid = true;
               break;
             }
           }
-          if (!isValid) console.log("[AUTH] Brute-force window scan found no match");
+          if (!isValid) console.log(`[AUTH] Window scan: no valid signature found in ${rawSigBytes.length}B payload`);
         }
       }
 

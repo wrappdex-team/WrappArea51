@@ -8,7 +8,7 @@
  *  - Health factor & borrow power display
  *  - Toast notifications for success/error
  *
- * Focused tokens: HBAR, USDC, WBTC, WETH, LINK, BONZO
+ * Focused tokens: HBAR, USDC, WBTC, WETH, LINK, AAVE, DAI, BONZO
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";

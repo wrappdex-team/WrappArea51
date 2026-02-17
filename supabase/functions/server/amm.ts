@@ -27,6 +27,7 @@ import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
   generateTicketId, withKvLock, isValidBigIntString, isValidPoolId,
   POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
+  saucerswapBreaker, isHttpFailure,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
 import { requireAuth, validateSession, requireOwner, logAdminAction, OWNER_ACCOUNT } from "./auth.ts";
@@ -51,6 +52,8 @@ const ORACLE_CACHE_TTL_MS = 60_000;
 const ORACLE_FALLBACK_CONFIG_KEY = "sl_oracle_fallback_cfg";
 const TREASURY_FEE_KEY = "sl_treasury_fees";
 const TREASURY_FEE_LOCK_KEY = "sl_treasury_lock";
+const PROTOCOL_FEE_ACCUM_PREFIX = "sl_pfee_";   // Per-pool protocol fee accumulator
+const PROTOCOL_FEE_ACCUM_LOCK = "sl_pfee_lock_"; // Per-pool lock for fee writes
 const AMM_KILL_SWITCH_KEY = "amm_kill_switch";
 
 // ── AMM Kill Switch ─────────────────────────────────────────────────
@@ -108,6 +111,21 @@ interface TreasuryFeeAccumulator {
   lastUpdated: number;
 }
 
+// Per-pool protocol fee accumulator — tracks the 0.05% share that remains
+// in pool reserves until extracted. Extraction deducts from reserves and
+// resets the accumulator. This is the Uniswap V2 "fee switch" pattern:
+// fees accrue inside the pool (increasing k for LPs) and the protocol's
+// share is periodically swept out by the admin/DAO.
+interface PoolProtocolFeeAccumulator {
+  poolId: string;
+  accruedUsd: number;           // Running USD total of accrued 0.05% fees
+  accruedInputTokens: Record<string, string>;  // symbol → raw integer string
+  swapCount: number;
+  lastSwapAt: number;
+  lastExtractedAt: number | null;
+  lastExtractedUsd: number;
+}
+
 interface PoolApiResponse {
   tvlUsd: number;
   priceA: number;
@@ -122,7 +140,7 @@ interface PoolApiResponse {
 // Fee is flat (not proportional) to prevent manipulation via trade splitting.
 // HBAR price resolved from oracle; fallback used if stale. Min 1 tinybar.
 
-const PROTOCOL_FEE_USD = 0.0007;            // $0.0007 per swap = 0.07 cents
+export const PROTOCOL_FEE_USD = 0.0007;            // $0.0007 per swap = 0.07 cents
 const PROTOCOL_TREASURY_ACCOUNT = "0.0.9695738";
 // Fallback HBAR price — used ONLY when SaucerSwap oracle is unreachable.
 // KV-backed at runtime (key: sl_oracle_fallback_cfg) so it can be updated via
@@ -170,26 +188,25 @@ async function getOracleFallbackConfig(): Promise<OracleFallbackConfig> {
   return defaults;
 }
 // Max protocol fee in tinybar — safety ceiling if oracle + fallback are both stale
-const MAX_PROTOCOL_FEE_TINYBAR = 500; // ~$0.0014 at $0.28/HBAR — 2× normal fee
+export const MAX_PROTOCOL_FEE_TINYBAR = 500_000; // ~$0.0014 at $0.28/HBAR — 2× normal fee
 
-// ── Fee Structure (Phase 1) ─────────────────────────────────────────
+// ── Fee Structure ────────────────────────────────────────────────────
 // Total swap fee: 0.25% (25 bps) — applied in AMM formula.
 //
-//   LP share:       0.20% (20 bps) — stays in pool, increases k
-//   Protocol share: 0.05% (5 bps)  — accrued to treasury for on-chain sweep
+// The FULL 25 bps stays in pool reserves (increases k for LP holders).
+// The protocol's 5 bps share is TRACKED in a per-pool accumulator
+// (PoolProtocolFeeAccumulator) and can be EXTRACTED via the admin
+// /pools/protocol-fees/extract endpoint. Until extraction, LPs earn
+// the full 0.25%.
 //
-// The full 25 bps is applied in getAmountOut() and stays in reserves.
-// The protocol's 5 bps share is tracked in the treasury accumulator as
-// a USD-denominated accounting entry. On-chain extraction via LP token
-// minting or reserve withdrawal is a Phase 2 feature.
-//
-// This mirrors the Uniswap V2 protocol fee model (fee switch). DAO
-// governance can vote to adjust the protocol share in Phase 2+.
+// This is the Uniswap V2 "fee switch" model: fees accrue in-pool,
+// protocol share is swept periodically. DAO governance can adjust
+// the protocol share via proposal vote.
 //
 // The flat $0.0007 micro-fee (Layer 2) is SEPARATE and additive.
-const TOTAL_SWAP_FEE_BPS = 25;       // 0.25% total — applied in AMM formula
-const LP_FEE_BPS = 20;               // 0.20% — LP portion (conceptual split)
-const PROTOCOL_FEE_BPS = 5;          // 0.05% — Protocol portion (treasury accrual)
+export const TOTAL_SWAP_FEE_BPS = 25;       // 0.25% total — applied in AMM formula
+export const LP_FEE_BPS = 20;               // 0.20% — LP effective share (after protocol extraction)
+export const PROTOCOL_FEE_BPS = 5;          // 0.05% — tracked per pool, extractable
 
 // ── Token Whitelist ─────────────────────────────────────────────────
 // Only whitelisted tokens can be used in pools.
@@ -210,6 +227,8 @@ const TOKEN_WHITELIST: TokenDef[] = [
   { tokenId: "0.0.456858",  symbol: "USDC",  name: "USD Coin",              decimals: 6,  fallbackPrice: 1.00,  tier: 1 },
   { tokenId: "0.0.4291336", symbol: "USDT",  name: "Tether USD",            decimals: 6,  fallbackPrice: 1.00,  tier: 1 },
   { tokenId: "0.0.1970030", symbol: "LINK",  name: "Chainlink",             decimals: 8,  fallbackPrice: 19.0,  bridge: "HashPort", tier: 1 },
+  { tokenId: "0.0.1055498", symbol: "AAVE",  name: "Aave",                  decimals: 8,  fallbackPrice: 180.0, bridge: "HashPort", tier: 1 },
+  { tokenId: "0.0.1055477", symbol: "DAI",   name: "Dai Stablecoin",        decimals: 8,  fallbackPrice: 1.00,  bridge: "HashPort", tier: 1 },
   { tokenId: "0.0.3306241", symbol: "WPOL",  name: "Wrapped POL (Polygon)", decimals: 8,  fallbackPrice: 0.40,  bridge: "HashPort", tier: 2 },
 ];
 
@@ -250,7 +269,7 @@ const VOLUME_MICRO_SCALE = 1_000_000;   // 1 micro-USD = $0.000001
 function poolToApi(pool: PoolState): Record<string, unknown> {
   return {
     ...pool,
-    cumulativeVolumeUsd: parseInt(pool.cumulativeVolumeUsd || "0", 10) / VOLUME_MICRO_SCALE,
+    cumulativeVolumeUsd: Number(BigInt(pool.cumulativeVolumeUsd || "0")) / VOLUME_MICRO_SCALE,
   };
 }
 
@@ -265,10 +284,10 @@ interface LPPosition {
 // ── AMM Math (Constant Product: x * y = k) ─────────────────────────
 // All swap math uses reserves, never oracle prices.
 
-const MINIMUM_LIQUIDITY = 1000n;
-const BPS_BASE = 10000n;
+export const MINIMUM_LIQUIDITY = 1000n;
+export const BPS_BASE = 10000n;
 
-function bigIntSqrt(n: bigint): bigint {
+export function bigIntSqrt(n: bigint): bigint {
   if (n < 0n) throw new Error("sqrt of negative");
   if (n === 0n) return 0n;
   let x = n;
@@ -277,8 +296,21 @@ function bigIntSqrt(n: bigint): bigint {
   return x;
 }
 
+/**
+ * Parse a decimal string (e.g. "1.5") to raw integer BigInt at given decimal
+ * precision. Uses string manipulation, not float math, to avoid IEEE 754
+ * precision loss for tokens with >15 significant digits (WETH at 18 decimals).
+ */
+export function decimalToBigInt(amount: string, decimals: number): bigint {
+  const clean = amount.replace(/,/g, "").trim();
+  if (!/^\d+\.?\d*$/.test(clean)) return 0n;
+  const [whole, frac = ""] = clean.split(".");
+  const paddedFrac = (frac + "0".repeat(decimals)).slice(0, decimals);
+  return BigInt(whole + paddedFrac);
+}
+
 /** Constant-product swap output (Uniswap V2 formula). Fee stays in pool. */
-function getAmountOut(amountIn: bigint, reserveIn: bigint, reserveOut: bigint, feeBps: number): bigint {
+export function getAmountOut(amountIn: bigint, reserveIn: bigint, reserveOut: bigint, feeBps: number): bigint {
   if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
   const feeMultiplier = BPS_BASE - BigInt(feeBps);
   const amountInWithFee = amountIn * feeMultiplier;
@@ -288,7 +320,7 @@ function getAmountOut(amountIn: bigint, reserveIn: bigint, reserveOut: bigint, f
 }
 
 /** Price impact in bps. */
-function getPriceImpactBps(amountIn: bigint, reserveIn: bigint): number {
+export function getPriceImpactBps(amountIn: bigint, reserveIn: bigint): number {
   if (reserveIn <= 0n) return 10000;
   return Math.min(Number(amountIn * 10000n / (reserveIn + amountIn)), 10000);
 }
@@ -328,10 +360,13 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
     : allVariants;
   for (const path of variants) {
     try {
-      const res = await fetch(`${SAUCERSWAP_API_URL}${path}`, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(8000),
-      });
+      const res = await saucerswapBreaker.call(
+        () => fetch(`${SAUCERSWAP_API_URL}${path}`, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(8000),
+        }),
+        isHttpFailure,
+      );
       if (!res.ok) continue;
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -862,6 +897,7 @@ export function registerAmmRoutes(app: Hono): void {
     try {
       const poolId = c.req.param("poolId");
       const accountId = c.req.param("accountId");
+      if (!isValidPoolId(poolId)) return c.json({ error: "Invalid pool ID format" }, 400);
       if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid accountId" }, 400);
       const position = await getLPPosition(poolId, accountId);
       return c.json({ position: position || null });
@@ -897,7 +933,10 @@ export function registerAmmRoutes(app: Hono): void {
       interface RouteCandidate { path: string[]; amountOut: bigint; priceImpactBps: number; feeBps: number; poolId: string; }
       const routes: RouteCandidate[] = [];
 
-      const rawIn = BigInt(Math.floor(parsedAmountIn * (10 ** defIn.decimals)));
+      // Parse amount to raw integer BigInt using string manipulation to avoid
+      // IEEE 754 precision loss. Float math (amount * 10^decimals) overflows
+      // Number.MAX_SAFE_INTEGER for 18-decimal tokens like WETH at >0.009 units.
+      const rawIn = decimalToBigInt(String(amountIn), defIn.decimals);
       if (rawIn <= 0n) return c.json({ error: "Amount must be positive" }, 400);
 
       // Direct routes — uses pre-fetched pool array (no individual KV reads)
@@ -973,7 +1012,8 @@ export function registerAmmRoutes(app: Hono): void {
         feeUsd: swapValueUsd * best.feeBps / 10000,
         effectiveRate: outDisplay / inDisplay, minAmountOut: outDisplay * 0.995,
         routeCount: routes.length, inPrice: prices[defIn.tokenId] || 0, outPrice: prices[defOut.tokenId] || 0,
-        // Fee structure breakdown (Phase 1)
+        // Fee structure breakdown — full 25 bps stays in pool; protocol's 5 bps
+        // is tracked per pool and extractable. Until extracted, LPs earn full 0.25%.
         feeStructure: {
           totalFeeBps: TOTAL_SWAP_FEE_BPS,
           lpFeeBps: LP_FEE_BPS,
@@ -1017,8 +1057,8 @@ export function registerAmmRoutes(app: Hono): void {
       const body = await c.req.json();
       const { poolId, tokenIn, tokenOut, amountInRaw, minAmountOutRaw } = body;
 
-      // Input validation
-      if (!isValidPoolId(poolId) && !(poolId || "").includes("+")) {
+      // Input validation (isValidPoolId accepts both single and multi-hop formats)
+      if (!isValidPoolId(poolId)) {
         return c.json({ error: "Invalid pool ID format" }, 400);
       }
       if (!tokenIn || typeof tokenIn !== "string" || !TOKEN_BY_SYMBOL.has(tokenIn)) {
@@ -1038,6 +1078,13 @@ export function registerAmmRoutes(app: Hono): void {
       if ((poolId || "").includes("+")) {
         return c.json({ error: "Multi-hop execution is not yet available. Use direct pools." }, 501);
       }
+
+      // Fetch oracle prices OUTSIDE the pool lock. Prices are used for depth
+      // checks, volume tracking, and fee calculations — none require atomic
+      // consistency with pool state. Fetching inside the lock risks holding it
+      // during a slow external HTTP call (SaucerSwap), which could expire the
+      // 5s TTL and cause spurious CAS conflicts on concurrent requests.
+      const prices = await fetchOraclePrices();
 
       return await withPoolLock(poolId, async () => {
             const pool = await getPool(poolId);
@@ -1063,7 +1110,6 @@ export function registerAmmRoutes(app: Hono): void {
             if (minAmountOutRaw && rawOut < BigInt(minAmountOutRaw)) return c.json({ error: "Slippage exceeded" }, 400);
 
             // Depth check
-            const prices = await fetchOraclePrices();
             const tvl = poolTvlUsd(pool, prices);
             const defIn = TOKEN_BY_SYMBOL.get(tokenIn);
             if (defIn && tvl > 0) {
@@ -1089,8 +1135,8 @@ export function registerAmmRoutes(app: Hono): void {
             const defOut = TOKEN_BY_SYMBOL.get(tokenOut);
             if (defOut) {
               const swapUsd = Number(rawOut) / (10 ** defOut.decimals) * (prices[defOut.tokenId] || 0);
-              const swapMicro = Math.round(swapUsd * VOLUME_MICRO_SCALE);
-              const currentMicro = parseInt(pool.cumulativeVolumeUsd || "0", 10) || 0;
+              const swapMicro = BigInt(Math.round(swapUsd * VOLUME_MICRO_SCALE));
+              const currentMicro = BigInt(pool.cumulativeVolumeUsd || "0");
               pool.cumulativeVolumeUsd = (currentMicro + swapMicro).toString();
             }
 
@@ -1130,6 +1176,45 @@ export function registerAmmRoutes(app: Hono): void {
               // Log for monitoring: if this fires frequently, lock contention needs tuning.
               if (feeErr?.code === "LOCK_TIMEOUT") {
                 console.log(`[Treasury] Fee lock timeout — ${treasuryFeeTinybar}tb deferred`);
+              }
+            }
+
+            // Layer 3: Per-pool protocol fee accumulator (0.05% of swap value)
+            // Tracks the protocol's 5 bps share that remains in pool reserves.
+            // Extractable via admin endpoint; until extracted, LPs earn full 0.25%.
+            try {
+              const pfeeKey = PROTOCOL_FEE_ACCUM_PREFIX + poolId;
+              const pfeeLockKey = PROTOCOL_FEE_ACCUM_LOCK + poolId;
+              const protocolShareRaw = rawIn * BigInt(PROTOCOL_FEE_BPS) / BPS_BASE;
+              const inputPrice = defIn ? (prices[defIn.tokenId] || 0) : 0;
+              const protocolShareUsd = defIn
+                ? Number(protocolShareRaw) / (10 ** defIn.decimals) * inputPrice
+                : 0;
+              await withKvLock({
+                key: pfeeLockKey,
+                ttlMs: 2_000,
+                waitMs: 1_500,
+                retryMs: 20,
+              }, async () => {
+                const existing: PoolProtocolFeeAccumulator | null = await kv.get(pfeeKey);
+                const tokens = existing?.accruedInputTokens || {};
+                const prevRaw = BigInt(tokens[tokenIn] || "0");
+                tokens[tokenIn] = (prevRaw + protocolShareRaw).toString();
+                const updated: PoolProtocolFeeAccumulator = {
+                  poolId,
+                  accruedUsd: (existing?.accruedUsd || 0) + protocolShareUsd,
+                  accruedInputTokens: tokens,
+                  swapCount: (existing?.swapCount || 0) + 1,
+                  lastSwapAt: Date.now(),
+                  lastExtractedAt: existing?.lastExtractedAt ?? null,
+                  lastExtractedUsd: existing?.lastExtractedUsd ?? 0,
+                };
+                await kv.set(pfeeKey, updated);
+              });
+            } catch (pfeeErr: any) {
+              // Non-critical — swap succeeds even if fee tracking fails.
+              if (pfeeErr?.code === "LOCK_TIMEOUT") {
+                console.log(`[ProtocolFee] Lock timeout on pool ${poolId} — fee tracking deferred`);
               }
             }
 
@@ -1221,6 +1306,161 @@ export function registerAmmRoutes(app: Hono): void {
     } catch (err) {
       console.error("[AMM] Error in GET /pools/recent-swaps:", err);
       return c.json({ swaps: [] }, 500);
+    }
+  });
+
+  // ── Protocol Fee Admin Endpoints ────────────────────────────────────
+  // Owner-only endpoints for viewing and extracting accrued protocol fees.
+
+  // GET /pools/protocol-fees — View accrued protocol fees across all pools.
+  app.get(`${ROUTE_PREFIX}/pools/protocol-fees`, async (c) => {
+    try {
+      const ownerAuth = await requireOwner(c);
+      if (ownerAuth instanceof Response) return ownerAuth;
+
+      const poolIds: string[] = (await kv.get(POOL_INDEX_KEY)) ?? [];
+      const results: PoolProtocolFeeAccumulator[] = [];
+      let totalAccruedUsd = 0;
+
+      for (const pid of poolIds) {
+        const pfeeKey = PROTOCOL_FEE_ACCUM_PREFIX + pid;
+        const accum: PoolProtocolFeeAccumulator | null = await kv.get(pfeeKey);
+        if (accum && accum.accruedUsd > 0) {
+          results.push(accum);
+          totalAccruedUsd += accum.accruedUsd;
+        }
+      }
+
+      // Also include flat micro-fee treasury
+      const treasuryFees: TreasuryFeeAccumulator | null = await kv.get(TREASURY_FEE_KEY);
+
+      return c.json({
+        pools: results,
+        totalAccruedUsd,
+        totalPoolsWithFees: results.length,
+        flatMicroFee: treasuryFees || { totalTinybar: 0, swapCount: 0, treasuryAccount: PROTOCOL_TREASURY_ACCOUNT, lastUpdated: 0 },
+        feeConfig: {
+          totalFeeBps: TOTAL_SWAP_FEE_BPS,
+          lpFeeBps: LP_FEE_BPS,
+          protocolFeeBps: PROTOCOL_FEE_BPS,
+          flatFeeUsd: PROTOCOL_FEE_USD,
+          treasuryAccount: PROTOCOL_TREASURY_ACCOUNT,
+        },
+      });
+    } catch (err) {
+      console.error("[AMM] Error in GET /pools/protocol-fees:", err);
+      return c.json({ error: "Failed to fetch protocol fees" }, 500);
+    }
+  });
+
+  // POST /pools/protocol-fees/extract — Extract accrued protocol fees from a pool.
+  // Deducts the protocol's accrued token amounts from pool reserves and resets
+  // the accumulator. The extracted tokens are owed to the treasury account for
+  // on-chain settlement via HTS transfer (treasury multisig).
+  //
+  // Body: { poolId: string }
+  app.post(`${ROUTE_PREFIX}/pools/protocol-fees/extract`, async (c) => {
+    try {
+      const ownerAuth = await requireOwner(c);
+      if (ownerAuth instanceof Response) return ownerAuth;
+      const ip = getClientIp(c);
+
+      const body = await c.req.json().catch(() => ({}));
+      const { poolId } = body;
+      if (!poolId || !isValidPoolId(poolId)) return c.json({ error: "Invalid poolId" }, 400);
+
+      const pfeeKey = PROTOCOL_FEE_ACCUM_PREFIX + poolId;
+
+      // Execute extraction within pool lock. Both pool state AND accumulator
+      // are read INSIDE the lock to prevent TOCTOU double-extraction: without
+      // this, two concurrent requests could both observe non-zero fees outside
+      // the lock, then sequentially deduct from reserves — draining the pool.
+      const lockCfg: KvLockConfig = {
+        key: POOL_LOCK_PREFIX + poolId,
+        ttlMs: POOL_LOCK_TTL_MS,
+        waitMs: POOL_LOCK_WAIT_MS,
+        retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+      };
+
+      return await withKvLock(lockCfg, async () => {
+        const pool: PoolState | null = await kv.get(POOL_PREFIX + poolId);
+        if (!pool) return c.json({ error: "Pool not found" }, 404);
+
+        const accum: PoolProtocolFeeAccumulator | null = await kv.get(pfeeKey);
+        if (!accum || accum.accruedUsd <= 0) {
+          return c.json({ error: "No accrued protocol fees for this pool", accruedUsd: 0 }, 400);
+        }
+
+        const resA = BigInt(pool.reserveA);
+        const resB = BigInt(pool.reserveB);
+        const tokens = accum.accruedInputTokens || {};
+        let deductedA = 0n;
+        let deductedB = 0n;
+
+        // Calculate deductions per token side
+        for (const [symbol, rawStr] of Object.entries(tokens)) {
+          const raw = BigInt(rawStr || "0");
+          if (raw <= 0n) continue;
+          if (symbol === pool.tokenA) deductedA += raw;
+          else if (symbol === pool.tokenB) deductedB += raw;
+        }
+
+        // Safety: never deduct more than 50% of reserves (sanity ceiling)
+        if (deductedA > resA / 2n || deductedB > resB / 2n) {
+          console.error(`[ProtocolFee] Extraction safety limit: pool=${poolId} deductA=${deductedA} resA=${resA} deductB=${deductedB} resB=${resB}`);
+          return c.json({ error: "Extraction exceeds 50% safety ceiling — manual review required" }, 400);
+        }
+
+        // Apply deductions to reserves
+        const newResA = resA - deductedA;
+        const newResB = resB - deductedB;
+
+        // k-invariant will decrease (extraction removes value) — this is expected
+        pool.reserveA = newResA.toString();
+        pool.reserveB = newResB.toString();
+
+        const expectedVersion = pool.version;
+        const casOk = await compareAndSavePool(pool, expectedVersion);
+        if (!casOk) {
+          return c.json({ error: "Pool state changed during extraction — retry", code: "VERSION_CONFLICT" }, 409);
+        }
+
+        // Reset accumulator
+        const extractedUsd = accum.accruedUsd;
+        const resetAccum: PoolProtocolFeeAccumulator = {
+          poolId,
+          accruedUsd: 0,
+          accruedInputTokens: {},
+          swapCount: 0,
+          lastSwapAt: accum.lastSwapAt,
+          lastExtractedAt: Date.now(),
+          lastExtractedUsd: extractedUsd,
+        };
+        await kv.set(pfeeKey, resetAccum);
+
+        await logAdminAction("protocol_fee_extract", ownerAuth.accountId, ip,
+          `pool=${poolId} usd=${extractedUsd.toFixed(4)} -${deductedA}A -${deductedB}B swaps=${accum.swapCount}`);
+
+        console.log(`[ProtocolFee] Extracted $${extractedUsd.toFixed(4)} from pool ${poolId}: -${deductedA} tokenA, -${deductedB} tokenB (${accum.swapCount} swaps)`);
+
+        return c.json({
+          success: true,
+          poolId,
+          extractedUsd,
+          deducted: {
+            [pool.tokenA]: deductedA.toString(),
+            [pool.tokenB]: deductedB.toString(),
+          },
+          swapsCovered: accum.swapCount,
+          newReserves: { reserveA: pool.reserveA, reserveB: pool.reserveB },
+          treasuryAccount: PROTOCOL_TREASURY_ACCOUNT,
+          note: "Tokens deducted from reserves. On-chain HTS transfer to treasury pending settlement.",
+        });
+      });
+    } catch (err: any) {
+      if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
+      console.error("[AMM] Error in POST /pools/protocol-fees/extract:", err);
+      return c.json({ error: "Extraction failed" }, 500);
     }
   });
 }

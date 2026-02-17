@@ -10,7 +10,6 @@ let masterGain: GainNode | null = null;
 export type SoundVolume = "off" | "low" | "medium" | "high";
 
 const VOLUME_KEY = "hbarh-sound-volume";
-const MUTE_KEY = "hbarh-sound-muted"; // legacy — read for migration
 
 const VOLUME_MULTIPLIERS: Record<SoundVolume, number> = {
   off: 0,
@@ -32,10 +31,7 @@ function resolveVolume(): SoundVolume {
     _volume = stored;
     return _volume;
   }
-  // Migrate from legacy boolean mute key
-  const legacyMuted = localStorage.getItem(MUTE_KEY);
-  if (legacyMuted === "1") { _volume = "off"; }
-  else { _volume = "off"; }
+  _volume = "off";
   localStorage.setItem(VOLUME_KEY, _volume);
   return _volume;
 }

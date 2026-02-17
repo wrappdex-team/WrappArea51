@@ -15,7 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
-import { isRateLimited, getClientIp } from "./shared.ts";
+import { isRateLimited, getClientIp, oneInchBreaker, isHttpFailure, CircuitBreakerOpenError } from "./shared.ts";
 
 const ONEINCH_BASE = "https://api.1inch.dev/swap/v6.0";
 const SUPPORTED_CHAINS = new Set([1, 137, 56, 42161, 10, 8453]);
@@ -52,13 +52,16 @@ async function upstream(path: string, queryString: string): Promise<{ status: nu
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
   try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: "application/json",
-      },
-      signal: controller.signal,
-    });
+    const res = await oneInchBreaker.call(
+      () => fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      }),
+      isHttpFailure,
+    );
 
     let body: any;
     try {
@@ -78,6 +81,9 @@ async function upstream(path: string, queryString: string): Promise<{ status: nu
 
     return { status: 200, body };
   } catch (err: any) {
+    if (err instanceof CircuitBreakerOpenError) {
+      return { status: 503, body: { error: "1inch API temporarily unavailable — retry shortly", code: "CIRCUIT_OPEN" } };
+    }
     if (err?.name === "AbortError") {
       console.log(`[1inch] Upstream timeout for ${path}`);
       return { status: 504, body: { error: "1inch API timeout" } };

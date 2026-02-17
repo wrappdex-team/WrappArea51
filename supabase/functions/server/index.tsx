@@ -38,6 +38,23 @@ app.use(
   }),
 );
 
+// ── Request Body Size Limit ──────────────────────────────────────────
+// Reject oversized payloads before Hono parses them into memory.
+// No legitimate endpoint needs >512 KB (largest is DAO proposal creation).
+// Without this, any POST endpoint accepts 100 MB+ payloads — trivial DoS.
+const MAX_BODY_BYTES = 524_288; // 512 KB
+
+app.use("*", async (c, next) => {
+  const cl = c.req.header("content-length");
+  if (cl) {
+    const size = parseInt(cl, 10);
+    if (!Number.isNaN(size) && size > MAX_BODY_BYTES) {
+      return c.json({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }, 413);
+    }
+  }
+  await next();
+});
+
 // ── Security Response Headers ────────────────────────────────────────
 
 app.use("*", async (c, next) => {

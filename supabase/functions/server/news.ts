@@ -4,7 +4,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { ROUTE_PREFIX, HEDERA_MIRROR_MAINNET } from "./shared.ts";
+import { ROUTE_PREFIX, HEDERA_MIRROR_MAINNET, coingeckoBreaker, mirrorNodeBreaker, isHttpFailure } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -36,10 +36,13 @@ async function fetchCryptoNews(): Promise<CachedNews["items"]> {
 
   // Source 1: CoinGecko trending coins (free, no API key)
   try {
-    const trendResp = await fetch("https://api.coingecko.com/api/v3/search/trending", {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
+    const trendResp = await coingeckoBreaker.call(
+      () => fetch("https://api.coingecko.com/api/v3/search/trending", {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      }),
+      isHttpFailure,
+    );
     if (trendResp.ok) {
       const data = await trendResp.json();
       const coins = data?.coins ?? [];
@@ -71,10 +74,13 @@ async function fetchCryptoNews(): Promise<CachedNews["items"]> {
 
   // Source 2: CoinGecko global market data
   try {
-    const globalResp = await fetch("https://api.coingecko.com/api/v3/global", {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
+    const globalResp = await coingeckoBreaker.call(
+      () => fetch("https://api.coingecko.com/api/v3/global", {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      }),
+      isHttpFailure,
+    );
     if (globalResp.ok) {
       const gd = (await globalResp.json())?.data;
       if (gd) {
@@ -112,9 +118,12 @@ async function fetchCryptoNews(): Promise<CachedNews["items"]> {
 
   // Source 3: Hedera-specific data from Mirror Node
   try {
-    const hbarResp = await fetch(`${HEDERA_MIRROR_MAINNET}/api/v1/network/supply`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const hbarResp = await mirrorNodeBreaker.call(
+      () => fetch(`${HEDERA_MIRROR_MAINNET}/api/v1/network/supply`, {
+        signal: AbortSignal.timeout(5000),
+      }),
+      isHttpFailure,
+    );
     if (hbarResp.ok) {
       const supply = await hbarResp.json();
       const totalHbar = Number(supply?.total_supply) / 1e8;

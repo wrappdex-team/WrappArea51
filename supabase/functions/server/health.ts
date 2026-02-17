@@ -5,7 +5,7 @@
 import type { Hono } from "npm:hono@4.6.3";
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
-import { ROUTE_PREFIX } from "./shared.ts";
+import { ROUTE_PREFIX, saucerswapBreaker, mirrorNodeBreaker, coingeckoBreaker, oneInchBreaker } from "./shared.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -72,7 +72,14 @@ export function registerHealthRoutes(app: Hono): void {
       try {
         const cached: (HealthSnapshotV2 & { fromCache?: boolean }) | null = await kv.get(HEALTH_CACHE_KEY_V2);
         if (cached && Date.now() - cached.timestamp < HEALTH_CACHE_TTL_MS_V2) {
-          return c.json({ ...cached, fromCache: true });
+          // Breaker state is always live — never cached (it changes per-request)
+          const circuitBreakers = {
+            saucerswap: saucerswapBreaker.getStatus(),
+            mirrorNode: mirrorNodeBreaker.getStatus(),
+            coingecko: coingeckoBreaker.getStatus(),
+            oneInch: oneInchBreaker.getStatus(),
+          };
+          return c.json({ ...cached, circuitBreakers, fromCache: true });
         }
       } catch { /* cache miss — proceed to live check */ }
     }
@@ -120,6 +127,17 @@ export function registerHealthRoutes(app: Hono): void {
       probeApiV2("https://api.dexscreener.com/latest/dex/tokens/0x0000000000000000000000000000000000000000"),
     ]);
 
+    // Circuit breaker status — live snapshot (never cached).
+    // Health probes above bypass breakers (raw fetch) so they test actual
+    // service availability; breaker state shows how the AMM/auth/news
+    // modules currently perceive each dependency.
+    const circuitBreakers = {
+      saucerswap: saucerswapBreaker.getStatus(),
+      mirrorNode: mirrorNodeBreaker.getStatus(),
+      coingecko: coingeckoBreaker.getStatus(),
+      oneInch: oneInchBreaker.getStatus(),
+    };
+
     const snapshot: HealthSnapshotV2 = {
       timestamp: Date.now(),
       totalMs: Date.now() - start,
@@ -139,6 +157,6 @@ export function registerHealthRoutes(app: Hono): void {
     });
 
     console.log(`[Health] Live check complete in ${snapshot.totalMs}ms`);
-    return c.json({ ...snapshot, fromCache: false });
+    return c.json({ ...snapshot, circuitBreakers, fromCache: false });
   });
 }

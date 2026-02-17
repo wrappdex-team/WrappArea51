@@ -909,12 +909,12 @@ export function WhitePaper() {
                 . When you submit a swap the engine calculates your exact
                 output amount, deducts a{" "}
                 <span className={`font-semibold ${isDark ? "text-pink-400" : "text-pink-600"}`}>0.25&nbsp;%</span>{" "}
-                swap fee &mdash;{" "}
-                <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>0.20&nbsp;%</span>{" "}
-                stays in the pool (increasing{" "}
-                <span className="font-mono">k</span> for LP holders) and{" "}
+                swap fee stays entirely in pool reserves (increasing{" "}
+                <span className="font-mono">k</span> for LP holders).
+                The protocol&rsquo;s{" "}
                 <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>0.05&nbsp;%</span>{" "}
-                accrues to the protocol treasury &mdash; and settles
+                share is tracked per pool and extractable by DAO
+                governance. Everything settles
                 instantly in a single atomic step. Because the entire
                 process happens server-side, no third party can see or
                 interfere with your trade.
@@ -1007,11 +1007,13 @@ export function WhitePaper() {
                   The 0.25&nbsp;% swap fee is applied first: 1,000 &times;
                   0.9975 ={" "}
                   <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>997.5 HBAR</span>{" "}
-                  enters the pricing formula. Of the 2.5 HBAR fee,{" "}
-                  <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>2.0</span>{" "}
-                  stays in the pool (LP share) and{" "}
-                  <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>0.5</span>{" "}
-                  accrues to the protocol treasury.
+                  enters the pricing formula. All 2.5 HBAR of fee value stays
+                  in pool reserves (increasing{" "}
+                  <span className="font-mono">k</span> for LPs). The protocol&rsquo;s
+                  0.05&nbsp;% share ({" "}
+                  <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>0.5 HBAR</span>
+                  ) is tracked in a per-pool accumulator and extractable by the
+                  DAO &mdash; until extraction, LPs earn the full 0.25&nbsp;%.
                 </li>
                 <li>
                   The engine applies{" "}
@@ -1053,29 +1055,32 @@ export function WhitePaper() {
           <p
             className={`text-xs md:text-sm leading-relaxed mb-4 max-w-3xl ${isDark ? "text-slate-400" : "text-gray-500"}`}
           >
-            WRAPpDEX uses a dual-layer fee model: a percentage-based
-            swap fee split between LPs and the protocol, plus a flat
-            micro-fee that prevents trade-splitting manipulation.
-            Total cost to the trader: 0.25&nbsp;% + $0.0007 &mdash;
-            17&nbsp;% cheaper than SaucerSwap&rsquo;s 0.30&nbsp;%.
+            WRAPpDEX uses a dual-layer fee model: a 0.25&nbsp;% swap fee
+            that stays entirely in pool reserves (benefiting LPs), plus a flat
+            $0.0007 micro-fee that prevents trade-splitting manipulation.
+            The protocol&rsquo;s 0.05&nbsp;% share is tracked per pool and
+            extractable by DAO governance. Total cost to the trader:
+            0.25&nbsp;% + $0.0007 &mdash; 17&nbsp;% cheaper than
+            SaucerSwap&rsquo;s 0.30&nbsp;%.
           </p>
           <div className="grid md:grid-cols-3 gap-3 mb-4">
             <GlassCard className="p-5 md:p-6">
               <h4
                 className={`font-bold text-sm mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
               >
-                LP Fee
+                Swap Fee (All to Pool)
               </h4>
               <p className="text-2xl font-bold mb-1 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                0.20%
+                0.25%
               </p>
               <p
                 className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                Applied per trade (20 bps of the 25 bps total). This
-                portion stays inside the pool, increasing{" "}
+                The full 25 bps stays in pool reserves, increasing{" "}
                 <span className="font-mono">k</span> and benefiting all LP
-                holders proportional to their share.
+                holders. The protocol&rsquo;s 5 bps share is tracked
+                separately and extractable &mdash; until then, LPs earn
+                the full 0.25&nbsp;%.
               </p>
             </GlassCard>
             <GlassCard className="p-5 md:p-6">
@@ -1090,11 +1095,11 @@ export function WhitePaper() {
               <p
                 className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                5 bps of the 25 bps total swap fee accrues to the protocol
-                treasury (0.0.9695738). Plus a flat $0.0007 micro-fee per
-                swap in HBAR (split 50/50 LP / treasury) to prevent
-                trade-splitting manipulation. DAO governance can adjust the
-                protocol share in Phase 2+.
+                5 bps of the 25 bps total is the protocol&rsquo;s share,
+                tracked per pool in a dedicated accumulator. Extraction
+                deducts from reserves and credits treasury (0.0.9695738).
+                Plus a flat $0.0007 micro-fee per swap in HBAR (50/50
+                LP / treasury). DAO-adjustable.
               </p>
             </GlassCard>
             <GlassCard className="p-5 md:p-6">
@@ -1773,12 +1778,12 @@ export function WhitePaper() {
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
             {[
               {
-                title: "LP Swap Fee (0.20%)",
-                desc: "20 bps per swap stays in the pool, increasing k and accruing to all liquidity providers proportionally.",
+                title: "Swap Fee (0.25% — all to pool)",
+                desc: "The full 25 bps stays in reserves, increasing k for LPs. The protocol's 5 bps share is tracked per pool and extractable — until extraction, LPs earn the full 0.25%.",
               },
               {
-                title: "Protocol Fee (0.05% + $0.0007)",
-                desc: "5 bps per swap accrues to the protocol treasury. Plus a flat $0.0007 micro-fee in HBAR (50/50 LP/treasury). DAO-adjustable in Phase 2.",
+                title: "Protocol Share (0.05% tracked + $0.0007)",
+                desc: "5 bps per swap tracked in a per-pool accumulator, extractable by DAO. Plus a flat $0.0007 micro-fee in HBAR (50/50 LP/treasury). DAO-adjustable.",
               },
               {
                 title: "Pool Creation Fees",
@@ -1809,12 +1814,12 @@ export function WhitePaper() {
               className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
             >
               <span className="font-bold">Conservative projection:</span> At
-              $1M daily volume across all pools, the 0.20% LP fee
-              generates $2,000/day for LPs. The 0.05% protocol share
-              generates $500/day (~$182K/year) for the treasury, plus
-              the flat $0.0007 micro-fee adds ~$2.50/day at 3,500
-              swaps. Pool creation fees and fiat affiliate revenue
-              layer on top as the user base scales.
+              $1M daily volume, the full 0.25% stays in pools
+              ($2,500/day for LPs). The protocol&rsquo;s tracked 0.05%
+              share accrues ~$500/day (~$182K/year) extractable by DAO
+              governance. The flat $0.0007 micro-fee adds ~$2.50/day
+              at 3,500 swaps. Pool creation fees and fiat affiliate
+              revenue layer on top as the user base scales.
             </p>
           </GlassCard>
         </Section>

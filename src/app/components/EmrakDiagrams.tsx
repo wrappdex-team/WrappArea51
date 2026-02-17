@@ -863,7 +863,7 @@ function FeesDiagram({ isDark }: { isDark: boolean }) {
             </div>
           </div>
           <p className={`text-[10px] mt-1.5 ${isDark ? "text-slate-600" : "text-gray-300"}`}>
-            0.20% LP + 0.05% protocol · Phase&nbsp;1 fixed · DAO-adjustable later
+            Full 0.25% stays in pool · 0.05% tracked for DAO extraction
           </p>
         </div>
 
@@ -884,7 +884,7 @@ function FeesDiagram({ isDark }: { isDark: boolean }) {
             </span>
           </div>
           <p className={`text-[10px] mt-1 ${isDark ? "text-slate-600" : "text-gray-300"}`}>
-            Paid in HBAR · oracle-priced · clamped at 500 tinybar max
+            Paid in HBAR · oracle-priced · clamped at 500,000 tinybar safety ceiling
           </p>
         </div>
 

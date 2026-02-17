@@ -307,7 +307,7 @@ export function Branding() {
         }
       })
       .catch((err) => {
-        console.log("[Branding] Failed to fetch brand logos, using SVG fallbacks:", err);
+        console.warn("[Branding] Brand logo fetch failed, using SVG fallbacks:", err);
       });
   }, []);
 
@@ -796,7 +796,7 @@ export function Branding() {
               { label: "Token Standard", value: "HTS (Hedera Token Service)", mono: false },
               { label: "LP Pool (SaucerSwap V1)", value: "WHBAR / HBAR.ħ", mono: false },
               { label: "LP Token ID", value: "0.0.9356724", mono: true },
-              { label: "Total Swap Fee", value: "0.25% (25 bps) — 0.20% LP + 0.05% protocol", mono: false },
+              { label: "Total Swap Fee", value: "0.25% (25 bps) — all to pool; 0.05% tracked for DAO extraction", mono: false },
               { label: "Flat Micro-Fee", value: "$0.0007 per swap (additive, anti-splitting)", mono: false },
               { label: "VIP Gate", value: "100M+ HBAR.ħ or 1+ VIP NFT", mono: false },
               { label: "Max DAO Votes / Wallet", value: "11 (10 token + 1 NFT)", mono: false },
@@ -914,10 +914,11 @@ export function Branding() {
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Dual-fee model at near-zero cost.</strong>{" "}
-                  A 0.25% swap fee (0.20% to LPs, 0.05% to protocol treasury)
+                  A 0.25% swap fee that stays entirely in pool reserves for LPs,
                   plus a flat $0.0007 micro-fee per swap — 17% cheaper than
-                  SaucerSwap. No hidden spreads, no variable gas, no surprise
-                  extraction. Users see exactly what they pay before they confirm.
+                  SaucerSwap. The protocol's 0.05% share is tracked per pool and
+                   extractable by DAO governance. No hidden spreads, no variable
+                   gas. Users see exactly what they pay before they confirm.
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Smart routing finds the best path automatically.</strong>{" "}

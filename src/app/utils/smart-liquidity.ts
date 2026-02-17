@@ -8,12 +8,14 @@
  *   - Manages LP positions (add/remove liquidity)
  *   - Displays oracle prices for UI only (swaps use reserves)
  *
- * Token Whitelist (Tier 1 — Top 5 by MC on Hedera):
+ * Token Whitelist (Tier 1 — Top 7 by MC on Hedera):
  *   WBTC:  0.0.1969769  (8 decimals,  HashPort bridge)
  *   WETH:  0.0.1969757  (18 decimals, HashPort bridge)
  *   USDC:  0.0.456858   (6 decimals,  native)
  *   USDT:  0.0.4291336  (6 decimals,  native)
  *   LINK:  0.0.1970030  (8 decimals,  HashPort bridge)
+ *   AAVE:  0.0.1055498  (8 decimals,  HashPort bridge)
+ *   DAI:   0.0.1055477  (8 decimals,  HashPort bridge)
  *
  * HSuite Smart Node Integration (future):
  *   Pool creation and on-chain execution will route through HSuite validators.
@@ -177,6 +179,8 @@ export const WRAPPED_TOKENS: WrappedTokenSeed[] = [
   { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
   { tokenId: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" },
   { tokenId: "0.0.1970030", symbol: "LINK", name: "Chainlink", decimals: 8, fallbackPrice: 19.0, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055498", symbol: "AAVE", name: "Aave", decimals: 8, fallbackPrice: 180.0, logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055477", symbol: "DAI", name: "Dai Stablecoin", decimals: 8, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png", bridge: "HashPort" },
 ];
 
 const TOKEN_BY_SYMBOL = new Map(WRAPPED_TOKENS.map(t => [t.symbol, t]));

@@ -325,7 +325,7 @@ export function registerStorageRoutes(app: Hono): void {
     }
   });
 
-  // Diagnostic endpoint — owner-only raw bucket listing for debugging
+  // Owner-only diagnostic endpoint — raw bucket listing for operational troubleshooting
   app.get(`${ROUTE_PREFIX}/partnered-logos/debug`, async (c) => {
     const ownerAuth = await requireOwner(c);
     if (ownerAuth instanceof Response) return ownerAuth;

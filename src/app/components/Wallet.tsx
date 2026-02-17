@@ -64,11 +64,15 @@ import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 
 const HBARH_TOKEN_ID = "0.0.9356476";
 const WBTC_TOKEN_ID = "0.0.1055483";
+const AAVE_TOKEN_ID = "0.0.1055498";
+const DAI_TOKEN_ID = "0.0.1055477";
 const SS_LP_TOKEN_ID = LP_TOKEN_WHBAR_HBARH.tokenId; // "0.0.9356724"
 
 const TOKEN_LOGOS: Record<string, string> = {
   HBAR: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
   WBTC: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
+  AAVE: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
+  DAI: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
 };
 
 function getTokenLogo(
@@ -80,6 +84,8 @@ function getTokenLogo(
 ): string | null {
   if (tokenId === HBARH_TOKEN_ID || tokenId === SS_LP_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? hbarDark : hbarLight;
   if (tokenId === WBTC_TOKEN_ID || symbol === "WBTC") return TOKEN_LOGOS.WBTC;
+  if (tokenId === AAVE_TOKEN_ID || symbol === "AAVE") return TOKEN_LOGOS.AAVE;
+  if (tokenId === DAI_TOKEN_ID || symbol === "DAI") return TOKEN_LOGOS.DAI;
   return TOKEN_LOGOS[symbol] || null;
 }
 

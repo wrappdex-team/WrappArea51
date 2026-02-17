@@ -32,6 +32,8 @@ export const TOKEN_REGISTRY: TokenDef[] = [
   { symbol: "TRX",   name: "TRON",       category: "layer1",      volatility: 0.04,  fallbackPrice: 0.2456,     fallbackChange: 1.89,  logo: TOKEN_LOGOS.TRX },
   { symbol: "TON",   name: "Toncoin",    category: "layer1",      volatility: 0.08,  fallbackPrice: 5.82,       fallbackChange: 3.15,  logo: TOKEN_LOGOS.TON },
   { symbol: "LINK",  name: "Chainlink",  category: "defi",        volatility: 0.08,  fallbackPrice: 18.92,      fallbackChange: 5.34,  logo: TOKEN_LOGOS.LINK },
+  { symbol: "AAVE",  name: "Aave",       category: "defi",        volatility: 0.08,  fallbackPrice: 180.0,      fallbackChange: 2.10,  logo: TOKEN_LOGOS.AAVE },
+  { symbol: "DAI",   name: "Dai",        category: "stablecoin",  volatility: 0.002, fallbackPrice: 1.0000,     fallbackChange: 0.01,  logo: TOKEN_LOGOS.DAI },
   { symbol: "SHIB",  name: "Shiba Inu",  category: "layer1",      volatility: 0.15,  fallbackPrice: 0.00002234, fallbackChange: 6.12,  logo: TOKEN_LOGOS.SHIB },
   { symbol: "DOT",   name: "Polkadot",   category: "layer1",      volatility: 0.06,  fallbackPrice: 7.89,       fallbackChange: 4.12,  logo: TOKEN_LOGOS.DOT },
   { symbol: "LTC",   name: "Litecoin",   category: "layer1",      volatility: 0.05,  fallbackPrice: 95.43,      fallbackChange: 2.15,  logo: TOKEN_LOGOS.LTC },

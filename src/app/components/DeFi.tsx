@@ -71,6 +71,8 @@ const POOLS: LiquidityPool[] = [
   { id: "pool-sauce-usdc", tokenA: { symbol: "SAUCE", logo: "https://www.saucerswap.finance/images/tokens/sauce.svg" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 1_560_000, volume24h: 420_000, apr: 28.5, fee: 0.3, utilization: 55, trending: "up" },
   { id: "pool-wbtc-usdc", tokenA: { symbol: "WBTC[hts]", logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 2_100_000, volume24h: 560_000, apr: 12.0, fee: 0.3, utilization: 48, trending: "stable" },
   { id: "pool-weth-usdc", tokenA: { symbol: "WETH[hts]", logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 3_450_000, volume24h: 890_000, apr: 14.2, fee: 0.3, utilization: 51, trending: "up" },
+  { id: "pool-whbar-aave", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "AAVE[hts]", logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png" }, tvl: 1_280_000, volume24h: 340_000, apr: 16.5, fee: 0.3, utilization: 46, trending: "up" },
+  { id: "pool-dai-usdc", tokenA: { symbol: "DAI[hts]", logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 2_640_000, volume24h: 720_000, apr: 6.8, fee: 0.05, utilization: 58, trending: "stable" },
 ];
 
 type Tab = "pools" | "lend" | "staking";

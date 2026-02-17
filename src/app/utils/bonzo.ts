@@ -3,7 +3,7 @@
  *
  * Bonzo Finance (bonzo.finance) is an Aave V2 fork deployed on Hedera mainnet.
  * This module provides:
- *   1. Market definitions for 6 target assets (HBAR, USDC, WBTC, WETH, LINK, BONZO)
+ *   1. Market definitions for 8 target assets (HBAR, USDC, WBTC, WETH, LINK, AAVE, DAI, BONZO)
  *   2. Data fetching via Bonzo Data API + Mirror Node fallback
  *   3. User position fetching
  *   4. Transaction building for supply/withdraw/borrow/repay
@@ -224,6 +224,30 @@ const BONZO_SUPPORTED_TOKENS: BonzoTokenDef[] = [
     defaultMaxLTV: 60,
     defaultLiquidationThreshold: 70,
     defaultLiquidationBonus: 110,
+  },
+  {
+    symbol: "AAVE",
+    name: "Aave",
+    hederaTokenId: "0.0.1055498",
+    decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
+    canBeCollateral: true,
+    borrowEnabled: true,
+    defaultMaxLTV: 55,
+    defaultLiquidationThreshold: 70,
+    defaultLiquidationBonus: 110,
+  },
+  {
+    symbol: "DAI",
+    name: "Dai Stablecoin",
+    hederaTokenId: "0.0.1055477",
+    decimals: 8,
+    logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+    canBeCollateral: true,
+    borrowEnabled: true,
+    defaultMaxLTV: 75,
+    defaultLiquidationThreshold: 80,
+    defaultLiquidationBonus: 105,
   },
   {
     symbol: "BONZO",
@@ -475,6 +499,8 @@ function matchReserveToToken(reserve: BonzoAPIReserve, token: BonzoTokenDef): bo
   if (tokenSym === "WBTC" && (sym === "WBTC" || sym === "WBTC[HTS]" || sym.includes("BTC"))) return true;
   if (tokenSym === "WETH" && (sym === "WETH" || sym === "WETH[HTS]" || sym.includes("ETH"))) return true;
   if (tokenSym === "LINK" && (sym === "LINK" || sym === "LINK[HTS]" || sym === "WLNK")) return true;
+  if (tokenSym === "AAVE" && (sym === "AAVE" || sym === "AAVE[HTS]" || sym === "WAAVE")) return true;
+  if (tokenSym === "DAI" && (sym === "DAI" || sym === "DAI[HTS]" || sym === "WDAI")) return true;
   // Name match
   if (name.includes(token.name.toUpperCase())) return true;
   // Address match

@@ -929,8 +929,10 @@ both contribute to governance.
   | Pool Creation Fees            | $50 in HBAR.h per weighted pool          |
   |                               | (non-VIP) -> treasury                    |
   +-------------------------------+------------------------------------------+
-  | AMM Swap Fee (0.25%)          | Total 25 bps per swap, split:            |
-  |                               | 20 bps (0.20%) LP + 5 bps (0.05%) proto  |
+  | AMM Swap Fee (0.25%)          | Full 25 bps stays in pool reserves.      |
+  |                               | Protocol's 5 bps (0.05%) is tracked      |
+  |                               | per pool and extractable by DAO.         |
+  |                               | Until extraction, LPs earn full 0.25%.   |
   +-------------------------------+------------------------------------------+
   | Flat Micro-Fee                | $0.0007 per swap (in HBAR, additive)     |
   |                               | 50% LP bonus + 50% treasury              |
@@ -945,10 +947,13 @@ both contribute to governance.
   PHASE 1 -- LIQUIDITY DEPTH
   Achieve $100M+ TVL. Incentivize LP provision, deepen the WHBAR/HBAR.h
   pool as a flywheel, expand token whitelist via DAO governance.
+  Full 0.25% swap fee benefits LPs. Protocol's 0.05% share tracked in
+  per-pool accumulators; extraction deferred to maximize early LP yield.
 
   PHASE 2 -- PROTOCOL REVENUE
-  Scale via DAO governance: adjust protocol fee share (currently 5 bps),
-  scale pool creation fees. Launch premium API for institutional traders.
+  Activate protocol fee extraction (admin/DAO endpoint). Scale via DAO
+  governance: adjust protocol fee share (5 bps -> 8 bps -> 10 bps as
+  volume grows). Launch premium API for institutional traders.
 
   PHASE 3 -- ECOSYSTEM EXPANSION
   HSuite SmartNode deep integration for cross-DEX aggregation. Native
@@ -964,7 +969,12 @@ both contribute to governance.
 16.3  REVENUE PROJECTIONS
 ----------------------------
 
-  Assumptions: $100M TVL, $5M daily volume, 5 bps protocol fee.
+  Assumptions: $100M TVL, $5M daily volume, 5 bps protocol fee
+  (tracked per pool, extractable by DAO).
+
+  NOTE: Protocol swap fee revenue requires extraction from pool reserves
+  via the admin /pools/protocol-fees/extract endpoint. Until extracted,
+  the 0.05% share accrues inside pool reserves and benefits LPs.
 
   +-----------------------------+-------------------+
   | Source                      | Annual Revenue    |
@@ -1056,11 +1066,11 @@ both contribute to governance.
   |  oracle integration. Sole architect of the AMM, Pool Factory, DAO,  |
   |  and VIP system.                                                    |
   |                                                                     |
-  |  Name:     [FOUNDER NAME]                                          |
-  |  Title:    [TITLE]                                                  |
-  |  Bio:      [2-3 sentence professional bio]                         |
-  |  LinkedIn: [URL]                                                    |
-  |  Twitter:  [URL]                                                    |
+  |  Name:     ———                                                     |
+  |  Title:    ———                                                     |
+  |  Bio:      ———                                                     |
+  |  LinkedIn: ———                                                     |
+  |  Twitter:  ———                                                     |
   +-------------------------------------------------------------------+
 
   +-------------------------------------------------------------------+
@@ -1069,8 +1079,8 @@ both contribute to governance.
   |  Leads brand strategy, growth marketing, and market positioning    |
   |  for Wrappdex and the HBAR.h ecosystem.                            |
   |                                                                     |
-  |  LinkedIn: [URL]                                                    |
-  |  Twitter:  [URL]                                                    |
+  |  LinkedIn: ———                                                     |
+  |  Twitter:  ———                                                     |
   +-------------------------------------------------------------------+
 
   +-------------------------------------------------------------------+
@@ -1079,8 +1089,8 @@ both contribute to governance.
   |  Drives community engagement, moderates governance channels, and   |
   |  represents the HBAR.h brand across the Hedera ecosystem.          |
   |                                                                     |
-  |  LinkedIn: [URL]                                                    |
-  |  Twitter:  [URL]                                                    |
+  |  LinkedIn: ———                                                     |
+  |  Twitter:  ———                                                     |
   +-------------------------------------------------------------------+
 
 
@@ -1097,8 +1107,8 @@ both contribute to governance.
   |  Provides strategic advisory on protocol direction, ecosystem       |
   |  development, and partnership opportunities.                        |
   |                                                                     |
-  |  LinkedIn: [URL]                                                    |
-  |  Twitter:  [URL]                                                    |
+  |  LinkedIn: ———                                                     |
+  |  Twitter:  ———                                                     |
   +-------------------------------------------------------------------+
 
 

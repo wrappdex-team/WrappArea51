@@ -167,20 +167,6 @@ export function generateTicketId(): string {
   return `TKT-${hex}`;
 }
 
-// ── Admin Authorization (DEPRECATED) ────────────────────────────────
-// The old isAdminAuthorized() checked the service role key sent from
-// the client. This was a security vulnerability — the service role key
-// is a god key for all Supabase resources and must NEVER be transmitted
-// over the wire. All admin operations now use ED25519 session auth via
-// requireOwner() in auth.ts. This stub remains only to produce a clear
-// error if any code path still references it.
-
-/** @deprecated Use requireOwner() from auth.ts instead. */
-export function isAdminAuthorized(_c: any): boolean {
-  console.error("[SECURITY] DEPRECATED: isAdminAuthorized() called — migrate to requireOwner() from auth.ts");
-  return false; // Fail-closed: always deny
-}
-
 // ── KV-Based Distributed Lock ───────────────────────────────────────
 // Pessimistic lock using KV with write-verify-retry pattern + double-check.
 // TTL safety valve ensures release even if holder crashes.
@@ -283,8 +269,10 @@ export async function acquireKvLock(cfg: KvLockConfig): Promise<string | null> {
 export async function releaseKvLock(key: string, holderId: string): Promise<void> {
   try {
     const existing: KvLock | null = await kv.get(key);
-    // Only release if we still own it (could have expired and been re-acquired)
-    if (existing?.holder === holderId) {
+    // Only release if we still own it AND the lock hasn't expired.
+    // If expired, a new holder may have acquired between our read and delete —
+    // deleting would remove their valid lock. Let TTL clean up stale locks.
+    if (existing?.holder === holderId && Date.now() < existing.expiresAt) {
       await kv.del(key);
     }
   } catch {
@@ -316,7 +304,7 @@ export const POOL_LOCK_RETRY_INTERVAL_MS = 40;    // Spin-wait interval
 // Canonical hostnames — single source of truth for every server module.
 // Always use mainnet-public (the community-facing public endpoint).
 // `mainnet.mirrornode.hedera.com` also resolves but is not the canonical
-// hostname; mixing the two causes independent failure modes (P7 audit).
+// hostname; mixing the two causes independent failure modes.
 
 export const HEDERA_MIRROR_MAINNET = "https://mainnet-public.mirrornode.hedera.com";
 export const HEDERA_MIRROR_TESTNET = "https://testnet.mirrornode.hedera.com";
@@ -326,3 +314,195 @@ export const HEDERA_MIRROR_TESTNET = "https://testnet.mirrornode.hedera.com";
 // Single source of truth — eliminates 30+ hardcoded repetitions across modules.
 
 export const ROUTE_PREFIX = "/make-server-54299934";
+
+// ── Circuit Breaker ─────────────────────────────────────────────────
+// Prevents cascading failures when external services (SaucerSwap, Mirror
+// Node, CoinGecko, 1inch) become unavailable. Without this, a 5-minute
+// outage generates thousands of failing HTTP requests that consume CPU,
+// saturate connection pools, and delay recovery.
+//
+// States:
+//   CLOSED    → Normal. Failures counted in rolling window.
+//               Trips to OPEN when failureThreshold reached.
+//   OPEN      → Requests short-circuit immediately (no HTTP call).
+//               After openDurationMs, transitions to HALF_OPEN.
+//   HALF_OPEN → Single probe allowed through. Success → CLOSED. Failure → OPEN.
+//
+// Per-isolate (in-memory): each Deno Deploy isolate independently detects
+// outages along its network path. This is intentional — a service may be
+// reachable from one edge region but not another.
+
+export interface CircuitBreakerConfig {
+  name: string;
+  failureThreshold: number;
+  failureWindowMs: number;
+  openDurationMs: number;
+}
+
+export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+export class CircuitBreakerOpenError extends Error {
+  readonly code = "CIRCUIT_OPEN" as const;
+  readonly service: string;
+  constructor(service: string) {
+    super(`${service} circuit breaker is OPEN — service temporarily unavailable`);
+    this.service = service;
+  }
+}
+
+export class CircuitBreaker {
+  private state: CircuitState = "CLOSED";
+  private failures: number[] = [];
+  private openedAt = 0;
+  private halfOpenInFlight = false;
+  private readonly cfg: CircuitBreakerConfig;
+
+  constructor(cfg: CircuitBreakerConfig) {
+    this.cfg = cfg;
+  }
+
+  get currentState(): CircuitState { return this.state; }
+
+  /**
+   * Execute fn() through the breaker.
+   *
+   * @param fn          Async operation to protect (typically a fetch call).
+   * @param isFailure   Optional result classifier. If fn() resolves but the
+   *                    result indicates a service-level error (e.g. HTTP 5xx),
+   *                    return true to count it as a breaker failure. The result
+   *                    is still returned to the caller for status-specific handling.
+   */
+  async call<T>(fn: () => Promise<T>, isFailure?: (result: T) => boolean): Promise<T> {
+    this.transitionIfReady();
+
+    if (this.state === "OPEN") {
+      throw new CircuitBreakerOpenError(this.cfg.name);
+    }
+
+    if (this.state === "HALF_OPEN") {
+      if (this.halfOpenInFlight) {
+        // Another probe is already in progress — reject to avoid piling on
+        throw new CircuitBreakerOpenError(this.cfg.name);
+      }
+      this.halfOpenInFlight = true;
+    }
+
+    try {
+      const result = await fn();
+
+      // Check if the "successful" result is actually a service failure
+      if (isFailure?.(result)) {
+        this.onFailure();
+        return result; // Still return — caller handles HTTP status-specific logic
+      }
+
+      this.onSuccess();
+      return result;
+    } catch (err) {
+      this.onFailure();
+      throw err;
+    }
+  }
+
+  /** Snapshot for health/monitoring endpoints. */
+  getStatus(): {
+    state: CircuitState;
+    failures: number;
+    service: string;
+    openedAt: number | null;
+    nextProbeAt: number | null;
+  } {
+    this.transitionIfReady();
+    return {
+      service: this.cfg.name,
+      state: this.state,
+      failures: this.failures.length,
+      openedAt: this.state !== "CLOSED" ? this.openedAt : null,
+      nextProbeAt: this.state === "OPEN" ? this.openedAt + this.cfg.openDurationMs : null,
+    };
+  }
+
+  /** Time-based state transition (OPEN → HALF_OPEN after cooldown). */
+  private transitionIfReady(): void {
+    if (this.state === "OPEN" && Date.now() >= this.openedAt + this.cfg.openDurationMs) {
+      console.log(`[Breaker:${this.cfg.name}] OPEN → HALF_OPEN (cooldown elapsed, allowing probe)`);
+      this.state = "HALF_OPEN";
+      this.halfOpenInFlight = false;
+    }
+  }
+
+  private onSuccess(): void {
+    if (this.state === "HALF_OPEN") {
+      console.log(`[Breaker:${this.cfg.name}] HALF_OPEN → CLOSED (probe succeeded)`);
+      this.state = "CLOSED";
+      this.failures = [];
+      this.halfOpenInFlight = false;
+    }
+    // CLOSED success is a no-op — only failures are tracked
+  }
+
+  private onFailure(): void {
+    const now = Date.now();
+
+    if (this.state === "HALF_OPEN") {
+      console.log(`[Breaker:${this.cfg.name}] HALF_OPEN → OPEN (probe failed — resetting cooldown)`);
+      this.state = "OPEN";
+      this.openedAt = now;
+      this.halfOpenInFlight = false;
+      return;
+    }
+
+    // CLOSED: accumulate failure in rolling window
+    this.failures.push(now);
+    const cutoff = now - this.cfg.failureWindowMs;
+    this.failures = this.failures.filter(t => t > cutoff);
+
+    if (this.failures.length >= this.cfg.failureThreshold) {
+      console.log(
+        `[Breaker:${this.cfg.name}] CLOSED → OPEN ` +
+        `(${this.failures.length}/${this.cfg.failureThreshold} failures in ${this.cfg.failureWindowMs / 1000}s window)`
+      );
+      this.state = "OPEN";
+      this.openedAt = now;
+      this.failures = [];
+    }
+  }
+}
+
+// ── Pre-configured Breaker Instances (one per external service) ─────
+
+/** SaucerSwap price oracle — critical for swap quotes and display prices. */
+export const saucerswapBreaker = new CircuitBreaker({
+  name: "SaucerSwap",
+  failureThreshold: 5,
+  failureWindowMs: 60_000,
+  openDurationMs: 30_000,
+});
+
+/** Hedera Mirror Node — auth (pubkey fetch), VIP verification, news. */
+export const mirrorNodeBreaker = new CircuitBreaker({
+  name: "MirrorNode",
+  failureThreshold: 5,
+  failureWindowMs: 60_000,
+  openDurationMs: 30_000,
+});
+
+/** CoinGecko — trending coins, global market data (non-critical). */
+export const coingeckoBreaker = new CircuitBreaker({
+  name: "CoinGecko",
+  failureThreshold: 3,
+  failureWindowMs: 60_000,
+  openDurationMs: 60_000,
+});
+
+/** 1inch DEX aggregator — swap/quote proxy for EVM chains. */
+export const oneInchBreaker = new CircuitBreaker({
+  name: "1inch",
+  failureThreshold: 5,
+  failureWindowMs: 60_000,
+  openDurationMs: 30_000,
+});
+
+/** HTTP 5xx / 429 classifier for use with breaker.call(fetch, isHttpFailure). */
+export const isHttpFailure = (res: Response): boolean =>
+  res.status >= 500 || res.status === 429;
