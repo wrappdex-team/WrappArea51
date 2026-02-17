@@ -131,7 +131,6 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
       logo: p?.image || token.logo,
       category: token.category,
       chartData: generateCandlestickData(
-        token.symbol,
         p?.current_price ?? token.fallbackPrice,
         token.volatility
       ),
@@ -352,7 +351,7 @@ export function Dashboard() {
       marketCapRaw: 0,
       logo: isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight,
       category: "defi",
-      chartData: generateCandlestickData("HBAR.ħ", hbarhData.priceUsd, 0.18),
+      chartData: generateCandlestickData(hbarhData.priceUsd, 0.18),
       oracleSource: undefined, // Handled with custom DexScreener badge
     } : null;
 

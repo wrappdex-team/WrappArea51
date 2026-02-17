@@ -37,6 +37,7 @@ export const TOKEN_REGISTRY: TokenDef[] = [
   { symbol: "SHIB",  name: "Shiba Inu",  category: "layer1",      volatility: 0.15,  fallbackPrice: 0.00002234, fallbackChange: 6.12,  logo: TOKEN_LOGOS.SHIB },
   { symbol: "DOT",   name: "Polkadot",   category: "layer1",      volatility: 0.06,  fallbackPrice: 7.89,       fallbackChange: 4.12,  logo: TOKEN_LOGOS.DOT },
   { symbol: "LTC",   name: "Litecoin",   category: "layer1",      volatility: 0.05,  fallbackPrice: 95.43,      fallbackChange: 2.15,  logo: TOKEN_LOGOS.LTC },
+  { symbol: "XMR",   name: "Monero",     category: "layer1",      volatility: 0.06,  fallbackPrice: 334,        fallbackChange: 1.20,  logo: TOKEN_LOGOS.XMR },
 ];
 
 // Subsets for specific views

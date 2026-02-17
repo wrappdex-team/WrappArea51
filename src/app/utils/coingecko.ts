@@ -13,7 +13,9 @@ import { log } from "./logger";
 // IMPORTANT: Every pair here MUST exist on Binance. The batch
 // ticker/24hr endpoint returns HTTP 400 if ANY symbol is invalid,
 // killing the ENTIRE request. EURC is intentionally excluded
-// (no EURCUSDT pair on Binance).
+// (no EURCUSDT pair on Binance). XMR is excluded because Binance
+// delisted Monero spot trading (Feb 2024) — the API returns a
+// frozen last-traded price, producing stale quotes.
 const BINANCE_PAIR_MAP: Record<string, string> = {
   BTC: "BTCUSDT", ETH: "ETHUSDT", BNB: "BNBUSDT", SOL: "SOLUSDT",
   XRP: "XRPUSDT", HBAR: "HBARUSDT", DOGE: "DOGEUSDT", ADA: "ADAUSDT",
@@ -38,6 +40,7 @@ export const COINCAP_ID_MAP: Record<string, string> = {
   LTC: "litecoin", PAXG: "pax-gold", EURC: "euro-coin",
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "multi-collateral-dai",
+  XMR: "monero",
   // Wrapped bridge tokens (map to parent asset)
   WHBAR: "hedera-hashgraph", WBTC: "bitcoin", WETH: "ethereum",
   WBNB: "binance-coin", WAVAX: "avalanche", WMATIC: "matic-network",
@@ -52,6 +55,7 @@ export const COIN_ID_MAP: Record<string, string> = {
   LTC: "litecoin", PAXG: "pax-gold", EURC: "euro-coin-2",
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "dai",
+  XMR: "monero",
   // Wrapped bridge tokens (map to parent asset CoinGecko ID)
   WHBAR: "hedera-hashgraph", WBTC: "wrapped-bitcoin", WETH: "weth",
   WBNB: "binancecoin", WAVAX: "avalanche-2", WMATIC: "matic-network",
@@ -80,6 +84,7 @@ export const TOKEN_LOGOS: Record<string, string> = {
   USDCh: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
   AAVE: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
   DAI: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+  XMR: "https://assets.coingecko.com/coins/images/69/large/monero_logo.png",
   // Wrapped bridge tokens (AMM-specific — reuse parent asset logos)
   WHBAR: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
   WBTC: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
@@ -131,6 +136,7 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
   USDCh:{ id: "usd-coin",   symbol: "usdc", name: "USD Coin",   current_price: 1.0000,   price_change_percentage_24h: 0.0,   market_cap: 60000000000,   total_volume: 8000000000,  image: TOKEN_LOGOS.USDCh },
   AAVE: { id: "aave",       symbol: "aave", name: "AAVE",       current_price: 150,      price_change_percentage_24h: 0.5,   market_cap: 15000000000,   total_volume: 100000000,   image: TOKEN_LOGOS.AAVE },
   DAI:  { id: "dai",        symbol: "dai",  name: "Dai",        current_price: 1.0000,   price_change_percentage_24h: 0.01,  market_cap: 5300000000,    total_volume: 300000000,   image: TOKEN_LOGOS.DAI },
+  XMR:  { id: "monero",     symbol: "xmr",  name: "Monero",     current_price: 334,      price_change_percentage_24h: 1.2,   market_cap: 6200000000,    total_volume: 120000000,   image: TOKEN_LOGOS.XMR },
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -365,6 +371,7 @@ export async function fetchCoinPrices(
         ...merged[sym],
         ...gecko,
         oracle_source: "coingecko",
+        change_source: isFinite(gecko.price_change_percentage_24h) ? "coingecko" as OracleSource : merged[sym]?.change_source,
       };
     }
 
