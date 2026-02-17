@@ -32,6 +32,7 @@ import {
 } from "../utils/smart-liquidity";
 import { useTheme } from "../contexts/ThemeContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT } from "../assets/brand";
 
 // ── AMM kill switch status polling ──────────────────────────────────
 const AMM_STATUS_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/amm/kill-switch`;
@@ -229,16 +230,20 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
           {/* Header */}
           <div className={`px-4 py-3 border-b ${isDark ? "border-pink-500/10" : "border-gray-100"}`}>
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <motion.div
-                  className="w-8 h-8 rounded-lg bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center"
-                  animate={{ boxShadow: status === "swapping" ? "0 0 20px rgba(236,72,153,0.5)" : "0 0 0px rgba(236,72,153,0)" }}
+                  animate={{ boxShadow: status === "swapping" ? "0 0 16px rgba(236,72,153,0.4)" : "0 0 0px rgba(236,72,153,0)" }}
                   transition={{ duration: 0.5, repeat: status === "swapping" ? 9999 : 0, repeatType: "reverse" }}
+                  className="flex-shrink-0"
                 >
-                  <Zap className="w-4 h-4 text-white" />
+                  <img
+                    src={isDark ? HBARH_BRANDING_DARK : HBARH_BRANDING_LIGHT}
+                    alt="WRAPpDEX"
+                    className="h-5 w-auto"
+                  />
                 </motion.div>
                 <div>
-                  <span className="text-sm font-bold">AMM Swap</span>
+                  <span className={`text-sm font-bold ${isDark ? "text-slate-400" : "text-slate-500"}`}>Swap</span>
                   <div className="flex items-center gap-1">
                     <span className={`w-1.5 h-1.5 rounded-full ${quote ? "bg-emerald-400 animate-pulse" : isDark ? "bg-slate-600" : "bg-gray-300"}`} />
                     <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
