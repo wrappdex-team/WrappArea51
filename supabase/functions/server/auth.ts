@@ -16,6 +16,7 @@
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET, mirrorNodeBreaker, isHttpFailure } from "./shared.ts";
+import nacl from "npm:tweetnacl@1.0.3";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -215,8 +216,36 @@ async function verifyED25519Signature(
 
     console.log(`[AUTH] Verifying: pubKey=${publicKeyHex.slice(0, 16)}... sig=${bytesToHex(sigBytes).slice(0, 32)}... msg=${messageBytes.length}B`);
 
-    const cryptoKey = await crypto.subtle.importKey("raw", pubKeyBytes, { name: "Ed25519" }, false, ["verify"]);
-    return await crypto.subtle.verify("Ed25519", cryptoKey, sigBytes, messageBytes);
+    // Primary: Use tweetnacl — the same library the Hedera SDK and HashPack
+    // wallet use internally. This guarantees byte-level compatibility with
+    // the wallet's Ed25519 implementation. Falls back to Web Crypto only if
+    // tweetnacl is unavailable (should not happen with npm: import).
+    try {
+      const naclResult = nacl.sign.detached.verify(messageBytes, sigBytes, pubKeyBytes);
+      if (naclResult) {
+        console.log("[AUTH] Signature verified via tweetnacl");
+        return true;
+      }
+      console.log("[AUTH] tweetnacl: verify returned false");
+    } catch (naclErr: any) {
+      console.log(`[AUTH] tweetnacl verify error: ${naclErr?.message || naclErr}`);
+    }
+
+    // Fallback: Web Crypto API (Deno runtime). Some Deno versions may have
+    // Ed25519 bugs or missing support — this is a belt-and-suspenders check.
+    try {
+      const cryptoKey = await crypto.subtle.importKey("raw", pubKeyBytes, { name: "Ed25519" }, false, ["verify"]);
+      const webCryptoResult = await crypto.subtle.verify("Ed25519", cryptoKey, sigBytes, messageBytes);
+      if (webCryptoResult) {
+        console.log("[AUTH] Signature verified via Web Crypto API");
+        return true;
+      }
+      console.log("[AUTH] Web Crypto: verify returned false");
+    } catch (wcErr: any) {
+      console.log(`[AUTH] Web Crypto Ed25519 not available or failed: ${wcErr?.message || wcErr}`);
+    }
+
+    return false;
   } catch (err: any) {
     console.log(`[AUTH] ED25519 verification error: ${err?.message || err}`);
     return false;
@@ -431,9 +460,15 @@ export function registerAuthRoutes(app: Hono): void {
       // received base64 and signed those bytes without decoding first.
       if (!isValid) {
         try {
-          const b64Msg = btoa(challenge.message);
+          // Use the EXACT same UTF-8-safe base64 encoding as the client
+          // (wallet-core.ts: TextEncoder → byte-by-byte String.fromCharCode → btoa)
+          // to guarantee identical base64 output across browser and Deno.
+          const msgUtf8 = new TextEncoder().encode(challenge.message);
+          let binStr = "";
+          for (let i = 0; i < msgUtf8.length; i++) binStr += String.fromCharCode(msgUtf8[i]);
+          const b64Msg = btoa(binStr);
           const b64MsgBytes = new TextEncoder().encode(b64Msg);
-          console.log(`[AUTH] Primary failed — trying base64 message variant (${b64MsgBytes.length}B)`);
+          console.log(`[AUTH] Primary failed — trying base64 message variant (${b64MsgBytes.length}B, b64 first 20: ${b64Msg.slice(0, 20)})`);
           isValid = await verifyED25519Signature(keyResult.rawKeyHex, b64MsgBytes, cleanSig);
           if (isValid) console.log("[AUTH] Signature verified via base64-message fallback");
         } catch { /* btoa might fail on non-Latin1 — skip this fallback */ }
@@ -499,7 +534,21 @@ export function registerAuthRoutes(app: Hono): void {
 
       if (!isValid) {
         console.log(`[AUTH] ALL verification strategies FAILED for ${accountId} challenge=${challengeId} sigChars=${cleanSig.length}`);
-        return c.json({ error: "Signature verification failed. Ensure you signed the exact challenge message.", code: "SIGNATURE_INVALID" }, 401);
+        // Include diagnostic context so the client can display actionable info.
+        // None of this leaks secrets — the sig was already visible to the client.
+        const diagSigLen = preDecodedSig ? 64 : -1;
+        const diagMsgLen = messageBytes.length;
+        return c.json({
+          error: "Signature verification failed. Ensure you signed the exact challenge message.",
+          code: "SIGNATURE_INVALID",
+          _diag: {
+            sigInputChars: cleanSig.length,
+            sigDecodedBytes: diagSigLen,
+            msgBytes: diagMsgLen,
+            pubKeyPrefix: keyResult.rawKeyHex.slice(0, 16),
+            strategies: "primary,base64,nonce,crlf,window",
+          },
+        }, 401);
       }
 
       // ── Revoke existing session for this account ──

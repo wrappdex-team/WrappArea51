@@ -213,7 +213,15 @@ async function submitSession(
     signal: AbortSignal.timeout(15000),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // Log full server response for diagnostics (signature verification failures
+    // include _diag with byte lengths, key prefix, and strategies tried)
+    log.error("Auth", `submitSession failed: HTTP ${res.status} code=${data.code} error=${data.error}`);
+    if (data._diag) {
+      log.error("Auth", `Server diagnostic: ${JSON.stringify(data._diag)}`);
+    }
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
   return data as SessionResponse;
 }
 
