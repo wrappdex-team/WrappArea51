@@ -25,6 +25,7 @@ import { formatTokenCount } from "../utils/dao";
 import { toast } from "sonner";
 import { fetchHbarhTokenPrice } from "../utils/saucerswap";
 import { Tip } from "./Tip";
+import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 
 // ── Weight Colors ────────────────────────────────────────────────────
 
@@ -223,6 +224,21 @@ export function PoolCreator() {
       : "bg-gray-100 text-gray-400 border border-gray-200";
 
   // ── Render ──
+
+  // ┌─────────────────────────────────────────────────────────────────┐
+  // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                            │
+  // │  Remove this early-return block when AMM_PRELAUNCH_LOCKED      │
+  // │  is set to false in amm.ts and redeploy.                       │
+  // └─────────────────────────────────────────────────────────────────┘
+  const AMM_PRELAUNCH_UI_LOCKED = true;
+  if (AMM_PRELAUNCH_UI_LOCKED) {
+    return (
+      <div className={`rounded-2xl p-6 ${isDark ? "bg-slate-900/40 border border-white/[0.06]" : "bg-white border border-gray-100 shadow-sm"}`}>
+        <AmmPrelaunchBanner isDark={isDark} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}

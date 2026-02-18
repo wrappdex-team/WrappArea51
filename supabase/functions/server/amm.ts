@@ -125,6 +125,28 @@ const PROTOCOL_FEE_ACCUM_PREFIX = "sl_pfee_";   // Per-pool protocol fee accumul
 const PROTOCOL_FEE_ACCUM_LOCK = "sl_pfee_lock_"; // Per-pool lock for fee writes
 const AMM_KILL_SWITCH_KEY = "amm_kill_switch";
 
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  🔒  SENIOR DEV NOTE — PRE-LAUNCH AMM LOCK                         ║
+// ║                                                                     ║
+// ║  The AMM is temporarily locked while we complete testing & audits.  ║
+// ║  All mutating pool operations (create pool, add liquidity, swap)    ║
+// ║  are blocked at the server level.  The frontend mirrors this with   ║
+// ║  a locked UI state on every Create Pool modal + PoolCreator.        ║
+// ║                                                                     ║
+// ║  TO GO LIVE:                                                        ║
+// ║    1. Set AMM_PRELAUNCH_LOCKED = false below                        ║
+// ║    2. Remove the AmmPrelaunchBanner usage in frontend components:   ║
+// ║       - TradingPoolsSection.tsx  (CreatePoolModal)                  ║
+// ║       - SmartLiquidity.tsx       (CreatePoolModal)                  ║
+// ║       - PoolCreator.tsx          (step gating)                      ║
+// ║    3. Redeploy server + frontend                                    ║
+// ║                                                                     ║
+// ║  This is SEPARATE from the kill switch (emergency halt).            ║
+// ║  This is a planned pre-launch hold.                                 ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+const AMM_PRELAUNCH_LOCKED = true;
+const AMM_PRELAUNCH_MESSAGE = "The AMM is not yet live. Pool creation, liquidity, and swaps will be enabled after testing and security audits are complete.";
+
 // ── AMM Kill Switch ─────────────────────────────────────────────────
 // Owner-only circuit breaker. When active, all swaps and new liquidity
 // additions are rejected. LP removals remain open (users must always
@@ -748,6 +770,7 @@ export function registerAmmRoutes(app: Hono): void {
         active: state?.active ?? false,
         activatedAt: state?.activatedAt ?? null,
         reason: state?.reason ?? null,
+        prelaunchLocked: AMM_PRELAUNCH_LOCKED,
       });
     } catch {
       return c.json({ active: false }, 500);
@@ -839,6 +862,11 @@ export function registerAmmRoutes(app: Hono): void {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
+      // ── Pre-launch lock: block all pool creation until audits complete ──
+      if (AMM_PRELAUNCH_LOCKED) {
+        return c.json({ error: AMM_PRELAUNCH_MESSAGE, code: "AMM_PRELAUNCH" }, 503);
+      }
+
       // ── AMM kill switch: block pool creation ──
       if (await isAmmKilled()) {
         return c.json({ error: "AMM trading is temporarily halted by protocol owner", code: "AMM_HALTED" }, 503);
@@ -921,6 +949,11 @@ export function registerAmmRoutes(app: Hono): void {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+      // ── Pre-launch lock ──
+      if (AMM_PRELAUNCH_LOCKED) {
+        return c.json({ error: AMM_PRELAUNCH_MESSAGE, code: "AMM_PRELAUNCH" }, 503);
+      }
 
       // ── AMM kill switch: block new liquidity additions ──
       if (await isAmmKilled()) {
@@ -1206,6 +1239,11 @@ export function registerAmmRoutes(app: Hono): void {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+      // ── Pre-launch lock ──
+      if (AMM_PRELAUNCH_LOCKED) {
+        return c.json({ error: AMM_PRELAUNCH_MESSAGE, code: "AMM_PRELAUNCH" }, 503);
+      }
 
       // ── AMM kill switch: block swaps ──
       if (await isAmmKilled()) {

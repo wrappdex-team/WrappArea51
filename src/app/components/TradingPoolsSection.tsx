@@ -41,6 +41,7 @@ import {
   type LPPosition,
 } from "../utils/smart-liquidity";
 import { log } from "../utils/logger";
+import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 
 // ── Stat Card ───────────────────────────────────────────────────────
 
@@ -67,41 +68,15 @@ function StatCard({ label, value, isDark, accent }: { label: string; value: stri
 
 // ── Create Pool Modal ───────────────────────────────────────────────
 
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+// │  The CreatePoolModal currently shows only AmmPrelaunchBanner.      │
+// │  When AMM_PRELAUNCH_LOCKED is flipped to false in amm.ts,         │
+// │  restore the original form body and remove the banner import.      │
+// └─────────────────────────────────────────────────────────────────────┘
 function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
   isDark: boolean; accountId: string; onClose: () => void; onCreated: () => void;
 }) {
-  const tokens = WRAPPED_TOKENS;
-  const [tokenAIdx, setTokenAIdx] = useState(0);
-  const [tokenBIdx, setTokenBIdx] = useState(2);
-  const [name, setName] = useState("");
-  const [status, setStatus] = useState<"idle" | "creating" | "done" | "error">("idle");
-  const [error, setError] = useState("");
-
-  const handleCreate = async () => {
-    if (tokenAIdx === tokenBIdx) { setError("Select different tokens"); return; }
-    setStatus("creating");
-    setError("");
-    try {
-      await authenticate(accountId);
-      const result = await createPool(tokens[tokenAIdx].symbol, tokens[tokenBIdx].symbol, 10, accountId, name || undefined);
-      if (result.success) {
-        setStatus("done");
-        playVipConfirm();
-        toast.success("Pool created successfully!");
-        onCreated();
-        setTimeout(onClose, 1500);
-      } else {
-        setError(result.error || "Failed");
-        setStatus("error");
-      }
-    } catch (err: any) {
-      setError(err.message || "Authentication failed");
-      setStatus("error");
-    }
-  };
-
-  const inputClass = isDark ? "bg-slate-800/50 border border-pink-500/10" : "bg-gray-50 border border-gray-200";
-
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       <motion.div
@@ -115,56 +90,7 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         className={`relative w-full max-w-md mx-4 rounded-2xl p-6 ${isDark ? "bg-[#12121a] border border-pink-500/30" : "bg-white border border-gray-200 shadow-2xl"}`}
       >
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
-              <Plus className="w-4 h-4 text-white" />
-            </div>
-            <h3 className="font-bold text-lg">Create Pool</h3>
-          </div>
-          <button onClick={onClose} className={`p-2 rounded-lg ${isDark ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}>
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className={`rounded-xl p-3 mb-4 text-xs ${isDark ? "bg-blue-900/10 border border-blue-500/20 text-blue-300" : "bg-blue-50 border border-blue-200 text-blue-700"}`}>
-          <Info className="w-3.5 h-3.5 inline mr-1" />
-          Pool starts with 0 reserves. Add liquidity after creating.
-        </div>
-
-        <label className={`text-xs font-bold mb-1 block ${isDark ? "text-slate-300" : "text-gray-700"}`}>Pool Name (optional)</label>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. WBTC/USDC Core" className={`w-full rounded-lg px-3 py-2 text-sm mb-3 outline-none ${inputClass}`} />
-
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <label className={`text-xs font-bold mb-1 block ${isDark ? "text-slate-300" : "text-gray-700"}`}>Token A</label>
-            <select value={tokenAIdx} onChange={e => setTokenAIdx(Number(e.target.value))} className={`w-full rounded-lg px-3 py-2 text-sm outline-none ${inputClass}`}>
-              {tokens.map((t, i) => <option key={t.tokenId} value={i}>{t.symbol}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={`text-xs font-bold mb-1 block ${isDark ? "text-slate-300" : "text-gray-700"}`}>Token B</label>
-            <select value={tokenBIdx} onChange={e => setTokenBIdx(Number(e.target.value))} className={`w-full rounded-lg px-3 py-2 text-sm outline-none ${inputClass}`}>
-              {tokens.map((t, i) => <option key={t.tokenId} value={i}>{t.symbol}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div className={`flex items-center justify-between rounded-lg px-3 py-2.5 mb-4 ${inputClass}`}>
-          <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>Swap Fee</span>
-          <span className={`text-xs font-mono font-bold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>0.25% <span className={`font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>(all to pool · 0.05% tracked for DAO)</span></span>
-        </div>
-
-        {error && <div className="text-red-400 text-xs mb-3"><AlertCircle className="w-3 h-3 inline mr-1" />{error}</div>}
-
-        <motion.button
-          onClick={handleCreate}
-          disabled={status === "creating" || status === "done"}
-          whileTap={{ scale: 0.97 }}
-          className={`w-full py-3 rounded-xl font-bold text-white transition-all ${status === "done" ? "bg-emerald-500" : "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 hover:shadow-[0_0_20px_rgba(16,185,129,0.3)]"}`}
-        >
-          {status === "creating" ? "Creating..." : status === "done" ? "Pool Created!" : "Create Pool"}
-        </motion.button>
+        <AmmPrelaunchBanner isDark={isDark} onClose={onClose} />
       </motion.div>
     </div>
   );
@@ -172,46 +98,14 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
 
 // ── Add Liquidity Modal ─────────────────────────────────────────────
 
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+// │  AddLiquidityModal shows AmmPrelaunchBanner while AMM is locked.  │
+// │  Restore original form body when AMM_PRELAUNCH_LOCKED = false.    │
+// └─────────────────────────────────────────────────────────────────────┘
 function AddLiquidityModal({ pool, isDark, accountId, onClose, onDone }: {
   pool: PoolState; isDark: boolean; accountId: string; onClose: () => void; onDone: () => void;
 }) {
-  const [amtA, setAmtA] = useState("");
-  const [amtB, setAmtB] = useState("");
-  const [status, setStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
-  const [error, setError] = useState("");
-
-  const seedA = WRAPPED_TOKENS.find(t => t.symbol === pool.tokenA);
-  const seedB = WRAPPED_TOKENS.find(t => t.symbol === pool.tokenB);
-
-  const handleAdd = async () => {
-    const a = parseFloat(amtA);
-    const b = parseFloat(amtB);
-    if (!a || !b || a <= 0 || b <= 0) { setError("Both amounts required"); return; }
-    const rawA = BigInt(Math.floor(a * (10 ** (seedA?.decimals || 8)))).toString();
-    const rawB = BigInt(Math.floor(b * (10 ** (seedB?.decimals || 8)))).toString();
-    setStatus("adding");
-    setError("");
-    try {
-      await authenticate(accountId);
-      const result = await addLiquidity(pool.id, rawA, rawB, accountId);
-      if (result.success) {
-        setStatus("done");
-        playVipConfirm();
-        toast.success("Liquidity added!");
-        onDone();
-        setTimeout(onClose, 1500);
-      } else {
-        setError(result.error || "Failed");
-        setStatus("error");
-      }
-    } catch (err: any) {
-      setError(err.message || "Authentication failed");
-      setStatus("error");
-    }
-  };
-
-  const inputClass = isDark ? "bg-slate-800/50 border border-pink-500/10" : "bg-gray-50 border border-gray-200";
-
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -220,39 +114,7 @@ function AddLiquidityModal({ pool, isDark, accountId, onClose, onDone }: {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         className={`relative w-full max-w-md mx-4 rounded-2xl p-6 ${isDark ? "bg-[#12121a] border border-pink-500/30" : "bg-white border border-gray-200 shadow-2xl"}`}
       >
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="font-bold">Add Liquidity</h3>
-            <p className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{pool.name}</p>
-          </div>
-          <button onClick={onClose} className={`p-2 rounded-lg ${isDark ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}><X className="w-5 h-5" /></button>
-        </div>
-
-        {pool.lpTotalSupply === "0" && (
-          <div className={`rounded-xl p-3 mb-4 text-xs ${isDark ? "bg-amber-900/10 border border-amber-500/20 text-amber-300" : "bg-amber-50 border border-amber-200 text-amber-700"}`}>
-            <AlertCircle className="w-3.5 h-3.5 inline mr-1" />
-            First deposit — you set the initial price ratio. Choose carefully.
-          </div>
-        )}
-
-        <div className="space-y-3 mb-4">
-          <div>
-            <label className={`text-xs font-bold mb-1 block ${isDark ? "text-slate-300" : "text-gray-700"}`}>{pool.tokenA} Amount</label>
-            <input type="number" placeholder="0.00" value={amtA} onChange={e => setAmtA(e.target.value)} className={`w-full rounded-lg px-3 py-2 outline-none ${inputClass}`} />
-          </div>
-          <div>
-            <label className={`text-xs font-bold mb-1 block ${isDark ? "text-slate-300" : "text-gray-700"}`}>{pool.tokenB} Amount</label>
-            <input type="number" placeholder="0.00" value={amtB} onChange={e => setAmtB(e.target.value)} className={`w-full rounded-lg px-3 py-2 outline-none ${inputClass}`} />
-          </div>
-        </div>
-
-        {error && <div className="text-red-400 text-xs mb-3"><AlertCircle className="w-3 h-3 inline mr-1" />{error}</div>}
-
-        <motion.button onClick={handleAdd} disabled={status === "adding" || status === "done"} whileTap={{ scale: 0.97 }}
-          className={`w-full py-3 rounded-xl font-bold text-white transition-all ${status === "done" ? "bg-emerald-500" : "bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 hover:shadow-[0_0_20px_rgba(236,72,153,0.3)]"}`}
-        >
-          {status === "adding" ? "Adding..." : status === "done" ? "Liquidity Added!" : "Add Liquidity"}
-        </motion.button>
+        <AmmPrelaunchBanner isDark={isDark} onClose={onClose} />
       </motion.div>
     </div>
   );
@@ -359,7 +221,7 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
   );
 }
 
-// ── Main Pools Section ───────────────────────────────────��──────────
+// ── Main Pools Section ─────────────────────────────────────────────
 
 interface TradingPoolsSectionProps {
   isDark: boolean;
