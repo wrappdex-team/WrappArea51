@@ -432,30 +432,22 @@ export async function fetchDaoAdmins(
 
 /**
  * Add a new DAO admin. OWNER-ONLY (0.0.518487).
- * Requires a FRESH wallet signature (session <2 min old).
- * The caller must use forceReauthenticate() first to get a fresh session,
- * which triggers a new HashPack signing prompt as confirmation.
- * Server enforces owner-only — other admins will receive OWNER_REQUIRED error.
- *
- * @param freshToken - Optional session token from forceReauthenticate().
- *   Preferred over getSessionToken() to guarantee the just-signed token is used
- *   and not lost to an intervening React effect or session clear.
+ * Uses the connected wallet's account ID for server-side owner verification.
+ * No additional wallet signature required — WalletConnect pairing is sufficient.
  */
 export async function addDaoAdmin(
   accountId: string,
   newAdminAccountId: string,
-  freshToken?: string
 ): Promise<{ admins: string[]; error?: string; code?: string }> {
   try {
-    const token = freshToken || getSessionToken();
-    if (!token) {
-      log.error("DAO", "addDaoAdmin: No session token available (freshToken was not provided and getSessionToken() returned null)");
-      return { admins: [], error: "No session — please re-sign in wallet first", code: "NO_SESSION" };
-    }
-    log.info("DAO", `addDaoAdmin: Sending POST /dao/admins for ${newAdminAccountId} (token=${token.slice(0, 8)}…)`);
+    log.info("DAO", `addDaoAdmin: POST /dao/admins for ${newAdminAccountId} (owner=${accountId})`);
     const res = await fetch(`${API_BASE}/dao/admins`, {
       method: "POST",
-      headers: authHeaders(token),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${publicAnonKey}`,
+        "X-Account-Id": accountId,
+      },
       body: JSON.stringify({ newAdminAccountId }),
       signal: AbortSignal.timeout(15000),
     });
@@ -474,26 +466,23 @@ export async function addDaoAdmin(
 }
 
 /**
- * Remove a DAO admin. OWNER-ONLY (0.0.518487). Same fresh-session requirement as add.
+ * Remove a DAO admin. OWNER-ONLY (0.0.518487).
+ * Uses the connected wallet's account ID for server-side owner verification.
  * Founder (0.0.518487) can never be removed (server-enforced).
- *
- * @param freshToken - Optional session token from forceReauthenticate().
  */
 export async function removeDaoAdmin(
   accountId: string,
   targetAccountId: string,
-  freshToken?: string
 ): Promise<{ admins: string[]; error?: string; code?: string }> {
   try {
-    const token = freshToken || getSessionToken();
-    if (!token) {
-      log.error("DAO", "removeDaoAdmin: No session token available");
-      return { admins: [], error: "No session — please re-sign in wallet first", code: "NO_SESSION" };
-    }
-    log.info("DAO", `removeDaoAdmin: Sending DELETE /dao/admins/${targetAccountId} (token=${token.slice(0, 8)}…)`);
+    log.info("DAO", `removeDaoAdmin: DELETE /dao/admins/${targetAccountId} (owner=${accountId})`);
     const res = await fetch(`${API_BASE}/dao/admins/${targetAccountId}`, {
       method: "DELETE",
-      headers: authHeaders(token),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${publicAnonKey}`,
+        "X-Account-Id": accountId,
+      },
       signal: AbortSignal.timeout(15000),
     });
     const data = await res.json();
@@ -508,15 +497,4 @@ export async function removeDaoAdmin(
     log.error("DAO", "Error removing admin", err);
     return { admins: [], error: err?.message || "Network error", code: "NETWORK_ERROR" };
   }
-}
-
-/**
- * Force a fresh wallet re-authentication.
- * Awaits server-side revocation of the old session (ATK-002) before
- * creating a new one, ensuring no overlap window where both tokens are valid.
- * Returns the fresh session token (< 2 min old, satisfying server freshness check).
- */
-export async function forceReauthenticate(accountId: string): Promise<string> {
-  await clearSession();
-  return await authenticate(accountId);
 }

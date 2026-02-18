@@ -26,7 +26,6 @@ import {
   UserPlus,
   Shield,
   X,
-  KeyRound,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -58,7 +57,6 @@ import {
   fetchDaoAdmins,
   addDaoAdmin,
   removeDaoAdmin,
-  forceReauthenticate,
   formatTokenCount,
   formatCommentTime,
   timeRemaining,
@@ -1632,7 +1630,7 @@ function AdminManagementPanel({
 }) {
   const { isDark } = useTheme();
   const [newAdminId, setNewAdminId] = useState("");
-  const [step, setStep] = useState<"idle" | "confirm-add" | "signing" | "confirm-remove">("idle");
+  const [step, setStep] = useState<"idle" | "confirm-add" | "confirm-remove">("idle");
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1640,7 +1638,7 @@ function AdminManagementPanel({
   const alreadyAdmin = adminList.includes(newAdminId.trim());
   const isAtLimit = adminList.length >= 10;
 
-  // ── Add Admin Flow: idle → confirm-add → signing (wallet prompt) → API call
+  // ── Add Admin: idle → confirm-add → API call (no wallet signing needed)
   const handleStartAdd = () => {
     if (!isValidFormat || alreadyAdmin || isAtLimit) return;
     setError(null);
@@ -1648,52 +1646,29 @@ function AdminManagementPanel({
   };
 
   const handleConfirmAdd = async () => {
-    setStep("signing");
     setError(null);
     setActionLoading(true);
     try {
-      // Step 1: Force re-authentication — clears old session, issues new challenge,
-      // user signs in wallet, server verifies ED25519 sig → fresh session token
-      console.log("[DAO-Admin] Starting forceReauthenticate for add admin…");
-      const freshToken = await forceReauthenticate(accountId);
-      console.log(`[DAO-Admin] forceReauthenticate succeeded, token=${freshToken.slice(0, 8)}…`);
-
-      // Step 2: Use the fresh token DIRECTLY (not getSessionToken()) to guarantee
-      // the just-signed token is used — eliminates any race with React effects
-      // or session state that could clear _currentSession between calls
-      const result = await addDaoAdmin(accountId, newAdminId.trim(), freshToken);
+      console.log(`[DAO-Admin] Adding admin ${newAdminId.trim()} via owner ${accountId}`);
+      const result = await addDaoAdmin(accountId, newAdminId.trim());
       if (result.error) {
         console.error(`[DAO-Admin] addDaoAdmin error: code=${result.code} msg=${result.error}`);
         setError(`${result.error}${result.code ? ` [${result.code}]` : ""}`);
-        setStep("idle");
       } else {
         setAdminList(result.admins);
         setNewAdminId("");
-        setStep("idle");
         toast.success(`Admin added: ${newAdminId.trim()}`, { duration: 4000 });
       }
     } catch (err: any) {
       console.error("[DAO-Admin] handleConfirmAdd exception:", err);
-      const msg = err?.message || "Failed to add admin";
-      // Show actionable guidance based on common failure modes
-      if (msg.includes("Signing failed") || msg.includes("rejected")) {
-        setError("Wallet signing was rejected or timed out. Please try again and approve the signing prompt in HashPack.");
-      } else if (msg.includes("Could not extract signature")) {
-        setError("Could not read signature from wallet. Try disconnecting and reconnecting your wallet, then retry.");
-      } else if (msg.includes("Signature verification failed")) {
-        setError("Server could not verify the wallet signature. Disconnect wallet, reconnect, and retry.");
-      } else if (msg.includes("not connected")) {
-        setError("Wallet is not connected. Please reconnect HashPack and try again.");
-      } else {
-        setError(msg);
-      }
-      setStep("idle");
+      setError(err?.message || "Failed to add admin");
     } finally {
+      setStep("idle");
       setActionLoading(false);
     }
   };
 
-  // ── Remove Admin Flow: confirm-remove → signing → API call
+  // ── Remove Admin: confirm-remove → API call (no wallet signing needed)
   const handleStartRemove = (target: string) => {
     setError(null);
     setRemoveTarget(target);
@@ -1702,39 +1677,24 @@ function AdminManagementPanel({
 
   const handleConfirmRemove = async () => {
     if (!removeTarget) return;
-    setStep("signing");
     setError(null);
     setActionLoading(true);
     try {
-      console.log(`[DAO-Admin] Starting forceReauthenticate for remove ${removeTarget}…`);
-      const freshToken = await forceReauthenticate(accountId);
-      console.log(`[DAO-Admin] forceReauthenticate succeeded, token=${freshToken.slice(0, 8)}…`);
-
-      const result = await removeDaoAdmin(accountId, removeTarget, freshToken);
+      console.log(`[DAO-Admin] Removing admin ${removeTarget} via owner ${accountId}`);
+      const result = await removeDaoAdmin(accountId, removeTarget);
       if (result.error) {
         console.error(`[DAO-Admin] removeDaoAdmin error: code=${result.code} msg=${result.error}`);
         setError(`${result.error}${result.code ? ` [${result.code}]` : ""}`);
-        setStep("idle");
       } else {
         setAdminList(result.admins);
         setRemoveTarget(null);
-        setStep("idle");
         toast.success(`Admin removed: ${removeTarget}`, { duration: 4000 });
       }
     } catch (err: any) {
       console.error("[DAO-Admin] handleConfirmRemove exception:", err);
-      const msg = err?.message || "Failed to remove admin";
-      if (msg.includes("Signing failed") || msg.includes("rejected")) {
-        setError("Wallet signing was rejected or timed out. Please try again and approve the signing prompt in HashPack.");
-      } else if (msg.includes("Signature verification failed")) {
-        setError("Server could not verify the wallet signature. Disconnect wallet, reconnect, and retry.");
-      } else if (msg.includes("not connected")) {
-        setError("Wallet is not connected. Please reconnect HashPack and try again.");
-      } else {
-        setError(msg);
-      }
-      setStep("idle");
+      setError(err?.message || "Failed to remove admin");
     } finally {
+      setStep("idle");
       setActionLoading(false);
     }
   };
@@ -1764,15 +1724,6 @@ function AdminManagementPanel({
             {adminList.length}/10 admins &middot; Founder 0.0.518487 is permanent
           </p>
         </div>
-      </div>
-
-      {/* Security notice */}
-      <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/15 rounded-lg p-3">
-        <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-        <p className={`text-xs leading-relaxed ${isDark ? "text-amber-400/80" : "text-amber-600/80"}`}>
-          Adding or removing admins requires a <strong className="text-amber-300">fresh wallet signature</strong> for
-          security confirmation. Your HashPack wallet will prompt you to sign before the change is applied.
-        </p>
       </div>
 
       {/* Current admin list */}
@@ -1807,11 +1758,11 @@ function AdminManagementPanel({
                   You
                 </span>
               )}
-              {!isFounder && !isRemoving && (
+              {!isFounder && !isRemoving && step === "idle" && (
                 <Tip content="Remove admin" side="left">
                 <button
                   onClick={() => handleStartRemove(admin)}
-                  disabled={actionLoading || step !== "idle"}
+                  disabled={actionLoading}
                   className="text-slate-500 hover:text-red-400 transition-colors disabled:opacity-30 p-0.5"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -1825,8 +1776,8 @@ function AdminManagementPanel({
                     disabled={actionLoading}
                     className="px-2 py-1 rounded text-xs bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center gap-1"
                   >
-                    {actionLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <KeyRound className="w-2.5 h-2.5" />}
-                    Sign & Remove
+                    {actionLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}
+                    Remove
                   </button>
                   <button
                     onClick={handleCancel}
@@ -1882,7 +1833,7 @@ function AdminManagementPanel({
         </div>
       )}
 
-      {/* Confirm add step */}
+      {/* Confirm add dialog */}
       {step === "confirm-add" && (
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -1896,8 +1847,7 @@ function AdminManagementPanel({
             {newAdminId.trim()}
           </div>
           <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-            This will give them DAO admin privileges: proposal create/edit/delete rights.
-            Only the owner (0.0.518487) can add or remove admins. Your wallet will prompt you to sign.
+            This will give them proposal create/edit/delete rights. Only the owner (0.0.518487) can add or remove admins.
           </p>
           <div className="flex gap-2">
             <button
@@ -1905,8 +1855,8 @@ function AdminManagementPanel({
               disabled={actionLoading}
               className="flex-1 px-4 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white disabled:opacity-50"
             >
-              {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
-              Sign & Confirm
+              {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+              Confirm Add
             </button>
             <button
               onClick={handleCancel}
@@ -1914,19 +1864,6 @@ function AdminManagementPanel({
             >
               Cancel
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Signing in progress */}
-      {step === "signing" && (
-        <div className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-          <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
-          <div>
-            <p className="text-sm text-blue-300">Waiting for wallet signature...</p>
-            <p className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Check your HashPack wallet for the signing prompt
-            </p>
           </div>
         </div>
       )}

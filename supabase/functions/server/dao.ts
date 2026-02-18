@@ -19,8 +19,7 @@ import {
   withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
-import { requireAuth, AUTH_SESSION_PREFIX, requireOwner, logAdminAction, OWNER_ACCOUNT } from "./auth.ts";
-import type { AuthSession } from "./auth.ts";
+import { requireAuth, requireOwner, logAdminAction, OWNER_ACCOUNT } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
 // ── Sharded KV Storage ─────────────────────────────────────────────
@@ -64,7 +63,6 @@ function daoProposalLock(proposalId: string): KvLockConfig {
 const DAO_ADMINS_KEY = "dao_admin_accounts";
 const DAO_FOUNDER_ACCOUNT = "0.0.518487";
 const DAO_MAX_ADMINS = 10;
-const DAO_ADMIN_FRESH_SESSION_MS = 2 * 60 * 1000; // session must be <2 min old
 
 async function loadDaoAdmins(): Promise<string[]> {
   try {
@@ -93,37 +91,6 @@ async function getDaoAdminsCached(): Promise<string[]> {
 
 async function isDaoAdminAsync(accountId: string): Promise<boolean> {
   return (await getDaoAdminsCached()).includes(accountId);
-}
-
-/** Require a "fresh" session (created <2 min ago) for admin management ops */
-async function requireFreshAdminAuth(c: any): Promise<{ accountId: string } | Response> {
-  const token = c.req.header("x-session-token") || "";
-  if (!token || !/^[0-9a-f]{64}$/.test(token)) {
-    console.log(`[DAO-ADMIN] requireFreshAdminAuth: no valid token header (got ${token.length} chars)`);
-    return c.json({ error: "Authentication required — sign a fresh challenge", code: "AUTH_REQUIRED" }, 401);
-  }
-  try {
-    const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
-    if (!session) {
-      console.log(`[DAO-ADMIN] requireFreshAdminAuth: session not found in KV for token=${token.slice(0, 8)}…`);
-      return c.json({ error: "Session not found in server store — it may have been revoked. Please re-sign.", code: "SESSION_NOT_FOUND" }, 401);
-    }
-    if (Date.now() > session.expiresAt) {
-      console.log(`[DAO-ADMIN] requireFreshAdminAuth: session expired for ${session.accountId} (expired ${Date.now() - session.expiresAt}ms ago)`);
-      kv.del(AUTH_SESSION_PREFIX + token).catch(() => {});
-      return c.json({ error: "Session expired", code: "SESSION_EXPIRED" }, 401);
-    }
-    const age = Date.now() - session.createdAt;
-    if (age > DAO_ADMIN_FRESH_SESSION_MS) {
-      console.log(`[DAO-ADMIN] requireFreshAdminAuth: session too old for ${session.accountId} (age=${age}ms, max=${DAO_ADMIN_FRESH_SESSION_MS}ms)`);
-      return c.json({ error: "Admin operations require a fresh wallet signature. Please re-sign to confirm.", code: "SESSION_NOT_FRESH", sessionAgeMs: age, maxAgeMs: DAO_ADMIN_FRESH_SESSION_MS }, 403);
-    }
-    console.log(`[DAO-ADMIN] requireFreshAdminAuth: OK — ${session.accountId} session age=${age}ms`);
-    return { accountId: session.accountId };
-  } catch (err) {
-    console.log(`[DAO-ADMIN] requireFreshAdminAuth exception: ${err}`);
-    return c.json({ error: "Authentication check failed", code: "AUTH_CHECK_FAILED" }, 401);
-  }
 }
 
 // ── Voting Power ────────────────────────────────────────────────────
@@ -527,7 +494,7 @@ export function registerDaoRoutes(app: Hono): void {
 
   // ═══════════════════════════════════════════════════════════════════════
   // DAO ADMIN MANAGEMENT
-  // ══════════════════════════════════════════════════��════════════════════
+  // ══════════════════════════════════════════════════════════════════════
   //
   // OWNER-ONLY add/remove. Only 0.0.518487 can modify the admin list.
   // This prevents admin chain escalation (compromised admin adding hostile
@@ -554,12 +521,13 @@ export function registerDaoRoutes(app: Hono): void {
     }
   });
 
-  // POST /dao/admins — OWNER-ONLY: add a new admin (requires FRESH session)
+  // POST /dao/admins — OWNER-ONLY: add a new admin
+  // Auth: requireOwner (session token OR wallet-connected X-Account-Id)
   app.post(`${ROUTE_PREFIX}/dao/admins`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-      const auth = await requireFreshAdminAuth(c);
+      const auth = await requireOwner(c);
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
 
@@ -595,12 +563,13 @@ export function registerDaoRoutes(app: Hono): void {
     }
   });
 
-  // DELETE /dao/admins/:accountId — OWNER-ONLY: remove an admin (requires FRESH session)
+  // DELETE /dao/admins/:accountId — OWNER-ONLY: remove an admin
+  // Auth: requireOwner (session token OR wallet-connected X-Account-Id)
   app.delete(`${ROUTE_PREFIX}/dao/admins/:accountId`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-      const auth = await requireFreshAdminAuth(c);
+      const auth = await requireOwner(c);
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
 

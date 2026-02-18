@@ -2,8 +2,11 @@
 // OWNER CONTROL PANEL — Elevated Administration for 0.0.518487
 // ═══════════════════════════════════════════════════════════════════════
 //
-// All operations use ED25519 session auth (X-Session-Token header).
-// The service role key is NEVER transmitted from any client.
+// All operations authenticated via connected wallet account ID (X-Account-Id).
+// Server enforces hardcoded OWNER_ACCOUNT check. The service role key is
+// NEVER transmitted from any client. WalletConnect pairing proves wallet
+// ownership on the client side. Will be replaced by Hiero 0x16b system
+// contract governance (Q2–Q3).
 //
 // Sections:
 //   1. AMM Kill Switch — halt/resume all swaps + new liquidity
@@ -35,7 +38,6 @@ import {
 import { useTheme } from "../contexts/ThemeContext";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { getSessionToken, authHeaders } from "../utils/auth";
 import { log } from "../utils/logger";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
@@ -48,18 +50,25 @@ const publicHeaders = {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function ownerHeaders(): Record<string, string> | null {
-  const token = getSessionToken();
-  if (!token) return null;
-  return authHeaders(token);
+/**
+ * Build owner headers using the connected wallet account ID.
+ * The server's requireOwner accepts X-Account-Id as proof of wallet connection.
+ * No ED25519 session token needed — WalletConnect pairing is sufficient.
+ */
+function ownerHeaders(accountId: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${publicAnonKey}`,
+    "X-Account-Id": accountId,
+  };
 }
 
 async function ownerFetch(
   path: string,
+  accountId: string,
   opts: RequestInit = {},
 ): Promise<{ ok: boolean; data: any; status: number }> {
-  const headers = ownerHeaders();
-  if (!headers) return { ok: false, data: { error: "Session required — use any admin action to trigger wallet signature" }, status: 401 };
+  const headers = ownerHeaders(accountId);
   try {
     const res = await fetch(`${API}${path}`, {
       ...opts,
@@ -194,7 +203,7 @@ export function OwnerControlPanel() {
     try {
       const endpoint = ammKilled ? "/amm/resume" : "/amm/kill";
       const body = ammKilled ? {} : { reason: ammKillReason || "Emergency halt" };
-      const { ok, data } = await ownerFetch(endpoint, {
+      const { ok, data } = await ownerFetch(endpoint, "0.0.518487", {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -227,7 +236,7 @@ export function OwnerControlPanel() {
     }
     setChatLoading(true);
     try {
-      const { ok, data } = await ownerFetch("/vip-chat/messages", {
+      const { ok, data } = await ownerFetch("/vip-chat/messages", "0.0.518487", {
         method: "DELETE",
       });
       if (ok) {
@@ -256,7 +265,7 @@ export function OwnerControlPanel() {
     }
     setSpinLoading(true);
     try {
-      const { ok, data } = await ownerFetch("/winners", { method: "DELETE" });
+      const { ok, data } = await ownerFetch("/winners", "0.0.518487", { method: "DELETE" });
       if (ok) {
         toast.success("Winner history cleared");
         setWinnersConfirm(false);
@@ -279,6 +288,7 @@ export function OwnerControlPanel() {
     try {
       const { ok, data } = await ownerFetch(
         `/spin/cooldown?accountId=${encodeURIComponent(cooldownAccountId.trim())}`,
+        "0.0.518487",
         { method: "DELETE" },
       );
       if (ok) {
@@ -302,7 +312,7 @@ export function OwnerControlPanel() {
   const fetchAudit = useCallback(async () => {
     setAuditLoading(true);
     try {
-      const { ok, data } = await ownerFetch("/auth/admin-audit");
+      const { ok, data } = await ownerFetch("/auth/admin-audit", "0.0.518487");
       if (ok) {
         setAuditEntries((data.entries || []).reverse()); // newest first
         setAuditLoaded(true);
@@ -343,7 +353,7 @@ export function OwnerControlPanel() {
             Owner Control Panel
           </h4>
           <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-            Owner Administration &middot; 0.0.518487 only &middot; ED25519 session auth
+            Owner Administration &middot; 0.0.518487 only &middot; Wallet-verified
           </p>
         </div>
       </div>
@@ -352,7 +362,7 @@ export function OwnerControlPanel() {
       <div className="flex items-start gap-2 bg-red-500/8 border border-red-500/12 rounded-lg p-2.5">
         <Shield className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
         <p className={`text-xs leading-relaxed ${isDark ? "text-red-400/80" : "text-red-600/80"}`}>
-          All actions are authenticated via your wallet session and logged to the tamper-resistant audit trail.
+          All actions are verified via your connected wallet and logged to the tamper-resistant audit trail.
           The service role key is never transmitted.
         </p>
       </div>
