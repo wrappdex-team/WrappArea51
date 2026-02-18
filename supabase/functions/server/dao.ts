@@ -522,7 +522,7 @@ export function registerDaoRoutes(app: Hono): void {
   });
 
   // POST /dao/admins — OWNER-ONLY: add a new admin
-  // Auth: requireOwner (session token OR wallet-connected X-Account-Id)
+  // Auth: requireOwner (ED25519 session token ONLY — ghost audit C1)
   app.post(`${ROUTE_PREFIX}/dao/admins`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -564,7 +564,7 @@ export function registerDaoRoutes(app: Hono): void {
   });
 
   // DELETE /dao/admins/:accountId — OWNER-ONLY: remove an admin
-  // Auth: requireOwner (session token OR wallet-connected X-Account-Id)
+  // Auth: requireOwner (ED25519 session token ONLY — ghost audit C1)
   app.delete(`${ROUTE_PREFIX}/dao/admins/:accountId`, async (c) => {
     try {
       const ip = getClientIp(c);

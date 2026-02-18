@@ -1,13 +1,14 @@
 import { Lock } from "lucide-react";
 
 /**
- * AmmPrelaunchBanner — displayed inside Create Pool modals and the
- * PoolCreator while the AMM is in pre-launch lockdown.
+ * AmmPrelaunchBanner — displayed inside every AMM entry point while
+ * the AMM is in pre-launch lockdown.
  *
  * ┌─────────────────────────────────────────────────────────────────┐
  * │  SENIOR DEV NOTE                                               │
- * │  Remove this component (and its usages) when AMM goes live.    │
+ * │  This component can be deleted once AMM goes live.             │
  * │  Backend flag: AMM_PRELAUNCH_LOCKED in amm.ts                  │
+ * │  See the master go-live checklist in amm.ts for all usages.    │
  * └─────────────────────────────────────────────────────────────────┘
  */
 export function AmmPrelaunchBanner({

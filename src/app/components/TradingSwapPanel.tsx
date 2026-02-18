@@ -33,6 +33,7 @@ import {
 import { useTheme } from "../contexts/ThemeContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT } from "../assets/brand";
+import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 
 // ── AMM kill switch status polling ──────────────────────────────────
 const AMM_STATUS_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/amm/kill-switch`;
@@ -55,7 +56,7 @@ function GlowBorder({ children, className = "", active = false }: { children: Re
           className="absolute inset-0"
           style={{ background: active ? activeGrad : idleGrad }}
           animate={{ rotate: 360 }}
-          transition={{ duration: 4, repeat: 9999, ease: "linear" }}
+          transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
         />
       </div>
       {/* Inner content with background */}
@@ -117,6 +118,14 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
 
   // ── AMM Kill Switch Status ──────────────────────────────────────
   const [ammHalted, setAmmHalted] = useState(false);
+  // ┌─────────────────────────────────────────────────────────────────────┐
+  // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+  // │  ammPrelaunch is set from the kill-switch endpoint's               │
+  // │  prelaunchLocked field. When true, the entire swap body is         │
+  // │  replaced with AmmPrelaunchBanner. Remove this state +             │
+  // │  conditional when AMM_PRELAUNCH_LOCKED = false in amm.ts.          │
+  // └─────────────────────────────────────────────────────────────────────┘
+  const [ammPrelaunch, setAmmPrelaunch] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +138,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
         if (!cancelled && res.ok) {
           const data = await res.json();
           setAmmHalted(!!data.active);
+          setAmmPrelaunch(!!data.prelaunchLocked);
         }
       } catch { /* ignore — fail-open for status check */ }
     };
@@ -233,7 +243,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
               <div className="flex items-center gap-2.5">
                 <motion.div
                   animate={{ boxShadow: status === "swapping" ? "0 0 16px rgba(236,72,153,0.4)" : "0 0 0px rgba(236,72,153,0)" }}
-                  transition={{ duration: 0.5, repeat: status === "swapping" ? 9999 : 0, repeatType: "reverse" }}
+                  transition={{ duration: 0.5, repeat: status === "swapping" ? Infinity : 0, repeatType: "reverse" }}
                   className="flex-shrink-0"
                 >
                   <img
@@ -263,6 +273,11 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 relative">
             <ParticleBurst show={showParticles} />
 
+            {/* AMM Pre-launch Lock — replaces entire swap body */}
+            {ammPrelaunch ? (
+              <AmmPrelaunchBanner isDark={isDark} />
+            ) : (
+            <>
             {/* AMM Kill Switch Banner */}
             {ammHalted && (
               <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20 flex items-start gap-2.5">
@@ -430,9 +445,12 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                 </motion.div>
               )}
             </AnimatePresence>
+            </>
+            )}
           </div>
 
-          {/* Swap Button */}
+          {/* Swap Button — hidden during prelaunch */}
+          {!ammPrelaunch && (
           <div className="px-4 pb-4 pt-2">
             <motion.button
               onClick={handleSwap}
@@ -456,14 +474,14 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                   ? { backgroundPosition: ["0% 50%", "100% 50%", "0% 50%"] }
                   : undefined
               }
-              transition={!isSwapDisabled ? { duration: 3, repeat: 9999, ease: "linear" } : undefined}
+              transition={!isSwapDisabled ? { duration: 3, repeat: Infinity, ease: "linear" } : undefined}
             >
               {/* Shimmer overlay */}
               {!isSwapDisabled && status !== "swapping" && status !== "success" && (
                 <motion.div
                   className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
                   animate={{ x: ["-100%", "200%"] }}
-                  transition={{ duration: 2, repeat: 9999, ease: "linear", repeatDelay: 1 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear", repeatDelay: 1 }}
                 />
               )}
 
@@ -501,6 +519,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
               </div>
             )}
           </div>
+          )}
         </div>
       </GlowBorder>
     </div>

@@ -5,7 +5,7 @@
  * into the unified Trading terminal with animations and glow effects.
  */
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -13,24 +13,16 @@ import {
   Plus,
   RefreshCw,
   Search,
-  X,
-  AlertCircle,
   ExternalLink,
-  Info,
-  Zap,
   Layers,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { toast } from "sonner";
 import { useWallet } from "../contexts/WalletContext";
-import { authenticate, clearSession } from "../utils/auth";
-import { playVipConfirm, playVipButtonChime } from "../utils/sounds";
+import { playVipButtonChime } from "../utils/sounds";
 import {
   fetchPools,
   getPoolStats,
   refreshOracles,
-  createPool,
-  addLiquidity,
   getLPPosition,
   formatUsd,
   formatFeeBps,

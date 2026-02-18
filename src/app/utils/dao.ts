@@ -1,9 +1,11 @@
 /**
  * HBAR.ħ DAO — Server-Authoritative Governance Client
  *
- * All state in server KV. Auth via wallet-connected X-Account-Id header
+ * All state in server KV. Regular auth via wallet-connected X-Account-Id header
  * (WalletConnect pairing proves wallet ownership client-side). Temporary
  * model until Hiero 0x16b system contract governance (Q2–Q3).
+ * OWNER-ONLY operations (admin add/remove) require ED25519 session tokens
+ * (ghost audit C1 — X-Account-Id fallback removed from requireOwner).
  * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified server-side).
  * Vote weight: 1 per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
  * Admin CRUD restricted to 0.0.518487 + dynamic admin list.
@@ -12,6 +14,7 @@
 import type { HederaTokenBalance } from "./hedera";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { log } from "./logger";
+import { getSessionToken, authHeaders } from "./auth";
 
 // ── API Base ────────────────────────────────────────────────────────
 
@@ -427,22 +430,23 @@ export async function fetchDaoAdmins(
 
 /**
  * Add a new DAO admin. OWNER-ONLY (0.0.518487).
- * Uses the connected wallet's account ID for server-side owner verification.
- * No additional wallet signature required — WalletConnect pairing is sufficient.
+ * Requires an active ED25519 session — the owner must have signed a
+ * challenge message in their wallet before calling this. The server's
+ * requireOwner() ONLY accepts cryptographic session tokens (ghost audit C1).
  */
 export async function addDaoAdmin(
   accountId: string,
   newAdminAccountId: string,
 ): Promise<{ admins: string[]; error?: string; code?: string }> {
   try {
+    const sessionToken = getSessionToken();
+    if (!sessionToken) {
+      return { admins: [], error: "ED25519 session required — sign in as owner first", code: "AUTH_REQUIRED" };
+    }
     log.info("DAO", `addDaoAdmin: POST /dao/admins for ${newAdminAccountId} (owner=${accountId})`);
     const res = await fetch(`${API_BASE}/dao/admins`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${publicAnonKey}`,
-        "X-Account-Id": accountId,
-      },
+      headers: authHeaders(sessionToken),
       body: JSON.stringify({ newAdminAccountId }),
       signal: AbortSignal.timeout(15000),
     });
@@ -462,7 +466,9 @@ export async function addDaoAdmin(
 
 /**
  * Remove a DAO admin. OWNER-ONLY (0.0.518487).
- * Uses the connected wallet's account ID for server-side owner verification.
+ * Requires an active ED25519 session — the owner must have signed a
+ * challenge message in their wallet before calling this. The server's
+ * requireOwner() ONLY accepts cryptographic session tokens (ghost audit C1).
  * Founder (0.0.518487) can never be removed (server-enforced).
  */
 export async function removeDaoAdmin(
@@ -470,14 +476,14 @@ export async function removeDaoAdmin(
   targetAccountId: string,
 ): Promise<{ admins: string[]; error?: string; code?: string }> {
   try {
+    const sessionToken = getSessionToken();
+    if (!sessionToken) {
+      return { admins: [], error: "ED25519 session required — sign in as owner first", code: "AUTH_REQUIRED" };
+    }
     log.info("DAO", `removeDaoAdmin: DELETE /dao/admins/${targetAccountId} (owner=${accountId})`);
     const res = await fetch(`${API_BASE}/dao/admins/${targetAccountId}`, {
       method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${publicAnonKey}`,
-        "X-Account-Id": accountId,
-      },
+      headers: authHeaders(sessionToken),
       signal: AbortSignal.timeout(15000),
     });
     const data = await res.json();

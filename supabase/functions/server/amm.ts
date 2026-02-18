@@ -126,20 +126,23 @@ const PROTOCOL_FEE_ACCUM_LOCK = "sl_pfee_lock_"; // Per-pool lock for fee writes
 const AMM_KILL_SWITCH_KEY = "amm_kill_switch";
 
 // ╔═══════════════════════════════════════════════════════════════════════╗
-// ║  🔒  SENIOR DEV NOTE — PRE-LAUNCH AMM LOCK                         ║
+// ║  SENIOR DEV NOTE — PRE-LAUNCH AMM LOCK                             ║
 // ║                                                                     ║
 // ║  The AMM is temporarily locked while we complete testing & audits.  ║
 // ║  All mutating pool operations (create pool, add liquidity, swap)    ║
 // ║  are blocked at the server level.  The frontend mirrors this with   ║
-// ║  a locked UI state on every Create Pool modal + PoolCreator.        ║
+// ║  a locked UI state on every AMM entry point.                        ║
 // ║                                                                     ║
 // ║  TO GO LIVE:                                                        ║
 // ║    1. Set AMM_PRELAUNCH_LOCKED = false below                        ║
 // ║    2. Remove the AmmPrelaunchBanner usage in frontend components:   ║
-// ║       - TradingPoolsSection.tsx  (CreatePoolModal)                  ║
-// ║       - SmartLiquidity.tsx       (CreatePoolModal)                  ║
-// ║       - PoolCreator.tsx          (step gating)                      ║
-// ║    3. Redeploy server + frontend                                    ║
+// ║       - SmartLiquidity.tsx       (SwapPanel early-return +          ║
+// ║                                   CreatePoolModal + AddLiqModal)    ║
+// ║       - TradingPoolsSection.tsx  (CreatePoolModal + AddLiqModal)    ║
+// ║       - TradingSwapPanel.tsx     (ammPrelaunch state + banner)      ║
+// ║       - PoolCreator.tsx          (AMM_PRELAUNCH_UI_LOCKED gate)     ║
+// ║    3. Delete AmmPrelaunchBanner.tsx once no longer imported          ║
+// ║    4. Redeploy server + frontend                                    ║
 // ║                                                                     ║
 // ║  This is SEPARATE from the kill switch (emergency halt).            ║
 // ║  This is a planned pre-launch hold.                                 ║

@@ -26,6 +26,8 @@ import {
   getChainId,
   switchChain,
   formatAddress,
+  isMobileBrowser,
+  getMetaMaskDeepLink,
 } from "../utils/metamask";
 import {
   LZ_ENDPOINT_IDS,
@@ -243,9 +245,20 @@ export function StargateBridgeWidget({ onClose, isDark }: StargateBridgeWidgetPr
   }, [amount, srcChain.id, dstChain.id, token.symbol, token.decimals, walletAddress, walletChainId]);
 
   // ── Connect wallet ──
+  // On mobile, MetaMask's browser extension isn't available — the user must
+  // open this dApp inside MetaMask Mobile's in-app browser, where
+  // window.ethereum IS injected. We use metamask.app.link deep link to
+  // trigger this. On desktop, fallback to the download page.
   const handleConnect = useCallback(async () => {
     if (!isMetaMaskInstalled()) {
-      window.open("https://metamask.io/download/", "_blank");
+      if (isMobileBrowser()) {
+        // Deep-link into MetaMask Mobile's in-app browser.
+        // window.location.href (not window.open) is required to reliably
+        // trigger app-scheme handling on iOS/Android and avoid popup blockers.
+        window.location.href = getMetaMaskDeepLink();
+      } else {
+        window.open("https://metamask.io/download/", "_blank", "noopener,noreferrer");
+      }
       return;
     }
     try {
@@ -794,7 +807,11 @@ export function StargateBridgeWidget({ onClose, isDark }: StargateBridgeWidgetPr
                   className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white transition-all shadow-lg shadow-cyan-500/20"
                 >
                   <Wallet className="w-4 h-4" />
-                  {isMetaMaskInstalled() ? "Connect Wallet" : "Install MetaMask"}
+                  {isMetaMaskInstalled()
+                    ? "Connect Wallet"
+                    : isMobileBrowser()
+                      ? "Open in MetaMask"
+                      : "Install MetaMask"}
                 </button>
               ) : needsChainSwitch && hasValidAmount && routeSupported ? (
                 <button

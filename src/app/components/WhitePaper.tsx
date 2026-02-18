@@ -1897,7 +1897,7 @@ export function WhitePaper() {
                 "AAVE & DAI token onboarding (HashPort-bridged)",
                 "Circuit breakers for all external services",
                 "1inch DEX aggregator integration",
-                "Wyoming DUNA legal entity formation",
+                "Wyoming DUNA legal entity formation — processing",
                 "Anonymized site-wide activity feed",
               ]}
             />

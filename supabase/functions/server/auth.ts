@@ -271,16 +271,16 @@ const ADMIN_AUDIT_MAX_ENTRIES = 500;
  * Require the OWNER account (0.0.518487) for god-key operations: admin list
  * management, AMM kill switch, chat admin, spin reset, audit log, etc.
  *
- * Auth strategy (tried in order):
- *   1. ED25519 session token (X-Session-Token) — cryptographic proof
- *   2. Wallet-connected header (X-Account-Id) — WalletConnect pairing already
- *      proved wallet ownership on the client side. Temporary fallback until
- *      Hiero 0x16b system contract governance replaces this (Q2–Q3).
+ * Auth: ED25519 session token (X-Session-Token) ONLY — cryptographic proof
+ * that the caller controls the owner wallet's private key.
  *
- * Both paths enforce the account === OWNER_ACCOUNT check server-side.
+ * The X-Account-Id header fallback has been REMOVED (ghost audit C1).
+ * That header is client-supplied and trivially spoofable — any attacker
+ * could execute owner-level operations with a single curl command.
+ * All owner operations now require a signed ED25519 session.
  */
 export async function requireOwner(c: any): Promise<{ accountId: string } | Response> {
-  // Path 1: Try ED25519 session-based auth (strongest)
+  // ED25519 session-based auth — cryptographic proof of wallet ownership
   const session = await validateSession(c);
   if (session) {
     if (session.accountId !== OWNER_ACCOUNT) {
@@ -291,24 +291,15 @@ export async function requireOwner(c: any): Promise<{ accountId: string } | Resp
     return { accountId: session.accountId };
   }
 
-  // Path 2: Wallet-connected fallback — accept X-Account-Id header.
-  // The WalletConnect v2 pairing (hedera_signTransaction approval) already
-  // proves the user controls this wallet. The server enforces the hardcoded
-  // OWNER_ACCOUNT check so spoofing a different ID gains nothing.
+  // Log spoofing attempts for forensics
   const headerAccountId = (c.req.header("x-account-id") || "").trim();
-  if (headerAccountId && headerAccountId === OWNER_ACCOUNT) {
-    console.log(`[AUTH] Owner verified via X-Account-Id header (wallet-connected mode) from IP ${getClientIp(c)}`);
-    return { accountId: OWNER_ACCOUNT };
-  }
-
-  // Neither path succeeded
-  if (headerAccountId && headerAccountId !== OWNER_ACCOUNT) {
-    console.log(`[SECURITY] Non-owner X-Account-Id attempt: ${headerAccountId} from IP ${getClientIp(c)}`);
-    return c.json({ error: "Owner authorization required", code: "OWNER_REQUIRED" }, 403);
+  if (headerAccountId) {
+    const ip = getClientIp(c);
+    console.log(`[SECURITY] Owner endpoint called with X-Account-Id header (ignored — ED25519 session required): ${headerAccountId} from IP ${ip}`);
   }
 
   return c.json({
-    error: "Owner authentication required — connect wallet as 0.0.518487",
+    error: "Owner authentication required — sign in with ED25519 session as 0.0.518487",
     code: "AUTH_REQUIRED",
   }, 401);
 }

@@ -2,11 +2,12 @@
 // OWNER CONTROL PANEL — Elevated Administration for 0.0.518487
 // ═══════════════════════════════════════════════════════════════════════
 //
-// All operations authenticated via connected wallet account ID (X-Account-Id).
-// Server enforces hardcoded OWNER_ACCOUNT check. The service role key is
-// NEVER transmitted from any client. WalletConnect pairing proves wallet
-// ownership on the client side. Will be replaced by Hiero 0x16b system
-// contract governance (Q2–Q3).
+// All operations authenticated via ED25519 challenge-response session.
+// The owner must sign a message in their HashPack wallet to prove they
+// control 0.0.518487's private key. The resulting session token (30-min
+// TTL) is sent as X-Session-Token on every admin request. The server's
+// requireOwner() ONLY accepts ED25519 sessions — the spoofable
+// X-Account-Id header fallback has been removed (ghost audit C1).
 //
 // Sections:
 //   1. AMM Kill Switch — halt/resume all swaps + new liquidity
@@ -34,11 +35,13 @@ import {
   Zap,
   Clock,
   User,
+  KeyRound,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { log } from "../utils/logger";
+import { authenticate, getSessionToken, hasValidSession, authHeaders, clearSession as clearAuthSession } from "../utils/auth";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 
@@ -48,27 +51,32 @@ const publicHeaders = {
   Authorization: `Bearer ${publicAnonKey}`,
 };
 
+const OWNER_ACCOUNT = "0.0.518487";
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /**
- * Build owner headers using the connected wallet account ID.
- * The server's requireOwner accepts X-Account-Id as proof of wallet connection.
- * No ED25519 session token needed — WalletConnect pairing is sufficient.
+ * Get session-authenticated headers for owner operations.
+ * Requires a valid ED25519 session — will throw if not authenticated.
  */
-function ownerHeaders(accountId: string): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${publicAnonKey}`,
-    "X-Account-Id": accountId,
-  };
+function ownerSessionHeaders(): Record<string, string> {
+  const token = getSessionToken();
+  if (!token) {
+    throw new Error("ED25519 session required — sign in first");
+  }
+  return authHeaders(token);
 }
 
 async function ownerFetch(
   path: string,
-  accountId: string,
   opts: RequestInit = {},
 ): Promise<{ ok: boolean; data: any; status: number }> {
-  const headers = ownerHeaders(accountId);
+  let headers: Record<string, string>;
+  try {
+    headers = ownerSessionHeaders();
+  } catch (err: any) {
+    return { ok: false, data: { error: err?.message || "Not authenticated", code: "AUTH_REQUIRED" }, status: 401 };
+  }
   try {
     const res = await fetch(`${API}${path}`, {
       ...opts,
@@ -165,6 +173,43 @@ function Section({
 export function OwnerControlPanel() {
   const { isDark } = useTheme();
 
+  // ── ED25519 Session Auth State ─────────────────────────────────
+  const [isAuthenticated, setIsAuthenticated] = useState(() => hasValidSession(OWNER_ACCOUNT));
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Re-check session validity periodically (handles 30-min TTL expiry)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIsAuthenticated(hasValidSession(OWNER_ACCOUNT));
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSignIn = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await authenticate(OWNER_ACCOUNT);
+      setIsAuthenticated(true);
+      toast.success("Owner session authenticated via ED25519 signature", { duration: 3000 });
+      log.info("OwnerPanel", "ED25519 session established for owner");
+    } catch (err: any) {
+      const msg = err?.message || "Authentication failed";
+      setAuthError(msg);
+      toast.error(`Authentication failed: ${msg}`);
+      log.error("OwnerPanel", "ED25519 auth failed", msg);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await clearAuthSession();
+    setIsAuthenticated(false);
+    toast.info("Owner session revoked");
+  };
+
   // Section toggle states
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     amm: true,
@@ -203,7 +248,7 @@ export function OwnerControlPanel() {
     try {
       const endpoint = ammKilled ? "/amm/resume" : "/amm/kill";
       const body = ammKilled ? {} : { reason: ammKillReason || "Emergency halt" };
-      const { ok, data } = await ownerFetch(endpoint, "0.0.518487", {
+      const { ok, data } = await ownerFetch(endpoint, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -236,7 +281,7 @@ export function OwnerControlPanel() {
     }
     setChatLoading(true);
     try {
-      const { ok, data } = await ownerFetch("/vip-chat/messages", "0.0.518487", {
+      const { ok, data } = await ownerFetch("/vip-chat/messages", {
         method: "DELETE",
       });
       if (ok) {
@@ -265,7 +310,7 @@ export function OwnerControlPanel() {
     }
     setSpinLoading(true);
     try {
-      const { ok, data } = await ownerFetch("/winners", "0.0.518487", { method: "DELETE" });
+      const { ok, data } = await ownerFetch("/winners", { method: "DELETE" });
       if (ok) {
         toast.success("Winner history cleared");
         setWinnersConfirm(false);
@@ -288,7 +333,6 @@ export function OwnerControlPanel() {
     try {
       const { ok, data } = await ownerFetch(
         `/spin/cooldown?accountId=${encodeURIComponent(cooldownAccountId.trim())}`,
-        "0.0.518487",
         { method: "DELETE" },
       );
       if (ok) {
@@ -312,7 +356,7 @@ export function OwnerControlPanel() {
   const fetchAudit = useCallback(async () => {
     setAuditLoading(true);
     try {
-      const { ok, data } = await ownerFetch("/auth/admin-audit", "0.0.518487");
+      const { ok, data } = await ownerFetch("/auth/admin-audit");
       if (ok) {
         setAuditEntries((data.entries || []).reverse()); // newest first
         setAuditLoaded(true);
@@ -353,7 +397,7 @@ export function OwnerControlPanel() {
             Owner Control Panel
           </h4>
           <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-            Owner Administration &middot; 0.0.518487 only &middot; Wallet-verified
+            Owner Administration &middot; 0.0.518487 only &middot; ED25519 session-verified
           </p>
         </div>
       </div>
@@ -362,10 +406,53 @@ export function OwnerControlPanel() {
       <div className="flex items-start gap-2 bg-red-500/8 border border-red-500/12 rounded-lg p-2.5">
         <Shield className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
         <p className={`text-xs leading-relaxed ${isDark ? "text-red-400/80" : "text-red-600/80"}`}>
-          All actions are verified via your connected wallet and logged to the tamper-resistant audit trail.
-          The service role key is never transmitted.
+          All actions require an ED25519 challenge-response signature from the owner wallet.
+          Session tokens are cryptographically bound to your account. The service role key is never transmitted.
         </p>
       </div>
+
+      {/* Authentication controls */}
+      {!isAuthenticated && (
+        <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/15 rounded-lg p-2.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <p className={`text-xs leading-relaxed ${isDark ? "text-amber-400/90" : "text-amber-600/90"}`}>
+            {authError ? (
+              <><span className="font-bold">Error:</span> {authError}</>
+            ) : (
+              <>
+                <span className="font-bold">Not authenticated.</span> Sign in to proceed.
+              </>
+            )}
+          </p>
+          <button
+            onClick={handleSignIn}
+            disabled={authLoading}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 disabled:opacity-50 ${isDark ? "bg-amber-500/15 border border-amber-500/20 text-amber-400 hover:bg-amber-500/25" : "bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100"}`}
+          >
+            {authLoading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <KeyRound className="w-3 h-3" />
+            )}
+            {authError ? "Retry" : "Sign In"}
+          </button>
+        </div>
+      )}
+      {isAuthenticated && (
+        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/15 rounded-lg p-2.5">
+          <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+          <p className={`text-xs leading-relaxed ${isDark ? "text-emerald-400/90" : "text-emerald-600/90"}`}>
+            <span className="font-bold">Authenticated.</span> Owner session active.
+          </p>
+          <button
+            onClick={handleSignOut}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 disabled:opacity-50 ${isDark ? "bg-red-500/15 border border-red-500/20 text-red-400 hover:bg-red-500/25" : "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"}`}
+          >
+            <KeyRound className="w-3 h-3" />
+            Sign Out
+          </button>
+        </div>
+      )}
 
       {/* ═══ AMM Kill Switch ═══ */}
       <Section
