@@ -15,6 +15,7 @@ import { initPerformanceMonitoring } from "./utils/performance";
 import { runHealthChecks } from "./utils/health";
 import { preloadCriticalRoutes } from "./utils/preload";
 import { log } from "./utils/logger";
+import { TermsGate } from "./components/TermsGate";
 
 /**
  * LazyDynamicBridge — only loads the Dynamic ↔ WalletContext bridge
@@ -81,18 +82,20 @@ export default function App() {
 
   return (
     <AppErrorBoundary>
-      <DynamicSDKWrapper>
-        <ThemeProvider>
-          <WalletProvider>
-            <SigningProvider>
-              <PartneredLogosProvider>
-                <LazyDynamicBridge />
-                <RouterProvider router={router} />
-              </PartneredLogosProvider>
-            </SigningProvider>
-          </WalletProvider>
-        </ThemeProvider>
-      </DynamicSDKWrapper>
+      <TermsGate>
+        <DynamicSDKWrapper>
+          <ThemeProvider>
+            <WalletProvider>
+              <SigningProvider>
+                <PartneredLogosProvider>
+                  <LazyDynamicBridge />
+                  <RouterProvider router={router} />
+                </PartneredLogosProvider>
+              </SigningProvider>
+            </WalletProvider>
+          </ThemeProvider>
+        </DynamicSDKWrapper>
+      </TermsGate>
     </AppErrorBoundary>
   );
 }

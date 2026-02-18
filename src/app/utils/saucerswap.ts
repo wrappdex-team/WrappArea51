@@ -139,37 +139,37 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
   {
     symbol: "SAUCE", name: "SaucerSwap", htsId: "0.0.731861",
     evmAddress: htsIdToEvmAddress("0.0.731861"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/sauce.svg",
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#7C3AED"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">S</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
     rank: 6, isWrapped: false,
   },
   {
     symbol: "HBARX", name: "Stader HBAR", htsId: "0.0.834116",
     evmAddress: htsIdToEvmAddress("0.0.834116"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/hbarx.svg",
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="hx" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#3B82F6"/><stop offset="100%" stop-color="#1D4ED8"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#hx)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="20" font-weight="800" font-family="Arial,sans-serif">ℏX</text></svg>')}`,
     rank: 7, isWrapped: false,
   },
   {
-    symbol: "KARATE", name: "Karate Combat", htsId: "0.0.2283328",
-    evmAddress: htsIdToEvmAddress("0.0.2283328"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/karate.svg",
+    symbol: "KARATE", name: "Karate Combat", htsId: "0.0.2283230",
+    evmAddress: htsIdToEvmAddress("0.0.2283230"), decimals: 8,
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#DC2626"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">K</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
     rank: 8, isWrapped: false,
   },
   {
     symbol: "PACK", name: "HashPack", htsId: "0.0.4589822",
     evmAddress: htsIdToEvmAddress("0.0.4589822"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/pack.svg",
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="pk" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#059669"/><stop offset="100%" stop-color="#047857"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#pk)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">P</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
     rank: 9, isWrapped: false,
   },
   {
     symbol: "DOVU", name: "DOVU", htsId: "0.0.3716059",
     evmAddress: htsIdToEvmAddress("0.0.3716059"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/dovu.svg",
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="dv" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#059669"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#dv)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">D</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
     rank: 10, isWrapped: false,
   },
   {
     symbol: "HST", name: "HSuite Token", htsId: "0.0.786931",
     evmAddress: htsIdToEvmAddress("0.0.786931"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/hst.svg",
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="hs" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#06B6D4"/><stop offset="100%" stop-color="#0891B2"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#hs)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="22" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">H</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
     rank: 11, isWrapped: false,
   },
   {
@@ -194,7 +194,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
   {
     symbol: "HBAR.ħ", name: "HBAR.ħ Protocol", htsId: HBARH_TOKEN_ID,
     evmAddress: htsIdToEvmAddress(HBARH_TOKEN_ID), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/hbar-h.svg",
+    logo: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="hh" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#EC4899"/><stop offset="100%" stop-color="#A855F7"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#hh)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="22" font-weight="800" font-family="Arial,sans-serif">ħ</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
     rank: 15, isWrapped: false,
   },
   {
@@ -1140,6 +1140,81 @@ export const LP_TOKEN_WHBAR_HBARH = {
   name: "SaucerSwap LP: WHBAR/HBAR.ħ",
   decimals: SS_LP_WHBAR_HBARH_DECIMALS,
 };
+
+// ══════════════════════════════════════════════════════════════════════
+// ── ALL-TOKEN PRICE MAP (keyed by HTS ID) ───────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// Used by Wallet.tsx to price every token the user holds — not just the
+// tokens in SAUCERSWAP_TOKENS. Fetches from SaucerSwap /tokens which
+// returns all listed tokens with live USD prices from the DEX oracle.
+
+export interface SaucerTokenPriceEntry {
+  htsId: string;
+  symbol: string;
+  name: string;
+  priceUsd: number;
+  decimals: number;
+  icon?: string;
+}
+
+let _allTokenPriceCache: { data: Map<string, SaucerTokenPriceEntry>; ts: number } | null = null;
+const ALL_TOKEN_PRICE_TTL_MS = 60_000; // 1 minute
+
+/**
+ * Fetch ALL token prices from SaucerSwap, keyed by HTS token ID.
+ * Returns a Map<htsId, SaucerTokenPriceEntry> covering every token
+ * listed on SaucerSwap V1/V2 with a non-zero USD price.
+ *
+ * This is the primary price oracle for the Wallet portfolio view.
+ * It is cached for 60s and shared across all callers.
+ */
+export async function fetchAllTokenPricesById(): Promise<Map<string, SaucerTokenPriceEntry>> {
+  // Return cache if fresh
+  if (_allTokenPriceCache && Date.now() - _allTokenPriceCache.ts < ALL_TOKEN_PRICE_TTL_MS) {
+    return _allTokenPriceCache.data;
+  }
+
+  const priceMap = new Map<string, SaucerTokenPriceEntry>();
+
+  try {
+    const res = await saucerFetch("/tokens", 12000);
+    if (!res) {
+      // Return stale cache if available
+      return _allTokenPriceCache?.data ?? priceMap;
+    }
+
+    const data = await res.json();
+    const tokens: any[] = Array.isArray(data) ? data : Object.values(data);
+
+    for (const t of tokens) {
+      const priceUsd = parseFloat(t.priceUsd || t.price || "0");
+      const htsId = t.id || t.tokenId || t.token_id || "";
+      if (!htsId || !htsId.startsWith("0.0.")) continue;
+
+      const entry: SaucerTokenPriceEntry = {
+        htsId,
+        symbol: t.symbol || "",
+        name: t.name || "",
+        priceUsd: priceUsd > 0 ? priceUsd : 0,
+        decimals: parseInt(t.decimals || "0", 10),
+        icon: t.icon || t.logoURI || t.image || undefined,
+      };
+
+      priceMap.set(htsId, entry);
+    }
+
+    if (priceMap.size > 0) {
+      _allTokenPriceCache = { data: priceMap, ts: Date.now() };
+      log.info("SaucerSwap", `All-token price map: ${priceMap.size} tokens indexed by HTS ID`);
+    }
+  } catch (err: any) {
+    log.info("SaucerSwap", `fetchAllTokenPricesById failed: ${err?.message || err}`);
+    // Return stale cache on error
+    if (_allTokenPriceCache) return _allTokenPriceCache.data;
+  }
+
+  return priceMap;
+}
 
 function estimateOutputFromPrices(
   rawAmountIn: number,

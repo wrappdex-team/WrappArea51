@@ -8,7 +8,6 @@ import {
   ExternalLink,
   X,
   RefreshCw,
-  Loader2,
   Wallet as WalletIcon,
   Clock,
   ChevronDown,
@@ -58,6 +57,9 @@ import {
   fetchHbarhTokenPrice as fetchHbarhPriceSaucer,
   fetchLPTokenPrice,
   LP_TOKEN_WHBAR_HBARH,
+  fetchAllTokenPricesById,
+  SAUCERSWAP_TOKENS,
+  type SaucerTokenPriceEntry,
 } from "../utils/saucerswap";
 import { maxVotesForBalance } from "../utils/dao";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
@@ -73,10 +75,22 @@ const WAVAX_TOKEN_ID = "0.0.1157020";
 const WMATIC_TOKEN_ID = "0.0.540318";
 const USDC_BRIDGE_TOKEN_ID = "0.0.1055459";
 const USDT_BRIDGE_TOKEN_ID = "0.0.1055472";
+const USDC_NATIVE_TOKEN_ID = "0.0.456858";
+const USDT_NATIVE_TOKEN_ID = "0.0.4291336";
+const WHBAR_TOKEN_ID = "0.0.1456986";
+const SAUCE_TOKEN_ID = "0.0.731861";
+const HBARX_TOKEN_ID = "0.0.834116";
+const KARATE_TOKEN_ID = "0.0.2283230";
+const PACK_TOKEN_ID = "0.0.4589822";
+const DOVU_TOKEN_ID = "0.0.3716059";
+const HST_TOKEN_ID = "0.0.786931";
+const WPOL_TOKEN_ID = "0.0.3306241";
 const SS_LP_TOKEN_ID = LP_TOKEN_WHBAR_HBARH.tokenId; // "0.0.9356724"
 
+// ── Comprehensive logo registry (CoinGecko + inline SVG) ────────────
 const TOKEN_LOGOS: Record<string, string> = {
   HBAR: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
+  WHBAR: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
   WBTC: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
   WETH: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
   AAVE: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
@@ -87,10 +101,20 @@ const TOKEN_LOGOS: Record<string, string> = {
   WBNB: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
   WAVAX: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
   WMATIC: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+  WPOL: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+  SAUCE: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#7C3AED"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">S</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
+  HBARX: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="hx" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#3B82F6"/><stop offset="100%" stop-color="#1D4ED8"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#hx)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="20" font-weight="800" font-family="Arial,sans-serif">ℏX</text></svg>')}`,
+  KARATE: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="#DC2626"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">K</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
+  PACK: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="pk" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#059669"/><stop offset="100%" stop-color="#047857"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#pk)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">P</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
+  DOVU: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="dv" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#059669"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#dv)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="24" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">D</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
+  HST: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="hs" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#06B6D4"/><stop offset="100%" stop-color="#0891B2"/></linearGradient></defs><circle cx="50" cy="50" r="50" fill="url(#hs)"/><text x="50" y="55" text-anchor="middle" fill="white" font-size="22" font-weight="800" font-family="Arial,sans-serif" letter-spacing="-1">H</text><circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/></svg>')}`,
+  USDCh: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+  USDTh: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
 };
 
-// Map HTS token IDs to logo keys for bridge tokens the user may hold
+// ── HTS token ID → logo key (covers all allowlisted tokens) ────────
 const TOKEN_ID_TO_LOGO: Record<string, string> = {
+  [WHBAR_TOKEN_ID]: "WHBAR",
   [WBTC_TOKEN_ID]: "WBTC",
   [AAVE_TOKEN_ID]: "AAVE",
   [DAI_TOKEN_ID]: "DAI",
@@ -99,9 +123,26 @@ const TOKEN_ID_TO_LOGO: Record<string, string> = {
   [WBNB_TOKEN_ID]: "WBNB",
   [WAVAX_TOKEN_ID]: "WAVAX",
   [WMATIC_TOKEN_ID]: "WMATIC",
-  [USDC_BRIDGE_TOKEN_ID]: "USDC",
-  [USDT_BRIDGE_TOKEN_ID]: "USDT",
+  [WPOL_TOKEN_ID]: "WPOL",
+  [USDC_BRIDGE_TOKEN_ID]: "USDCh",
+  [USDT_BRIDGE_TOKEN_ID]: "USDTh",
+  [USDC_NATIVE_TOKEN_ID]: "USDC",
+  [USDT_NATIVE_TOKEN_ID]: "USDT",
+  [SAUCE_TOKEN_ID]: "SAUCE",
+  [HBARX_TOKEN_ID]: "HBARX",
+  [KARATE_TOKEN_ID]: "KARATE",
+  [PACK_TOKEN_ID]: "PACK",
+  [DOVU_TOKEN_ID]: "DOVU",
+  [HST_TOKEN_ID]: "HST",
 };
+
+// Build a reverse lookup: HTS ID → logo URL (populated from SAUCERSWAP_TOKENS)
+const HTS_ID_TO_LOGO_URL: Record<string, string> = {};
+for (const t of SAUCERSWAP_TOKENS) {
+  if (t.htsId !== "native" && t.logo) {
+    HTS_ID_TO_LOGO_URL[t.htsId] = t.logo;
+  }
+}
 
 function getTokenLogo(
   symbol: string,
@@ -109,12 +150,21 @@ function getTokenLogo(
   isDark = true,
   hbarDark = HBARH_LOGO_DARK,
   hbarLight = HBARH_LOGO_LIGHT,
+  saucerPriceMap?: Map<string, SaucerTokenPriceEntry>,
 ): string | null {
+  // HBAR.ħ and LP token → protocol branding
   if (tokenId === HBARH_TOKEN_ID || tokenId === SS_LP_TOKEN_ID || symbol === "HBAR.ħ" || symbol === "HBARh") return isDark ? hbarDark : hbarLight;
   // Match by token ID first (handles bridge tokens with non-standard symbols)
   if (tokenId) {
     const logoKey = TOKEN_ID_TO_LOGO[tokenId];
     if (logoKey && TOKEN_LOGOS[logoKey]) return TOKEN_LOGOS[logoKey];
+    // Direct HTS ID → logo URL from SAUCERSWAP_TOKENS registry
+    if (HTS_ID_TO_LOGO_URL[tokenId]) return HTS_ID_TO_LOGO_URL[tokenId];
+    // SaucerSwap API sometimes includes icon URLs
+    if (saucerPriceMap) {
+      const entry = saucerPriceMap.get(tokenId);
+      if (entry?.icon) return entry.icon;
+    }
   }
   // Then by symbol
   return TOKEN_LOGOS[symbol] || null;
@@ -258,10 +308,12 @@ export function Wallet() {
   const [loadingErc20, setLoadingErc20] = useState(false);
   const [hbarhPrice, setHbarhPrice] = useState<number>(0);
   const [lpTokenPrice, setLpTokenPrice] = useState<number>(0);
-  const [lpTokenPriceSource, setLpTokenPriceSource] = useState<string>("");
 
   // Direct LP token balance from Mirror Node
   const [lpDirect, setLpDirect] = useState<TokenDirectBalance | null>(null);
+
+  // All-token price map from SaucerSwap oracle (keyed by HTS ID)
+  const [allTokenPrices, setAllTokenPrices] = useState<Map<string, SaucerTokenPriceEntry>>(new Map());
 
   // EVM transaction history
   const [evmTxns, setEvmTxns] = useState<EvmTransaction[]>([]);
@@ -270,7 +322,6 @@ export function Wallet() {
 
   // Direct HBAR.ħ balance from Mirror Node (guaranteed source of truth)
   const [hbarhDirect, setHbarhDirect] = useState<HbarhDirectBalance | null>(null);
-  const [hbarhPriceSource, setHbarhPriceSource] = useState<string>("");
 
   const { isDark } = useTheme();
   const partnerLogos = usePartneredLogos();
@@ -343,7 +394,6 @@ export function Wallet() {
         const result = await fetchHbarhPriceSaucer();
         if (result.price > 0) {
           setHbarhPrice(result.price);
-          setHbarhPriceSource(result.source);
           log.info("Wallet", `HBAR.ħ price: $${result.price} (via ${result.source})`);
         }
       } catch { /* non-critical */ }
@@ -360,8 +410,26 @@ export function Wallet() {
         const result = await fetchLPTokenPrice(SS_LP_TOKEN_ID);
         if (result.price > 0) {
           setLpTokenPrice(result.price);
-          setLpTokenPriceSource(result.source);
           log.info("Wallet", `LP token price: $${result.price} (via ${result.source})`);
+        }
+      } catch { /* non-critical */ }
+    };
+    load();
+    const iv = setInterval(load, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // ── All-token price oracle (SaucerSwap) ──────────────────────────
+  // Fetches prices for ALL SaucerSwap-listed tokens, keyed by HTS ID.
+  // This powers USD valuation for every token in the wallet, not just
+  // HBAR/HBAR.ħ/LP. Refreshes every 60s alongside the other price feeds.
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const priceMap = await fetchAllTokenPricesById();
+        if (priceMap.size > 0) {
+          setAllTokenPrices(priceMap);
+          log.info("Wallet", `All-token prices loaded: ${priceMap.size} tokens`);
         }
       } catch { /* non-critical */ }
     };
@@ -432,16 +500,21 @@ export function Wallet() {
     }
   }, [metaMaskAccount?.address, metaMaskAccount?.chainId]);
 
-  // Build real holdings list from mirror node data
+  // ── Build holdings list from mirror node data + SaucerSwap oracle prices ──
+  // Every token the user holds is priced via:
+  //   1. Dedicated oracle (HBAR → 5-tier pipeline, HBAR.ħ → DexScreener/SaucerSwap, LP → pool TVL)
+  //   2. SaucerSwap all-token price map (keyed by HTS ID — covers ALL listed tokens)
+  //   3. Falls back to 0 for truly unpriced tokens (shown without USD value)
   const holdings = useMemo(() => {
     if (!hederaAccount) return [];
     const list: Array<{
       symbol: string; name: string; balance: number; value: number;
       price: number; tokenId?: string; isHbarh: boolean; isWbtc: boolean;
       isPrimary: boolean; isNative: boolean; decimals: number;
-      isLp?: boolean;
+      isLp?: boolean; isAllowlisted?: boolean;
     }> = [];
 
+    // ── HBAR (native) — always primary ──
     list.push({
       symbol: "HBAR", name: "Hedera", balance: hederaAccount.hbarBalance,
       value: hederaAccount.hbarBalance * hbarPrice, price: hbarPrice,
@@ -451,13 +524,19 @@ export function Wallet() {
     let foundHbarh = false;
     let foundLp = false;
 
-    // Process all tokens from the paginated list
+    // ── Curated allowlist lookup by HTS ID (membership + trusted symbol/name) ──
+    const allowlistByHtsId = new Map(
+      SAUCERSWAP_TOKENS.filter(t => t.htsId !== "native").map(t => [t.htsId, t])
+    );
+
+    // Process all tokens from the paginated mirror node list
     hederaAccount.tokens.forEach((token) => {
       const isHbarh = token.tokenId === HBARH_TOKEN_ID;
       const isWbtc = token.tokenId === WBTC_TOKEN_ID;
       const isLp = token.tokenId === SS_LP_TOKEN_ID;
+      const isAllowlisted = allowlistByHtsId.has(token.tokenId);
 
-      // For non-special tokens, skip zero balances
+      // Skip zero-balance tokens unless they are special (HBAR.ħ, LP)
       if (!isHbarh && !isLp && token.balance <= 0) return;
 
       if (isHbarh) foundHbarh = true;
@@ -470,21 +549,57 @@ export function Wallet() {
           ? lpDirect.balance
           : token.balance;
 
-      const tokenPrice = isHbarh && hbarhPrice > 0
-        ? hbarhPrice
-        : isLp && lpTokenPrice > 0
-          ? lpTokenPrice
-          : 0;
+      // ── Price resolution (priority order) ──
+      let tokenPrice = 0;
+      if (isHbarh && hbarhPrice > 0) {
+        tokenPrice = hbarhPrice;
+      } else if (isLp && lpTokenPrice > 0) {
+        tokenPrice = lpTokenPrice;
+      } else if (allTokenPrices.has(token.tokenId)) {
+        // SaucerSwap oracle price by HTS ID
+        tokenPrice = allTokenPrices.get(token.tokenId)!.priceUsd;
+      }
+
+      // ── Symbol / name override (priority: hardcoded → allowlist → API with guard) ──
+      let displaySymbol = token.symbol;
+      let displayName = token.name;
+      if (isHbarh) { displaySymbol = "HBAR.ħ"; displayName = "HBAR.ħ Governance"; }
+      else if (isWbtc) { displaySymbol = "WBTC"; displayName = "Wrapped Bitcoin"; }
+      else if (isLp) { displaySymbol = LP_TOKEN_WHBAR_HBARH.symbol; displayName = LP_TOKEN_WHBAR_HBARH.name; }
+      else {
+        // Priority 1: Our curated allowlist — human-reviewed, always trusted
+        const curated = allowlistByHtsId.get(token.tokenId);
+        if (curated) {
+          displaySymbol = curated.symbol;
+          displayName = curated.name;
+        } else if (allTokenPrices.has(token.tokenId)) {
+          // Priority 2: SaucerSwap API — only for non-allowlisted tokens
+          // Guard: reject nonsensical symbols (numeric-only, single char, or empty)
+          const saucerEntry = allTokenPrices.get(token.tokenId)!;
+          const apiSym = saucerEntry.symbol?.trim() || "";
+          const apiName = saucerEntry.name?.trim() || "";
+          if (apiSym.length >= 2 && !/^\d+$/.test(apiSym)) displaySymbol = apiSym;
+          if (apiName.length >= 2) displayName = apiName;
+        }
+      }
+
+      // Promote to primary if: special token, allowlisted, OR has a known price with balance
+      const hasPricedValue = tokenPrice > 0 && displayBalance > 0;
+      const shouldBePrimary = isHbarh || isWbtc || isLp || isAllowlisted || hasPricedValue;
 
       list.push({
-        symbol: isHbarh ? "HBAR.ħ" : isWbtc ? "WBTC" : isLp ? LP_TOKEN_WHBAR_HBARH.symbol : token.symbol,
-        name: isHbarh ? "HBAR.ħ Governance" : isWbtc ? "Wrapped Bitcoin" : isLp ? LP_TOKEN_WHBAR_HBARH.name : token.name,
+        symbol: displaySymbol,
+        name: displayName,
         balance: displayBalance,
         value: tokenPrice > 0 ? displayBalance * tokenPrice : 0,
-        price: tokenPrice, tokenId: token.tokenId, isHbarh, isWbtc,
-        isPrimary: isHbarh || isWbtc || isLp, isNative: false,
+        price: tokenPrice,
+        tokenId: token.tokenId,
+        isHbarh, isWbtc,
+        isPrimary: shouldBePrimary,
+        isNative: false,
         decimals: isHbarh && hbarhDirect ? hbarhDirect.decimals : isLp && lpDirect ? lpDirect.decimals : token.decimals,
         isLp,
+        isAllowlisted,
       });
     });
 
@@ -514,6 +629,7 @@ export function Wallet() {
       });
     }
 
+    // ── Sort: native first, then HBAR.ħ, LP, WBTC, then by USD value desc, then balance desc ──
     list.sort((a, b) => {
       if (a.isNative) return -1;
       if (b.isNative) return 1;
@@ -523,10 +639,12 @@ export function Wallet() {
       if (b.isLp) return 1;
       if (a.isWbtc) return -1;
       if (b.isWbtc) return 1;
+      // Sort remaining by USD value (priced tokens first), then by raw balance
+      if (a.value !== b.value) return b.value - a.value;
       return b.balance - a.balance;
     });
     return list;
-  }, [hederaAccount, hbarPrice, hbarhPrice, hbarhDirect, lpTokenPrice, lpDirect]);
+  }, [hederaAccount, hbarPrice, hbarhPrice, hbarhDirect, lpTokenPrice, lpDirect, allTokenPrices]);
 
   const primaryHoldings = useMemo(() => holdings.filter((h) => h.isPrimary), [holdings]);
   const hiddenHoldings = useMemo(() => {
@@ -538,17 +656,40 @@ export function Wallet() {
     );
   }, [holdings, tokenFilter]);
 
-  // Hedera donut data — include LP tokens even if price is unavailable (balance > 0)
+  // Hedera donut data — top 8 by value + "Other" bucket for readability
   const hederaDonutData = useMemo(() => {
-    const items = holdings.filter((h) => h.value > 0 || (h.isLp && h.balance > 0));
-    return items.map((h, i) => ({
-      name: h.symbol,
-      value: h.value > 0 ? h.value : 0.01, // minimal sentinel for unpriced LP tokens so they appear
-      color: isVip
+    // Only include tokens with a real USD value — avoids phantom slivers
+    // for LP or other tokens that have a balance but no oracle price yet
+    const pricedItems = holdings
+      .filter((h) => h.value > 0)
+      .sort((a, b) => b.value - a.value);
+
+    const MAX_SLICES = 8;
+    const topItems = pricedItems.slice(0, MAX_SLICES);
+    const otherItems = pricedItems.slice(MAX_SLICES);
+    const otherValue = otherItems.reduce((s, h) => s + h.value, 0);
+
+    const colorForItem = (h: typeof pricedItems[0], i: number) =>
+      isVip
         ? (h.isNative ? "#10b981" : h.isHbarh ? "#34d399" : h.isLp ? "#06b6d4" : CHART_COLORS[i % CHART_COLORS.length])
-        : (h.isNative ? "#a855f7" : h.isHbarh ? "#ec4899" : h.isLp ? "#06b6d4" : CHART_COLORS[i % CHART_COLORS.length]),
+        : (h.isNative ? "#a855f7" : h.isHbarh ? "#ec4899" : h.isLp ? "#06b6d4" : CHART_COLORS[i % CHART_COLORS.length]);
+
+    const result = topItems.map((h, i) => ({
+      name: h.symbol,
+      value: h.value,
+      color: colorForItem(h, i),
     }));
-  }, [holdings, isVip]);
+
+    if (otherValue > 0) {
+      result.push({
+        name: `Other (${otherItems.length})`,
+        value: otherValue,
+        color: isDark ? "#475569" : "#94a3b8",
+      });
+    }
+
+    return result;
+  }, [holdings, isVip, isDark]);
 
   // EVM donut data
   const STABLECOINS = useMemo(() => new Set(["USDC", "USDT", "DAI"]), []);
@@ -587,14 +728,16 @@ export function Wallet() {
     setIsRefreshing(true);
     await refreshHederaBalance();
     if (hederaAccount) {
-      const [txns, hbarhBal, lpBal] = await Promise.all([
+      const [txns, hbarhBal, lpBal, freshPrices] = await Promise.all([
         fetchRecentTransactions(hederaAccount.accountId, hederaAccount.network),
         fetchHbarhBalance(hederaAccount.accountId, hederaAccount.network),
         fetchTokenDirectBalance(hederaAccount.accountId, SS_LP_TOKEN_ID),
+        fetchAllTokenPricesById(),
       ]);
       setRecentTxns(txns);
       setHbarhDirect(hbarhBal);
       setLpDirect(lpBal);
+      if (freshPrices.size > 0) setAllTokenPrices(freshPrices);
     }
     setIsRefreshing(false);
   }, [refreshHederaBalance, hederaAccount, isVip]);
@@ -805,6 +948,13 @@ export function Wallet() {
                 <div className="font-bold text-emerald-400/80">{holdings.length}</div>
               </div>
             )}
+            {/* Oracle price coverage indicator */}
+            {!isVip && allTokenPrices.size > 0 && (
+              <div>
+                <div className={`text-[10px] uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>Oracle</div>
+                <div className={`font-bold text-xs ${isDark ? "text-cyan-400/70" : "text-cyan-600"}`}>{allTokenPrices.size} feeds</div>
+              </div>
+            )}
             {/* Auto-refresh indicator */}
             <div className="ml-auto flex items-center gap-1.5">
               {isVip ? (
@@ -938,7 +1088,7 @@ export function Wallet() {
                 {/* Token list (VIP-enhanced) */}
                 <div className="space-y-1.5">
                   {primaryHoldings.map((h) => {
-                    const logo = getTokenLogo(h.symbol, h.tokenId, isDark, partnerLogos.hbarDark, partnerLogos.hbarLight);
+                    const logo = getTokenLogo(h.symbol, h.tokenId, isDark, partnerLogos.hbarDark, partnerLogos.hbarLight, allTokenPrices);
                     const pctOfPortfolio = hederaTotalUsd > 0 && h.value > 0 ? ((h.value / hederaTotalUsd) * 100) : 0;
                     return (
                       <div
@@ -1020,18 +1170,37 @@ export function Wallet() {
                             <input type="text" value={tokenFilter} onChange={(e) => setTokenFilter(e.target.value)} placeholder="Filter..." className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-xs outline-none ${isDark ? "bg-black/20 border border-cyan-500/10 placeholder:text-slate-700" : "bg-gray-50 border border-gray-200 placeholder:text-gray-400"}`} />
                           </div>
                         )}
-                        {hiddenHoldings.map((h) => (
-                          <div key={h.tokenId || h.symbol} className={`flex items-center justify-between p-2 rounded-lg ${isDark ? "hover:bg-white/[0.02]" : "hover:bg-gray-50"}`}>
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-6 h-6 bg-gradient-to-br from-cyan-500/15 to-blue-500/15 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">{h.symbol.slice(0, 2)}</div>
-                              <div className="min-w-0">
-                                <span className="font-bold text-xs">{h.symbol}</span>
-                                <span className={`text-[10px] ml-1.5 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>{h.tokenId}</span>
+                        {hiddenHoldings.map((h) => {
+                          const logo = getTokenLogo(h.symbol, h.tokenId, isDark, partnerLogos.hbarDark, partnerLogos.hbarLight, allTokenPrices);
+                          return (
+                            <div key={h.tokenId || h.symbol} className={`flex items-center justify-between p-2 rounded-lg ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-50"}`}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                {logo ? (
+                                  <img src={logo} alt={h.symbol} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
+                                ) : (
+                                  <div className="w-6 h-6 bg-gradient-to-br from-cyan-500/15 to-blue-500/15 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">{h.symbol.slice(0, 2)}</div>
+                                )}
+                                <div className="min-w-0">
+                                  <span className="font-bold text-xs">{h.symbol}</span>
+                                  {h.tokenId && (
+                                    <div className="flex items-center gap-1">
+                                      <span className={`text-[10px] font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>{h.tokenId}</span>
+                                      <a href={`https://hashscan.io/${hederaAccount?.network || "mainnet"}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className={`${isVip ? "text-emerald-400 hover:text-emerald-300" : "text-cyan-400 hover:text-cyan-300"}`}>
+                                        <ExternalLink className="w-2.5 h-2.5" />
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right flex-shrink-0 ml-2">
+                                <div className="font-bold text-xs">{formatBal(h.balance)}</div>
+                                {h.value > 0 && (
+                                  <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(h.value)}</div>
+                                )}
                               </div>
                             </div>
-                            <span className="font-bold text-xs flex-shrink-0 ml-2">{formatBal(h.balance)}</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1053,7 +1222,7 @@ export function Wallet() {
                   {/* VIP: priced vs unpriced count */}
                   {isVip && (
                     <div className="text-[10px] text-emerald-400/40 mt-0.5">
-                      {hederaDonutData.length} priced · {holdings.length - hederaDonutData.length} unpriced
+                      {holdings.filter(h => h.value > 0).length} priced · {holdings.filter(h => h.value <= 0).length} unpriced
                     </div>
                   )}
                 </div>

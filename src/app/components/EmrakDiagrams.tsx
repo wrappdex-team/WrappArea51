@@ -24,6 +24,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
+import { AmmBlueprintDiagram } from "./AmmBlueprintDiagram";
 
 /* ═══════════════════════════════════════════════════════════════════════
    EMRAK'S TECHNICAL DOODLES — Architecture Diagrams
@@ -32,7 +33,7 @@ import { useTheme } from "../contexts/ThemeContext";
 
 /* ── Shared helpers ──────────────────────────────────────────────────── */
 
-type Tab = "swap" | "router" | "security" | "oracle" | "fees";
+type Tab = "swap" | "router" | "security" | "oracle" | "fees" | "amm";
 
 const TABS: { id: Tab; label: string; icon: typeof Cpu }[] = [
   { id: "swap", label: "Swap Pipeline", icon: Zap },
@@ -40,6 +41,7 @@ const TABS: { id: Tab; label: string; icon: typeof Cpu }[] = [
   { id: "security", label: "Security", icon: Shield },
   { id: "oracle", label: "Oracle", icon: Eye },
   { id: "fees", label: "Fees & Split", icon: DollarSign },
+  { id: "amm", label: "AMM Blueprint", icon: Cpu },
 ];
 
 /* ── Diagram building blocks ─────────────────────────────────────────── */
@@ -1203,6 +1205,7 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                     {tab === "security" && <SecurityDiagram isDark={isDark} />}
                     {tab === "oracle" && <OracleDiagram isDark={isDark} />}
                     {tab === "fees" && <FeesDiagram isDark={isDark} />}
+                    {tab === "amm" && <AmmBlueprintDiagram isDark={isDark} />}
                   </motion.div>
                 </AnimatePresence>
               </div>
