@@ -37,9 +37,11 @@ import {
   Key,
   Sparkles,
   Globe,
+  Lock,
 } from "lucide-react";
 import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
+import { useWallet } from "../contexts/WalletContext";
 import {
   playVipCashRegister,
   playVipConfirm,
@@ -79,6 +81,18 @@ interface QuoteResult {
   gas?: number;
   cached?: boolean;
 }
+
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  SENIOR DEV NOTE — 1INCH TESTING LOCK                              │
+// │  The 1inch swap widget is locked to ONLY the founder's Hedera      │
+// │  account (0.0.518487) until end-to-end swap flow has been          │
+// │  smoke-tested on a live deployment. Non-matching users see a       │
+// │  locked banner.                                                    │
+// │                                                                    │
+// │  TO GO LIVE: set ONEINCH_TEST_LOCKED = false                       │
+// └─────────────────────────────────────────────────────────────────────┘
+const ONEINCH_TEST_LOCKED = true;
+const ONEINCH_ALLOWED_ACCOUNT = "0.0.518487";
 
 // ── Chain configuration ──────────────────────────────────────────────
 
@@ -313,6 +327,12 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
 export function OneInchWidget() {
   const { isDark } = useTheme();
   const partnerLogos = usePartneredLogos();
+  const { hashPackSession } = useWallet();
+
+  // ── Test Lock Gate (derived — evaluated after all hooks below) ──
+  const connectedHederaAccount = hashPackSession?.accountId ?? "";
+  const isAllowedTester = connectedHederaAccount === ONEINCH_ALLOWED_ACCOUNT;
+  const isLocked = ONEINCH_TEST_LOCKED && !isAllowedTester;
 
   // ── Wallet state ──
   const [evmAccount, setEvmAccount] = useState<string | null>(null);
@@ -729,6 +749,77 @@ export function OneInchWidget() {
   }), [tokenSearch, setTokenSearch, tokens, mergedTokens, allTokens.length, tokensLoading, isDark, inputClass]);
 
   // ── Render ─────────────────────────────────────────────────────────
+
+  // Lock gate — all hooks have been called above, so this early return
+  // is safe under React's Rules of Hooks (hook call order is stable).
+  if (isLocked) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.1 }}
+        className={`rounded-2xl p-5 mt-4 ${cardClass}`}
+      >
+        {/* Header — same as live widget */}
+        <div className="flex items-center gap-2.5 mb-4">
+          <div className="relative">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ${
+              isDark
+                ? "bg-gradient-to-br from-slate-700 to-slate-800 ring-1 ring-pink-500/20"
+                : "bg-gradient-to-br from-gray-100 to-gray-200 ring-1 ring-gray-300"
+            }`}>
+              <span className="text-sm font-black bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">1"</span>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-lg bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent font-bold leading-tight">
+              1inch Swap
+            </h3>
+            <p className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              Cross-chain EVM aggregator
+            </p>
+          </div>
+        </div>
+
+        {/* Lock Banner */}
+        <div className={`rounded-xl p-6 text-center ${
+          isDark
+            ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border border-amber-500/20"
+            : "bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200"
+        }`}>
+          <div className={`w-14 h-14 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
+            isDark ? "bg-amber-500/10" : "bg-amber-100"
+          }`}>
+            <Lock className={`w-7 h-7 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
+          </div>
+          <h4 className={`text-base font-bold mb-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
+            Testing in Progress
+          </h4>
+          <p className={`text-sm leading-relaxed max-w-xs mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
+            The 1inch swap aggregator is currently locked for founder testing.
+            It will be available to all users once the swap flow has been fully verified.
+          </p>
+          {connectedHederaAccount && (
+            <p className={`text-xs mt-3 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+              Connected: {connectedHederaAccount}
+            </p>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className={`flex items-center justify-center gap-2 mt-4 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+          <Shield className="w-3 h-3" />
+          <span>Non-custodial · MEV-protected · Powered by</span>
+          <a href="https://1inch.io" target="_blank" rel="noopener noreferrer"
+            className={`font-bold flex items-center gap-0.5 transition-colors ${
+              isDark ? "text-pink-400/40 hover:text-pink-400" : "text-pink-500/40 hover:text-pink-600"
+            }`}>
+            1inch <ExternalLink className="w-2.5 h-2.5" />
+          </a>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
