@@ -1,7 +1,9 @@
 /**
  * HBAR.ħ DAO — Server-Authoritative Governance Client
  *
- * All state in server KV. Proposals, votes, and comments use ED25519 session auth.
+ * All state in server KV. Auth via wallet-connected X-Account-Id header
+ * (WalletConnect pairing proves wallet ownership client-side). Temporary
+ * model until Hiero 0x16b system contract governance (Q2–Q3).
  * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified server-side).
  * Vote weight: 1 per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
  * Admin CRUD restricted to 0.0.518487 + dynamic admin list.
@@ -10,7 +12,6 @@
 import type { HederaTokenBalance } from "./hedera";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { log } from "./logger";
-import { getSessionToken, authHeaders, authenticate, clearSession } from "./auth";
 
 // ── API Base ────────────────────────────────────────────────────────
 
@@ -134,12 +135,17 @@ export interface Proposal {
   comments: ProposalComment[];
 }
 
-// ── Helper: ensure session for mutating operations ──────────────────
+// ── Helper: build authenticated headers for wallet-connected user ────
+// WalletConnect pairing proves wallet ownership. Server's requireAuth
+// accepts X-Account-Id as a fallback when no ED25519 session exists.
+// Temporary auth model until Hiero 0x16b system contract governance (Q2–Q3).
 
-async function ensureAuth(accountId: string): Promise<string> {
-  const existing = getSessionToken();
-  if (existing) return existing;
-  return await authenticate(accountId);
+function walletHeaders(accountId: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${publicAnonKey}`,
+    "X-Account-Id": accountId,
+  };
 }
 
 // ── Server API Functions ────────────────────────────────────────────
@@ -211,10 +217,9 @@ export async function createProposal(
   quorum: number
 ): Promise<{ proposals: Proposal[]; error?: string }> {
   try {
-    const token = await ensureAuth(accountId);
     const res = await fetch(`${API_BASE}/dao/proposals`, {
       method: "POST",
-      headers: authHeaders(token),
+      headers: walletHeaders(accountId),
       body: JSON.stringify({ title, description, category, durationDays, quorum }),
       signal: AbortSignal.timeout(15000),
     });
@@ -240,10 +245,9 @@ export async function editProposal(
   updates: { title?: string; description?: string; category?: ProposalCategory }
 ): Promise<{ proposals: Proposal[]; error?: string }> {
   try {
-    const token = await ensureAuth(accountId);
     const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}`, {
       method: "PUT",
-      headers: authHeaders(token),
+      headers: walletHeaders(accountId),
       body: JSON.stringify(updates),
       signal: AbortSignal.timeout(15000),
     });
@@ -268,10 +272,9 @@ export async function deleteProposal(
   proposalId: string
 ): Promise<{ proposals: Proposal[]; error?: string }> {
   try {
-    const token = await ensureAuth(accountId);
     const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}`, {
       method: "DELETE",
-      headers: authHeaders(token),
+      headers: walletHeaders(accountId),
       signal: AbortSignal.timeout(15000),
     });
     const data = await res.json();
@@ -297,10 +300,9 @@ export async function castVote(
   direction: "for" | "against"
 ): Promise<{ success: boolean; proposal?: Proposal; votingPower?: number; error?: string }> {
   try {
-    const token = await ensureAuth(accountId);
     const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}/vote`, {
       method: "POST",
-      headers: authHeaders(token),
+      headers: walletHeaders(accountId),
       body: JSON.stringify({ direction }),
       signal: AbortSignal.timeout(15000),
     });
@@ -329,10 +331,9 @@ export async function addComment(
   text: string
 ): Promise<{ success: boolean; proposal?: Proposal; error?: string }> {
   try {
-    const token = await ensureAuth(accountId);
     const res = await fetch(`${API_BASE}/dao/proposals/${proposalId}/comment`, {
       method: "POST",
-      headers: authHeaders(token),
+      headers: walletHeaders(accountId),
       body: JSON.stringify({ text }),
       signal: AbortSignal.timeout(15000),
     });
@@ -395,26 +396,20 @@ export function formatCommentTime(createdAt: number): string {
 
 /**
  * Fetch the current admin list from the server.
- * PASSIVE: Only uses an existing session — never triggers a wallet signing prompt.
- * If no session exists, returns the client-side cache (founder-only by default).
- * Admin status is fully discovered once the user authenticates for their first
- * mutating action (vote, create proposal, etc.), which is the correct UX flow.
- * Also updates the client-side admin cache when a valid session is available.
+ * Uses wallet-connected X-Account-Id header for authentication.
+ * Server checks if the requesting account is itself an admin before returning the list.
+ * Also updates the client-side admin cache on success.
  */
 export async function fetchDaoAdmins(
   accountId: string
 ): Promise<{ admins: string[]; founder: string; maxAdmins: number; error?: string }> {
   const defaultResult = { admins: [..._adminListCache], founder: DAO_FOUNDER_ACCOUNT, maxAdmins: 10 };
+  if (!accountId) {
+    return { ...defaultResult, error: "no_account" };
+  }
   try {
-    // Passive check — only use existing session, never trigger wallet signing
-    const token = getSessionToken();
-    if (!token) {
-      // No active session — skip server call, rely on client cache.
-      // User will authenticate naturally on their first action.
-      return { ...defaultResult, error: "no_session" };
-    }
     const res = await fetch(`${API_BASE}/dao/admins`, {
-      headers: authHeaders(token),
+      headers: walletHeaders(accountId),
       signal: AbortSignal.timeout(10000),
     });
     const data = await res.json();

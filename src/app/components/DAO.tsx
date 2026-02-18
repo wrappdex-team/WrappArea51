@@ -188,10 +188,10 @@ export function DAO() {
     if (isDAOAdmin(accountId)) {
       setIsAdmin(true);
     }
-    // Passive server check — fetchDaoAdmins will return cache if no session
+    // Server check — fetchDaoAdmins uses X-Account-Id header (no signing required)
     fetchDaoAdmins(accountId).then((result) => {
-      if (result.error === "no_session") {
-        // No session — rely on client cache only. No signing prompt.
+      if (result.error === "no_account") {
+        // No account connected — rely on client cache only.
         return;
       }
       if (!result.error && result.admins.includes(accountId)) {
@@ -199,9 +199,10 @@ export function DAO() {
         setAdminList(result.admins);
       } else if (!result.error) {
         // Server responded but user not in admin list
-        setIsAdmin(isDAOAdmin(accountId)); // fall back to cache (founder check)
+        setIsAdmin(false);
         setAdminList(result.admins);
       }
+      // On error (e.g. network), keep current isAdmin state from cache
     });
   }, [accountId]);
 
