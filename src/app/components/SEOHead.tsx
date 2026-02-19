@@ -81,9 +81,14 @@ export function SEOHead({ title, description, path, image }: SEOHeadProps) {
 /** Route-specific SEO configs */
 export const ROUTE_SEO: Record<string, SEOHeadProps> = {
   "/": {
+    title: "WRAPpDEX — Sovereign Digital Asset Infrastructure",
+    description: "Wrappdex delivers high-performance decentralized custody and liquidity settlement. Built on the Hedera network for ultimate transparency and institutional security.",
+    path: "/",
+  },
+  "/markets": {
     title: "Markets",
     description: "Live cryptocurrency market data with Chainlink oracle prices, real-time charts, and AI-powered market sentiment on the Hedera network.",
-    path: "/",
+    path: "/markets",
   },
   "/trading": {
     title: "Trading",

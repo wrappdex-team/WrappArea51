@@ -10,8 +10,11 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
     setOk(localStorage.getItem(KEY) === "1");
   }, []);
 
+  // Always allow the institutional landing page through without gating
+  const isLandingPage = typeof window !== "undefined" && window.location.pathname === "/";
+
   if (ok === null) return null;
-  if (ok) return <>{children}</>;
+  if (ok || isLandingPage) return <>{children}</>;
 
   return (
     <motion.div

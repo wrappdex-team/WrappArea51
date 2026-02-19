@@ -39,7 +39,7 @@ export function NotFound() {
         </p>
 
         <Link
-          to="/"
+          to="/markets"
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 transition-all shadow-lg shadow-pink-500/20"
         >
           <ArrowLeft className="w-4 h-4" />

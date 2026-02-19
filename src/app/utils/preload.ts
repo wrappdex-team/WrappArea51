@@ -43,7 +43,7 @@ function retryImport<T>(
 
 // Map route paths to their dynamic import functions (with retry)
 const ROUTE_IMPORTERS: Record<string, () => Promise<unknown>> = {
-  "/": () => retryImport(() => import("../components/Dashboard")),
+  "/markets": () => retryImport(() => import("../components/Dashboard")),
   "/trading": () => retryImport(() => import("../components/Trading")),
   "/swap": () => retryImport(() => import("../components/SwapPage")),
   "/buy-sell": () => retryImport(() => import("../components/BuySell")),
@@ -97,7 +97,7 @@ export function preloadCriticalRoutes(): void {
 
   idle(() => {
     // Preload the most commonly visited routes
-    preloadRoute("/");
+    preloadRoute("/markets");
     preloadRoute("/swap");
     preloadRoute("/trading");
   });

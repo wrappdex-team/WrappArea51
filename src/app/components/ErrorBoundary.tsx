@@ -97,7 +97,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   handleGoHome = (): void => {
-    window.location.href = "/";
+    window.location.href = "/markets";
   };
 
   render(): ReactNode {

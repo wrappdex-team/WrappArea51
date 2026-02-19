@@ -87,7 +87,7 @@ export function Layout() {
   }, []);
 
   const navItems = [
-    { path: "/", label: "Markets", icon: TrendingUp },
+    { path: "/markets", label: "Markets", icon: TrendingUp },
     { path: "/trading", label: "Trade", icon: BarChart3 },
     { path: "/swap", label: "Swap", icon: ArrowRightLeft },
     { path: "/buy-sell", label: "Buy/Sell", icon: DollarSign },
@@ -105,7 +105,7 @@ export function Layout() {
   ];
 
   const isActive = (path: string) => {
-    if (path === "/") return location.pathname === "/";
+    if (path === "/markets") return location.pathname === "/markets";
     return location.pathname.startsWith(path);
   };
 
@@ -117,7 +117,7 @@ export function Layout() {
   };
 
   // Track route changes for performance monitoring + SEO
-  const currentSEO = ROUTE_SEO[location.pathname] || ROUTE_SEO["/"];
+  const currentSEO = ROUTE_SEO[location.pathname] || ROUTE_SEO["/markets"];
   useEffect(() => {
     trackRouteChange(location.pathname);
   }, [location.pathname]);
@@ -193,7 +193,7 @@ export function Layout() {
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
             {/* HBAR.ħ Logo — compact on lg to free nav space */}
-            <Link to="/" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1">
+            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1">
               <HolidayLogo
                 defaultDarkSrc={brandLogos.dark}
                 defaultLightSrc={brandLogos.light}

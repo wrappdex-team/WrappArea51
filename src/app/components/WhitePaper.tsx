@@ -454,7 +454,7 @@ export function WhitePaper() {
       <div className="max-w-4xl mx-auto px-4 md:px-8 py-8 md:py-12">
         {/* Back nav */}
         <Link
-          to="/"
+          to="/markets"
           className={`inline-flex items-center gap-2 text-sm mb-8 transition-colors ${
             isDark
               ? "text-slate-400 hover:text-white"
@@ -2074,7 +2074,7 @@ export function WhitePaper() {
               </p>
               <div className="flex flex-wrap justify-center gap-3">
                 <Link
-                  to="/"
+                  to="/markets"
                   className="px-6 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold text-sm hover:opacity-90 transition-opacity"
                 >
                   Launch App
