@@ -26,6 +26,8 @@ import {
   UserPlus,
   Shield,
   X,
+  KeyRound,
+  LogIn,
 } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -64,6 +66,7 @@ import {
   type ProposalCategory,
   type ProposalStatus,
 } from "../utils/dao";
+import { authenticate, hasValidSession } from "../utils/auth";
 import { SpinWheel } from "./SpinWheel";
 import { OwnerControlPanel } from "./OwnerControlPanel";
 import { DAOProposalListSkeleton } from "./Skeletons";
@@ -169,6 +172,85 @@ export function DAO() {
   // Owner (0.0.518487) has elevated privileges — admin management is owner-only
   const isOwner = accountId === DAO_FOUNDER_ACCOUNT;
 
+  // ── ED25519 Session State (ghost audit C2) ────────────────────────
+  // All mutating DAO actions (vote, comment, create, edit, delete) now
+  // require an ED25519 session — the spoofable X-Account-Id header
+  // fallback has been removed from the server's requireAuth().
+  // We track session status for UI indicators and auto-authenticate
+  // before the first mutating action.
+
+  const [isAuthenticated, setIsAuthenticated] = useState(() =>
+    accountId ? hasValidSession(accountId) : false
+  );
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  // Sync session status when accountId changes or after actions
+  const refreshSessionStatus = useCallback(() => {
+    setIsAuthenticated(accountId ? hasValidSession(accountId) : false);
+  }, [accountId]);
+
+  // Check session status periodically (catches expiry within the 30-min window)
+  useEffect(() => {
+    refreshSessionStatus();
+    const iv = setInterval(refreshSessionStatus, 30_000);
+    return () => clearInterval(iv);
+  }, [refreshSessionStatus]);
+
+  /**
+   * Ensure an active ED25519 session before performing a mutating action.
+   * If no session exists, triggers the wallet signing prompt (one-time per
+   * 30-min window). Returns true if a valid session exists after the call.
+   *
+   * UX flow:
+   *   1. hasValidSession? → proceed immediately (no wallet prompt)
+   *   2. No session → toast "Signing in..." → authenticate() → HashPack prompt
+   *   3. User signs → session created → return true
+   *   4. User rejects → error toast → return false
+   */
+  const ensureSession = useCallback(async (): Promise<boolean> => {
+    // Fast path: session already active
+    if (hasValidSession(accountId)) {
+      setIsAuthenticated(true);
+      return true;
+    }
+
+    // Trigger wallet signing
+    setIsAuthenticating(true);
+    const signingToast = toast.loading(
+      "Sign the message in HashPack to authenticate...",
+      { duration: 30_000 }
+    );
+
+    try {
+      await authenticate(accountId);
+      toast.dismiss(signingToast);
+      toast.success("Signed in — session active for 30 minutes", { duration: 3000 });
+      setIsAuthenticated(true);
+      return true;
+    } catch (err: any) {
+      toast.dismiss(signingToast);
+      const msg = err?.message || "Authentication failed";
+      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("cancel")) {
+        toast.error("Signing cancelled — you need to sign to participate", { duration: 5000 });
+      } else {
+        toast.error(`Sign-in failed: ${msg}`, { duration: 5000 });
+      }
+      return false;
+    } finally {
+      setIsAuthenticating(false);
+      refreshSessionStatus();
+    }
+  }, [accountId, refreshSessionStatus]);
+
+  /**
+   * Proactive sign-in handler for the EligibilityCard button.
+   * Same flow as ensureSession but exposed as a standalone action.
+   */
+  const handleSignIn = useCallback(async () => {
+    if (isAuthenticating) return;
+    await ensureSession();
+  }, [ensureSession, isAuthenticating]);
+
   // Load proposals from server on mount
   useEffect(() => {
     loadProposals().then((p) => {
@@ -188,7 +270,7 @@ export function DAO() {
     if (isDAOAdmin(accountId)) {
       setIsAdmin(true);
     }
-    // Server check — fetchDaoAdmins uses X-Account-Id header (no signing required)
+    // Server check — fetchDaoAdmins uses ED25519 session token (if available)
     fetchDaoAdmins(accountId).then((result) => {
       if (result.error === "no_account") {
         // No account connected — rely on client cache only.
@@ -262,6 +344,9 @@ export function DAO() {
     async (proposalId: string, direction: "for" | "against") => {
       if (!connected || !eligible || maxVotes <= 0 || actionLoading) return;
 
+      // Ensure ED25519 session before server call (ghost audit C2)
+      if (!(await ensureSession())) return;
+
       setActionLoading(true);
       try {
         const result = await castVote(accountId, proposalId, direction);
@@ -286,7 +371,7 @@ export function DAO() {
         setActionLoading(false);
       }
     },
-    [connected, eligible, maxVotes, accountId, actionLoading, refreshAdminStatus]
+    [connected, eligible, maxVotes, accountId, actionLoading, refreshAdminStatus, ensureSession]
   );
 
   const hasVotedOn = useCallback(
@@ -299,6 +384,7 @@ export function DAO() {
   const handleDelete = useCallback(
     async (proposalId: string) => {
       if (actionLoading) return;
+      if (!(await ensureSession())) return;
       setActionLoading(true);
       try {
         const result = await deleteProposal(accountId, proposalId);
@@ -317,12 +403,13 @@ export function DAO() {
         setActionLoading(false);
       }
     },
-    [accountId, expandedId, actionLoading, refreshAdminStatus]
+    [accountId, expandedId, actionLoading, refreshAdminStatus, ensureSession]
   );
 
   const handleEdit = useCallback(
     async (proposalId: string, updates: { title?: string; description?: string; category?: ProposalCategory }) => {
       if (actionLoading) return;
+      if (!(await ensureSession())) return;
       setActionLoading(true);
       try {
         const result = await editProposal(accountId, proposalId, updates);
@@ -340,12 +427,13 @@ export function DAO() {
         setActionLoading(false);
       }
     },
-    [accountId, actionLoading, refreshAdminStatus]
+    [accountId, actionLoading, refreshAdminStatus, ensureSession]
   );
 
   const handleAddComment = useCallback(
     async (proposalId: string, text: string) => {
       if (actionLoading) return;
+      if (!(await ensureSession())) return;
       setActionLoading(true);
       try {
         const result = await addComment(accountId, proposalId, text);
@@ -364,12 +452,13 @@ export function DAO() {
         setActionLoading(false);
       }
     },
-    [accountId, actionLoading, refreshAdminStatus]
+    [accountId, actionLoading, refreshAdminStatus, ensureSession]
   );
 
   const handleCreate = useCallback(
     async (title: string, desc: string, cat: ProposalCategory, days: number, quorum: number) => {
       if (actionLoading) return;
+      if (!(await ensureSession())) return;
       setActionLoading(true);
       try {
         const result = await createProposal(accountId, title, desc, cat, days, quorum);
@@ -387,7 +476,7 @@ export function DAO() {
         setShowCreate(false);
       }
     },
-    [accountId, actionLoading, refreshAdminStatus]
+    [accountId, actionLoading, refreshAdminStatus, ensureSession]
   );
 
   // ── Render: Not connected ──────────────────────────────────────────
@@ -575,6 +664,9 @@ export function DAO() {
         refreshing={refreshing}
         maxVotes={maxVotes}
         isAdmin={isAdmin}
+        isAuthenticated={isAuthenticated}
+        isAuthenticating={isAuthenticating}
+        onSignIn={handleSignIn}
       />
 
       {/* ── DAO Section Tabs ── */}
@@ -680,6 +772,9 @@ function EligibilityCard({
   refreshing,
   maxVotes,
   isAdmin,
+  isAuthenticated,
+  isAuthenticating,
+  onSignIn,
 }: {
   wrappBalance: number;
   nftCount: number;
@@ -689,6 +784,9 @@ function EligibilityCard({
   refreshing: boolean;
   maxVotes?: number;
   isAdmin?: boolean;
+  isAuthenticated?: boolean;
+  isAuthenticating?: boolean;
+  onSignIn?: () => void;
 }) {
   const { isDark } = useTheme();
   const eligible = wrappBalance >= GATE_THRESHOLD || nftCount >= 1;
@@ -766,6 +864,50 @@ function EligibilityCard({
           <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>Votes verified on-chain</div>
         </div>
       </div>
+
+      {/* ── Session Status Indicator (ghost audit C2) ── */}
+      {eligible && onSignIn && (
+        <div className={`mt-3 pt-3 border-t ${isDark ? "border-white/5" : "border-gray-200"}`}>
+          {isAuthenticated ? (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className={`text-xs ${isDark ? "text-emerald-400/80" : "text-emerald-600"}`}>
+                  Session active
+                </span>
+              </div>
+              <KeyRound className={`w-3 h-3 ${isDark ? "text-emerald-400/50" : "text-emerald-500/50"}`} />
+              <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                ED25519 verified &middot; votes, comments & proposals authorized
+              </span>
+            </div>
+          ) : isAuthenticating ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className={`w-3.5 h-3.5 animate-spin ${isDark ? "text-amber-400" : "text-amber-500"}`} />
+              <span className={`text-xs ${isDark ? "text-amber-400" : "text-amber-600"}`}>
+                Waiting for wallet signature...
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onSignIn}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 border ${
+                  isDark
+                    ? "bg-amber-500/10 border-amber-500/25 text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/40"
+                    : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                }`}
+              >
+                <LogIn className="w-3 h-3" />
+                Sign In to Participate
+              </button>
+              <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                One wallet signature &middot; 30-min session &middot; no fees
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className={`mt-3 pt-3 border-t flex items-center gap-2 text-xs ${isDark ? "border-white/5 text-slate-500" : "border-gray-200 text-slate-600"}`}>
         <Info className="w-3 h-3 shrink-0" />

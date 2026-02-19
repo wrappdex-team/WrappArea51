@@ -347,32 +347,78 @@ export async function validateSession(c: any): Promise<{ accountId: string } | n
 }
 
 /**
- * Require authenticated user. Returns accountId from verified session or
- * wallet-connected X-Account-Id header.
+ * Require authenticated user. Returns accountId from a cryptographically
+ * verified ED25519 session token.
  *
- * Auth strategy (tried in order):
- *   1. ED25519 session token (X-Session-Token) — cryptographic proof
- *   2. Wallet-connected header (X-Account-Id) — WalletConnect pairing already
- *      proved wallet ownership on the client side. Temporary fallback until
- *      Hiero 0x16b system contract governance replaces this (Q2–Q3).
+ * ═══════════════════════════════════════════════════════════════════════
+ * GHOST AUDIT C2 — X-Account-Id HEADER FALLBACK REMOVED
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * Previously, this function accepted a client-supplied X-Account-Id header
+ * as a fallback when no ED25519 session existed. The rationale was that
+ * "WalletConnect pairing proves wallet ownership on the client side."
+ *
+ * This was INSECURE because:
+ *   - The X-Account-Id header is set by the browser, not by any
+ *     cryptographic protocol the server can verify.
+ *   - WalletConnect v2 pairing proves identity to the dApp's FRONTEND
+ *     running in the user's browser — the server has no way to confirm
+ *     that a WC session was actually established.
+ *   - An attacker can trivially spoof ANY account:
+ *       curl -H "X-Account-Id: 0.0.12345" POST /dao/proposals/xxx/vote
+ *   - This allowed vote stuffing, comment impersonation, and LP manipulation
+ *     without controlling the target wallet's private key.
+ *
+ * WHY NOT @walletconnect/sign-client ON THE SERVER?
+ *   The WC Sign Client is a long-lived, event-driven SDK that maintains
+ *   persistent WebSocket connections to relay.walletconnect.com. It is
+ *   designed for:
+ *     - Browser dApp frontends (our current client-side model)
+ *     - Long-running Node.js backends with persistent state
+ *   It is INCOMPATIBLE with Supabase Edge Functions because:
+ *     1. Edge Functions are stateless — each request may hit a different
+ *        Deno isolate. No WebSocket persistence across invocations.
+ *     2. The WC pairing flow is async/event-driven — the server would need
+ *        to listen for session_approval events via WebSocket, but the
+ *        function that generated the pairing URI has already returned.
+ *     3. WC client state (sessions, pairings) is in-memory and lost
+ *        between isolate invocations.
+ *     4. Heavy Node.js dependencies (crypto, events, process) are not
+ *        guaranteed compatible with Deno Deploy.
+ *
+ * CORRECT MODEL:
+ *   ED25519 challenge-response (already implemented) provides STRONGER
+ *   guarantees than WC server-side verification:
+ *     - Server issues a CSPRNG nonce → user signs in HashPack wallet →
+ *       server verifies signature against Mirror Node public key.
+ *     - Cryptographic proof that the caller controls the wallet's private
+ *       key. Not spoofable, not replayable.
+ *     - 30-min KV-backed sessions with per-account revocation.
+ *
+ * All endpoints using requireAuth() now require ED25519 sessions.
+ * Frontend callers must call authenticate(accountId) before making
+ * requests to these endpoints.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 export async function requireAuth(c: any): Promise<{ accountId: string } | Response> {
-  // Path 1: Try ED25519 session-based auth (strongest)
+  // ED25519 session-based auth — cryptographic proof of wallet ownership
   const session = await validateSession(c);
   if (session) {
     return { accountId: session.accountId };
   }
 
-  // Path 2: Wallet-connected fallback — accept X-Account-Id header.
-  // WalletConnect v2 pairing proves the user controls this wallet.
+  // Log spoofing attempts for forensics (matches requireOwner pattern)
   const headerAccountId = (c.req.header("x-account-id") || "").trim();
-  if (headerAccountId && /^0\.0\.\d{1,10}$/.test(headerAccountId)) {
-    return { accountId: headerAccountId };
+  if (headerAccountId) {
+    const ip = getClientIp(c);
+    console.log(
+      `[SECURITY] Auth endpoint called with X-Account-Id header ` +
+      `(ignored — ED25519 session required): ${headerAccountId} from IP ${ip}`
+    );
   }
 
-  // Neither path succeeded
   return c.json({
-    error: "Authentication required — connect your wallet or sign a challenge.",
+    error: "Authentication required — sign a challenge with your wallet to create a session.",
     code: "AUTH_REQUIRED",
   }, 401);
 }

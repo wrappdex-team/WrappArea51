@@ -16,6 +16,23 @@ const SAUCERSWAP_API = "https://api.saucerswap.finance";
 const HBARH_TOKEN_ID = "0.0.9356476";
 import { log } from "./logger";
 
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  SENIOR DEV NOTE #12 — SAUCERSWAP PARTNER / API KEY                │
+// │                                                                    │
+// │  SaucerSwap is generating a partner/API key for WRAPpDEX.          │
+// │  When received, paste the key below. It will be auto-attached      │
+// │  to all SaucerSwap API requests via the `x-api-key` header for:    │
+// │    - Better rate limits (bypasses public tier throttling)           │
+// │    - Revenue sharing / affiliate tracking                          │
+// │    - Priority access to new API endpoints                          │
+// │                                                                    │
+// │  The key is safe to include client-side — SaucerSwap's public      │
+// │  API keys identify the dApp, they are NOT secret keys.             │
+// │                                                                    │
+// │  TO CONFIGURE: Replace "" with the key string from SaucerSwap.     │
+// └─────────────────────────────────────────────────────────────────────┘
+export const SAUCERSWAP_PARTNER_ID: string = "";
+
 // ── Resilient SaucerSwap API helper ────────────────────────────────
 // The SaucerSwap REST API has been observed to respond differently
 // depending on path prefix (versionless, /v1/, /v2/) and may enforce
@@ -36,6 +53,10 @@ async function saucerFetch(
     "/v2" + path,     // V2 prefix   (e.g. /v2/tokens)
   ];
   const headers: Record<string, string> = { Accept: "application/json" };
+  // Attach partner key if configured (SENIOR DEV NOTE #12)
+  if (SAUCERSWAP_PARTNER_ID) {
+    headers["x-api-key"] = SAUCERSWAP_PARTNER_ID;
+  }
 
   for (const variant of variants) {
     try {

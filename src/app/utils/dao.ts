@@ -1,9 +1,10 @@
 /**
  * HBAR.ħ DAO — Server-Authoritative Governance Client
  *
- * All state in server KV. Regular auth via wallet-connected X-Account-Id header
- * (WalletConnect pairing proves wallet ownership client-side). Temporary
- * model until Hiero 0x16b system contract governance (Q2–Q3).
+ * All state in server KV. Auth via ED25519 challenge-response sessions
+ * (ghost audit C2 — spoofable X-Account-Id header fallback removed from
+ * server's requireAuth). Users must sign a wallet challenge before
+ * performing any authenticated action (vote, comment, create proposal).
  * OWNER-ONLY operations (admin add/remove) require ED25519 session tokens
  * (ghost audit C1 — X-Account-Id fallback removed from requireOwner).
  * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified server-side).
@@ -138,16 +139,30 @@ export interface Proposal {
   comments: ProposalComment[];
 }
 
-// ── Helper: build authenticated headers for wallet-connected user ────
-// WalletConnect pairing proves wallet ownership. Server's requireAuth
-// accepts X-Account-Id as a fallback when no ED25519 session exists.
-// Temporary auth model until Hiero 0x16b system contract governance (Q2–Q3).
+// ── Helper: build authenticated headers for DAO endpoints ────────────
+// Ghost audit C2: The spoofable X-Account-Id header fallback has been
+// removed from the server's requireAuth(). ALL authenticated endpoints
+// now require an ED25519 session token (X-Session-Token header).
+//
+// If no active session exists, this returns base headers only — the
+// server will respond with 401 AUTH_REQUIRED, which surfaces as an
+// actionable error message to the user.
+//
+// The accountId parameter is retained for call-site compatibility but
+// is no longer sent as a header — identity is bound to the KV-backed
+// session token, not a client-supplied string.
 
-function walletHeaders(accountId: string): Record<string, string> {
+function walletHeaders(_accountId: string): Record<string, string> {
+  const sessionToken = getSessionToken();
+  if (sessionToken) {
+    return authHeaders(sessionToken);
+  }
+  // No active session — server will reject with 401 AUTH_REQUIRED.
+  // Callers surface the server error to the user (e.g., "Sign in first").
+  log.warn("DAO", "No active ED25519 session — server will reject this request. User must authenticate() first.");
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${publicAnonKey}`,
-    "X-Account-Id": accountId,
   };
 }
 
@@ -399,7 +414,8 @@ export function formatCommentTime(createdAt: number): string {
 
 /**
  * Fetch the current admin list from the server.
- * Uses wallet-connected X-Account-Id header for authentication.
+ * Requires ED25519 session token (ghost audit C2 — X-Account-Id removed).
+ * If no session exists, falls back to client-side cache silently.
  * Server checks if the requesting account is itself an admin before returning the list.
  * Also updates the client-side admin cache on success.
  */

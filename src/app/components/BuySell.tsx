@@ -32,6 +32,7 @@ import { WalletConnectModal } from "./WalletConnectModal";
 import { orchestrateSwap } from "../utils/hsuite";
 import {
   executeSaucerSwap,
+  SAUCERSWAP_PARTNER_ID,
   type SwapResult,
 } from "../utils/saucerswap";
 import { signTransaction as hashPackSign } from "../utils/hashpack";
@@ -43,6 +44,25 @@ const USDC_LOGO = "https://assets.coingecko.com/coins/images/6319/large/usdc.png
 const CHANGENOW_LOGO = "https://changenow.io/images/changenow-logo.svg";
 
 const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
+
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  SENIOR DEV NOTE #11 — SAUCERSWAP SWAP PRODUCTION LOCK             │
+// │                                                                    │
+// │  The Hedera swap tab (Buy/Sell HBAR) is production-ready and       │
+// │  routes through SaucerSwap V1 with HSuite fallback. It is locked   │
+// │  behind a test gate so ONLY the owner wallet (0.0.518487) can      │
+// │  execute live swaps until end-to-end testing is complete on a      │
+// │  deployed Vercel URL.                                              │
+// │                                                                    │
+// │  TO GO LIVE: set BUYSELL_SWAP_LOCKED = false                       │
+// │                                                                    │
+// │  SaucerSwap Partner ID: When received, set SAUCERSWAP_PARTNER_ID   │
+// │  in /src/app/utils/saucerswap.ts — it will auto-attach to all API  │
+// │  calls for better rate limits and revenue sharing.                  │
+// │  Current status: ${SAUCERSWAP_PARTNER_ID ? "CONFIGURED" : "AWAITING KEY FROM SAUCERSWAP TEAM"}
+// └─────────────────────────────────────────────────────────────────────┘
+const BUYSELL_SWAP_LOCKED = true;
+const BUYSELL_ALLOWED_ACCOUNT = "0.0.518487";
 
 // ── ChangeNOW widget config ──────────────────────────────────────────
 
@@ -130,6 +150,11 @@ interface RecentSwap {
 export function BuySell() {
   const { isDark } = useTheme();
   const { primaryWallet, hederaAccount, hashPackSession, hederaNetwork, hbarPrice: ctxHbarPrice } = useWallet();
+
+  // ── Swap Lock Gate (derived — evaluated after all hooks below) ──
+  const connectedHederaAccount = hashPackSession?.accountId ?? "";
+  const isAllowedTester = connectedHederaAccount === BUYSELL_ALLOWED_ACCOUNT;
+  const isSwapLocked = BUYSELL_SWAP_LOCKED && !isAllowedTester;
 
   const [activeTab, setActiveTab] = useState<TabKey>("swap");
   const [mode, setMode] = useState<"buy" | "sell">("buy");
@@ -312,14 +337,21 @@ export function BuySell() {
       }
     }
 
-    // Simulation fallback (no wallet or both routers unavailable)
-    setSwapError(null);
-    setTimeout(() => {
-      onSwapSuccess(null, "simulation", accountId || "");
-    }, 1500);
+    // ── No simulation fallback — production mode only ──
+    // If we reach here, the wallet is either not connected or both
+    // SaucerSwap and HSuite routers failed. Show the real error.
+    if (!accountId) {
+      setSwapStatus("error");
+      setSwapError("Connect your HashPack wallet to execute swaps.");
+    } else {
+      setSwapStatus("error");
+      if (!swapError) {
+        setSwapError("Both SaucerSwap and HSuite routers failed. Please try again or check your network connection.");
+      }
+    }
   };
 
-  const onSwapSuccess = (txId: string | null, router: "saucerswap" | "hsuite" | "simulation", accountId: string) => {
+  const onSwapSuccess = (txId: string | null, router: "saucerswap" | "hsuite", accountId: string) => {
     // VIP cash register
     try {
       const vp = loadVipPrefs();
@@ -463,7 +495,63 @@ export function BuySell() {
         </div>
 
         {/* ── TAB: Hedera Swap ── */}
-        {activeTab === "swap" && (
+        {activeTab === "swap" && isSwapLocked && (
+          <div className="max-w-lg mx-auto">
+            <div className={`rounded-2xl p-6 ${cardClass}`}>
+              {/* Buy/Sell Toggle — visible but disabled */}
+              <div className="grid grid-cols-2 gap-2 mb-6">
+                <button disabled className="py-3 rounded-xl font-bold bg-gradient-to-r from-emerald-600/40 to-green-500/40 text-white/50 cursor-not-allowed">
+                  Buy HBAR
+                </button>
+                <button disabled className={`py-3 rounded-xl font-bold cursor-not-allowed ${isDark ? "bg-slate-800/30 text-slate-600" : "bg-gray-100 text-gray-400"}`}>
+                  Sell HBAR
+                </button>
+              </div>
+
+              {/* Lock Banner */}
+              <div className={`rounded-xl p-8 text-center ${
+                isDark
+                  ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border border-amber-500/20"
+                  : "bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200"
+              }`}>
+                <div className={`w-16 h-16 rounded-2xl mx-auto mb-5 flex items-center justify-center ${
+                  isDark ? "bg-amber-500/10" : "bg-amber-100"
+                }`}>
+                  <Lock className={`w-8 h-8 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
+                </div>
+                <h4 className={`text-lg font-bold mb-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
+                  Swap Testing in Progress
+                </h4>
+                <p className={`text-sm leading-relaxed max-w-sm mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
+                  The on-chain swap engine (SaucerSwap V1 + HSuite fallback) is currently locked for
+                  founder testing. It will be available to all users once the full swap flow has been
+                  verified on a live deployment.
+                </p>
+                {connectedHederaAccount && (
+                  <p className={`text-xs mt-4 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                    Connected: {connectedHederaAccount}
+                  </p>
+                )}
+              </div>
+
+              {/* Router badge */}
+              <div className="mt-4 flex items-center justify-center gap-2 text-xs">
+                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-emerald-900/20 text-emerald-400/50 border border-emerald-500/10" : "bg-emerald-50 text-emerald-700/50 border border-emerald-200/50"}`}>
+                  <Zap className="w-2.5 h-2.5" />
+                  SauceSwap V1
+                </span>
+                <span className={isDark ? "text-slate-600" : "text-gray-400"}>
+                  HSuite fallback
+                </span>
+              </div>
+              <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                <Shield className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Routed through SauceSwap on Hedera with ~2s finality. Signed via HashPack.</span>
+              </div>
+            </div>
+          </div>
+        )}
+        {activeTab === "swap" && !isSwapLocked && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-7 space-y-4">
               <div className={`rounded-2xl p-6 ${cardClass}`}>
@@ -676,6 +764,21 @@ export function BuySell() {
                         Swap Complete
                       </div>
                     </button>
+                  ) : swapStatus === "error" ? (
+                    <div>
+                      <button disabled className="w-full py-4 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white">
+                        <div className="flex items-center justify-center gap-2">
+                          <AlertCircle className="w-5 h-5" />
+                          Swap Failed
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => { setSwapStatus("idle"); setSwapError(null); }}
+                        className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}
+                      >
+                        Try Again
+                      </button>
+                    </div>
                   ) : (
                     <button
                       onClick={handleSwap}
