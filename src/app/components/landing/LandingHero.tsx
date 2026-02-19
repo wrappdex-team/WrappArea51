@@ -10,10 +10,23 @@ import {
   Landmark,
 } from "lucide-react";
 
-import desktopDark from "figma:asset/72e5844b003ad8836621a9b42801f4a374233bad.png";
-import desktopLight from "figma:asset/1363aca7ffb225941d53307632c6195b0845cc11.png";
-import mobileDark from "figma:asset/930dd19dcf4a38e66c3deae40c8f951f85e4e4b3.png";
-import mobileLight from "figma:asset/22470b23cd596378a1047db7fe5a76f33753a23e.png";
+/**
+ * App screenshots — served from /public/screenshots/.
+ *
+ * The `figma:asset/...` scheme only works inside Figma Make's dev server.
+ * For Vercel / Railway / any standard Vite build, reference plain paths
+ * into /public/ so Vite copies them as static assets.
+ *
+ * Place the four PNGs in your repo at:
+ *   public/screenshots/desktop-dark.png
+ *   public/screenshots/desktop-light.png
+ *   public/screenshots/mobile-dark.png
+ *   public/screenshots/mobile-light.png
+ */
+const desktopDark  = "/screenshots/desktop-dark.png";
+const desktopLight = "/screenshots/desktop-light.png";
+const mobileDark   = "/screenshots/mobile-dark.png";
+const mobileLight  = "/screenshots/mobile-light.png";
 
 const BLUE = "#1D63ED";
 const CYAN = "#06b6d4";

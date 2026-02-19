@@ -34,8 +34,39 @@ function dynamicLabsResolverPlugin() {
   };
 }
 
+/**
+ * Safety-net plugin for `figma:asset/` imports.
+ *
+ * The `figma:asset/…` virtual scheme only works inside Figma Make's dev
+ * server. In production builds (Vercel, Railway, Netlify) Rollup cannot
+ * resolve it and the build crashes.
+ *
+ * This plugin intercepts those imports and rewrites them to paths under
+ * `/public/screenshots/` (served at `/screenshots/` by Vite).
+ * If the referenced file doesn't exist the image simply won't load at
+ * runtime — which is a soft failure instead of a hard build crash.
+ */
+function figmaAssetSafetyPlugin() {
+  const FIGMA_PREFIX = 'figma:asset/';
+  return {
+    name: 'figma-asset-safety',
+    enforce: 'pre' as const,
+    resolveId(source: string) {
+      if (source.startsWith(FIGMA_PREFIX)) {
+        // Strip the virtual scheme and return a public-dir path
+        // so Rollup treats it as resolved (external URL reference).
+        const filename = source.slice(FIGMA_PREFIX.length);
+        return { id: `/screenshots/${filename}`, external: true };
+      }
+      return null;
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => ({
   plugins: [
+    // Resolve figma:asset/ imports to /public/screenshots/ paths
+    figmaAssetSafetyPlugin(),
     // Fix @dynamic-labs/ethereum internal resolution BEFORE other plugins process it
     dynamicLabsResolverPlugin(),
     // The React and Tailwind plugins are both required for Make, even if
