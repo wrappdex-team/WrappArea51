@@ -39,7 +39,13 @@ import {
 import { isVipEligible } from "../utils/vip";
 import { VIPAccessGate } from "./VIPAccessGate";
 
-// ── Liquidity Pool types (unchanged) ──
+// ══════════════════════════════════════════════════════════════════════
+// NO HARDCODED POOL DATA
+// All pool data comes from SaucerSwap's live API via defi-stats.ts.
+// If the API is unreachable, the UI shows an honest error state.
+// ═════════��════════════════════════════════════════════════════════════
+
+// ── Liquidity Pool types ──
 
 interface LiquidityPool {
   id: string;
@@ -48,32 +54,13 @@ interface LiquidityPool {
   tvl: number;
   volume24h: number;
   apr: number;
+  feeAPR: number;
+  farmAPR: number;
   fee: number;
   utilization: number;
   trending: "up" | "down" | "stable";
+  source: "v1" | "v2";
 }
-
-// ── SauceSwap Pool Data ──
-const POOLS: LiquidityPool[] = [
-  { id: "pool-whbar-usdc", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 18_420_000, volume24h: 3_240_000, apr: 24.5, fee: 0.3, utilization: 72, trending: "up" },
-  { id: "pool-whbar-weth", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "WETH[hts]", logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png" }, tvl: 12_800_000, volume24h: 2_150_000, apr: 18.2, fee: 0.3, utilization: 65, trending: "up" },
-  { id: "pool-whbar-wbtc", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "WBTC[hts]", logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png" }, tvl: 9_650_000, volume24h: 1_890_000, apr: 15.8, fee: 0.3, utilization: 58, trending: "stable" },
-  { id: "pool-usdc-usdt", tokenA: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tokenB: { symbol: "USDT", logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" }, tvl: 8_910_000, volume24h: 2_180_000, apr: 8.4, fee: 0.01, utilization: 54, trending: "stable" },
-  { id: "pool-whbar-sauce", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "SAUCE", logo: "https://www.saucerswap.finance/images/tokens/sauce.svg" }, tvl: 4_120_000, volume24h: 1_560_000, apr: 38.2, fee: 0.3, utilization: 68, trending: "up" },
-  { id: "pool-whbar-hbarh", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "HBAR.ħ", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tvl: 5_630_000, volume24h: 890_000, apr: 12.8, fee: 0.05, utilization: 42, trending: "stable" },
-  { id: "pool-whbar-link", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "LINK[hts]", logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png" }, tvl: 2_340_000, volume24h: 780_000, apr: 18.7, fee: 0.3, utilization: 49, trending: "up" },
-  { id: "pool-whbar-karate", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "KARATE", logo: "https://www.saucerswap.finance/images/tokens/karate.svg" }, tvl: 1_840_000, volume24h: 620_000, apr: 52.1, fee: 1.0, utilization: 75, trending: "up" },
-  { id: "pool-whbar-pack", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "PACK", logo: "https://www.saucerswap.finance/images/tokens/pack.svg" }, tvl: 920_000, volume24h: 340_000, apr: 31.6, fee: 0.3, utilization: 52, trending: "up" },
-  { id: "pool-whbar-hst", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "HST", logo: "https://www.saucerswap.finance/images/tokens/hst.svg" }, tvl: 680_000, volume24h: 210_000, apr: 26.4, fee: 0.3, utilization: 46, trending: "stable" },
-  { id: "pool-whbar-usdt", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "USDT", logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" }, tvl: 6_200_000, volume24h: 1_450_000, apr: 18.3, fee: 0.3, utilization: 62, trending: "up" },
-  { id: "pool-whbar-hbarx", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "HBARX", logo: "https://www.saucerswap.finance/images/tokens/hbarx.svg" }, tvl: 5_630_000, volume24h: 890_000, apr: 12.8, fee: 0.05, utilization: 44, trending: "stable" },
-  { id: "pool-whbar-dovu", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "DOVU", logo: "https://www.saucerswap.finance/images/tokens/dovu.svg" }, tvl: 420_000, volume24h: 95_000, apr: 22.0, fee: 0.3, utilization: 38, trending: "stable" },
-  { id: "pool-sauce-usdc", tokenA: { symbol: "SAUCE", logo: "https://www.saucerswap.finance/images/tokens/sauce.svg" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 1_560_000, volume24h: 420_000, apr: 28.5, fee: 0.3, utilization: 55, trending: "up" },
-  { id: "pool-wbtc-usdc", tokenA: { symbol: "WBTC[hts]", logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 2_100_000, volume24h: 560_000, apr: 12.0, fee: 0.3, utilization: 48, trending: "stable" },
-  { id: "pool-weth-usdc", tokenA: { symbol: "WETH[hts]", logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 3_450_000, volume24h: 890_000, apr: 14.2, fee: 0.3, utilization: 51, trending: "up" },
-  { id: "pool-whbar-aave", tokenA: { symbol: "WHBAR", logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, tokenB: { symbol: "AAVE[hts]", logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png" }, tvl: 1_280_000, volume24h: 340_000, apr: 16.5, fee: 0.3, utilization: 46, trending: "up" },
-  { id: "pool-dai-usdc", tokenA: { symbol: "DAI[hts]", logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png" }, tokenB: { symbol: "USDC", logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" }, tvl: 2_640_000, volume24h: 720_000, apr: 6.8, fee: 0.05, utilization: 58, trending: "stable" },
-];
 
 type Tab = "pools" | "lend" | "staking";
 type SortField = "tvl" | "apr" | "volume24h" | "utilization";
@@ -205,10 +192,10 @@ export function DeFi() {
 
   // Protocol stats — prefer live SaucerSwap data, fall back to static POOLS
   const isLive = defiStats?.dataSource === "live";
-  const totalTVL = isLive ? defiStats!.totalTVL : POOLS.reduce((s, p) => s + p.tvl, 0);
-  const totalVolume = isLive ? defiStats!.totalVolume24h : POOLS.reduce((s, p) => s + p.volume24h, 0);
-  const avgAPR = isLive ? defiStats!.avgAPR : POOLS.reduce((s, p) => s + p.apr, 0) / POOLS.length;
-  const poolCount = isLive ? defiStats!.poolCount : POOLS.length;
+  const totalTVL = isLive ? defiStats!.totalTVL : 0;
+  const totalVolume = isLive ? defiStats!.totalVolume24h : 0;
+  const avgAPR = isLive ? defiStats!.avgAPR : 0;
+  const poolCount = isLive ? defiStats!.poolCount : 0;
 
   // Display pools — prefer live, fall back to static
   const displayPools: LiquidityPool[] = useMemo(() => {
@@ -220,12 +207,15 @@ export function DeFi() {
         tvl: lp.tvl,
         volume24h: lp.volume24h,
         apr: lp.apr,
+        feeAPR: lp.feeAPR,
+        farmAPR: lp.farmAPR,
         fee: lp.fee,
         utilization: lp.utilization,
         trending: lp.trending,
+        source: lp.source,
       }));
     }
-    return POOLS;
+    return [];
   }, [livePools]);
 
   // Filtered & sorted pools
@@ -348,6 +338,42 @@ export function DeFi() {
       {/* ═══ LIQUIDITY POOLS TAB ═══ */}
       {activeTab === "pools" && (
         <div className="space-y-4">
+          {/* Data Source Indicator */}
+          <div className={`flex items-center justify-between text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+            <div className="flex items-center gap-2">
+              {defiLoading ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  Loading live data from SaucerSwap...
+                </span>
+              ) : isLive ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  Live from SaucerSwap &middot; {poolCount} pools
+                  {defiStats?.v1Count != null && defiStats?.v2Count != null && (defiStats.v1Count > 0 || defiStats.v2Count > 0) && (
+                    <> ({defiStats.v1Count} V1, {defiStats.v2Count} V2)</>
+                  )}
+                  {" "}&middot; Updated {defiStats ? new Date(defiStats.lastUpdated).toLocaleTimeString() : ""}
+                </span>
+              ) : defiError ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                  SaucerSwap API unavailable &middot; {defiError}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                  Connecting to SaucerSwap...
+                </span>
+              )}
+            </div>
+            {defiStats?.fetchDurationMs != null && !defiLoading && (
+              <span className={isDark ? "text-slate-600" : "text-gray-300"}>
+                {defiStats.fetchDurationMs}ms
+              </span>
+            )}
+          </div>
+
           {/* Search & Filter */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className={`flex items-center gap-2 px-3 py-2.5 rounded-lg flex-1 ${inputClass}`}>
@@ -414,6 +440,11 @@ export function DeFi() {
                         <div className="font-bold text-sm">{pool.tokenA.symbol}/{pool.tokenB.symbol}</div>
                         <div className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                           <span className={`px-1 py-0.5 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{pool.fee}%</span>
+                          <span className={`px-1 py-0.5 rounded font-medium ${
+                            pool.source === "v2"
+                              ? isDark ? "bg-purple-500/10 text-purple-400" : "bg-purple-50 text-purple-600"
+                              : isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
+                          }`}>{pool.source.toUpperCase()}</span>
                           {pool.trending === "up" && <TrendingUp className="w-3 h-3 text-emerald-400" />}
                           {pool.trending === "down" && <TrendingDown className="w-3 h-3 text-red-400" />}
                         </div>
@@ -477,8 +508,13 @@ export function DeFi() {
                           <div className={`text-xs mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Pool Information</div>
                           <div className="space-y-1.5 text-sm">
                             <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Fee Tier</span><span>{pool.fee}%</span></div>
-                            <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Protocol</span><span>SaucerSwap</span></div>
+                            <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Protocol</span><span>SaucerSwap {pool.source.toUpperCase()}</span></div>
                             <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Network</span><span>Hedera</span></div>
+                            <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Fee APR</span><span className="text-emerald-400">{pool.feeAPR}%</span></div>
+                            {pool.farmAPR > 0 && (
+                              <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Farm APR</span><span className="text-purple-400">+{pool.farmAPR}%</span></div>
+                            )}
+                            <div className="flex justify-between font-bold"><span className={isDark ? "text-slate-300" : "text-gray-700"}>Total APR</span><span className="text-emerald-400">{pool.apr}%</span></div>
                           </div>
                         </div>
                         <div className={`rounded-lg p-3 ${isDark ? "bg-slate-800/50" : "bg-white"}`}>
@@ -508,9 +544,28 @@ export function DeFi() {
               );
             })}
 
-            {filteredPools.length === 0 && (
+            {filteredPools.length === 0 && !defiLoading && !defiError && !searchQuery && (
+              <div className={`py-16 text-center ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                <Droplets className={`w-10 h-10 mx-auto mb-3 ${isDark ? "text-slate-700" : "text-gray-300"}`} />
+                <div className="font-bold text-sm mb-1">No Pool Data Available</div>
+                <div className="text-xs max-w-sm mx-auto">
+                  SaucerSwap pool data could not be loaded. This may be due to API rate limiting or network issues. Tap refresh to retry.
+                </div>
+              </div>
+            )}
+
+            {filteredPools.length === 0 && searchQuery && (
               <div className={`py-12 text-center ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                 No pools found matching "{searchQuery}"
+              </div>
+            )}
+
+            {defiLoading && filteredPools.length === 0 && (
+              <div className="py-16 flex flex-col items-center justify-center gap-3">
+                <RefreshCw className={`w-6 h-6 animate-spin ${isDark ? "text-pink-400/50" : "text-pink-300"}`} />
+                <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                  Fetching live pool data from SaucerSwap...
+                </span>
               </div>
             )}
           </div>

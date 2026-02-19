@@ -24,7 +24,7 @@ interface HotWord {
 
 const words: HotWord[] = [
   {
-    text: "50 curated tokens.",
+    text: "38 curated tokens.",
     accent: BLUE,
     icon: Coins,
     hint: "Hand-picked. Audited. No rugs.",
@@ -235,7 +235,7 @@ export function LandingWhyWrappdex() {
           style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
         >
           {[
-            { val: "50", label: "Curated Tokens", color: BLUE },
+            { val: "38", label: "Curated Tokens", color: BLUE },
             { val: "0", label: "Meme Coins Listed", color: RED },
             { val: "8", label: "Pro Modules", color: CYAN },
             { val: "3s", label: "Avg Finality", color: EMERALD },

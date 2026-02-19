@@ -79,7 +79,7 @@ const makeFeatured = (urls: Record<string, string>) => [
   {
     icon: Layers,
     title: "DeFi Suite",
-    desc: "Constant-product AMM with 7 whitelisted tokens, Bonzo Finance lending, and USDC-hop smart routing.",
+    desc: "Constant-product AMM with 13 whitelisted tokens, Bonzo Finance lending, and USDC-hop smart routing.",
     route: "/defi",
     screenshot: urls[SCREENSHOT_FILES.vip] || "",
     accent: AMBER,
@@ -101,7 +101,7 @@ const makeFeatured = (urls: Record<string, string>) => [
 ];
 
 const stats = [
-  { value: "50", label: "Supported Tokens", icon: Sparkles },
+  { value: "38", label: "Supported Tokens", icon: Sparkles },
   { value: "8", label: "Platform Modules", icon: Layers },
   { value: "3", label: "Bridge Protocols", icon: Globe },
   { value: "6", label: "Chart Indicators", icon: BarChart3 },

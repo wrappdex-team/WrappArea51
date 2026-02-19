@@ -2,8 +2,9 @@
 // Wrappdex Edge Function Server — Route Orchestrator
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Modules: Auth, VIP, Spin Wheel, News, AMM, VIP Chat, DAO, Storage, Health, 1inch
+// Modules: Auth, VIP, Spin Wheel, News, Atomic Signer, VIP Chat, DAO, Storage, Health, 1inch
 // Auth:    ED25519 challenge-response sessions (30-min TTL, KV-backed)
+// AMM:     Hedera-native atomic CryptoTransfer co-signing oracle (replaced KV-backed amm.ts)
 // Storage: All state persisted in KV (survives cold starts, multi-instance safe)
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -15,12 +16,13 @@ import { registerAuthRoutes } from "./auth.ts";
 import { registerVipRoutes } from "./vip.ts";
 import { registerSpinRoutes } from "./spin.ts";
 import { registerNewsRoutes } from "./news.ts";
-import { registerAmmRoutes } from "./amm.ts";
+import { registerAtomicSignerRoutes } from "./atomic-signer.ts";
 import { registerVipChatRoutes } from "./vip-chat.ts";
 import { registerDaoRoutes } from "./dao.ts";
 import { registerStorageRoutes } from "./storage.ts";
 import { registerHealthRoutes } from "./health.ts";
 import { registerOneInchRoutes } from "./oneinch.ts";
+import { registerSaucerswapPoolRoutes } from "./saucerswap-pools.ts";
 
 const app = new Hono();
 
@@ -77,11 +79,12 @@ registerAuthRoutes(app);
 registerVipRoutes(app);
 registerSpinRoutes(app);
 registerNewsRoutes(app);
-registerAmmRoutes(app);
+registerAtomicSignerRoutes(app);
 registerVipChatRoutes(app);
 registerDaoRoutes(app);
 registerStorageRoutes(app);
 registerHealthRoutes(app);
 registerOneInchRoutes(app);
+registerSaucerswapPoolRoutes(app);
 
 Deno.serve(app.fetch);

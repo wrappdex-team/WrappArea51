@@ -41,7 +41,7 @@ export function LandingFooter() {
                 <DiscordIcon className="w-4 h-4" />
               </a>
               <a
-                href="#"
+                href="https://www.linkedin.com/company/wrappdex"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-10 h-10 flex items-center justify-center hover:bg-black hover:text-white transition-all text-black"

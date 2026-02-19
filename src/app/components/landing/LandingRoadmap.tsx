@@ -25,7 +25,7 @@ const roadmap: Quarter[] = [
     title: "Foundation — Shipped",
     phase: "current",
     items: [
-      { text: "Constant-product AMM with persistent state", status: "shipped" },
+      { text: "Constant-product AMM with Hedera-native atomic settlement", status: "shipped" },
       { text: "4-tier oracle pipeline (Chainlink, Binance, CoinCap, CoinGecko)", status: "shipped" },
       { text: "SaucerSwap integration with auto-path discovery", status: "shipped" },
       { text: "ED25519 challenge-response authentication", status: "shipped" },

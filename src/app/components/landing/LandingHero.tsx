@@ -341,7 +341,7 @@ export function LandingHero() {
           <TeaserBadge
             icon={TrendingUp}
             label="Markets"
-            value="Top 50 Tokens"
+            value="38 Curated Tokens"
             accent="#10b981"
             className="-top-6 left-0 xl:-left-16"
             delay={0.9}
@@ -357,7 +357,7 @@ export function LandingHero() {
           <TeaserBadge
             icon={BarChart3}
             label="HBAR"
-            value="$0.097"
+            value="Live Price"
             accent="#06b6d4"
             className="-top-6 right-0 xl:-right-12"
             delay={1.0}
@@ -424,7 +424,7 @@ export function LandingHero() {
                       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                     </svg>
                     <span className="text-[11px] text-slate-400 font-medium">
-                      wrapp.finance/markets
+                      wrappdex.io/markets
                     </span>
                   </div>
                 </div>

@@ -937,7 +937,7 @@ export function WhitePaper() {
             <OracleTier
               tier="T2"
               name="Binance Market Data"
-              desc="Primary market data from the world's most liquid exchange. Bulk ticker API returns price, 24h change, and volume for 22 tokens in a single request (~200ms). Also powers the 4-source chart kline waterfall."
+              desc="Primary market data from the world's most liquid exchange. Bulk ticker API returns price, 24h change, and volume for 18 tokens in a single request (~200ms). Also powers the 4-source chart kline waterfall."
               color=""
               dotColor="bg-yellow-500"
             />

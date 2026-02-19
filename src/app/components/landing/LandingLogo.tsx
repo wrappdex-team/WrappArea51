@@ -1,4 +1,4 @@
-/** WRAPpDEX institutional wordmark — exact match to wrapp.finance */
+/** WRAPpDEX institutional wordmark — exact match to wrappdex.io */
 
 interface LandingLogoProps {
   className?: string;

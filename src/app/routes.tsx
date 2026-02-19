@@ -63,7 +63,7 @@ const Branding = lazy(() => retryImport(() => import("./components/Branding")).t
 const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).then(m => ({ default: m.NotFound })));
 
 /**
- * Route Architecture — wrapp.finance
+ * Route Architecture — wrappdex.io
  *
  * /                → Institutional landing page (no DEX chrome)
  * /markets         → DEX Dashboard (formerly index)
