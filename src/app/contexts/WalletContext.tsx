@@ -29,6 +29,14 @@ import type {
   HashPackConnectionResult,
   HashPackProfile,
 } from "../utils/hashpack";
+import {
+  isHashConnectSDKAvailable,
+  connectViaHashConnect,
+  connectViaMirrorNode,
+  disconnectHashConnect,
+  restoreSession,
+  onStaleSession,
+} from "../utils/hashpack";
 
 interface Wallet {
   address: string;
