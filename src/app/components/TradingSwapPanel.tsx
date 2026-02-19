@@ -1,7 +1,7 @@
 /**
  * TradingSwapPanel — Premium AMM Swap with Glow, Sound & Motion
  *
- * Uses the real KV-backed AMM engine (constant-product math).
+ * Uses the atomic CryptoTransfer AMM engine (constant-product math).
  * Features: animated borders, neon glow, sound effects, particle bursts.
  */
 

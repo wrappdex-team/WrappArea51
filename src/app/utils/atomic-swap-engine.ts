@@ -681,6 +681,33 @@ export async function fetchOraclePrices(): Promise<Record<string, number>> {
     if (!prices[t.tokenId]) prices[t.tokenId] = t.fallbackPriceUsd;
   }
 
+  // ── Oracle Deviation Defense ──────────────────────────────────────
+  // Reject oracle prices that deviate >50% from hardcoded fallbacks.
+  // Oracle manipulation cannot affect swap execution (swaps use reserves),
+  // but TVL/depth-cap calculations depend on oracle prices. A manipulated
+  // oracle could push TVL artificially high → widen depth caps → enable
+  // larger swaps than intended. This sanity check mitigates that vector.
+  //
+  // SENIOR DEV NOTE [PERF-02]:
+  //   Threshold is 50% (generous) because legitimate price swings can be
+  //   large for volatile assets (WETH, WBTC). The goal is catching gross
+  //   manipulation (10x), not normal volatility. Stablecoins get a tighter
+  //   10% bound since they should never deviate significantly from $1.
+  for (const t of TOKEN_WHITELIST) {
+    const oraclePrice = prices[t.tokenId];
+    const fallback = t.fallbackPriceUsd;
+    if (!oraclePrice || !fallback || fallback <= 0) continue;
+
+    const ratio = oraclePrice / fallback;
+    const isStable = ["USDC", "USDT", "DAI", "USDCh", "USDTh"].includes(t.symbol);
+    const maxDeviation = isStable ? 0.10 : 0.50; // 10% for stables, 50% for volatile
+
+    if (ratio < (1 - maxDeviation) || ratio > (1 + maxDeviation)) {
+      log.warn("Oracle", `Price deviation rejected for ${t.symbol}: oracle=$${oraclePrice} fallback=$${fallback} ratio=${ratio.toFixed(3)}`);
+      prices[t.tokenId] = fallback; // Fall back to hardcoded price
+    }
+  }
+
   _oracleCache = { prices, ts: Date.now() };
   return prices;
 }

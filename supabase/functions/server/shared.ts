@@ -13,6 +13,53 @@ const RATE_LIMIT_PREFIX = "rl_";
 const _rateLimitL1 = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_L1_MAX_SIZE = 10_000; // Cap in-memory map to prevent unbounded growth
 
+// ── Per-Account Rate Limiter ─────────────────────────────────────────
+// Supplements IP-based limiting with account-level throttling.
+// Prevents spam from compromised sessions sharing different IPs.
+// L1-only (in-memory) — KV cost not justified for short windows.
+//
+// SENIOR DEV NOTE [PERF-01]:
+//   Per-account limiting is critical because a single compromised session
+//   could rotate source IPs (proxies/VPNs) to bypass IP limits. Account-level
+//   tracking is immune to IP rotation.
+
+const ACCOUNT_RATE_LIMIT_WINDOW_MS = 60_000;    // 1-minute window
+const ACCOUNT_RATE_LIMIT_MAX_SWAPS = 15;         // Max 15 swaps/min per account
+const ACCOUNT_RATE_LIMIT_MAX_MUTATIONS = 30;     // Max 30 total mutations/min
+const _accountRateLimitL1 = new Map<string, { swapCount: number; mutationCount: number; resetAt: number }>();
+const ACCOUNT_RATE_LIMIT_L1_MAX_SIZE = 5_000;
+
+export async function isAccountRateLimited(
+  accountId: string,
+  action: "swap" | "liquidity" | "other" = "other",
+): Promise<boolean> {
+  const now = Date.now();
+
+  // Periodic eviction
+  if (_accountRateLimitL1.size > ACCOUNT_RATE_LIMIT_L1_MAX_SIZE) {
+    for (const [k, v] of _accountRateLimitL1) {
+      if (now > v.resetAt) _accountRateLimitL1.delete(k);
+    }
+  }
+
+  const entry = _accountRateLimitL1.get(accountId);
+  if (entry && now <= entry.resetAt) {
+    entry.mutationCount++;
+    if (action === "swap") entry.swapCount++;
+    if (entry.mutationCount > ACCOUNT_RATE_LIMIT_MAX_MUTATIONS) return true;
+    if (action === "swap" && entry.swapCount > ACCOUNT_RATE_LIMIT_MAX_SWAPS) return true;
+    return false;
+  }
+
+  // Fresh window
+  _accountRateLimitL1.set(accountId, {
+    swapCount: action === "swap" ? 1 : 0,
+    mutationCount: 1,
+    resetAt: now + ACCOUNT_RATE_LIMIT_WINDOW_MS,
+  });
+  return false;
+}
+
 export async function isRateLimited(ip: string): Promise<boolean> {
   const now = Date.now();
   const kvKey = RATE_LIMIT_PREFIX + ip.replace(/[^a-zA-Z0-9._:-]/g, "_");

@@ -1,23 +1,44 @@
 // ══════════════════════════════════════════════════════════════════════
-// SMART LIQUIDITY — Constant-Product AMM Engine (KV-Backed)
+// ╔═══════════════════════════════════════════════════════════════════╗
+// ║  DEPRECATED — KV-BACKED AMM (REPLACED BY atomic-signer.ts)      ║
+// ║                                                                   ║
+// ║  This file is NOT imported in index.tsx. registerAmmRoutes() is   ║
+// ║  NEVER called. All /amm/* and /pools/* routes from this module    ║
+// ║  are dead code. The active AMM is the Hedera-native atomic        ║
+// ║  CryptoTransfer co-signing oracle in atomic-signer.ts.            ║
+// ║                                                                   ║
+// ║  This file is retained as reference for:                          ║
+// ║    - AMM math functions (getAmountOut, bigIntSqrt, etc.)          ║
+// ║    - Oracle price fetching (fetchOraclePrices, T0 Network Rate)   ║
+// ║    - Fee structure constants (shared with atomic-swap-engine.ts)   ║
+// ║    - Token whitelist (canonical source — kept in sync)             ║
+// ║                                                                   ║
+// ║  DO NOT re-enable without addressing:                             ║
+// ║    - FIXED: Number() overflow in poolTvlUsd (bigIntToDisplay)     ║
+// ║    - FIXED: Duplicate /amm/kill routes removed (atomic handles)   ║
+// ║    - P1: KV pool reserves are simulated, not on-chain             ║
+// ║    - P1: No server-side tx byte verification                      ║
+// ║    - P2: Multi-hop swap execution stub (501 Not Implemented)      ║
+// ╚═══════════════════════════════════════════════════════════════════╝
 // ══════════════════════════════════════════════════════════════════════
 //
-// Architecture:
-//   - Constant-product AMM (x * y = k) for 2-token pools
+// ORIGINAL ARCHITECTURE (preserved for reference):
+//   - Constant-product AMM (x · y = k) for 2-token pools
 //   - All pool state in KV (multi-instance safe, cold-start resilient)
 //   - LP share tracking per user per pool
-//   - Smart routing: direct → USDC-hop, selects lowest price impact
-//   - Oracle prices (T0 Network Rate → SaucerSwap fallback) for UI/TVL only — swaps use reserves
+//   - Smart routing: direct → hub-hop (USDC, WHBAR), best output wins
+//   - Oracle: T0 Network Rate → SaucerSwap → hardcoded fallback
+//   - Sandwich-resistant: KV mempool is private (server-side only)
+//   - Per-pool pessimistic lock + optimistic CAS versioning
+//   - AMM_PRELAUNCH_LOCKED = true (never went live)
 //
-// Security design:
-//   - First-depositor attack mitigated by MINIMUM_LIQUIDITY lock (1000 units)
-//   - Reserves stored as raw integer strings (no floating-point loss)
-//   - Depth-proportional max swap caps (<$10K: 2%, <$100K: 5%, >$100K: 10%)
-//   - Pools below $100 TVL excluded from routing (manipulation resistance)
-//   - Per-pool pessimistic lock + optimistic CAS versioning on all mutations
-//   - Sandwich protection: KV mempool is private (server-side only)
-//   - Fees stay in pool (increase k), benefiting all LP holders
-//   - Pool creation restricted to whitelisted Tier 1 tokens
+// SENIOR DEV NOTE [LEGACY-01]:
+//   This module was rated 5.5/10 during architecture review. The core
+//   weakness: pool reserves exist only in KV, not on-chain. Users must
+//   trust the server to maintain reserve integrity. The atomic model
+//   (atomic-signer.ts + atomic-swap-engine.ts) eliminates this by using
+//   real Hedera account balances as reserves, verifiable via Mirror Node.
+//   See atomic-swap-types.ts [ATOMIC-01] for the decentralization roadmap.
 //
 // ══════════════════════════════════════════════════════════════════════
 
@@ -30,7 +51,7 @@ import {
   saucerswapBreaker, isHttpFailure,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
-import { requireAuth, validateSession, requireOwner, logAdminAction, OWNER_ACCOUNT } from "./auth.ts";
+import { requireAuth, validateSession, requireOwner, logAdminAction } from "./auth.ts";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -119,6 +140,9 @@ async function fetchNetworkExchangeRate(): Promise<number> {
     return _networkRateCache?.priceUsd ?? 0;
   }
 }
+
+// ── KV Key Constants (Treasury / Protocol Fees) ─────────────────────
+
 const TREASURY_FEE_KEY = "sl_treasury_fees";
 const TREASURY_FEE_LOCK_KEY = "sl_treasury_lock";
 const PROTOCOL_FEE_ACCUM_PREFIX = "sl_pfee_";   // Per-pool protocol fee accumulator
@@ -126,26 +150,22 @@ const PROTOCOL_FEE_ACCUM_LOCK = "sl_pfee_lock_"; // Per-pool lock for fee writes
 const AMM_KILL_SWITCH_KEY = "amm_kill_switch";
 
 // ╔═══════════════════════════════════════════════════════════════════════╗
-// ║  SENIOR DEV NOTE — PRE-LAUNCH AMM LOCK                             ║
-// ║                                                                     ║
-// ║  The AMM is temporarily locked while we complete testing & audits.  ║
-// ║  All mutating pool operations (create pool, add liquidity, swap)    ║
-// ║  are blocked at the server level.  The frontend mirrors this with   ║
-// ║  a locked UI state on every AMM entry point.                        ║
-// ║                                                                     ║
-// ║  TO GO LIVE:                                                        ║
-// ║    1. Set AMM_PRELAUNCH_LOCKED = false below                        ║
-// ║    2. Remove the AmmPrelaunchBanner usage in frontend components:   ║
-// ║       - SmartLiquidity.tsx       (SwapPanel early-return +          ║
-// ║                                   CreatePoolModal + AddLiqModal)    ║
-// ║       - TradingPoolsSection.tsx  (CreatePoolModal + AddLiqModal)    ║
-// ║       - TradingSwapPanel.tsx     (ammPrelaunch state + banner)      ║
-// ║       - PoolCreator.tsx          (AMM_PRELAUNCH_UI_LOCKED gate)     ║
-// ║    3. Delete AmmPrelaunchBanner.tsx once no longer imported          ║
-// ║    4. Redeploy server + frontend                                    ║
-// ║                                                                     ║
-// ║  This is SEPARATE from the kill switch (emergency halt).            ║
-// ║  This is a planned pre-launch hold.                                 ║
+// ║  SENIOR DEV NOTE [LEGACY-03] — PRE-LAUNCH LOCK (MOOT)              ║
+// ║                                                                      ║
+// ║  This module NEVER went live. AMM_PRELAUNCH_LOCKED was always true.  ║
+// ║  The atomic CryptoTransfer AMM (atomic-signer.ts) replaced this      ║
+// ║  module before the prelaunch lock was ever lifted.                    ║
+// ║                                                                      ║
+// ║  The "TO GO LIVE" checklist below is PRESERVED FOR REFERENCE ONLY.   ║
+// ║  DO NOT follow these steps — re-enabling this module would create    ║
+// ║  conflicting routes with atomic-signer.ts and expose the KV-backed   ║
+// ║  reserve simulation (rated 5.5/10) alongside the atomic model.       ║
+// ║                                                                      ║
+// ║  ORIGINAL GO-LIVE STEPS (historical — do not execute):               ║
+// ║    1. Set AMM_PRELAUNCH_LOCKED = false                               ║
+// ║    2. Remove AmmPrelaunchBanner from frontend components             ║
+// ║    3. Delete AmmPrelaunchBanner.tsx                                   ║
+// ║    4. Redeploy server + frontend                                     ║
 // ╚═══════════════════════════════════════════════════════════════════════╝
 const AMM_PRELAUNCH_LOCKED = true;
 const AMM_PRELAUNCH_MESSAGE = "The AMM is not yet live. Pool creation, liquidity, and swaps will be enabled after testing and security audits are complete.";
@@ -425,9 +445,11 @@ const VOLUME_MICRO_SCALE = 1_000_000;   // 1 micro-USD = $0.000001
 
 /** Convert internal pool state to API-safe format (micro-USD string → USD float). */
 function poolToApi(pool: PoolState): Record<string, unknown> {
+  // Volume in micro-USD fits safely in Number (max ~$9 trillion at 1e6 scale)
+  const volumeMicro = Number(BigInt(pool.cumulativeVolumeUsd || "0"));
   return {
     ...pool,
-    cumulativeVolumeUsd: Number(BigInt(pool.cumulativeVolumeUsd || "0")) / VOLUME_MICRO_SCALE,
+    cumulativeVolumeUsd: volumeMicro / VOLUME_MICRO_SCALE,
   };
 }
 
@@ -484,12 +506,26 @@ export function getPriceImpactBps(amountIn: bigint, reserveIn: bigint): number {
 }
 
 // ── Pool TVL & Swap Limits ──────────────────────────────────────────
+//
+// SENIOR DEV NOTE [LEGACY-02]:
+//   Number(BigInt(reserve)) overflows Number.MAX_SAFE_INTEGER for tokens
+//   with 18 decimals (WETH) at reserves > ~90 ETH. This was a P0 bug in
+//   the original code. Fixed below using string-based decimal conversion
+//   (same approach as atomic-swap-engine.ts bigIntToDecimal).
+
+function bigIntToDisplay(raw: string, decimals: number): number {
+  if (!raw || raw === "0") return 0;
+  const str = raw.padStart(decimals + 1, "0");
+  const whole = str.slice(0, str.length - decimals) || "0";
+  const frac = str.slice(str.length - decimals);
+  return parseFloat(`${whole}.${frac}`);
+}
 
 function poolTvlUsd(pool: PoolState, prices: Record<string, number>): number {
   const priceA = prices[pool.tokenIdA] || 0;
   const priceB = prices[pool.tokenIdB] || 0;
-  const reserveA = Number(BigInt(pool.reserveA)) / (10 ** pool.decimalsA);
-  const reserveB = Number(BigInt(pool.reserveB)) / (10 ** pool.decimalsB);
+  const reserveA = bigIntToDisplay(pool.reserveA, pool.decimalsA);
+  const reserveB = bigIntToDisplay(pool.reserveB, pool.decimalsB);
   return reserveA * priceA + reserveB * priceB;
 }
 
@@ -726,7 +762,7 @@ export function registerAmmRoutes(app: Hono): void {
         stale,
       });
     } catch (err) {
-      console.error("[AMM] Error in GET /oracle/fallback:", err);
+      console.log("[AMM] Error in GET /oracle/fallback:", err);
       return c.json({ error: "Failed to read fallback config" }, 500);
     }
   });
@@ -767,75 +803,16 @@ export function registerAmmRoutes(app: Hono): void {
         maxAgeDays,
       });
     } catch (err) {
-      console.error("[AMM] Error in PUT /oracle/fallback:", err);
+      console.log("[AMM] Error in PUT /oracle/fallback:", err);
       return c.json({ error: "Failed to update fallback config" }, 500);
     }
   });
 
-  // ── AMM Kill Switch Endpoints (Owner-only) ────────────────────────
-
-  // GET /amm/kill-switch — Public: check if AMM is halted
-  app.get(`${ROUTE_PREFIX}/amm/kill-switch`, async (c) => {
-    try {
-      const state: AmmKillState | null = await kv.get(AMM_KILL_SWITCH_KEY);
-      return c.json({
-        active: state?.active ?? false,
-        activatedAt: state?.activatedAt ?? null,
-        reason: state?.reason ?? null,
-        prelaunchLocked: AMM_PRELAUNCH_LOCKED,
-      });
-    } catch {
-      return c.json({ active: false }, 500);
-    }
-  });
-
-  // POST /amm/kill — Owner-only: halt all AMM swaps and new liquidity
-  app.post(`${ROUTE_PREFIX}/amm/kill`, async (c) => {
-    const ownerAuth = await requireOwner(c);
-    if (ownerAuth instanceof Response) return ownerAuth;
-    const ip = getClientIp(c);
-    try {
-      let reason = "Emergency halt";
-      try { const body = await c.req.json(); reason = sanitizeString(body.reason || reason, 200); } catch { /* no body */ }
-      const state: AmmKillState = {
-        active: true,
-        activatedAt: Date.now(),
-        activatedBy: ownerAuth.accountId,
-        reason,
-      };
-      await kv.set(AMM_KILL_SWITCH_KEY, state);
-      _killSwitchCache = { state, ts: Date.now() };
-      console.log(`[CRITICAL] AMM KILL SWITCH ACTIVATED by ${ownerAuth.accountId}: ${reason}`);
-      logAdminAction("amm_kill_activate", ownerAuth.accountId, ip, reason);
-      return c.json({ success: true, ...state });
-    } catch (err) {
-      console.error("[AMM] Error activating kill switch:", err);
-      return c.json({ error: "Failed to activate kill switch" }, 500);
-    }
-  });
-
-  // POST /amm/resume — Owner-only: resume AMM trading
-  app.post(`${ROUTE_PREFIX}/amm/resume`, async (c) => {
-    const ownerAuth = await requireOwner(c);
-    if (ownerAuth instanceof Response) return ownerAuth;
-    const ip = getClientIp(c);
-    try {
-      const state: AmmKillState = {
-        active: false,
-        activatedAt: Date.now(),
-        activatedBy: ownerAuth.accountId,
-        reason: "Resumed by owner",
-      };
-      await kv.set(AMM_KILL_SWITCH_KEY, state);
-      _killSwitchCache = { state, ts: Date.now() };
-      console.log(`[AMM] Kill switch DEACTIVATED by ${ownerAuth.accountId}`);
-      logAdminAction("amm_kill_resume", ownerAuth.accountId, ip);
-      return c.json({ success: true, active: false });
-    } catch (err) {
-      console.error("[AMM] Error deactivating kill switch:", err);
-      return c.json({ error: "Failed to resume AMM" }, 500);
-    }
-  });
+  // ── AMM Kill Switch Endpoints ───────────────────────────────────────
+  // REMOVED: /amm/kill-switch, /amm/kill, /amm/resume routes are now
+  // served by atomic-signer.ts backward-compat shims. If this module is
+  // re-enabled, these endpoints would conflict with the atomic routes.
+  // See atomic-signer.ts "BACKWARD-COMPAT SHIMS" section.
 
   // GET /pools — List all active pools with real-time state + oracle prices
   app.get(`${ROUTE_PREFIX}/pools`, async (c) => {
@@ -851,7 +828,7 @@ export function registerAmmRoutes(app: Hono): void {
 
       return c.json({ pools, tokens: ACTIVE_TOKENS, prices, updatedAt: Math.floor(Date.now() / 1000) });
     } catch (err) {
-      console.error("[AMM] Error in GET /pools:", err);
+      console.log("[AMM] Error in GET /pools:", err);
       return c.json({ error: "Failed to fetch pools" }, 500);
     }
   });
@@ -862,7 +839,7 @@ export function registerAmmRoutes(app: Hono): void {
       const prices = await fetchOraclePrices();
       return c.json({ prices, updatedAt: Math.floor(Date.now() / 1000) });
     } catch (err) {
-      console.error("[AMM] Error in GET /pools/prices:", err);
+      console.log("[AMM] Error in GET /pools/prices:", err);
       return c.json({ error: "Failed to fetch prices" }, 500);
     }
   });
@@ -950,7 +927,7 @@ export function registerAmmRoutes(app: Hono): void {
       if (err?.code === "LOCK_TIMEOUT") {
         return c.json({ error: "Pool creation service is busy — please retry in a few seconds", code: "CREATION_BUSY" }, 503);
       }
-      console.error("[AMM] Error in POST /pools/create:", err);
+      console.log("[AMM] Error in POST /pools/create:", err);
       return c.json({ error: "Pool creation failed" }, 500);
     }
   });
@@ -1031,7 +1008,7 @@ export function registerAmmRoutes(app: Hono): void {
       });
     } catch (err: any) {
       if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
-      console.error("[AMM] Error in POST /pools/liquidity/add:", err);
+      console.log("[AMM] Error in POST /pools/liquidity/add:", err);
       return c.json({ error: "Add liquidity failed" }, 500);
     }
   });
@@ -1087,7 +1064,7 @@ export function registerAmmRoutes(app: Hono): void {
       });
     } catch (err: any) {
       if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
-      console.error("[AMM] Error in POST /pools/liquidity/remove:", err);
+      console.log("[AMM] Error in POST /pools/liquidity/remove:", err);
       return c.json({ error: "Remove liquidity failed" }, 500);
     }
   });
@@ -1102,7 +1079,7 @@ export function registerAmmRoutes(app: Hono): void {
       const position = await getLPPosition(poolId, accountId);
       return c.json({ position: position || null });
     } catch (err) {
-      console.error("[AMM] Error fetching LP position:", err);
+      console.log("[AMM] Error fetching LP position:", err);
       return c.json({ position: null, error: "Failed to fetch LP position" }, 500);
     }
   });
@@ -1195,7 +1172,7 @@ export function registerAmmRoutes(app: Hono): void {
 
       routes.sort((a, b) => (b.amountOut > a.amountOut ? 1 : -1));
       const best = routes[0];
-      const outDisplay = Number(best.amountOut) / (10 ** defOut.decimals);
+      const outDisplay = bigIntToDisplay(best.amountOut.toString(), defOut.decimals);
       const inDisplay = parseFloat(amountIn);
 
       // Protocol fee in HBAR — T0 Network Rate (0x168) is primary, SaucerSwap/fallback is backup
@@ -1241,7 +1218,7 @@ export function registerAmmRoutes(app: Hono): void {
         timestamp: Date.now(),
       });
     } catch (err) {
-      console.error("[AMM] Error in POST /pools/quote:", err);
+      console.log("[AMM] Error in POST /pools/quote:", err);
       return c.json({ error: "Quote failed" }, 500);
     }
   });
@@ -1325,7 +1302,7 @@ export function registerAmmRoutes(app: Hono): void {
             const tvl = poolTvlUsd(pool, prices);
             const defIn = TOKEN_BY_SYMBOL.get(tokenIn);
             if (defIn && tvl > 0) {
-              const inputUsd = Number(rawIn) / (10 ** defIn.decimals) * (prices[defIn.tokenId] || 0);
+              const inputUsd = bigIntToDisplay(rawIn.toString(), defIn.decimals) * (prices[defIn.tokenId] || 0);
               if (inputUsd > tvl * maxSwapFraction(tvl)) {
                 return c.json({ error: `Swap too large. Max ~${(maxSwapFraction(tvl) * 100).toFixed(0)}% of $${tvl.toFixed(0)} TVL` }, 400);
               }
@@ -1339,14 +1316,14 @@ export function registerAmmRoutes(app: Hono): void {
             const kNew = BigInt(pool.reserveA) * BigInt(pool.reserveB);
             const kOld = resA * resB;
             if (kNew < kOld) {
-              console.error(`[CRITICAL] K-invariant violated! kOld=${kOld} kNew=${kNew} pool=${poolId}`);
+              console.log(`[CRITICAL] K-invariant violated! kOld=${kOld} kNew=${kNew} pool=${poolId}`);
               return c.json({ error: "K-invariant violated — swap aborted (report to developers)" }, 500);
             }
 
             pool.swapCount++;
             const defOut = TOKEN_BY_SYMBOL.get(tokenOut);
             if (defOut) {
-              const swapUsd = Number(rawOut) / (10 ** defOut.decimals) * (prices[defOut.tokenId] || 0);
+              const swapUsd = bigIntToDisplay(rawOut.toString(), defOut.decimals) * (prices[defOut.tokenId] || 0);
               const swapMicro = BigInt(Math.round(swapUsd * VOLUME_MICRO_SCALE));
               const currentMicro = BigInt(pool.cumulativeVolumeUsd || "0");
               pool.cumulativeVolumeUsd = (currentMicro + swapMicro).toString();
@@ -1402,7 +1379,7 @@ export function registerAmmRoutes(app: Hono): void {
               const protocolShareRaw = rawIn * BigInt(PROTOCOL_FEE_BPS) / BPS_BASE;
               const inputPrice = defIn ? (prices[defIn.tokenId] || 0) : 0;
               const protocolShareUsd = defIn
-                ? Number(protocolShareRaw) / (10 ** defIn.decimals) * inputPrice
+                ? bigIntToDisplay(protocolShareRaw.toString(), defIn.decimals) * inputPrice
                 : 0;
               await withKvLock({
                 key: pfeeLockKey,
@@ -1465,7 +1442,7 @@ export function registerAmmRoutes(app: Hono): void {
       });
     } catch (err: any) {
       if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
-      console.error("[AMM] Error in POST /pools/swap:", err);
+      console.log("[AMM] Error in POST /pools/swap:", err);
       return c.json({ error: "Swap failed" }, 500);
     }
   });
@@ -1505,7 +1482,7 @@ export function registerAmmRoutes(app: Hono): void {
       // No history — user either hasn't swapped or swapped before indexing was deployed
       return c.json({ swaps: [] });
     } catch (err) {
-      console.error("[AMM] Error in GET /pools/swaps:", err);
+      console.log("[AMM] Error in GET /pools/swaps:", err);
       return c.json({ swaps: [], error: "Failed to fetch swap history" }, 500);
     }
   });
@@ -1518,7 +1495,7 @@ export function registerAmmRoutes(app: Hono): void {
       recentSwaps.sort((a, b) => (b?.timestamp || 0) - (a?.timestamp || 0));
       return c.json({ swaps: recentSwaps });
     } catch (err) {
-      console.error("[AMM] Error in GET /pools/recent-swaps:", err);
+      console.log("[AMM] Error in GET /pools/recent-swaps:", err);
       return c.json({ swaps: [] }, 500);
     }
   });
@@ -1562,7 +1539,7 @@ export function registerAmmRoutes(app: Hono): void {
         },
       });
     } catch (err) {
-      console.error("[AMM] Error in GET /pools/protocol-fees:", err);
+      console.log("[AMM] Error in GET /pools/protocol-fees:", err);
       return c.json({ error: "Failed to fetch protocol fees" }, 500);
     }
   });
@@ -1620,9 +1597,25 @@ export function registerAmmRoutes(app: Hono): void {
         }
 
         // Safety: never deduct more than 50% of reserves (sanity ceiling)
+        // SENIOR DEV NOTE [LEGACY-04]:
+        //   Min TVL guard prevents fee extraction from draining small pools.
+        //   Without this, a $10 pool could have 50% of reserves extracted,
+        //   leaving it with ~$5 TVL — effectively dead. The $100 floor matches
+        //   the routing exclusion threshold (pools <$100 TVL are excluded).
         if (deductedA > resA / 2n || deductedB > resB / 2n) {
-          console.error(`[ProtocolFee] Extraction safety limit: pool=${poolId} deductA=${deductedA} resA=${resA} deductB=${deductedB} resB=${resB}`);
+          console.log(`[ProtocolFee] Extraction safety limit: pool=${poolId} deductA=${deductedA} resA=${resA} deductB=${deductedB} resB=${resB}`);
           return c.json({ error: "Extraction exceeds 50% safety ceiling — manual review required" }, 400);
+        }
+
+        // Min TVL guard: block extraction if post-extraction reserves are too thin
+        const postResA = bigIntToDisplay((resA - deductedA).toString(), pool.decimalsA);
+        const postResB = bigIntToDisplay((resB - deductedB).toString(), pool.decimalsB);
+        const prices = await fetchOraclePrices();
+        const postTvl = postResA * (prices[pool.tokenIdA] || 0) + postResB * (prices[pool.tokenIdB] || 0);
+        if (postTvl < 100 && postTvl > 0) {
+          return c.json({
+            error: `Post-extraction TVL would be $${postTvl.toFixed(2)} — below $100 minimum. Reduce extraction or add liquidity first.`,
+          }, 400);
         }
 
         // Apply deductions to reserves
@@ -1673,7 +1666,7 @@ export function registerAmmRoutes(app: Hono): void {
       });
     } catch (err: any) {
       if (err?.code === "POOL_BUSY") return c.json({ error: err.message, code: "POOL_BUSY" }, 503);
-      console.error("[AMM] Error in POST /pools/protocol-fees/extract:", err);
+      console.log("[AMM] Error in POST /pools/protocol-fees/extract:", err);
       return c.json({ error: "Extraction failed" }, 500);
     }
   });

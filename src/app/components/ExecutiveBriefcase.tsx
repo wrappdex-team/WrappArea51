@@ -326,15 +326,17 @@ export function ExecutiveBriefcase({ open, onClose }: ExecutiveBriefcaseProps) {
                     your users see when Tier 1 oracles go dark.
                   </li>
                   <li>
-                    <span className={hl}>The KV store is your heartbeat.</span>{" "}
-                    Pool state, sessions, admin lists, proposals, votes &mdash;
-                    everything lives in the KV layer. Treat it like a database
-                    that never got a DBA: monitor key count growth, watch for
-                    orphaned entries, and periodically audit that every pool key
-                    has a matching metadata key. The{" "}
-                    <span className={em}>CAS versioning and k-invariant checks
-                    </span> are your last line of defense, but they should never
-                    have to fire in normal operation.
+                    <span className={hl}>On-chain reserves are your heartbeat.</span>{" "}
+                    Pool account balances, LP token supply, sessions, admin
+                    lists, proposals, votes &mdash; state is distributed across
+                    Hedera (reserves), KV (sessions/governance), and the signing
+                    oracle (fee accumulators). Monitor Mirror Node query latency,
+                    watch for pool account balance discrepancies, and audit that
+                    every pool registry entry has a matching on-chain account.
+                    The{" "}
+                    <span className={em}>server-side reserve validation and
+                    k-invariant checks</span> are your last line of defense, but
+                    they should never have to fire in normal operation.
                   </li>
                   <li>
                     <span className={hl}>Wallet-core is the most delicate code

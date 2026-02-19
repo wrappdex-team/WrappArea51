@@ -94,7 +94,7 @@ function FlowArrow({
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   AMM BLUEPRINT — Full Wiring Schematic
+   AMM BLUEPRINT — Full Wiring Schematic (Hedera-Native Atomic Model)
    ═══════════════════════════════════════════════════════════════════════ */
 
 export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
@@ -131,13 +131,14 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
               isDark ? "bg-cyan-500/10 text-cyan-400" : "bg-cyan-100 text-cyan-700"
             }`}
           >
-            v2.1
+            v3.0 — Atomic
           </span>
         </div>
         <p className={`text-[10px] leading-relaxed ${muted}`}>
-          Server-side constant-product AMM on Hedera. No smart contracts — pool reserves live in KV store,
-          the Hono server is the sole sequencer. Zero MEV by design. BigInt arithmetic throughout. This
-          diagram traces every data flow from user intent to settlement.
+          Client-side constant-product AMM on Hedera. Pool reserves are real on-chain token balances
+          of dedicated Hedera accounts, verifiable by anyone via Mirror Node. AMM math runs in the browser
+          using BigInt arithmetic. The server is a signing oracle — it validates math independently and
+          co-signs the pool side of each CryptoTransfer. Settlement is atomic: both token legs or neither.
         </p>
       </motion.div>
 
@@ -192,8 +193,8 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
           >
             <Box className="w-5 h-5 text-blue-400 mx-auto mb-1" />
             <div className={`text-xs font-bold ${bright}`}>Reserve X</div>
-            <div className={`text-[9px] ${muted}`}>Token A balance</div>
-            <div className={`text-[8px] font-mono mt-1 ${faint}`}>BigInt</div>
+            <div className={`text-[9px] ${muted}`}>Pool account balance A</div>
+            <div className={`text-[8px] font-mono mt-1 ${faint}`}>Mirror Node</div>
           </motion.div>
 
           <motion.div
@@ -217,8 +218,8 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
           >
             <Box className="w-5 h-5 text-emerald-400 mx-auto mb-1" />
             <div className={`text-xs font-bold ${bright}`}>Reserve Y</div>
-            <div className={`text-[9px] ${muted}`}>Token B balance</div>
-            <div className={`text-[8px] font-mono mt-1 ${faint}`}>BigInt</div>
+            <div className={`text-[9px] ${muted}`}>Pool account balance B</div>
+            <div className={`text-[8px] font-mono mt-1 ${faint}`}>Mirror Node</div>
           </motion.div>
         </div>
 
@@ -227,7 +228,7 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
           {[
             { label: "getAmountOut()", formula: "dy = (y · dx · 9975) / (x · 10000 + dx · 9975)", color: "#3b82f6", icon: ArrowDownUp },
             { label: "getAmountIn()", formula: "dx = (x · dy · 10000) / ((y - dy) · 9975) + 1", color: "#8b5cf6", icon: Sigma },
-            { label: "Price Impact", formula: "1 - (amountOut / (dx · spotPrice))", color: "#f59e0b", icon: TrendingUp },
+            { label: "Price Impact", formula: "dx * 10000 / (reserveIn + dx)", color: "#f59e0b", icon: TrendingUp },
             { label: "Spot Price", formula: "reserveY / reserveX", color: "#10b981", icon: CircleDot },
           ].map((item, i) => (
             <motion.div
@@ -253,7 +254,7 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
 
       {/* ═══ SECTION 2 — SWAP EXECUTION FLOW ═══ */}
       <SectionLabel isDark={isDark} color="#3b82f6">
-        2 — Swap Execution Flow
+        2 — Atomic Swap Execution Flow
       </SectionLabel>
 
       <div className="space-y-1">
@@ -261,13 +262,13 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
           { icon: Wallet, label: "User Intent", sub: "HashPack signs swap request", color: "#8b5cf6", tag: "CLIENT" },
           { icon: KeyRound, label: "Session Auth", sub: "X-Session-Token header validated", color: "#f59e0b", tag: "AUTH" },
           { icon: Router, label: "Smart Router", sub: "Score direct vs USDC-hop, pick best amountOut", color: "#06b6d4", tag: "ROUTE" },
-          { icon: Lock, label: "Pool Lock Acquired", sub: "KV pessimistic mutex · 5s TTL · 3s wait", color: "#ef4444", tag: "LOCK" },
-          { icon: Database, label: "Read Reserves", sub: "KV mget() · BigInt parse · version check", color: "#3b82f6", tag: "READ" },
-          { icon: Sigma, label: "Compute Output", sub: "getAmountOut() · fee deduction · slippage guard", color: "#8b5cf6", tag: "MATH" },
+          { icon: Globe, label: "Mirror Node Read", sub: "Fetch pool account balances · on-chain ground truth", color: "#10b981", tag: "READ" },
+          { icon: Sigma, label: "Client AMM Math", sub: "getAmountOut() · BigInt · fee deduction · slippage guard", color: "#8b5cf6", tag: "MATH" },
+          { icon: Cpu, label: "Build CryptoTransfer", sub: "TransferTransaction with both token legs · frozen bytes", color: "#3b82f6", tag: "BUILD" },
+          { icon: Server, label: "Server Co-Sign", sub: "Re-reads reserves · verifies math · signs pool side", color: "#ef4444", tag: "SIGN" },
           { icon: Zap, label: "Fee Split", sub: "0.25% stays in pool · $0.0007 flat \u2192 50/50 LP/Treasury", color: "#f59e0b", tag: "FEE" },
-          { icon: CheckCircle2, label: "K-Invariant Assert", sub: "k_new \u2265 k_old or revert. Non-negotiable.", color: "#10b981", tag: "GUARD" },
-          { icon: Layers, label: "CAS Write", sub: "Compare-and-swap reserves + bump version", color: "#06b6d4", tag: "WRITE" },
-          { icon: Database, label: "Settlement", sub: "~2s Hedera consensus finality", color: "#10b981", tag: "DONE" },
+          { icon: CheckCircle2, label: "K-Invariant Assert", sub: "k_new \u2265 k_old or reject co-sign. Non-negotiable.", color: "#10b981", tag: "GUARD" },
+          { icon: Layers, label: "Atomic Settlement", sub: "User wallet signs + submits \u2192 ~3-5s Hedera consensus finality", color: "#06b6d4", tag: "DONE" },
         ].map((step, i) => (
           <div key={step.label}>
             <motion.div
@@ -324,7 +325,7 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
 
       {/* ═══ SECTION 3 — LIQUIDITY OPERATIONS ═══ */}
       <SectionLabel isDark={isDark} color="#10b981">
-        3 — Liquidity Operations
+        3 — Liquidity Operations (Atomic CryptoTransfer)
       </SectionLabel>
 
       <div className="grid grid-cols-2 gap-3">
@@ -343,17 +344,17 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
             </div>
             <div>
               <div className={`text-[11px] font-bold ${bright}`}>Add Liquidity</div>
-              <div className={`text-[8px] ${faint}`}>Proportional deposit</div>
+              <div className={`text-[8px] ${faint}`}>3-leg atomic transfer</div>
             </div>
           </div>
           <div className="space-y-2">
             {[
-              "Calculate ratio: dA/dB = rA/rB",
+              "User \u2192 Pool: tokenA deposit",
+              "User \u2192 Pool: tokenB deposit",
+              "Pool \u2192 User: LP tokens minted",
               "LP shares = min(dA/rA, dB/rB) \u00b7 totalLP",
               "First deposit: \u221a(A\u00b7B) - 1000",
               "MINIMUM_LIQUIDITY burned forever",
-              "Reserves += deposits",
-              "totalLpSupply += newShares",
             ].map((line, i) => (
               <div key={i} className="flex items-start gap-1.5">
                 <span className="text-[8px] font-mono font-bold text-emerald-400/60 mt-0.5 w-3 flex-shrink-0">
@@ -380,16 +381,16 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
             </div>
             <div>
               <div className={`text-[11px] font-bold ${bright}`}>Remove Liquidity</div>
-              <div className={`text-[8px] ${faint}`}>Pro-rata withdrawal</div>
+              <div className={`text-[8px] ${faint}`}>3-leg atomic transfer</div>
             </div>
           </div>
           <div className="space-y-2">
             {[
+              "User \u2192 Pool: LP tokens burned",
+              "Pool \u2192 User: tokenA withdrawn",
+              "Pool \u2192 User: tokenB withdrawn",
               "outA = shares/totalLP \u00b7 reserveA",
-              "outB = shares/totalLP \u00b7 reserveB",
               "Includes accumulated swap fees",
-              "Reserves -= withdrawals",
-              "totalLpSupply -= burned shares",
               "Always open (even if kill switch on)",
             ].map((line, i) => (
               <div key={i} className="flex items-start gap-1.5">
@@ -413,26 +414,21 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
         <div className="flex items-center gap-2 mb-2">
           <Gem className="w-3.5 h-3.5 text-purple-400" />
           <span className={`text-[10px] font-bold ${isDark ? "text-purple-300" : "text-purple-700"}`}>
-            LP Share Token
+            LP Share Token (HTS)
           </span>
         </div>
         <p className={`text-[10px] leading-relaxed ${muted}`}>
-          Each pool tracks{" "}
-          <code
-            className={`text-[9px] px-1 py-0.5 rounded ${isDark ? "bg-white/[0.05]" : "bg-gray-100"}`}
-          >
-            totalLpSupply
-          </code>{" "}
-          as a BigInt in KV. LP tokens are virtual — represented as a counter, not an on-chain HTS token
-          (yet). Share calculation uses the Uniswap V2 formula: minted shares proportional to the lesser
+          Each pool has a dedicated HTS fungible token representing LP shares. LP tokens are real on-chain
+          Hedera tokens — transferable, verifiable on HashScan, with total supply tracked via Mirror Node.
+          Share calculation uses the Uniswap V2 formula: minted shares proportional to the lesser
           of the two deposit ratios. Fees compound automatically because they increase reserves without
           increasing LP supply.
         </p>
       </motion.div>
 
-      {/* ═══ SECTION 4 — KV STORAGE SCHEMA ═══ */}
+      {/* ═══ SECTION 4 — ON-CHAIN STATE MODEL ═══ */}
       <SectionLabel isDark={isDark} color="#f59e0b">
-        4 — State Machine: KV Storage Schema
+        4 — On-Chain State Model (Pool Accounts)
       </SectionLabel>
 
       <motion.div
@@ -446,18 +442,18 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
             isDark ? "bg-white/[0.02] border-white/[0.05]" : "bg-gray-50 border-gray-100"
           }`}
         >
-          <span className={`text-[9px] font-bold uppercase tracking-wider ${faint}`}>KV Key</span>
+          <span className={`text-[9px] font-bold uppercase tracking-wider ${faint}`}>Source</span>
           <span className={`text-[9px] font-bold uppercase tracking-wider ${faint}`}>Contents</span>
-          <span className={`text-[9px] font-bold uppercase tracking-wider ${faint}`}>Type</span>
+          <span className={`text-[9px] font-bold uppercase tracking-wider ${faint}`}>Verification</span>
         </div>
         {[
-          { key: "sl_pool_{id}", contents: "reserveA, reserveB, totalLP, version, fee counters", type: "JSON/BigInt" },
-          { key: "sl_pool_lock_{id}", contents: "Pessimistic mutex \u00b7 5s TTL \u00b7 3s wait \u00b7 20ms retry", type: "Lock" },
-          { key: "sl_treasury_fees", contents: "Accumulated protocol fees (per-token map)", type: "JSON/BigInt" },
-          { key: "sl_treasury_lock", contents: "Serializes cross-pool treasury writes", type: "Lock" },
-          { key: "sl_oracle_cache", contents: "SaucerSwap price data \u00b7 60s TTL", type: "JSON" },
-          { key: "sl_pool_list", contents: "Active pool IDs + metadata (token pair, decimals)", type: "JSON" },
-          { key: "sl_amm_halt", contents: "Emergency kill switch flag", type: "Boolean" },
+          { key: "Pool Account", contents: "Real Hedera account holding both tokens \u00b7 reserves = balances", type: "HashScan" },
+          { key: "Token Balances", contents: "Mirror Node /accounts/{id}/tokens \u00b7 on-chain ground truth", type: "REST API" },
+          { key: "LP Token", contents: "HTS fungible token \u00b7 total supply tracks all outstanding shares", type: "Mirror Node" },
+          { key: "Pool Registry", contents: "8 registered pools \u00b7 token pairs, fee rate, status, account IDs", type: "Client-side" },
+          { key: "Oracle Cache", contents: "SaucerSwap + Hedera exchange rate \u00b7 30s TTL \u00b7 display only", type: "In-memory" },
+          { key: "Fee Accumulators", contents: "Per-pool protocol fee tracking \u00b7 DAO-extractable", type: "Server-side" },
+          { key: "Kill Switch", contents: "Emergency halt flag \u00b7 owner-only \u00b7 LP removals always open", type: "Server-side" },
         ].map((row, i) => (
           <motion.div
             key={row.key}
@@ -477,16 +473,16 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
         ))}
       </motion.div>
 
-      {/* ═══ SECTION 5 — CONCURRENCY & SAFETY ═══ */}
+      {/* ═══ SECTION 5 — TRUST & SAFETY ═══ */}
       <SectionLabel isDark={isDark} color="#ef4444">
-        5 — Concurrency & Safety Guarantees
+        5 — Trust Model & Safety Guarantees
       </SectionLabel>
 
       <div className="grid grid-cols-3 gap-2">
         {[
-          { label: "Pessimistic Lock", desc: "KV-backed mutex per pool. Prevents concurrent reserve mutations.", specs: "5s TTL \u00b7 3s wait \u00b7 20ms retry", color: "#ef4444", icon: Lock },
-          { label: "CAS Versioning", desc: "Version counter on every pool. Rejects stale writes even if lock held.", specs: "Monotonic uint64", color: "#f59e0b", icon: Layers },
-          { label: "K-Invariant", desc: "Final assertion: k_new \u2265 k_old. Catches any arithmetic bug or exploit.", specs: "BigInt comparison", color: "#10b981", icon: Shield },
+          { label: "Atomic Settlement", desc: "Single CryptoTransfer with both token legs. Hedera consensus guarantees both or neither.", specs: "~3-5s finality", color: "#ef4444", icon: Lock },
+          { label: "Server Validation", desc: "Signing oracle re-reads reserves from Mirror Node and independently verifies AMM math before co-signing.", specs: "1 raw-unit tolerance", color: "#f59e0b", icon: Layers },
+          { label: "K-Invariant", desc: "Server asserts k_new \u2265 k_old before signing. Catches any arithmetic bug or exploit attempt.", specs: "BigInt comparison", color: "#10b981", icon: Shield },
         ].map((item, i) => (
           <motion.div
             key={item.label}
@@ -513,7 +509,7 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
         ))}
       </div>
 
-      {/* Kill switch + no MEV */}
+      {/* Kill switch + decentralization roadmap */}
       <div className="grid grid-cols-2 gap-3">
         <motion.div
           className={`rounded-xl border p-3 ${
@@ -544,12 +540,12 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
           <div className="flex items-center gap-2 mb-1.5">
             <Shield className="w-3.5 h-3.5 text-purple-400" />
             <span className={`text-[10px] font-bold ${isDark ? "text-purple-300" : "text-purple-700"}`}>
-              Zero MEV
+              Decentralization Roadmap
             </span>
           </div>
           <p className={`text-[9px] leading-snug ${muted}`}>
-            No public mempool. Server is the sole sequencer. No front-running, sandwiching, or tx
-            reordering possible.
+            Phase 1: Server holds pool keys (signing oracle). Phase 2: Threshold keys (2-of-3 multisig).
+            Phase 3: HIP-206 account abstraction — fully trustless.
           </p>
         </motion.div>
       </div>
@@ -655,7 +651,7 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
             <div className={`text-xs font-bold ${isDark ? "text-blue-300" : "text-blue-700"}`}>
               50% Treasury
             </div>
-            <div className={`text-[8px] font-mono ${faint}`}>0.0.9695738</div>
+            <div className={`text-[8px] ${faint}`}>Tracked on-chain \u00b7 0.0.9695738</div>
           </div>
         </div>
       </motion.div>
@@ -673,9 +669,9 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
       >
         <div className="grid grid-cols-3 gap-3 mb-4">
           {[
-            { label: "Frontend", sub: "React + Vite + Tailwind", detail: "HashPack SDK, MetaMask, WalletConnect", color: "#8b5cf6", icon: Globe },
-            { label: "Edge Server", sub: "Hono on Supabase Edge", detail: "Sole sequencer, all AMM logic here", color: "#3b82f6", icon: Server },
-            { label: "Data Layer", sub: "Supabase KV Store", detail: "BigInt pool state, locks, oracles", color: "#10b981", icon: Database },
+            { label: "Frontend", sub: "React + Vite + Tailwind", detail: "AMM math, TX building, HashPack SDK", color: "#8b5cf6", icon: Globe },
+            { label: "Signing Oracle", sub: "Hono on Supabase Edge", detail: "Validates math, co-signs pool side", color: "#3b82f6", icon: Server },
+            { label: "Hedera Network", sub: "Mirror Node + Consensus", detail: "On-chain reserves, atomic settlement", color: "#10b981", icon: Database },
           ].map((tier, i) => (
             <motion.div
               key={tier.label}
@@ -695,8 +691,8 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
         {/* Connection lines */}
         <div className="flex items-center justify-center gap-2 mb-3">
           {[
-            { from: "Frontend", to: "Edge Server", color: "#8b5cf6" },
-            { from: "Edge Server", to: "KV Store", color: "#3b82f6" },
+            { from: "Frontend", to: "Signing Oracle", color: "#8b5cf6" },
+            { from: "Signing Oracle", to: "Hedera", color: "#3b82f6" },
           ].map((conn) => (
             <div key={conn.from} className="flex items-center gap-1">
               <span className={`text-[8px] font-bold ${isDark ? "text-slate-400" : "text-gray-500"}`}>
@@ -757,11 +753,13 @@ export function AmmBlueprintDiagram({ isDark }: { isDark: boolean }) {
       >
         <p className={`text-[10px] leading-relaxed ${muted}`}>
           <strong className={isDark ? "text-slate-400" : "text-gray-500"}>Design philosophy:</strong>{" "}
-          WRAPpDEX deliberately avoids on-chain smart contracts. All AMM logic runs server-side in a
-          Supabase Edge Function, using KV as the sole state store. This eliminates MEV, simplifies
-          upgrades, and enables BigInt-precise arithmetic without EVM gas constraints. The tradeoff is
-          trust in the server operator — mitigated by open-source code, audit trails, and the K-invariant
-          safety net that prevents any reserve-draining bug from executing.
+          WRAPpDEX uses Hedera-native atomic CryptoTransfers for settlement — every swap is a single
+          transaction containing both token legs that either succeed together or revert entirely at consensus.
+          Pool reserves are real on-chain account balances (not a database), verifiable by anyone via Mirror Node
+          or HashScan. AMM math runs client-side in BigInt for full transparency. The server is a signing oracle
+          that holds pool account keys (Phase 1) and validates the math independently before co-signing. This
+          architecture eliminates MEV by design, enables BigInt-precise arithmetic without EVM gas constraints,
+          and provides a clear upgrade path to threshold keys (Phase 2) and full trustlessness via HIP-206 (Phase 3).
         </p>
       </motion.div>
     </div>

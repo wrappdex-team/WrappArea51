@@ -206,9 +206,10 @@ export function FounderLetter({ open, onClose }: FounderLetterProps) {
 
                 <p className={`text-sm sm:text-[15px] leading-relaxed ${isDark ? "text-slate-300" : "text-gray-700"}`}>
                   The Smart Liquidity Engine at the heart of WRAPpDEX exists because we are
-                  traders ourselves, and we were tired of being the product. Server-side pool
-                  state means there is no public mempool for bots to exploit. No sandwich
-                  attacks. No MEV extraction. The 0.25% swap fee is transparent and
+                  traders ourselves, and we were tired of being the product. Hedera-native
+                  atomic CryptoTransfer settlement means every swap is a single transaction
+                  with both token legs &mdash; no public mempool for bots to exploit. No
+                  sandwich attacks. No MEV extraction. The 0.25% swap fee is transparent and
                   protocol-fixed &mdash; the full 0.25% stays in pool reserves for
                   LPs, with the protocol&rsquo;s 0.05% share tracked and extractable by
                   DAO governance. Nobody can manipulate it. We built the exchange

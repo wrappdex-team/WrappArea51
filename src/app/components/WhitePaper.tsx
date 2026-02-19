@@ -557,18 +557,18 @@ export function WhitePaper() {
             </p>
             <p className={prose}>
               The protocol features a custom constant-product AMM with
-              server-side execution (zero MEV, zero front-running), a 4-tier
-              oracle pipeline backed by Chainlink decentralized feeds, a
-              dual-layer fee model 17% cheaper than competitors, and
-              full DAO governance where every proposal vote carries real
-              legal weight under Wyoming law.
+              Hedera-native atomic CryptoTransfer settlement (zero MEV,
+              zero front-running), a 4-tier oracle pipeline backed by
+              Chainlink decentralized feeds, a dual-layer fee model 17%
+              cheaper than competitors, and full DAO governance where
+              every proposal vote carries real legal weight under Wyoming law.
             </p>
           </GlassCard>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { v: "22", l: "Price Feeds" },
-              { v: "7", l: "AMM Tokens" },
+              { v: "18", l: "Price Feeds" },
+              { v: "13", l: "AMM Tokens" },
               { v: "60+", l: "Bridge Chains" },
               { v: "10", l: "Chart Timeframes" },
             ].map((s) => (
@@ -744,7 +744,7 @@ export function WhitePaper() {
               {
                 icon: TrendingUp,
                 title: "Markets",
-                desc: "Live dashboards with 22 asset tickers, Fear & Greed Index, RSI gauges, BTC dominance, crypto heatmap, news ticker, sparkline charts, and real-time site activity feed.",
+                desc: "Live dashboards with 18 asset tickers, Fear & Greed Index, RSI gauges, BTC dominance, crypto heatmap, news ticker, sparkline charts, and real-time site activity feed.",
                 color: "from-blue-500 to-cyan-500",
               },
               {
@@ -756,7 +756,7 @@ export function WhitePaper() {
               {
                 icon: ArrowRightLeft,
                 title: "Swap",
-                desc: "Dual-engine swaps: Smart Liquidity AMM (direct + USDC-hop routing) and SaucerSwap integration. Configurable slippage, route visualization, and auto-refreshing quotes.",
+                desc: "Hedera-native atomic CryptoTransfer swaps with client-side AMM math, direct + USDC-hop smart routing, and SaucerSwap integration. Configurable slippage, route visualization, and auto-refreshing quotes.",
                 color: "from-pink-500 to-rose-500",
               },
               {
@@ -768,7 +768,7 @@ export function WhitePaper() {
               {
                 icon: Layers,
                 title: "DeFi Suite",
-                desc: "Constant-product AMM with 7 whitelisted tokens (WBTC, WETH, USDC, USDT, LINK, AAVE, DAI), Bonzo Finance lending/borrowing (Aave V2 on Hedera), and smart routing with USDC-hop discovery.",
+                desc: "Constant-product AMM with 13 whitelisted tokens including WBTC, WETH, USDC, USDT, LINK, AAVE, DAI, WBNB, and WAVAX. Bonzo Finance lending/borrowing (Aave V2 on Hedera), and smart routing with USDC-hop discovery.",
                 color: "from-amber-500 to-orange-500",
               },
               {
@@ -912,8 +912,8 @@ export function WhitePaper() {
               <p
                 className={`text-xs mt-3 ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                The router finds optimal multi-hop paths through SaucerSwap V1
-                liquidity pools. HBAR/WHBAR wraps are always 1:1, zero fee.
+                The client-side smart router evaluates direct and USDC-hop paths
+                across all active pools. HBAR/WHBAR wraps are always 1:1, zero fee.
               </p>
             </div>
           </GlassCard>
@@ -1021,13 +1021,18 @@ export function WhitePaper() {
             every pending swap sits in a public mempool before it executes.
             Bots exploit that transparency to front-run ordinary users,
             extracting value on every trade. WRAPpDEX takes a fundamentally
-            different approach: all pool state is maintained server-side
-            inside a private KV store, so swap execution is deterministic and
-            atomic. There is no mempool to snipe, no block producer who can
-            reorder your transaction, and no MEV leakage. Every mutation is
-            protected by a per-pool pessimistic lock plus optimistic
-            compare-and-swap versioning, and a post-swap k-invariant
-            assertion guarantees that reserves can never decrease.
+            different approach: pool reserves are the actual on-chain token
+            balances of real Hedera accounts, and every swap settles as a
+            single atomic CryptoTransfer containing both token legs. AMM
+            math runs client-side in BigInt, and the server acts as a
+            signing oracle that independently validates the math and
+            co-signs the pool side. There is no mempool to snipe, no block
+            producer who can reorder your transaction, and no MEV leakage.
+            The server re-reads reserves from Mirror Node and recomputes the
+            expected output before co-signing &mdash; if client and server
+            disagree by more than 1 raw unit, the transaction is rejected.
+            A post-swap k-invariant assertion guarantees that reserves can
+            never decrease.
           </p>
 
           {/* Token Whitelist Callout */}
@@ -1035,17 +1040,23 @@ export function WhitePaper() {
             <h4
               className={`font-bold text-xs mb-2 ${isDark ? "text-white" : "text-slate-900"}`}
             >
-              Whitelisted AMM Tokens (Tier 1)
+              Whitelisted AMM Tokens (13 Total)
             </h4>
             <div className="flex flex-wrap gap-2 mb-2">
               {[
+                { s: "WHBAR", d: "8 dec", b: "Native" },
+                { s: "USDC", d: "6 dec", b: "Circle" },
+                { s: "USDT", d: "6 dec", b: "Tether" },
+                { s: "DAI", d: "8 dec", b: "HashPort" },
+                { s: "USDCh", d: "6 dec", b: "HashPort" },
+                { s: "USDTh", d: "6 dec", b: "HashPort" },
                 { s: "WBTC", d: "8 dec", b: "HashPort" },
                 { s: "WETH", d: "18 dec", b: "HashPort" },
-                { s: "USDC", d: "6 dec", b: "Native" },
-                { s: "USDT", d: "6 dec", b: "Native" },
                 { s: "LINK", d: "8 dec", b: "HashPort" },
                 { s: "AAVE", d: "8 dec", b: "HashPort" },
-                { s: "DAI", d: "8 dec", b: "HashPort" },
+                { s: "WBNB", d: "8 dec", b: "LayerZero" },
+                { s: "WAVAX", d: "8 dec", b: "LayerZero" },
+                { s: "WMATIC", d: "8 dec", b: "HashPort" },
               ].map((t) => (
                 <span
                   key={t.s}
@@ -1061,11 +1072,11 @@ export function WhitePaper() {
             <p
               className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}
             >
-              All pool reserves are stored as raw integer strings (no floating-point
-              precision loss). Volume is tracked in micro-USD integer strings to
-              prevent IEEE 754 drift over millions of accumulations. Only Tier 1
-              tokens can be used in pools &mdash; pool creation is restricted to
-              whitelisted assets for security.
+              Pool reserves are the actual on-chain token balances of dedicated
+              Hedera accounts, read via Mirror Node REST API. All AMM math uses
+              BigInt arithmetic to prevent IEEE 754 floating-point drift. Only
+              whitelisted assets can be used in pools &mdash; pool creation is
+              restricted to vetted tokens for security.
             </p>
           </GlassCard>
 
@@ -1086,18 +1097,19 @@ export function WhitePaper() {
                 >
                   x &times; y = k
                 </span>
-                . When you submit a swap the engine calculates your exact
-                output amount, deducts a{" "}
+                . When you submit a swap, the client reads pool reserves
+                from Mirror Node and calculates your exact output using
+                BigInt math. A{" "}
                 <span className={`font-semibold ${isDark ? "text-pink-400" : "text-pink-600"}`}>0.25&nbsp;%</span>{" "}
                 swap fee stays entirely in pool reserves (increasing{" "}
                 <span className="font-mono">k</span> for LP holders).
                 The protocol&rsquo;s{" "}
                 <span className={`font-semibold ${isDark ? "text-amber-400" : "text-amber-600"}`}>0.05&nbsp;%</span>{" "}
                 share is tracked per pool and extractable by DAO
-                governance. Everything settles
-                instantly in a single atomic step. Because the entire
-                process happens server-side, no third party can see or
-                interfere with your trade.
+                governance. The server validates the math independently
+                and co-signs the pool side. Your wallet signs and submits
+                the atomic CryptoTransfer &mdash; both token legs settle
+                together at Hedera consensus.
               </p>
             </GlassCard>
 
@@ -1294,12 +1306,12 @@ export function WhitePaper() {
               <p
                 className={`text-xs leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                Pool state updates server-side in milliseconds, while
-                on-chain token settlement follows Hedera&#39;s aBFT
-                consensus finality of ~2&nbsp;seconds. No pending
-                transactions in a public mempool. The AMM includes an
-                owner-only kill switch for emergency halts &mdash; LP
-                withdrawals always remain open.
+                Every swap is a single Hedera CryptoTransfer containing
+                both token legs. Settlement is atomic &mdash; both sides
+                execute at consensus or neither does, with aBFT finality
+                in ~2&nbsp;seconds. No pending transactions in a public
+                mempool. The AMM includes an owner-only kill switch for
+                emergency halts &mdash; LP withdrawals always remain open.
               </p>
             </GlassCard>
           </div>
@@ -1318,9 +1330,10 @@ export function WhitePaper() {
               </p>
               <ul className={`list-disc list-inside pl-1 space-y-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                 <li>
-                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Private mempool</span>{" "}
-                  &mdash; pool state lives in a KV store accessible only by
-                  the server. No public transaction queue exists.
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Atomic settlement</span>{" "}
+                  &mdash; every swap is a single CryptoTransfer. Both token
+                  legs settle at Hedera consensus or neither does. No public
+                  transaction queue exists.
                 </li>
                 <li>
                   <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>First-depositor attack mitigation</span>{" "}
@@ -1341,11 +1354,11 @@ export function WhitePaper() {
                   trade.
                 </li>
                 <li>
-                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Optimistic CAS versioning</span>{" "}
-                  &mdash; every pool mutation re-reads state, verifies the
-                  version matches, bumps the counter, and writes. Concurrent
-                  requests that arrive with a stale version are rejected and
-                  retried automatically.
+                  <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Server-side reserve validation</span>{" "}
+                  &mdash; the signing oracle independently re-reads pool
+                  account balances from Mirror Node and recomputes the
+                  expected output. If client and server math disagree by
+                  more than 1 raw unit (rounding), co-signing is refused.
                 </li>
                 <li>
                   <span className={`font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`}>Circuit breaker &amp; kill switch</span>{" "}
@@ -1759,7 +1772,7 @@ export function WhitePaper() {
               {
                 icon: Activity,
                 title: "Distributed Locking",
-                desc: "KV-backed pessimistic locks with double-verify pattern and crypto-random fencing tokens. Per-pool lock isolation ensures swap contention on one pool never blocks another.",
+                desc: "Server-side signing lock with double-verify pattern. The signing oracle re-reads reserves from Mirror Node inside the lock window, ensuring concurrent swap requests are validated against fresh on-chain state.",
               },
               {
                 icon: Eye,
@@ -1774,7 +1787,7 @@ export function WhitePaper() {
               {
                 icon: Target,
                 title: "Rate Limiting & Depth Caps",
-                desc: "Two-layer rate limiting (in-memory L1 + KV L2) with conservative fallback on KV failure. Depth-proportional swap caps: 2% for small pools, 5% mid-size, 10% large. Low-TVL pools excluded from routing.",
+                desc: "In-memory rate limiting with depth-proportional swap caps: 2% for small pools (<$10K TVL), 5% mid-size, 10% large. The server re-reads on-chain reserves before co-signing. Low-TVL pools excluded from routing.",
               },
             ].map((s) => (
               <GlassCard key={s.title} className="p-5">
@@ -1912,7 +1925,7 @@ export function WhitePaper() {
               icon={Rocket}
               current
               items={[
-                "Constant-product AMM with KV-backed persistent state",
+                "Constant-product AMM with Hedera-native atomic CryptoTransfer settlement",
                 "4-tier oracle pipeline (Chainlink, Binance, CoinCap, CoinGecko)",
                 "SaucerSwap swap integration with auto-path discovery",
                 "ED25519 challenge-response authentication",

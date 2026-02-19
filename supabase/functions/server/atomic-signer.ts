@@ -42,6 +42,7 @@ import {
   HEDERA_MIRROR_MAINNET,
   mirrorNodeBreaker,
   isHttpFailure,
+  isAccountRateLimited,
 } from "./shared.ts";
 import { requireAuth, requireOwner, logAdminAction } from "./auth.ts";
 
@@ -422,6 +423,25 @@ async function validateSwap(
     };
   }
 
+  // 5b. Explicit k-invariant assertion (defense-in-depth)
+  // The constant-product formula mathematically guarantees k_new >= k_old,
+  // but we verify it explicitly as a safety net against arithmetic bugs.
+  // SEC-09: If this ever fires, it indicates a critical math error.
+  const kBefore = reserveIn * reserveOut;
+  const kAfter = (reserveIn + amountIn) * (reserveOut - serverAmountOut);
+  if (kAfter < kBefore) {
+    console.log(
+      `[AtomicSigner] CRITICAL: k-invariant violation! pool=${poolId} ` +
+      `kBefore=${kBefore} kAfter=${kAfter} amountIn=${amountIn} serverOut=${serverAmountOut} ` +
+      `reserveIn=${reserveIn} reserveOut=${reserveOut}`,
+    );
+    return {
+      valid: false,
+      error: "CRITICAL: k-invariant violation detected — swap rejected for safety",
+      errorCode: "K_INVARIANT_VIOLATION",
+    };
+  }
+
   // 6. Compare client vs server output
   // The client sends minAmountOutRaw (slippage-adjusted), which should be <= serverAmountOut.
   // We verify the client isn't trying to extract MORE than the AMM formula allows.
@@ -552,6 +572,7 @@ export function registerAtomicSignerRoutes(app: Hono) {
   //   errorCode?: string
 
   app.post(`${R}/atomic/sign-swap`, async (c) => {
+    const t0 = performance.now();
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) {
       return c.json({ success: false, error: "Rate limited", errorCode: "RATE_LIMITED" }, 429);
@@ -560,6 +581,16 @@ export function registerAtomicSignerRoutes(app: Hono) {
     // Auth required for swap signing
     const authResult = await requireAuth(c);
     if (authResult instanceof Response) return authResult;
+
+    // Per-account rate limit (supplements per-IP; immune to IP rotation)
+    if (await isAccountRateLimited(authResult.accountId, "swap")) {
+      console.log(`[AtomicSigner] Account rate limited: ${authResult.accountId}`);
+      return c.json({
+        success: false,
+        error: "Account swap rate limit exceeded. Max 15 swaps/min.",
+        errorCode: "RATE_LIMITED",
+      }, 429);
+    }
 
     // Kill switch check
     if (await isAmmKilled()) {
@@ -611,7 +642,7 @@ export function registerAtomicSignerRoutes(app: Hono) {
         }, 403);
       }
 
-      // Per-account rate limit for signing
+      // Per-account rate limit for signing (KV-backed burst limiter)
       if (await isSignRateLimited(userAccountId)) {
         return c.json({
           success: false,
@@ -621,7 +652,9 @@ export function registerAtomicSignerRoutes(app: Hono) {
       }
 
       // Validate the swap math independently
+      const tValidate = performance.now();
       const validation = await validateSwap(poolId, tokenIn, tokenOut, amountInRaw, amountOutRaw);
+      const validateMs = (performance.now() - tValidate).toFixed(1);
       if (!validation.valid) {
         return c.json({
           success: false,
@@ -639,8 +672,10 @@ export function registerAtomicSignerRoutes(app: Hono) {
       }
 
       // Co-sign with pool account key
+      const tSign = performance.now();
       const pool = POOL_BY_ID.get(poolId)!;
       const signResult = await signTransactionWithPoolKey(pool, txBytes);
+      const signMs = (performance.now() - tSign).toFixed(1);
 
       if ("error" in signResult) {
         return c.json({
@@ -650,9 +685,11 @@ export function registerAtomicSignerRoutes(app: Hono) {
         }, 500);
       }
 
-      // Log successful co-sign (no amounts in log — privacy)
+      // Log successful co-sign with timing instrumentation
+      const totalMs = (performance.now() - t0).toFixed(1);
       console.log(
-        `[AtomicSigner] CO-SIGNED: pool=${poolId} ${tokenIn}→${tokenOut} user=${userAccountId}`,
+        `[AtomicSigner] CO-SIGNED: pool=${poolId} ${tokenIn}→${tokenOut} user=${userAccountId} ` +
+        `| validate=${validateMs}ms sign=${signMs}ms total=${totalMs}ms`,
       );
 
       // Persist swap event for analytics (non-blocking)
@@ -682,6 +719,7 @@ export function registerAtomicSignerRoutes(app: Hono) {
   // Co-sign an add/remove liquidity TransferTransaction.
 
   app.post(`${R}/atomic/sign-liquidity`, async (c) => {
+    const t0 = performance.now();
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) {
       return c.json({ success: false, error: "Rate limited", errorCode: "RATE_LIMITED" }, 429);
@@ -709,6 +747,15 @@ export function registerAtomicSignerRoutes(app: Hono) {
       }
       if (authResult.accountId !== userAccountId) {
         return c.json({ success: false, error: "Account mismatch" }, 403);
+      }
+
+      // Per-account rate limit for liquidity operations
+      if (await isAccountRateLimited(userAccountId, "liquidity")) {
+        return c.json({
+          success: false,
+          error: "Account mutation rate limit exceeded. Wait a moment.",
+          errorCode: "RATE_LIMITED",
+        }, 429);
       }
 
       // Kill switch — block adds but allow removes (users must always withdraw)
@@ -746,7 +793,8 @@ export function registerAtomicSignerRoutes(app: Hono) {
       }
 
       console.log(
-        `[AtomicSigner] CO-SIGNED LIQUIDITY: pool=${poolId} action=${action} user=${userAccountId}`,
+        `[AtomicSigner] CO-SIGNED LIQUIDITY: pool=${poolId} action=${action} user=${userAccountId} ` +
+        `| total=${(performance.now() - t0).toFixed(1)}ms`,
       );
 
       return c.json({

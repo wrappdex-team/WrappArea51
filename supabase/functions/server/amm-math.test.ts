@@ -1,15 +1,29 @@
 // ══════════════════════════════════════════════════════════════════════
-// AMM Math — Unit Tests
+// AMM Math — Unit Tests (Hedera-Native Atomic CryptoTransfer Model)
 // ══════════════════════════════════════════════════════════════════════
 //
+// Architecture (current):
+//   Pool reserves = real on-chain token balances of Hedera accounts
+//   AMM math runs client-side (browser) in BigInt — server validates
+//   Server is a signing oracle: re-reads reserves, verifies math, co-signs
+//   Settlement is a single atomic CryptoTransfer (both legs or nothing)
+//
 // Covers:
-//   1. getAmountOut         Uniswap V2 constant-product swap formula
-//   2. decimalToBigInt      String-based decimal parser (IEEE 754-safe)
-//   3. bigIntSqrt           Newton's method integer square root
-//   4. getPriceImpactBps    Trade-vs-reserve impact estimator
-//   5. Fee invariants       0.25% total, 0.20% LP / 0.05% protocol split
-//   6. Protocol micro-fee   $0.0007 flat per swap, capped at 500k tinybar
-//   7. k-invariant          Algebraic proof that fees increase pool depth
+//   1.  getAmountOut          Uniswap V2 constant-product swap formula
+//   2.  decimalToBigInt       String-based decimal parser (IEEE 754-safe)
+//   3.  bigIntSqrt            Newton's method integer square root
+//   4.  getPriceImpactBps     Trade-vs-reserve impact estimator
+//   5.  Fee invariants        0.25% total, 0.20% LP / 0.05% protocol split
+//   6.  Protocol micro-fee    $0.0007 flat per swap, capped at 500k tinybar
+//   7.  k-invariant           Algebraic proof that fees increase pool depth
+//   8.  Swap round-trips      Property-based tests across pool configs
+//   9.  getAmountIn           Inverse swap (exact-output) formula
+//  10.  bigIntToDecimal       Raw BigInt → display string conversion
+//  11.  getSpotPrice          Spot price computation (reserve ratio)
+//  12.  computeLPSharesMint   LP share minting (first deposit + proportional)
+//  13.  computeLPSharesBurn   LP share burning (pro-rata withdrawal)
+//  14.  computeOptimalDeposit Proportional deposit helper
+//  15.  Protocol fee accum    Per-pool tracking + extraction safety
 //
 // Run:  deno test supabase/functions/server/amm-math.test.ts
 // ══════════════════════════════════════════════════════════════════════
@@ -33,6 +47,82 @@ import {
   PROTOCOL_FEE_USD,
   MAX_PROTOCOL_FEE_TINYBAR,
 } from "./amm.ts";
+
+// ── Inline pure math replicas (from atomic-swap-engine.ts) ──────────
+//
+// These functions exist client-side in atomic-swap-engine.ts but not in
+// the server's amm.ts. They are pure (no deps, no side effects), so we
+// replicate them here for testing. Any divergence between these and the
+// client engine is itself a bug — the server validation must agree.
+
+function getAmountIn(
+  amountOut: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  feeBps: number,
+): bigint {
+  if (amountOut <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  if (amountOut >= reserveOut) return 0n;
+  const feeMultiplier = BPS_BASE - BigInt(feeBps);
+  const numerator = reserveIn * amountOut * BPS_BASE;
+  const denominator = (reserveOut - amountOut) * feeMultiplier;
+  return numerator / denominator + 1n;
+}
+
+function bigIntToDecimal(raw: bigint, decimals: number): string {
+  if (raw === 0n) return "0";
+  const str = raw.toString().padStart(decimals + 1, "0");
+  const whole = str.slice(0, str.length - decimals) || "0";
+  const frac = str.slice(str.length - decimals).replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : whole;
+}
+
+function getSpotPrice(
+  reserveA: bigint, decimalsA: number,
+  reserveB: bigint, decimalsB: number,
+): number {
+  if (reserveA <= 0n || reserveB <= 0n) return 0;
+  const a = Number(reserveA) / 10 ** decimalsA;
+  const b = Number(reserveB) / 10 ** decimalsB;
+  return b / a;
+}
+
+function computeLPSharesMint(
+  amountA: bigint, amountB: bigint,
+  reserveA: bigint, reserveB: bigint,
+  totalSupply: bigint,
+): { shares: bigint; isFirstDeposit: boolean } {
+  if (totalSupply === 0n) {
+    const gm = bigIntSqrt(amountA * amountB);
+    if (gm <= MINIMUM_LIQUIDITY) {
+      return { shares: 0n, isFirstDeposit: true };
+    }
+    return { shares: gm - MINIMUM_LIQUIDITY, isFirstDeposit: true };
+  }
+  const fromA = amountA * totalSupply / reserveA;
+  const fromB = amountB * totalSupply / reserveB;
+  return { shares: fromA < fromB ? fromA : fromB, isFirstDeposit: false };
+}
+
+function computeLPSharesBurn(
+  shares: bigint,
+  reserveA: bigint, reserveB: bigint,
+  totalSupply: bigint,
+): { amountA: bigint; amountB: bigint } {
+  if (totalSupply === 0n || shares === 0n) return { amountA: 0n, amountB: 0n };
+  return {
+    amountA: shares * reserveA / totalSupply,
+    amountB: shares * reserveB / totalSupply,
+  };
+}
+
+function computeOptimalDeposit(
+  desiredAmountA: bigint,
+  reserveA: bigint, reserveB: bigint,
+): bigint {
+  if (reserveA === 0n || reserveB === 0n) return 0n;
+  return desiredAmountA * reserveB / reserveA;
+}
 
 
 // ── 1. getAmountOut ─────────────────────────────────────────────────
@@ -109,9 +199,6 @@ Deno.test("getAmountOut", async (t) => {
   });
 
   await t.step("higher fee → lower output (monotonicity)", () => {
-    // Reserves must be small enough relative to trade that the 5-bps gap
-    // between 25 and 30 survives BigInt truncation. At 10K:10K with 1K in:
-    //   fee=0 → 909, fee=25 → 907, fee=30 → 906, fee=100 → 900
     const reserves = [10_000n, 10_000n] as const;
     const input = 1_000n;
     const out0   = getAmountOut(input, ...reserves, 0);
@@ -198,10 +285,8 @@ Deno.test("getAmountOut", async (t) => {
     const reserveUsdc = 2_000_000n * 10n ** 6n;
     const out = getAmountOut(oneWeth, reserveWeth, reserveUsdc, 25);
     // Expected: ~1996 USDC (slightly less due to fee + slippage)
-    // 1/1000 of pool = 0.1%, so output should be close to 2000 USDC raw units
     assert(out > 0n, "must produce output");
     assert(out < reserveUsdc, "must not exceed reserves");
-    // Roughly 1996-1999 USDC worth of raw units
     const outUsdc = Number(out) / 1e6;
     assert(outUsdc > 1990 && outUsdc < 2000, `Expected ~1996 USDC, got ${outUsdc}`);
   });
@@ -253,7 +338,6 @@ Deno.test("decimalToBigInt", async (t) => {
   // ── 2.2 Truncation (excess decimal digits) ────────────────────────
 
   await t.step("truncates excess decimal digits", () => {
-    // 9 fractional digits, but only 8 decimal places → last digit dropped
     assertEquals(decimalToBigInt("1.123456789", 8), 112_345_678n);
   });
 
@@ -275,8 +359,6 @@ Deno.test("decimalToBigInt", async (t) => {
   });
 
   await t.step("18 decimals: preserves full precision (the IEEE 754 killer)", () => {
-    // parseFloat("1.000000000000000001") === 1.0 (loses the trailing 1)
-    // String-based parsing preserves it.
     assertEquals(
       decimalToBigInt("1.000000000000000001", 18),
       1_000_000_000_000_000_001n,
@@ -286,7 +368,6 @@ Deno.test("decimalToBigInt", async (t) => {
   await t.step("18 decimals: large whole + full fractional", () => {
     assertEquals(
       decimalToBigInt("123456.789012345678901234", 18),
-      // "789012345678901234" is exactly 18 chars → no padding, no truncation
       123_456_789_012_345_678_901_234n,
     );
   });
@@ -335,8 +416,6 @@ Deno.test("decimalToBigInt", async (t) => {
   });
 
   await t.step("scientific notation → 0 (intentionally rejected)", () => {
-    // "1e18" contains 'e' → regex rejects. This prevents silent precision loss
-    // from JavaScript auto-converting scientific notation to float.
     assertEquals(decimalToBigInt("1e18", 8), 0n);
   });
 
@@ -375,12 +454,12 @@ Deno.test("bigIntSqrt", async (t) => {
   });
 
   await t.step("non-perfect squares → floor", () => {
-    assertEquals(bigIntSqrt(2n), 1n);     // 1^2=1 <= 2 < 4=2^2
+    assertEquals(bigIntSqrt(2n), 1n);
     assertEquals(bigIntSqrt(3n), 1n);
-    assertEquals(bigIntSqrt(5n), 2n);     // 2^2=4 <= 5 < 9=3^2
+    assertEquals(bigIntSqrt(5n), 2n);
     assertEquals(bigIntSqrt(8n), 2n);
-    assertEquals(bigIntSqrt(10n), 3n);    // 3^2=9 <= 10 < 16=4^2
-    assertEquals(bigIntSqrt(99n), 9n);    // 9^2=81 <= 99 < 100=10^2
+    assertEquals(bigIntSqrt(10n), 3n);
+    assertEquals(bigIntSqrt(99n), 9n);
   });
 
   await t.step("large value: sqrt(10^36) = 10^18", () => {
@@ -411,17 +490,14 @@ Deno.test("getPriceImpactBps", async (t) => {
   });
 
   await t.step("small trade on large pool → low impact", () => {
-    // 1 / (1_000_000 + 1) * 10000 ≈ 0 bps
     assertEquals(getPriceImpactBps(1n, 1_000_000n), 0);
   });
 
   await t.step("100 in 10000 reserve → 99 bps", () => {
-    // 100 * 10000 / (10000 + 100) = 1_000_000 / 10_100 = 99
     assertEquals(getPriceImpactBps(100n, 10_000n), 99);
   });
 
   await t.step("trade equal to reserves → 5000 bps (50%)", () => {
-    // 10000 * 10000 / (10000 + 10000) = 100_000_000 / 20_000 = 5000
     assertEquals(getPriceImpactBps(10_000n, 10_000n), 5000);
   });
 
@@ -431,7 +507,6 @@ Deno.test("getPriceImpactBps", async (t) => {
   });
 
   await t.step("capped at 10000 bps maximum", () => {
-    // Even with enormous input relative to reserves
     const impact = getPriceImpactBps(10n ** 18n, 1n);
     assertEquals(impact, 10000);
   });
@@ -498,7 +573,6 @@ Deno.test("Protocol micro-fee", async (t) => {
   });
 
   await t.step("at $0.10 HBAR → 700_000 capped to 500_000", () => {
-    // 0.0007 / 0.10 = 0.007 HBAR = 700_000 tinybar → capped
     assertEquals(computeProtocolFeeTinybar(0.10), MAX_PROTOCOL_FEE_TINYBAR);
   });
 
@@ -507,18 +581,14 @@ Deno.test("Protocol micro-fee", async (t) => {
   });
 
   await t.step("at $100 HBAR → 700 tinybar (well within bounds)", () => {
-    // 0.0007 / 100 = 0.000007 HBAR = 700 tinybar
     assertEquals(computeProtocolFeeTinybar(100), 700);
   });
 
-  await t.step("at $10_000 HBAR → 7 tinybar (floor doesn't kick in yet)", () => {
-    // 0.0007 / 10000 = 7e-8 HBAR → 7e-8 * 1e8 = 7 tinybar.
-    // The Math.max(1,...) floor only activates at much higher prices.
+  await t.step("at $10_000 HBAR → 7 tinybar", () => {
     assertEquals(computeProtocolFeeTinybar(10_000), 7);
   });
 
   await t.step("minimum floor: never returns 0", () => {
-    // At extremely high HBAR price, fee approaches 0 but Math.max(1,...) floors it
     const fee = computeProtocolFeeTinybar(1_000_000);
     assert(fee >= 1, "Protocol fee must never be 0 tinybar");
   });
@@ -539,7 +609,8 @@ Deno.test("Protocol micro-fee", async (t) => {
 //   protocolShareRaw = rawIn * PROTOCOL_FEE_BPS / BPS_BASE
 //
 // This section verifies the accumulation math and extraction safety
-// properties without needing KV or lock infrastructure.
+// properties. In the atomic model, fee tracking is maintained server-side
+// by the signing oracle; reserves themselves are on-chain.
 
 Deno.test("Protocol fee accumulation math", async (t) => {
 
@@ -556,25 +627,20 @@ Deno.test("Protocol fee accumulation math", async (t) => {
   });
 
   await t.step("sub-dust trades: 1 raw unit → 0 protocol share", () => {
-    // 1 * 5 / 10000 = 0 (BigInt truncation). Protocol gets nothing on dust trades.
     assertEquals(protocolShareRaw(1n), 0n);
   });
 
   await t.step("minimum non-zero share: 2000 raw units → 1", () => {
-    // 2000 * 5 / 10000 = 10000 / 10000 = 1
     assertEquals(protocolShareRaw(2_000n), 1n);
   });
 
   await t.step("1999 raw units → 0 (just below threshold)", () => {
-    // 1999 * 5 = 9995, 9995 / 10000 = 0
     assertEquals(protocolShareRaw(1_999n), 0n);
   });
 
   // ── Extraction safety: 50% ceiling ────────────────────────────────
 
   await t.step("extraction 50% ceiling: accumulated fees vs reserves", () => {
-    // Scenario: pool has 1M reserves, accumulated 600K in fees (60%)
-    // Extraction should be rejected (exceeds 50% safety ceiling)
     const reserveA = 1_000_000n;
     const deductedA = 600_000n;
     const exceedsCeiling = deductedA > reserveA / 2n;
@@ -583,14 +649,14 @@ Deno.test("Protocol fee accumulation math", async (t) => {
 
   await t.step("extraction within 50% ceiling: passes", () => {
     const reserveA = 1_000_000n;
-    const deductedA = 400_000n; // 40%
+    const deductedA = 400_000n;
     const exceedsCeiling = deductedA > reserveA / 2n;
     assert(!exceedsCeiling, "400K deduction from 1M reserves should be within 50% ceiling");
   });
 
   await t.step("extraction exactly at 50% boundary: passes", () => {
     const reserveA = 1_000_000n;
-    const deductedA = 500_000n; // Exactly 50%
+    const deductedA = 500_000n;
     const exceedsCeiling = deductedA > reserveA / 2n;
     assert(!exceedsCeiling, "Exactly 50% should not exceed ceiling (> not >=)");
   });
@@ -598,14 +664,12 @@ Deno.test("Protocol fee accumulation math", async (t) => {
   // ── Idempotency: extraction resets accumulator ────────────────────
 
   await t.step("post-extraction accumulator is zeroed", () => {
-    // Simulates the extraction reset logic
     const accum = {
       accruedUsd: 12.50,
       accruedInputTokens: { USDC: "625000", HBAR: "44642857" } as Record<string, string>,
       swapCount: 100,
     };
 
-    // After extraction, the accumulator is reset:
     const resetAccum = {
       accruedUsd: 0,
       accruedInputTokens: {} as Record<string, string>,
@@ -621,8 +685,6 @@ Deno.test("Protocol fee accumulation math", async (t) => {
   });
 
   await t.step("second extraction after reset has nothing to extract", () => {
-    // Simulates calling extract twice with no intervening swaps.
-    // The second call sees accruedUsd <= 0 and returns early.
     const accum = { accruedUsd: 0, accruedInputTokens: {} };
     const hasFeesToExtract = accum.accruedUsd > 0;
     assert(!hasFeesToExtract, "No fees should remain after extraction");
@@ -700,5 +762,389 @@ Deno.test("Swap round-trip properties", async (t) => {
         prevOut = dy;
       }
     }
+  });
+});
+
+
+// ── 9. getAmountIn (Inverse / Exact-Output Swap) ────────────────────
+//
+// Given a desired output, compute the required input.
+// Must satisfy: getAmountOut(getAmountIn(dy), x, y, fee) >= dy
+// (the round-trip must produce at least the desired output)
+
+Deno.test("getAmountIn", async (t) => {
+
+  // ── 9.1 Zero / negative guards ────────────────────────────────────
+
+  await t.step("returns 0 for zero amountOut", () => {
+    assertEquals(getAmountIn(0n, 10_000n, 10_000n, 25), 0n);
+  });
+
+  await t.step("returns 0 for negative amountOut", () => {
+    assertEquals(getAmountIn(-1n, 10_000n, 10_000n, 25), 0n);
+  });
+
+  await t.step("returns 0 for zero reserveIn", () => {
+    assertEquals(getAmountIn(100n, 0n, 10_000n, 25), 0n);
+  });
+
+  await t.step("returns 0 for zero reserveOut", () => {
+    assertEquals(getAmountIn(100n, 10_000n, 0n, 25), 0n);
+  });
+
+  await t.step("returns 0 when amountOut >= reserveOut (cannot drain pool)", () => {
+    assertEquals(getAmountIn(10_000n, 10_000n, 10_000n, 25), 0n);
+    assertEquals(getAmountIn(10_001n, 10_000n, 10_000n, 25), 0n);
+  });
+
+  // ── 9.2 Round-trip consistency: getAmountOut(getAmountIn(dy)) >= dy ─
+
+  await t.step("round-trip: computed input produces at least the desired output", () => {
+    const cases = [
+      { dy: 50n,    x: 10_000n,  y: 10_000n,  fee: 25 },
+      { dy: 500n,   x: 100_000n, y: 100_000n, fee: 25 },
+      { dy: 1_000n, x: 5_000n,   y: 20_000n,  fee: 25 },
+      { dy: 100n,   x: 10_000n,  y: 10_000n,  fee: 0  },
+      { dy: 10n ** 15n, x: 10n ** 18n, y: 10n ** 18n, fee: 25 },
+    ];
+    for (const { dy, x, y, fee } of cases) {
+      const dx = getAmountIn(dy, x, y, fee);
+      if (dx === 0n) continue; // Skip degenerate cases
+      const actualOut = getAmountOut(dx, x, y, fee);
+      assert(
+        actualOut >= dy,
+        `Round-trip failed: wanted ${dy}, got ${actualOut} (dx=${dx}, x=${x}, y=${y}, fee=${fee})`,
+      );
+    }
+  });
+
+  // ── 9.3 Input includes the +1 rounding bias (never underpays) ─────
+
+  await t.step("always rounds up (conservative for the trader)", () => {
+    const dy = 100n;
+    const x = 10_000n;
+    const y = 10_000n;
+    const dx = getAmountIn(dy, x, y, 25);
+    // The +1n in the formula ensures the input is always sufficient
+    assert(dx > 0n, "Input must be positive");
+    const actualOut = getAmountOut(dx, x, y, 25);
+    assert(actualOut >= dy, "Output must be >= desired (rounding protects pool)");
+  });
+
+  // ── 9.4 Monotonicity: larger desired output → larger required input ─
+
+  await t.step("monotonically increasing with desired output", () => {
+    const x = 100_000n;
+    const y = 100_000n;
+    let prevIn = 0n;
+    for (const dy of [10n, 100n, 1_000n, 10_000n, 50_000n]) {
+      const dx = getAmountIn(dy, x, y, 25);
+      if (dx === 0n) continue;
+      assert(dx >= prevIn, `Input must increase: ${dx} >= ${prevIn} (dy=${dy})`);
+      prevIn = dx;
+    }
+  });
+});
+
+
+// ── 10. bigIntToDecimal ─────────────────────────────────────────────
+//
+// Inverse of decimalToBigInt. Converts raw integer BigInt back to a
+// human-readable decimal string.
+
+Deno.test("bigIntToDecimal", async (t) => {
+
+  await t.step("zero → '0'", () => {
+    assertEquals(bigIntToDecimal(0n, 8), "0");
+  });
+
+  await t.step("1 HBAR (8 decimals): 100_000_000 → '1'", () => {
+    assertEquals(bigIntToDecimal(100_000_000n, 8), "1");
+  });
+
+  await t.step("1.5 HBAR: 150_000_000 → '1.5'", () => {
+    assertEquals(bigIntToDecimal(150_000_000n, 8), "1.5");
+  });
+
+  await t.step("1000 USDC (6 decimals): 1_000_000_000 → '1000'", () => {
+    assertEquals(bigIntToDecimal(1_000_000_000n, 6), "1000");
+  });
+
+  await t.step("0.01 USDC: 10_000 → '0.01'", () => {
+    assertEquals(bigIntToDecimal(10_000n, 6), "0.01");
+  });
+
+  await t.step("1 wei (18 decimals): 1 → '0.000000000000000001'", () => {
+    assertEquals(bigIntToDecimal(1n, 18), "0.000000000000000001");
+  });
+
+  await t.step("1 WETH (18 decimals): 10^18 → '1'", () => {
+    assertEquals(bigIntToDecimal(10n ** 18n, 18), "1");
+  });
+
+  await t.step("trailing zeros stripped", () => {
+    // 1.50000000 should display as "1.5", not "1.50000000"
+    assertEquals(bigIntToDecimal(150_000_000n, 8), "1.5");
+  });
+
+  await t.step("small sub-unit value: 1 tinybar (8 decimals)", () => {
+    assertEquals(bigIntToDecimal(1n, 8), "0.00000001");
+  });
+
+  await t.step("0 decimals: raw value as string", () => {
+    assertEquals(bigIntToDecimal(42n, 0), "42");
+  });
+
+  // ── Round-trip: decimalToBigInt → bigIntToDecimal ─────────────────
+
+  await t.step("round-trip: '123.456' at 8 decimals", () => {
+    const raw = decimalToBigInt("123.456", 8);
+    assertEquals(bigIntToDecimal(raw, 8), "123.456");
+  });
+
+  await t.step("round-trip: '0.00000001' at 8 decimals", () => {
+    const raw = decimalToBigInt("0.00000001", 8);
+    assertEquals(bigIntToDecimal(raw, 8), "0.00000001");
+  });
+
+  await t.step("round-trip: '1.000000000000000001' at 18 decimals", () => {
+    const raw = decimalToBigInt("1.000000000000000001", 18);
+    assertEquals(bigIntToDecimal(raw, 18), "1.000000000000000001");
+  });
+});
+
+
+// ── 11. getSpotPrice ────────────────────────────────────────────────
+//
+// Spot price = reserveB / reserveA (adjusted for decimals).
+// Used for UI display only — swap math uses the constant-product formula.
+
+Deno.test("getSpotPrice", async (t) => {
+
+  await t.step("1:1 pool with same decimals → price = 1.0", () => {
+    const price = getSpotPrice(1_000_000n, 6, 1_000_000n, 6);
+    assertEquals(price, 1.0);
+  });
+
+  await t.step("USDC/WHBAR pool: 50K USDC / 500K WHBAR → $0.10/WHBAR", () => {
+    // 50,000 USDC (6 dec) = 50_000_000_000 raw
+    // 500,000 WHBAR (8 dec) = 50_000_000_000_000 raw
+    // spotPrice = (50000) / (500000) = 0.1
+    const price = getSpotPrice(
+      50_000_000_000_000n, 8,  // 500K WHBAR
+      50_000_000_000n, 6,      // 50K USDC
+    );
+    assert(Math.abs(price - 0.1) < 0.001, `Expected ~0.1, got ${price}`);
+  });
+
+  await t.step("zero reserves → 0", () => {
+    assertEquals(getSpotPrice(0n, 8, 1_000n, 6), 0);
+    assertEquals(getSpotPrice(1_000n, 8, 0n, 6), 0);
+  });
+
+  await t.step("cross-decimal precision: 8-dec vs 18-dec tokens", () => {
+    // Pool: 1000 WBTC (8 dec) / 100 WETH (18 dec)
+    // Price of WBTC in WETH = 100/1000 = 0.1
+    const price = getSpotPrice(
+      1_000_00_000_000n, 8,     // 1000 WBTC
+      100n * 10n ** 18n, 18,    // 100 WETH
+    );
+    assert(Math.abs(price - 0.1) < 0.001, `Expected ~0.1, got ${price}`);
+  });
+});
+
+
+// ── 12. computeLPSharesMint ─────────────────────────────────────────
+//
+// LP share minting follows Uniswap V2:
+//   First deposit:  shares = sqrt(A * B) - MINIMUM_LIQUIDITY
+//   Subsequent:     shares = min(dA * totalLP / rA, dB * totalLP / rB)
+
+Deno.test("computeLPSharesMint", async (t) => {
+
+  // ── 12.1 First deposit ────────────────────────────────────────────
+
+  await t.step("first deposit: sqrt(A*B) - 1000", () => {
+    // Deposit 10_000 of each token
+    // sqrt(10000 * 10000) = 10000, minus 1000 = 9000
+    const { shares, isFirstDeposit } = computeLPSharesMint(
+      10_000n, 10_000n, 0n, 0n, 0n,
+    );
+    assertEquals(shares, 9_000n);
+    assertEquals(isFirstDeposit, true);
+  });
+
+  await t.step("first deposit: MINIMUM_LIQUIDITY burned (attack mitigation)", () => {
+    const { shares } = computeLPSharesMint(1_000_000n, 1_000_000n, 0n, 0n, 0n);
+    const gm = bigIntSqrt(1_000_000n * 1_000_000n);
+    assertEquals(shares, gm - MINIMUM_LIQUIDITY);
+  });
+
+  await t.step("first deposit too small: returns 0 shares", () => {
+    // sqrt(100 * 100) = 100, which is <= 1000 → 0 shares
+    const { shares, isFirstDeposit } = computeLPSharesMint(
+      100n, 100n, 0n, 0n, 0n,
+    );
+    assertEquals(shares, 0n);
+    assertEquals(isFirstDeposit, true);
+  });
+
+  await t.step("first deposit exactly at threshold: sqrt = 1000 → 0 shares", () => {
+    // sqrt(1000 * 1000) = 1000 → 1000 - 1000 = 0
+    const { shares } = computeLPSharesMint(1_000n, 1_000n, 0n, 0n, 0n);
+    assertEquals(shares, 0n);
+  });
+
+  await t.step("first deposit just above threshold: sqrt = 1001 → 1 share", () => {
+    // Find A*B where sqrt(A*B) = 1001: A*B = 1_002_001
+    // Let A = 1001, B = 1001 → sqrt(1002001) = 1001
+    const { shares } = computeLPSharesMint(1_001n, 1_001n, 0n, 0n, 0n);
+    assertEquals(shares, 1n);
+  });
+
+  // ── 12.2 Proportional deposit ─────────────────────────────────────
+
+  await t.step("proportional deposit: balanced amounts", () => {
+    // Pool: 10K A / 10K B, totalLP = 9000 (from first deposit above)
+    // Deposit 1K A / 1K B → 10% of reserves → 900 shares
+    const { shares, isFirstDeposit } = computeLPSharesMint(
+      1_000n, 1_000n, 10_000n, 10_000n, 9_000n,
+    );
+    assertEquals(shares, 900n);
+    assertEquals(isFirstDeposit, false);
+  });
+
+  await t.step("proportional deposit: unbalanced amounts → min ratio", () => {
+    // Pool: 10K A / 10K B, totalLP = 9000
+    // Deposit 2K A / 1K B → from A: 2000*9000/10000=1800, from B: 1000*9000/10000=900
+    // min(1800, 900) = 900
+    const { shares } = computeLPSharesMint(
+      2_000n, 1_000n, 10_000n, 10_000n, 9_000n,
+    );
+    assertEquals(shares, 900n);
+  });
+
+  await t.step("proportional deposit: heavily skewed → lesser ratio dominates", () => {
+    // Pool: 100K A / 100K B, totalLP = 99_000
+    // Deposit 10K A / 1 B → from A: 10000*99000/100000=9900, from B: 1*99000/100000=0
+    // min(9900, 0) = 0
+    const { shares } = computeLPSharesMint(
+      10_000n, 1n, 100_000n, 100_000n, 99_000n,
+    );
+    assertEquals(shares, 0n);
+  });
+});
+
+
+// ── 13. computeLPSharesBurn ─────────────────────────────────────────
+//
+// Pro-rata withdrawal: each share entitles the holder to a proportional
+// fraction of both reserves. Includes accumulated swap fees.
+
+Deno.test("computeLPSharesBurn", async (t) => {
+
+  await t.step("zero shares → zero tokens", () => {
+    const { amountA, amountB } = computeLPSharesBurn(0n, 10_000n, 10_000n, 9_000n);
+    assertEquals(amountA, 0n);
+    assertEquals(amountB, 0n);
+  });
+
+  await t.step("zero totalSupply → zero tokens", () => {
+    const { amountA, amountB } = computeLPSharesBurn(100n, 10_000n, 10_000n, 0n);
+    assertEquals(amountA, 0n);
+    assertEquals(amountB, 0n);
+  });
+
+  await t.step("burn all shares → get all reserves", () => {
+    const { amountA, amountB } = computeLPSharesBurn(9_000n, 10_000n, 10_000n, 9_000n);
+    assertEquals(amountA, 10_000n);
+    assertEquals(amountB, 10_000n);
+  });
+
+  await t.step("burn 10% of shares → get 10% of reserves", () => {
+    const { amountA, amountB } = computeLPSharesBurn(900n, 10_000n, 10_000n, 9_000n);
+    assertEquals(amountA, 1_000n);
+    assertEquals(amountB, 1_000n);
+  });
+
+  await t.step("burn 50% of shares → get 50% of reserves", () => {
+    const { amountA, amountB } = computeLPSharesBurn(4_500n, 10_000n, 10_000n, 9_000n);
+    assertEquals(amountA, 5_000n);
+    assertEquals(amountB, 5_000n);
+  });
+
+  await t.step("asymmetric reserves: proportional withdrawal", () => {
+    // Pool: 100K A / 50K B, totalLP = 50_000
+    // Burn 10_000 shares (20% of supply) → 20K A, 10K B
+    const { amountA, amountB } = computeLPSharesBurn(
+      10_000n, 100_000n, 50_000n, 50_000n,
+    );
+    assertEquals(amountA, 20_000n);
+    assertEquals(amountB, 10_000n);
+  });
+
+  await t.step("fee accumulation: reserves grow but LP supply unchanged", () => {
+    // After fees, reserves grew from 10K/10K to 11K/11K (fees added to reserves)
+    // totalLP still 9000. Burn 900 shares (10%) → get 1100/1100 (includes fee share!)
+    const { amountA, amountB } = computeLPSharesBurn(900n, 11_000n, 11_000n, 9_000n);
+    assertEquals(amountA, 1_100n);
+    assertEquals(amountB, 1_100n);
+  });
+
+  // ── Burn/mint symmetry ────────────────────────────────────────────
+
+  await t.step("mint then burn returns original deposit (minus rounding)", () => {
+    const depositA = 5_000n;
+    const depositB = 5_000n;
+    const reserveA = 100_000n;
+    const reserveB = 100_000n;
+    const totalLP = 99_000n;
+
+    const { shares } = computeLPSharesMint(depositA, depositB, reserveA, reserveB, totalLP);
+    const newTotalLP = totalLP + shares;
+    const newResA = reserveA + depositA;
+    const newResB = reserveB + depositB;
+
+    const { amountA, amountB } = computeLPSharesBurn(shares, newResA, newResB, newTotalLP);
+    // Due to BigInt truncation, may lose up to 1 unit per token
+    assert(amountA >= depositA - 1n && amountA <= depositA, `Expected ~${depositA}, got ${amountA}`);
+    assert(amountB >= depositB - 1n && amountB <= depositB, `Expected ~${depositB}, got ${amountB}`);
+  });
+});
+
+
+// ── 14. computeOptimalDeposit ───────────────────────────────────────
+//
+// Given a desired amount of token A, returns the proportional amount of
+// token B needed to maintain the pool ratio (avoiding excess token waste).
+
+Deno.test("computeOptimalDeposit", async (t) => {
+
+  await t.step("1:1 pool → same amount", () => {
+    assertEquals(computeOptimalDeposit(1_000n, 10_000n, 10_000n), 1_000n);
+  });
+
+  await t.step("1:2 pool → double amount", () => {
+    assertEquals(computeOptimalDeposit(1_000n, 10_000n, 20_000n), 2_000n);
+  });
+
+  await t.step("2:1 pool → half amount", () => {
+    assertEquals(computeOptimalDeposit(1_000n, 20_000n, 10_000n), 500n);
+  });
+
+  await t.step("zero reserves → 0", () => {
+    assertEquals(computeOptimalDeposit(1_000n, 0n, 10_000n), 0n);
+    assertEquals(computeOptimalDeposit(1_000n, 10_000n, 0n), 0n);
+  });
+
+  await t.step("large asymmetric pool: preserves ratio", () => {
+    // Pool: 1M USDC (6 dec) / 10M WHBAR (8 dec)
+    // Deposit 100K USDC → should need 1M WHBAR
+    const optB = computeOptimalDeposit(100_000n, 1_000_000n, 10_000_000n);
+    assertEquals(optB, 1_000_000n);
+  });
+
+  await t.step("deposit 0 → 0 regardless of reserves", () => {
+    assertEquals(computeOptimalDeposit(0n, 10_000n, 10_000n), 0n);
   });
 });

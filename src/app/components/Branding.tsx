@@ -907,10 +907,11 @@ export function Branding() {
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Zero MEV. Zero front-running.</strong>{" "}
-                  Our Smart Liquidity Engine holds pool state server-side in a
-                  private KV store. There is no public mempool. Bots cannot see
-                  your trade before it executes. This is not a feature we
-                  bolted on. It is the architecture.
+                  Every swap settles as a single atomic Hedera CryptoTransfer —
+                  both token legs or neither. Pool reserves are real on-chain
+                  account balances, not a database. Bots cannot see your trade
+                  before it executes. This is not a feature we bolted on. It
+                  is the architecture.
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Dual-fee model at near-zero cost.</strong>{" "}

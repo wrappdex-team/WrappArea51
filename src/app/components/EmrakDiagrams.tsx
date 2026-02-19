@@ -238,27 +238,27 @@ function SwapPipelineDiagram({ isDark }: { isDark: boolean }) {
       color: "#f59e0b",
     },
     {
-      icon: Server,
-      label: "Hono Edge Server",
-      sub: "Supabase Edge Function",
-      color: "#3b82f6",
-    },
-    {
-      icon: Lock,
-      label: "Pool Lock + CAS",
-      sub: "Pessimistic + optimistic",
-      color: "#ef4444",
-    },
-    {
-      icon: Database,
-      label: "KV Pool State",
-      sub: "BigInt reserves · x·y=k",
+      icon: Globe,
+      label: "Mirror Node Read",
+      sub: "Pool account balances · on-chain ground truth",
       color: "#10b981",
     },
     {
+      icon: Cpu,
+      label: "Client-Side AMM Math",
+      sub: "BigInt x·y=k · getAmountOut() · route scoring",
+      color: "#3b82f6",
+    },
+    {
+      icon: Server,
+      label: "Server Co-Sign",
+      sub: "Re-reads reserves · validates math · signs pool side",
+      color: "#ef4444",
+    },
+    {
       icon: CheckCircle2,
-      label: "Settlement",
-      sub: "~2s Hedera finality",
+      label: "Atomic CryptoTransfer",
+      sub: "Both legs settle in ~3-5s · atomic or nothing",
       color: "#06b6d4",
     },
   ];
@@ -293,10 +293,10 @@ function SwapPipelineDiagram({ isDark }: { isDark: boolean }) {
                     : i === 1
                       ? "X-Session-Token"
                       : i === 2
-                        ? "withPoolLock()"
+                        ? "BigInt reserves"
                         : i === 3
-                          ? "getAmountOut()"
-                          : "~2 sec"
+                          ? "frozen TX bytes"
+                          : "wallet sign + submit"
                 }
               />
             )}
@@ -322,7 +322,7 @@ function SwapPipelineDiagram({ isDark }: { isDark: boolean }) {
               Post-Swap K-Invariant Assertion
             </p>
             <p className={`text-[10px] mt-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              If k<sub>new</sub> {"<"} k<sub>old</sub> → swap aborted. Fee stays in pool (increases k), benefiting all LPs.
+              Server independently verifies k<sub>new</sub> {"≥"} k<sub>old</sub> before co-signing. Fee stays in pool (increases k), benefiting all LPs.
             </p>
           </div>
         </div>
@@ -341,10 +341,10 @@ function SwapPipelineDiagram({ isDark }: { isDark: boolean }) {
       >
         <p className={`text-[10px] leading-relaxed ${isDark ? "text-slate-500" : "text-gray-400"}`}>
           <strong className={isDark ? "text-slate-400" : "text-gray-500"}>Key design decision:</strong>{" "}
-          All pool state lives in Supabase KV — not on-chain smart contracts. This means
-          no public mempool, no transaction ordering games, no MEV extraction.
-          The server <em>is</em> the sequencer, and the KV store <em>is</em> the private mempool.
-          Reserves are stored as raw BigInt strings to avoid IEEE 754 floating-point drift over millions of operations.
+          Pool reserves are the actual on-chain token balances of real Hedera accounts, verifiable by anyone
+          via Mirror Node or HashScan. AMM math runs client-side in BigInt. The server is a <em>signing oracle</em> —
+          it holds pool account keys (Phase 1), validates the math independently, and co-signs the pool side of
+          the CryptoTransfer. Both token legs settle atomically at Hedera consensus — no partial fills, no intermediate state.
         </p>
       </motion.div>
     </div>
@@ -359,7 +359,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
   return (
     <div>
       <SectionLabel isDark={isDark} color="#8b5cf6">
-        Smart Routing · Direct vs USDC Multi-Hop
+        Smart Routing · Direct vs Hub Multi-Hop
       </SectionLabel>
 
       {/* Direct Route */}
@@ -389,7 +389,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
               }}
             />
             <div className={`text-[9px] font-medium ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              sl-usdc-wbtc · 25 bps
+              ap-wbtc-whbar · 25 bps
             </div>
             <div
               className={`text-[9px] px-2 py-0.5 rounded-full ${
@@ -399,7 +399,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
               x · y = k
             </div>
           </div>
-          <TokenBadge symbol="USDC" color="#2775ca" isDark={isDark} />
+          <TokenBadge symbol="WHBAR" color="#8247e5" isDark={isDark} />
         </div>
       </motion.div>
 
@@ -415,7 +415,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
         <div className="flex items-center gap-1.5 mb-3">
           <div className="w-1.5 h-1.5 rounded-full bg-purple-400" />
           <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? "text-purple-400" : "text-purple-600"}`}>
-            Route B — USDC Multi-Hop
+            Route B — WHBAR Hub Multi-Hop
           </span>
         </div>
         <div className="flex items-center justify-between gap-1">
@@ -427,19 +427,19 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
                 background: isDark ? "rgba(247,147,26,0.25)" : "rgba(247,147,26,0.15)",
               }}
             />
-            <span className={`text-[8px] ${isDark ? "text-slate-600" : "text-gray-300"}`}>Pool 1</span>
+            <span className={`text-[8px] ${isDark ? "text-slate-600" : "text-gray-300"}`}>ap-wbtc-whbar</span>
           </div>
-          <TokenBadge symbol="USDC" color="#2775ca" isDark={isDark} size="sm" />
+          <TokenBadge symbol="WHBAR" color="#8247e5" isDark={isDark} size="sm" />
           <div className="flex flex-col items-center flex-1 gap-0.5">
             <div
               className="w-full h-px"
               style={{
-                background: isDark ? "rgba(39,117,202,0.25)" : "rgba(39,117,202,0.15)",
+                background: isDark ? "rgba(130,71,229,0.25)" : "rgba(130,71,229,0.15)",
               }}
             />
-            <span className={`text-[8px] ${isDark ? "text-slate-600" : "text-gray-300"}`}>Pool 2</span>
+            <span className={`text-[8px] ${isDark ? "text-slate-600" : "text-gray-300"}`}>ap-usdc-whbar</span>
           </div>
-          <TokenBadge symbol="WETH" color="#627eea" isDark={isDark} size="sm" />
+          <TokenBadge symbol="USDC" color="#2775ca" isDark={isDark} size="sm" />
         </div>
         <div className={`text-[9px] text-center mt-2 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
           2× 25 bps = 50 bps total · Combined price impact evaluated
@@ -463,8 +463,8 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
         </div>
         <div className="space-y-1.5">
           {[
-            "All active pools batch-read in one KV round trip (mget)",
-            "Both direct and USDC-hop candidates scored",
+            "All active pool reserves fetched from Mirror Node in parallel",
+            "Both direct and hub-hop candidates scored (hubs: USDC, WHBAR)",
             "Winner = highest amountOut (sort descending)",
             "TVL < $100 pools excluded (manipulation resistance)",
             "Depth cap: <$10K→2%, <$100K→5%, >$100K→10% of TVL",
@@ -491,13 +491,13 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
         <div className="flex items-center gap-2 mb-2">
           <Globe className="w-3.5 h-3.5 text-cyan-400" />
           <span className={`text-[10px] font-bold ${isDark ? "text-cyan-300" : "text-cyan-700"}`}>
-            HSuite SmartNode Fallback Layer
+            External DEX Aggregation (Planned)
           </span>
         </div>
         <div className="flex items-center gap-2 mb-2">
-          {["mainnet", "mainnet-2", "mainnet-3"].map((node, i) => (
+          {["SaucerSwap", "Pangolin", "HeliSwap"].map((dex, i) => (
             <motion.div
-              key={node}
+              key={dex}
               className={`flex-1 text-center rounded-lg py-1.5 border text-[9px] font-medium ${
                 isDark ? "bg-white/[0.02] border-white/[0.05] text-slate-400" : "bg-white border-gray-100 text-gray-500"
               }`}
@@ -506,13 +506,13 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
               transition={{ delay: 0.5 + i * 0.08 }}
             >
               <Cpu className={`w-3 h-3 mx-auto mb-0.5 ${i === 0 ? "text-cyan-400" : isDark ? "text-slate-600" : "text-gray-300"}`} />
-              {node}
+              {dex}
             </motion.div>
           ))}
         </div>
         <p className={`text-[10px] leading-snug ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-          SaucerSwap V1 primary → HSuite SmartNode fallback → DEX aggregation across SaucerSwap, Pangolin, HeliSwap.
-          Latency-sorted node discovery. NFT-gated validator tiers.
+          Currently WRAPpDEX pools only. Future roadmap: HSuite SmartNode integration for cross-DEX
+          aggregation across SaucerSwap, Pangolin, HeliSwap. Not yet implemented.
         </p>
       </motion.div>
     </div>
@@ -532,26 +532,26 @@ function SecurityDiagram({ isDark }: { isDark: boolean }) {
       icon: KeyRound,
     },
     {
-      label: "Private Mempool (No MEV)",
-      desc: "Pool state in server-side KV. No public transaction queue. No front-running, no sandwich attacks, no transaction reordering.",
+      label: "Atomic Settlement (No MEV)",
+      desc: "Every swap is a single Hedera CryptoTransfer — both token legs settle atomically at consensus. No public transaction queue, no front-running, no sandwich attacks, no reordering.",
       color: "#ef4444",
       icon: Shield,
     },
     {
-      label: "Per-Pool Pessimistic Lock",
-      desc: "KV-backed mutex per pool ID. 5s TTL, 3s wait. Prevents concurrent mutations on the same pool from corrupting reserves.",
+      label: "Server-Side Reserve Validation",
+      desc: "The signing oracle independently re-reads pool account balances from Mirror Node and recomputes the expected output. If client and server disagree by >1 raw unit, co-signing is refused.",
       color: "#f59e0b",
       icon: Lock,
     },
     {
-      label: "Optimistic CAS Versioning",
-      desc: "Every pool carries a version counter. Compare-and-swap on write — rejects stale mutations even if the lock was held. Defense in depth.",
+      label: "Dual-Sig Transaction Model",
+      desc: "Transaction bytes are built client-side. The user's wallet shows the full transfer for review. Server signs pool side only after independent validation. User signs last + submits.",
       color: "#10b981",
       icon: Layers,
     },
     {
       label: "K-Invariant Assertion",
-      desc: "Post-swap check: k_new ≥ k_old. If reserves multiplication decreases, swap is aborted with a critical-severity log. Catches any arithmetic bugs.",
+      desc: "The constant-product formula mathematically guarantees k_new ≥ k_old (algebraically proven in unit tests). The server's independent reserve re-read + AMM recomputation enforces this. Any divergence triggers co-sign rejection.",
       color: "#06b6d4",
       icon: CheckCircle2,
     },
@@ -718,16 +718,16 @@ function OracleDiagram({ isDark }: { isDark: boolean }) {
         <FlowArrow direction="down" isDark={isDark} label="8s timeout · try next variant on fail" color="#8b5cf6" />
         <DiagramBox
           icon={Database}
-          label="In-Memory + KV Cache"
-          sublabel="60s TTL · sl_oracle_cache key · single KV round trip"
+          label="In-Memory Oracle Cache"
+          sublabel="30s TTL · SaucerSwap prices · display only"
           color="#3b82f6"
           isDark={isDark}
         />
         <FlowArrow direction="down" isDark={isDark} label="cache miss or stale" color="#f59e0b" />
         <DiagramBox
           icon={Shield}
-          label="KV-Backed Fallback Config"
-          sublabel="sl_oracle_fallback_cfg · admin-updatable at runtime · 90-day max age"
+          label="Hardcoded Fallback Prices"
+          sublabel="Per-token fallbackPriceUsd · last resort when all oracles fail"
           color="#f59e0b"
           isDark={isDark}
         />
@@ -759,11 +759,16 @@ function OracleDiagram({ isDark }: { isDark: boolean }) {
         </div>
         <div className="grid grid-cols-5 gap-1.5">
           {[
+            { sym: "WHBAR", color: "#8247e5", bridge: "Native" },
+            { sym: "USDC", color: "#2775ca", bridge: "Circle" },
+            { sym: "USDT", color: "#26a17b", bridge: "Tether" },
+            { sym: "DAI", color: "#f5ac37", bridge: "HashPort" },
             { sym: "WBTC", color: "#f7931a", bridge: "HashPort" },
             { sym: "WETH", color: "#627eea", bridge: "HashPort" },
-            { sym: "USDC", color: "#2775ca", bridge: "Native" },
-            { sym: "USDT", color: "#26a17b", bridge: "Native" },
             { sym: "LINK", color: "#2a5ada", bridge: "HashPort" },
+            { sym: "AAVE", color: "#9f71ec", bridge: "HashPort" },
+            { sym: "WBNB", color: "#f0b90b", bridge: "LayerZero" },
+            { sym: "WAVAX", color: "#e84142", bridge: "LayerZero" },
           ].map((t) => (
             <div
               key={t.sym}
@@ -926,7 +931,7 @@ function FeesDiagram({ isDark }: { isDark: boolean }) {
               Treasury
             </div>
             <div className={`text-[9px] mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              Accrued in KV
+              Accrued on-chain
             </div>
             <div className={`text-[9px] font-mono ${isDark ? "text-slate-600" : "text-gray-300"}`}>
               0.0.9695738
@@ -951,31 +956,31 @@ function FeesDiagram({ isDark }: { isDark: boolean }) {
           </span>
         </div>
         <p className={`text-[10px] leading-snug ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-          Separate KV lock for treasury fee accumulation (2s TTL, 1.5s wait, 20ms retry).
-          Serializes across concurrent swaps on different pools that all write to the same treasury key.
-          Prevents fee counter corruption under load.
+          Server-side signing lock serializes concurrent co-sign requests that would affect the same
+          pool's fee accumulator. Prevents double-counting under high swap throughput. Fee extraction
+          by DAO governance deducts tracked fees and credits the treasury account.
         </p>
       </motion.div>
 
-      {/* MINIMUM_LIQUIDITY */}
+      {/* Protocol Fee Tracking */}
       <motion.div
         className={`mt-3 rounded-xl border p-4 ${
-          isDark ? "bg-red-500/[0.03] border-red-500/[0.10]" : "bg-red-50 border-red-200"
+          isDark ? "bg-pink-500/[0.03] border-pink-500/[0.10]" : "bg-pink-50 border-pink-200"
         }`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.5 }}
       >
         <div className="flex items-center gap-2 mb-2">
-          <Shield className="w-3.5 h-3.5 text-red-400" />
-          <span className={`text-[10px] font-bold ${isDark ? "text-red-300" : "text-red-600"}`}>
-            First-Depositor Attack Mitigation
+          <Shield className="w-3.5 h-3.5 text-pink-400" />
+          <span className={`text-[10px] font-bold ${isDark ? "text-pink-300" : "text-pink-600"}`}>
+            Protocol Fee Tracking
           </span>
         </div>
         <p className={`text-[10px] leading-snug ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-          MINIMUM_LIQUIDITY = 1000 units burned on first deposit (sqrt(A*B) - 1000).
-          Prevents the classic Uniswap V2 "dust deposit" exploit where an attacker can
-          manipulate the initial LP share price to steal from subsequent depositors.
+          Protocol's 0.05% share is tracked per pool via a dedicated accumulator. Fee extraction by DAO
+          governance deducts from pool reserves and credits the treasury account (0.0.9695738). Until
+          extraction, LPs earn the full 0.25%.
         </p>
       </motion.div>
     </div>
