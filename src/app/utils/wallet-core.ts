@@ -305,33 +305,90 @@ async function _validateSessionBeforeRequest(client: any, topic: string): Promis
 }
 
 /**
- * Iframe-safe wrapper around client.request().
+ * Iframe-safe AND mobile-safe wrapper around client.request().
  *
- * WC v2.23 fires a deep-link redirect via window.open(url, "_top") in
- * parallel with every relay request.  Inside an iframe this navigates
- * the parent frame away, destroying the dApp.  On a top-level page the
- * SDK already uses "_blank" for HTTPS deep-links, so no fix is needed.
+ * WC v2.23 fires a deep-link redirect via window.open(url, ...) in
+ * parallel with every relay request.
  *
- * Fix: temporarily intercept window.open during the request and
- * downgrade _top / _parent → _blank.  The deep-link still fires
- * (waking the wallet) without hijacking navigation.
+ * IFRAME problem: window.open(url, "_top") navigates the parent frame
+ * away, destroying the dApp. Fix: downgrade _top/_parent → _blank.
  *
- * NOTE: sessionConfig.disableDeepLink in request params is IGNORED by
- * WC v2.23 — the SDK reads it from the stored session object only.
- * We avoid patching session.set() because that triggers WC-internal
- * events that can invalidate the session.
+ * MOBILE problem: The SDK fires window.open("wc:<pairingTopic>@2?...")
+ * which the mobile OS routes to the wallet app as a NEW pairing request
+ * instead of a signing request. HashPack shows "Pair with dApp" with a
+ * malformed URI error. The actual signing request is delivered via the
+ * relay — the deep link is only meant to bring the wallet to foreground.
+ *
+ * Fix: On mobile, suppress the raw `wc:` pairing URI deep links and
+ * instead open the wallet via its registered native/universal redirect
+ * URL (from the WC session peer metadata). The relay delivers the
+ * signing request; the redirect just brings the wallet to foreground.
+ *
+ * Desktop is unaffected — the interceptor only activates for iframe
+ * or mobile user agents.
  */
 async function _safeRequest(client: any, params: Record<string, any>): Promise<any> {
   const origOpen = window.open;
   const isIframe = (() => { try { return window !== window.top; } catch { return true; } })();
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-  if (isIframe) {
+  // ── Resolve wallet redirect URL for mobile ────────────────────────
+  // The WC session's peer metadata includes the wallet's registered
+  // native (custom scheme) and universal (HTTPS) redirect URLs.
+  // We prefer native ("hashpack://") because it opens the app directly
+  // without navigating the browser away.
+  let walletRedirect: string | null = null;
+  if (isMobile && params.topic) {
+    try {
+      const session = client.session?.get?.(params.topic);
+      const redirect = session?.peer?.metadata?.redirect;
+      walletRedirect = redirect?.native || redirect?.universal || null;
+      if (!walletRedirect) {
+        // Fallback: scan peer metadata URL for known wallet schemes
+        const peerUrl = session?.peer?.metadata?.url || "";
+        if (peerUrl.includes("hashpack")) walletRedirect = "https://www.hashpack.app/wc";
+      }
+    } catch { /* session lookup failed — proceed without redirect */ }
+  }
+
+  if (isIframe || isMobile) {
+    let redirectFired = false;
     window.open = function (url?: any, target?: any, features?: any): WindowProxy | null {
-      if (typeof target === "string" && (target === "_top" || target === "_parent")) {
+      const urlStr = String(url || "");
+
+      // ── Mobile: suppress WC pairing URI deep links ──────────────
+      // These are `wc:<topic>@2?...` URIs that HashPack interprets as
+      // new pairing requests, causing the "Pair with dApp" error.
+      // The relay already delivered the signing request — we just need
+      // to bring the wallet to the foreground.
+      if (isMobile && (urlStr.startsWith("wc:") || urlStr.includes("wc%3A") || urlStr.includes("/wc?uri=wc"))) {
+        console.log("[WC] Mobile: suppressed WC pairing deep-link:", urlStr.slice(0, 120));
+        if (walletRedirect && !redirectFired) {
+          redirectFired = true;
+          console.log("[WC] Mobile: opening wallet via redirect:", walletRedirect);
+          // Use location.href for native schemes (hashpack://) — this
+          // opens the app without navigating the browser away (like tel:
+          // or mailto: links). Falls back to window.open for HTTPS URLs.
+          try {
+            if (walletRedirect.startsWith("http")) {
+              origOpen.call(window, walletRedirect, "_blank");
+            } else {
+              window.location.href = walletRedirect;
+            }
+          } catch {
+            try { origOpen.call(window, walletRedirect, "_blank"); } catch { /* */ }
+          }
+        }
+        return null;
+      }
+
+      // ── Iframe: downgrade _top / _parent → _blank ──────────────
+      if (isIframe && typeof target === "string" && (target === "_top" || target === "_parent")) {
         console.log(`[WC] Deep-link target downgraded "${target}" → "_blank":`,
-          String(url).slice(0, 120));
+          urlStr.slice(0, 120));
         return origOpen.call(window, url, "_blank", features);
       }
+
       return origOpen.call(window, url, target, features);
     } as typeof window.open;
   }
@@ -339,7 +396,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   try {
     return await client.request(params);
   } finally {
-    if (isIframe) window.open = origOpen;
+    if (isIframe || isMobile) window.open = origOpen;
   }
 }
 
