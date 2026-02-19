@@ -32,6 +32,9 @@ import { useTheme } from "../contexts/ThemeContext";
 import { FounderLetter } from "./FounderLetter";
 import { CommunityMessage } from "./CommunityMessage";
 import { EmrakDiagrams } from "./EmrakDiagrams";
+import { ExecutiveBriefcase, BriefcaseTrigger } from "./ExecutiveBriefcase";
+import { useWallet } from "../contexts/WalletContext";
+import { isDAOAdmin } from "../utils/dao";
 
 /* ─── Animated Section Wrapper ─────────────────────────────────────── */
 
@@ -333,6 +336,9 @@ export function WhitePaper() {
   const [founderLetterOpen, setFounderLetterOpen] = useState(false);
   const [communityMessageOpen, setCommunityMessageOpen] = useState(false);
   const [emrakDiagramsOpen, setEmrakDiagramsOpen] = useState(false);
+  const [briefcaseOpen, setBriefcaseOpen] = useState(false);
+  const { hashPackSession } = useWallet();
+  const isAdmin = isDAOAdmin(hashPackSession?.accountId ?? "");
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -2118,6 +2124,13 @@ export function WhitePaper() {
               Privacy
             </Link>
           </p>
+
+          {/* ── Admin-only Steward's Codex trigger ── */}
+          {isAdmin && (
+            <div className="flex justify-center mt-6">
+              <BriefcaseTrigger onClick={() => setBriefcaseOpen(true)} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -2129,6 +2142,11 @@ export function WhitePaper() {
 
       {/* Emrak Architecture Diagrams — triggered by clicking Emrak's card */}
       <EmrakDiagrams open={emrakDiagramsOpen} onClose={() => setEmrakDiagramsOpen(false)} />
+
+      {/* Executive Briefcase — admin-only strategic guidance */}
+      {isAdmin && (
+        <ExecutiveBriefcase open={briefcaseOpen} onClose={() => setBriefcaseOpen(false)} />
+      )}
     </div>
   );
 }

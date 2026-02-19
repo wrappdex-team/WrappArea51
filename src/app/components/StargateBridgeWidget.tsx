@@ -62,7 +62,7 @@ interface Chain {
 }
 
 const ALL_CHAINS: Chain[] = [
-  { id: 1, name: "Ethereum", icon: "Ξ", color: "#627EEA", nativeSymbol: "ETH" },
+  { id: 1, name: "Ethereum", icon: "\u039E", color: "#627EEA", nativeSymbol: "ETH" },
   { id: 42161, name: "Arbitrum", icon: "A", color: "#28A0F0", nativeSymbol: "ETH" },
   { id: 10, name: "Optimism", icon: "O", color: "#FF0420", nativeSymbol: "ETH" },
   { id: 137, name: "Polygon", icon: "P", color: "#8247E5", nativeSymbol: "POL" },
@@ -72,6 +72,14 @@ const ALL_CHAINS: Chain[] = [
   { id: 59144, name: "Linea", icon: "L", color: "#61DFFF", nativeSymbol: "ETH" },
   { id: 5000, name: "Mantle", icon: "M", color: "#000000", nativeSymbol: "MNT" },
   { id: 534352, name: "Scroll", icon: "S", color: "#FFEEDA", nativeSymbol: "ETH" },
+  { id: 250, name: "Fantom", icon: "F", color: "#1969FF", nativeSymbol: "FTM" },
+  { id: 1088, name: "Metis", icon: "M", color: "#00DACC", nativeSymbol: "METIS" },
+  { id: 324, name: "zkSync Era", icon: "Z", color: "#8C8DFC", nativeSymbol: "ETH" },
+  { id: 2222, name: "Kava", icon: "K", color: "#FF564F", nativeSymbol: "KAVA" },
+  { id: 204, name: "opBNB", icon: "O", color: "#F3BA2F", nativeSymbol: "BNB" },
+  { id: 1116, name: "Core", icon: "C", color: "#FF9211", nativeSymbol: "CORE" },
+  { id: 1329, name: "Sei", icon: "S", color: "#9B1C2E", nativeSymbol: "SEI" },
+  { id: 196, name: "X Layer", icon: "X", color: "#000000", nativeSymbol: "OKB" },
 ];
 
 /* ── Token definitions ─────────────────────────────────── */
@@ -87,6 +95,8 @@ const ALL_TOKENS: Token[] = [
   { symbol: "USDC", name: "USD Coin", decimals: 6, color: "#2775CA" },
   { symbol: "USDT", name: "Tether", decimals: 6, color: "#26A17B" },
   { symbol: "ETH", name: "Ethereum", decimals: 18, color: "#627EEA" },
+  { symbol: "mETH", name: "Mantle Staked ETH", decimals: 18, color: "#C35BFF" },
+  { symbol: "METIS", name: "Metis", decimals: 18, color: "#00DACC" },
 ];
 
 /* ── Step labels for UI ───────────────────────────────── */

@@ -200,6 +200,9 @@ export function Trading() {
   const currentChainlinkFeed = prices[selectedToken.symbol]?.chainlink_feed;
   const feedInfo = getFeedInfo(selectedToken.symbol);
   const currentMarketCap = prices[selectedToken.symbol]?.market_cap;
+  // Real 24h high/low from Binance/CoinGecko ticker (not chart-derived)
+  const oracleHigh24h = prices[selectedToken.symbol]?.high_24h;
+  const oracleLow24h = prices[selectedToken.symbol]?.low_24h;
 
   // ── AMM → Chart bridge ──────────────────────────────────────────────
   // Maps wrapped HTS token symbols from the AMM panel to their chart-registry
@@ -656,11 +659,11 @@ export function Trading() {
           <div className="flex gap-4 lg:gap-6 overflow-x-auto text-xs">
             <div>
               <div className={isDark ? "text-slate-500" : "text-gray-400"}>24h High</div>
-              <div className="font-bold text-emerald-400">{formatPrice(high24)}</div>
+              <div className="font-bold text-emerald-400">{oracleHigh24h ? formatPrice(oracleHigh24h) : formatPrice(high24)}</div>
             </div>
             <div>
               <div className={isDark ? "text-slate-500" : "text-gray-400"}>24h Low</div>
-              <div className="font-bold text-red-400">{formatPrice(low24)}</div>
+              <div className="font-bold text-red-400">{oracleLow24h ? formatPrice(oracleLow24h) : formatPrice(low24)}</div>
             </div>
             <div>
               <div className={isDark ? "text-slate-500" : "text-gray-400"}>24h Volume</div>

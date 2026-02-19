@@ -110,6 +110,10 @@ export interface CoinPrice {
   oracle_updated_at?: number;
   chainlink_feed?: string;
   change_source?: OracleSource;
+  /** Real 24h high from exchange/aggregator ticker (not chart-derived) */
+  high_24h?: number;
+  /** Real 24h low from exchange/aggregator ticker (not chart-derived) */
+  low_24h?: number;
 }
 
 // ── Hardcoded Fallback (last resort) ──────────────────────────────
@@ -220,6 +224,8 @@ async function fetchBinancePrices(symbols: string[]): Promise<Record<string, Coi
           image: TOKEN_LOGOS[sym] || "",
           oracle_source: "binance",
           oracle_updated_at: Math.floor(Date.now() / 1000),
+          high_24h: parseFloat(item.highPrice) || undefined,
+          low_24h: parseFloat(item.lowPrice) || undefined,
         };
         count++;
       }
@@ -260,6 +266,8 @@ async function fetchHbarFastPath(): Promise<CoinPrice | null> {
         image: TOKEN_LOGOS.HBAR,
         oracle_source: "binance",
         oracle_updated_at: Math.floor(Date.now() / 1000),
+        high_24h: parseFloat(d.highPrice) || undefined,
+        low_24h: parseFloat(d.lowPrice) || undefined,
       };
     }
     return null;
@@ -301,6 +309,8 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
         image: coin.image || TOKEN_LOGOS[sym] || "",
         oracle_source: "coingecko",
         oracle_updated_at: Math.floor(Date.now() / 1000),
+        high_24h: coin.high_24h ?? undefined,
+        low_24h: coin.low_24h ?? undefined,
       };
       // USDCh shares CoinGecko "usd-coin" with USDC — copy over
       if (sym === "USDC" && !result["USDCh"]) {
@@ -388,6 +398,9 @@ export async function fetchCoinPrices(
         market_cap: merged[sym]?.market_cap || binance.market_cap,
         total_volume: binance.total_volume || merged[sym]?.total_volume || 0,
         change_source: "binance",
+        // Binance 24h high/low is more accurate (real-time), fallback to CoinGecko
+        high_24h: binance.high_24h || merged[sym]?.high_24h,
+        low_24h: binance.low_24h || merged[sym]?.low_24h,
       };
     }
 
@@ -427,6 +440,8 @@ export async function fetchCoinPrices(
           price_change_percentage_24h: hbarFast.price_change_percentage_24h,
           oracle_source: "binance",
           oracle_updated_at: hbarFast.oracle_updated_at,
+          high_24h: hbarFast.high_24h,
+          low_24h: hbarFast.low_24h,
         };
       }
     }
