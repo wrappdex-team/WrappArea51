@@ -42,7 +42,7 @@ const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
 
 /**
  * Validate proposalId format — must be a safe alphanumeric+dash+underscore string.
- * Prevents KV key injection via crafted proposal IDs (ghost audit).
+ * Prevents KV key injection via crafted proposal IDs (security review).
  * Max 80 chars prevents DoS via oversized keys.
  */
 function isValidProposalId(id: string): boolean {
@@ -531,7 +531,7 @@ export function registerDaoRoutes(app: Hono): void {
   });
 
   // POST /dao/admins — OWNER-ONLY: add a new admin
-  // Auth: requireOwner (ED25519 session token ONLY — ghost audit C1)
+  // Auth: requireOwner (ED25519 session token ONLY — security review SEC-01)
   app.post(`${ROUTE_PREFIX}/dao/admins`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -573,7 +573,7 @@ export function registerDaoRoutes(app: Hono): void {
   });
 
   // DELETE /dao/admins/:accountId — OWNER-ONLY: remove an admin
-  // Auth: requireOwner (ED25519 session token ONLY — ghost audit C1)
+  // Auth: requireOwner (ED25519 session token ONLY — security review SEC-01)
   app.delete(`${ROUTE_PREFIX}/dao/admins/:accountId`, async (c) => {
     try {
       const ip = getClientIp(c);

@@ -175,10 +175,19 @@ async function isAmmKilled(): Promise<boolean> {
     _killSwitchCache = { state, ts: now };
     return state?.active ?? false;
   } catch {
-    // KV unreachable — fail-open: allow trading to continue.
-    // A KV outage already prevents pool mutations (lock acquisition fails),
-    // so adding a trading halt here would be redundant and disruptive.
-    return false;
+    // KV unreachable — fail-CLOSED: preserve last known kill switch state.
+    // If the kill switch was activated before KV went down, the AMM stays halted.
+    // If no cached state exists (fresh deploy + immediate KV outage), default to
+    // halted (false positive is safer than false negative during an emergency).
+    if (_killSwitchCache.state !== null) {
+      // Extend the stale cache TTL so we don't hammer a dead KV on every request
+      _killSwitchCache.ts = Date.now();
+      console.log(`[AMM] KV unreachable — using cached kill switch state: active=${_killSwitchCache.state.active}`);
+      return _killSwitchCache.state.active;
+    }
+    // No cached state at all — halt trading as a precaution
+    console.log("[AMM] KV unreachable with no cached state — failing closed (halting AMM)");
+    return true;
   }
 }
 

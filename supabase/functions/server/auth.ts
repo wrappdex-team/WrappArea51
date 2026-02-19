@@ -511,7 +511,7 @@ const ADMIN_AUDIT_MAX_ENTRIES = 500;
  * Auth: ED25519 session token (X-Session-Token) ONLY — cryptographic proof
  * that the caller controls the owner wallet's private key.
  *
- * The X-Account-Id header fallback has been REMOVED (ghost audit C1).
+ * The X-Account-Id header fallback has been REMOVED (security review SEC-01).
  * That header is client-supplied and trivially spoofable — any attacker
  * could execute owner-level operations with a single curl command.
  * All owner operations now require a signed ED25519 session.
@@ -588,7 +588,7 @@ export async function validateSession(c: any): Promise<{ accountId: string } | n
  * verified ED25519 session token.
  *
  * ═══════════════════════════════════════════════════════════════════════
- * GHOST AUDIT C2 — X-Account-Id HEADER FALLBACK REMOVED
+ * SECURITY REVIEW SEC-02 — X-Account-Id HEADER FALLBACK REMOVED
  * ═══════════════════════════════════════════════════════════════════════
  *
  * Previously, this function accepted a client-supplied X-Account-Id header

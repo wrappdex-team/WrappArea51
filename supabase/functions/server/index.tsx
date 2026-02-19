@@ -29,7 +29,7 @@ app.use("*", logger(console.log));
 // Open CORS — browser-layer only. Access control is via ED25519 session tokens.
 // X-Account-Id is still listed in allowHeaders for backwards compatibility with
 // stale browser tabs, but the server IGNORES it — requireAuth() and requireOwner()
-// only accept cryptographic session tokens (ghost audit C1 + C2).
+// only accept cryptographic session tokens (security review SEC-01, SEC-02).
 app.use(
   "/*",
   cors({

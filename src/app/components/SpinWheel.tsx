@@ -538,7 +538,7 @@ function FireworksOverlay({ onComplete }: { onComplete: () => void }) {
         <div className="text-center">
           <motion.div
             animate={{ scale: [1, 1.05, 1] }}
-            transition={{ duration: 0.8, repeat: 9999 }}
+            transition={{ duration: 0.8, repeat: Infinity }}
             className="text-6xl sm:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-pink-400 to-yellow-300 drop-shadow-[0_0_40px_rgba(251,191,36,0.6)]"
             style={{ textShadow: "0 0 60px rgba(251,191,36,0.5), 0 0 120px rgba(236,72,153,0.3)" }}
           >
@@ -646,7 +646,7 @@ function PrizeTicket({
                   }}
                   transition={{
                     duration: 2,
-                    repeat: 9999,
+                    repeat: Infinity,
                     delay: Math.random() * 2,
                   }}
                 />
@@ -680,7 +680,7 @@ function PrizeTicket({
                 alt="HBAR.h"
                 className="w-16 h-16 rounded-full ring-2 ring-pink-500/50 shadow-lg shadow-pink-500/30"
                 animate={{ rotate: [0, 5, -5, 0] }}
-                transition={{ duration: 3, repeat: 9999 }}
+                transition={{ duration: 3, repeat: Infinity }}
               />
             </div>
 
@@ -1126,7 +1126,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
       <div className="max-w-md mx-auto">
         {vipStatus === "checking" && (
           <div className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: 9999, ease: "linear" }}>
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}>
               <ShieldCheck className="w-4 h-4 text-blue-400" />
             </motion.div>
             <span className="text-sm text-blue-700 dark:text-blue-300">Verifying wallet via Hedera Mirror Node...</span>
@@ -1281,7 +1281,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
                 <span className="flex items-center gap-2 text-white">
                   <motion.div
                     animate={{ rotate: 360 }}
-                    transition={{ duration: 1, repeat: 9999, ease: "linear" }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                   >
                     <Sparkles className="w-5 h-5" />
                   </motion.div>
@@ -1299,7 +1299,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
                 <motion.div
                   className="absolute inset-0 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 opacity-0"
                   animate={{ opacity: [0, 0.3, 0] }}
-                  transition={{ duration: 2, repeat: 9999 }}
+                  transition={{ duration: 2, repeat: Infinity }}
                 />
               )}
             </motion.button>

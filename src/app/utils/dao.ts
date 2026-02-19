@@ -2,11 +2,11 @@
  * HBAR.ħ DAO — Server-Authoritative Governance Client
  *
  * All state in server KV. Auth via ED25519 challenge-response sessions
- * (ghost audit C2 — spoofable X-Account-Id header fallback removed from
+ * (security review SEC-02 — spoofable X-Account-Id header fallback removed from
  * server's requireAuth). Users must sign a wallet challenge before
  * performing any authenticated action (vote, comment, create proposal).
  * OWNER-ONLY operations (admin add/remove) require ED25519 session tokens
- * (ghost audit C1 — X-Account-Id fallback removed from requireOwner).
+ * (security review SEC-01 — X-Account-Id fallback removed from requireOwner).
  * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified server-side).
  * Vote weight: 1 per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
  * Admin CRUD restricted to 0.0.518487 + dynamic admin list.
@@ -140,7 +140,7 @@ export interface Proposal {
 }
 
 // ── Helper: build authenticated headers for DAO endpoints ────────────
-// Ghost audit C2: The spoofable X-Account-Id header fallback has been
+// Security review SEC-02: The spoofable X-Account-Id header fallback has been
 // removed from the server's requireAuth(). ALL authenticated endpoints
 // now require an ED25519 session token (X-Session-Token header).
 //
@@ -414,7 +414,7 @@ export function formatCommentTime(createdAt: number): string {
 
 /**
  * Fetch the current admin list from the server.
- * Requires ED25519 session token (ghost audit C2 — X-Account-Id removed).
+ * Requires ED25519 session token (security review SEC-02 — X-Account-Id removed).
  * If no session exists, falls back to client-side cache silently.
  * Server checks if the requesting account is itself an admin before returning the list.
  * Also updates the client-side admin cache on success.
@@ -448,7 +448,7 @@ export async function fetchDaoAdmins(
  * Add a new DAO admin. OWNER-ONLY (0.0.518487).
  * Requires an active ED25519 session — the owner must have signed a
  * challenge message in their wallet before calling this. The server's
- * requireOwner() ONLY accepts cryptographic session tokens (ghost audit C1).
+ * requireOwner() ONLY accepts cryptographic session tokens (security review SEC-01).
  */
 export async function addDaoAdmin(
   accountId: string,
@@ -484,7 +484,7 @@ export async function addDaoAdmin(
  * Remove a DAO admin. OWNER-ONLY (0.0.518487).
  * Requires an active ED25519 session — the owner must have signed a
  * challenge message in their wallet before calling this. The server's
- * requireOwner() ONLY accepts cryptographic session tokens (ghost audit C1).
+ * requireOwner() ONLY accepts cryptographic session tokens (security review SEC-01).
  * Founder (0.0.518487) can never be removed (server-enforced).
  */
 export async function removeDaoAdmin(

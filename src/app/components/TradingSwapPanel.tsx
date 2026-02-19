@@ -140,7 +140,14 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
           setAmmHalted(!!data.active);
           setAmmPrelaunch(!!data.prelaunchLocked);
         }
-      } catch { /* ignore — fail-open for status check */ }
+      } catch {
+        // Fail-closed: if we can't verify AMM status, show halted state
+        // to prevent swaps against a potentially halted AMM.
+        if (!cancelled) {
+          console.log("[TradingSwap] Kill switch status check failed — failing closed");
+          setAmmHalted(true);
+        }
+      }
     };
     check();
     const interval = setInterval(check, 30_000);

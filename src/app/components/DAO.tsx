@@ -172,7 +172,7 @@ export function DAO() {
   // Owner (0.0.518487) has elevated privileges — admin management is owner-only
   const isOwner = accountId === DAO_FOUNDER_ACCOUNT;
 
-  // ── ED25519 Session State (ghost audit C2) ────────────────────────
+  // ── ED25519 Session State (security review SEC-02) ────────────────────────
   // All mutating DAO actions (vote, comment, create, edit, delete) now
   // require an ED25519 session — the spoofable X-Account-Id header
   // fallback has been removed from the server's requireAuth().
@@ -344,7 +344,7 @@ export function DAO() {
     async (proposalId: string, direction: "for" | "against") => {
       if (!connected || !eligible || maxVotes <= 0 || actionLoading) return;
 
-      // Ensure ED25519 session before server call (ghost audit C2)
+      // Ensure ED25519 session before server call (security review SEC-02)
       if (!(await ensureSession())) return;
 
       setActionLoading(true);
@@ -865,7 +865,7 @@ function EligibilityCard({
         </div>
       </div>
 
-      {/* ── Session Status Indicator (ghost audit C2) ── */}
+      {/* ── Session Status Indicator (security review SEC-02) ── */}
       {eligible && onSignIn && (
         <div className={`mt-3 pt-3 border-t ${isDark ? "border-white/5" : "border-gray-200"}`}>
           {isAuthenticated ? (

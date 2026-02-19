@@ -7,7 +7,7 @@
 // control 0.0.518487's private key. The resulting session token (30-min
 // TTL) is sent as X-Session-Token on every admin request. The server's
 // requireOwner() ONLY accepts ED25519 sessions — the spoofable
-// X-Account-Id header fallback has been removed (ghost audit C1).
+// X-Account-Id header fallback has been removed (security review SEC-01).
 //
 // Sections:
 //   1. AMM Kill Switch — halt/resume all swaps + new liquidity

@@ -179,7 +179,7 @@ export function VipChatBox({
             backgroundSize: "200% 200%",
           }}
           animate={{ backgroundPosition: ["0% 0%", "100% 100%", "0% 0%"] }}
-          transition={{ duration: 5, repeat: 9999, ease: "linear" }}
+          transition={{ duration: 5, repeat: Infinity, ease: "linear" }}
         />
       )}
 
@@ -200,7 +200,7 @@ export function VipChatBox({
           <div className="flex items-center gap-2">
             <motion.div
               animate={{ borderColor: ["rgba(16,185,129,0.2)", "rgba(16,185,129,0.5)", "rgba(16,185,129,0.2)"] }}
-              transition={{ duration: 2.5, repeat: 9999 }}
+              transition={{ duration: 2.5, repeat: Infinity }}
               className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20"
             >
               <Crown className="w-3 h-3 text-emerald-400" />
@@ -220,7 +220,7 @@ export function VipChatBox({
             <motion.span
               className="w-1 h-1 rounded-full bg-emerald-400"
               animate={{ opacity: [0.3, 1, 0.3] }}
-              transition={{ duration: 2, repeat: 9999 }}
+              transition={{ duration: 2, repeat: Infinity }}
             />
             {expanded ? (
               <ChevronUp className="w-3 h-3 text-emerald-400/40" />
