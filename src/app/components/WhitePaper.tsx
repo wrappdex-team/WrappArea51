@@ -34,7 +34,7 @@ import { CommunityMessage } from "./CommunityMessage";
 import { EmrakDiagrams } from "./EmrakDiagrams";
 import { ExecutiveBriefcase, BriefcaseTrigger } from "./ExecutiveBriefcase";
 import { useWallet } from "../contexts/WalletContext";
-import { isDAOAdmin } from "../utils/dao";
+import { isVipEligible } from "../utils/vip";
 
 /* ─── Animated Section Wrapper ─────────────────────────────────────── */
 
@@ -337,8 +337,8 @@ export function WhitePaper() {
   const [communityMessageOpen, setCommunityMessageOpen] = useState(false);
   const [emrakDiagramsOpen, setEmrakDiagramsOpen] = useState(false);
   const [briefcaseOpen, setBriefcaseOpen] = useState(false);
-  const { hashPackSession } = useWallet();
-  const isAdmin = isDAOAdmin(hashPackSession?.accountId ?? "");
+  const { hashPackSession, hederaAccount, hederaNetwork } = useWallet();
+  const isVip = isVipEligible(hederaAccount?.tokens ?? [], hederaNetwork);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -2125,8 +2125,8 @@ export function WhitePaper() {
             </Link>
           </p>
 
-          {/* ── Admin-only Steward's Codex trigger ── */}
-          {isAdmin && (
+          {/* ── VIP-only Steward's Codex trigger ── */}
+          {isVip && (
             <div className="flex justify-center mt-6">
               <BriefcaseTrigger onClick={() => setBriefcaseOpen(true)} />
             </div>
@@ -2143,8 +2143,8 @@ export function WhitePaper() {
       {/* Emrak Architecture Diagrams — triggered by clicking Emrak's card */}
       <EmrakDiagrams open={emrakDiagramsOpen} onClose={() => setEmrakDiagramsOpen(false)} />
 
-      {/* Executive Briefcase — admin-only strategic guidance */}
-      {isAdmin && (
+      {/* Executive Briefcase — VIP-only strategic guidance */}
+      {isVip && (
         <ExecutiveBriefcase open={briefcaseOpen} onClose={() => setBriefcaseOpen(false)} />
       )}
     </div>

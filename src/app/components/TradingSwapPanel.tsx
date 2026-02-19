@@ -1,7 +1,6 @@
 /**
  * TradingSwapPanel — Premium AMM Swap with Glow, Sound & Motion
  *
- * This replaces the old CEXTradePanel in the Trading view.
  * Uses the real KV-backed AMM engine (constant-product math).
  * Features: animated borders, neon glow, sound effects, particle bursts.
  */

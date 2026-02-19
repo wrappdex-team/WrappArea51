@@ -18,9 +18,9 @@ import { useTheme } from "../contexts/ThemeContext";
 /* =======================================================================
    EXECUTIVE BRIEFCASE — "The Steward's Codex"
    
-   Admin-only strategic guidance for the inner circle of WRAPpDEX.
-   This component is gated by isAdmin in the WhitePaper parent —
-   it never renders for non-admin users.
+   VIP-only strategic guidance for the inner circle of WRAPpDEX.
+   This component is gated by isVipEligible in the WhitePaper parent —
+   it only renders for wallets holding 100M+ HBAR.ħ or 1+ VIP NFT.
    ======================================================================= */
 
 interface ExecutiveBriefcaseProps {
@@ -236,7 +236,7 @@ export function ExecutiveBriefcase({ open, onClose }: ExecutiveBriefcaseProps) {
                     isDark ? "text-amber-500/20" : "text-amber-400/40"
                   }`}
                 >
-                  Admin-Gated &middot; Not for Public Distribution
+                  VIP-Gated &middot; Not for Public Distribution
                 </p>
               </div>
 
@@ -804,7 +804,7 @@ export function ExecutiveBriefcase({ open, onClose }: ExecutiveBriefcaseProps) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   BRIEFCASE TRIGGER — Glowing admin-only icon for the whitepaper footer
+   BRIEFCASE TRIGGER — Glowing VIP-only icon for the whitepaper footer
    ═══════════════════════════════════════════════════════════════════════ */
 
 export function BriefcaseTrigger({ onClick }: { onClick: () => void }) {

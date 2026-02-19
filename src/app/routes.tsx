@@ -49,7 +49,6 @@ const Trading = lazy(() => retryImport(() => import("./components/Trading")).the
 const SwapPage = lazy(() => retryImport(() => import("./components/SwapPage")).then(m => ({ default: m.SwapPage })));
 const BuySell = lazy(() => retryImport(() => import("./components/BuySell")).then(m => ({ default: m.BuySell })));
 const DeFi = lazy(() => retryImport(() => import("./components/DeFi")).then(m => ({ default: m.DeFi })));
-const SmartLiquidity = lazy(() => retryImport(() => import("./components/SmartLiquidity")).then(m => ({ default: m.SmartLiquidity })));
 const Wallet = lazy(() => retryImport(() => import("./components/Wallet")).then(m => ({ default: m.Wallet })));
 const DAO = lazy(() => retryImport(() => import("./components/DAO")).then(m => ({ default: m.DAO })));
 const Bridges = lazy(() => retryImport(() => import("./components/Bridges")).then(m => ({ default: m.Bridges })));
@@ -58,7 +57,6 @@ const TermsOfService = lazy(() => retryImport(() => import("./components/TermsOf
 const PrivacyPolicy = lazy(() => retryImport(() => import("./components/PrivacyPolicy")).then(m => ({ default: m.PrivacyPolicy })));
 const WhitePaper = lazy(() => retryImport(() => import("./components/WhitePaper")).then(m => ({ default: m.WhitePaper })));
 const Branding = lazy(() => retryImport(() => import("./components/Branding")).then(m => ({ default: m.Branding })));
-const SecurityAudit = lazy(() => retryImport(() => import("./components/GhostAudit")).then(m => ({ default: m.GhostAudit })));
 const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).then(m => ({ default: m.NotFound })));
 
 export const router = createBrowserRouter([
@@ -80,7 +78,6 @@ export const router = createBrowserRouter([
       { path: "privacy", Component: PrivacyPolicy },
       { path: "white-paper", Component: WhitePaper },
       { path: "branding", Component: Branding },
-      { path: "security-audit", Component: SecurityAudit },
       { path: "smart-liquidity", element: <Navigate to="/trading" replace /> },
       { path: "*", Component: NotFound },
     ],

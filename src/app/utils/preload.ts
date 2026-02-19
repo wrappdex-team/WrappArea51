@@ -48,7 +48,6 @@ const ROUTE_IMPORTERS: Record<string, () => Promise<unknown>> = {
   "/swap": () => retryImport(() => import("../components/SwapPage")),
   "/buy-sell": () => retryImport(() => import("../components/BuySell")),
   "/defi": () => retryImport(() => import("../components/DeFi")),
-  "/smart-liquidity": () => retryImport(() => import("../components/SmartLiquidity")),
   "/wallet": () => retryImport(() => import("../components/Wallet")),
   "/dao": () => retryImport(() => import("../components/DAO")),
   "/bridges": () => retryImport(() => import("../components/Bridges")),

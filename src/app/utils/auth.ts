@@ -227,35 +227,11 @@ async function submitSession(
   });
   const data = await res.json();
   if (!res.ok) {
-    // Log full server response for diagnostics (signature verification failures
-    // include _diag with byte lengths, key prefix, and strategies tried)
+    // Log server error response. Diagnostic details (signature bytes, public
+    // keys, message hex, self-test results) are now logged SERVER-SIDE ONLY
+    // and are no longer returned in the HTTP response body. Check server
+    // logs (tagged [AUTH][DIAG]) for signature verification troubleshooting.
     log.error("Auth", `submitSession failed: HTTP ${res.status} code=${data.code} error=${data.error}`);
-    if (data._diag) {
-      // Surface all diagnostic fields prominently for debugging
-      console.group("%c[AUTH DIAGNOSTIC] Signature Verification Failed", "color:red;font-weight:bold");
-      console.log("Signature input chars:", data._diag.sigInputChars);
-      console.log("Signature decoded bytes:", data._diag.sigDecodedBytes);
-      console.log("Signature preview:", data._diag.sigPreview);
-      console.log("Signature full hex:", data._diag.sigFull);
-      console.log("Message bytes:", data._diag.msgBytes);
-      console.log("Message preview:", data._diag.msgPreview);
-      console.log("Message hex (first 200):", data._diag.msgHex);
-      console.log("Mirror Node public key:", data._diag.pubKeyHex);
-      console.log("Protobuf pubKeyPrefix:", data._diag.protobufPubKeyHex);
-      console.log("Protobuf sig (first 64):", data._diag.protobufSigHex);
-      console.log("Keys match:", data._diag.keyMatch);
-      console.log("Has raw signatureMap:", data._diag.hasRawMap);
-      console.log("Raw signatureMap chars:", data._diag.rawMapChars);
-      console.log("Strategies tried:", data._diag.strategies);
-      if (data._diag.selfTest) {
-        console.log("Self-test OK:", data._diag.selfTest.ok);
-        console.log("Self-test nacl:", data._diag.selfTest.naclOk);
-        console.log("Self-test webCrypto:", data._diag.selfTest.webCryptoOk);
-        console.log("Self-test details:", data._diag.selfTest.details);
-      }
-      console.log("Full _diag JSON:", JSON.stringify(data._diag, null, 2));
-      console.groupEnd();
-    }
     throw new Error(data.error || `HTTP ${res.status}`);
   }
   return data as SessionResponse;

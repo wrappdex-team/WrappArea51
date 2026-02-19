@@ -113,7 +113,7 @@ function saveEntries(entries: OrderbookEntry[], network?: NetworkMode): void {
 
 /**
  * Record a new trade in the site orderbook.
- * Called from SwapPanel, BuySell, CEXTradePanel, SmartLiquidity after execution.
+ * Called from SwapPanel, BuySell, TradingSwapPanel after execution.
  */
 export function recordTrade(trade: Omit<OrderbookEntry, "id" | "timestamp" | "network">): OrderbookEntry {
   const entry: OrderbookEntry = {

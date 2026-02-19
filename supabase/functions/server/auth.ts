@@ -1070,41 +1070,34 @@ export function registerAuthRoutes(app: Hono): void {
         // Run self-test to determine if the crypto libraries even work
         const selfTest = await selfTestED25519();
         console.log(`[AUTH] Self-test result: ok=${selfTest.ok} nacl=${selfTest.naclOk} webCrypto=${selfTest.webCryptoOk} | ${selfTest.details}`);
-        // Include diagnostic context so the client can display actionable info.
-        // None of this leaks secrets — the sig was already visible to the client.
+        // ── Server-side diagnostic logging (never sent to client) ────────
+        // All diagnostic context is logged here for operational debugging.
+        // Signature hex, public keys, message bytes, and crypto self-test
+        // internals are useful for debugging but must not leave the server
+        // boundary. Diagnostics are logged server-side only.
         const diagSigLen = preDecodedSig ? 64 : -1;
         const diagMsgLen = messageBytes.length;
-        // Capture first 80 chars of the message for debugging mismatch issues
         const msgPreview = challenge.message.slice(0, 80).replace(/\n/g, "\\n");
         const sigPreview = cleanSig.slice(0, 64);
-        // Full message as hex for byte-level comparison with client
         const msgHex = bytesToHex(messageBytes);
+        console.log(
+          `[AUTH][DIAG] Signature verification diagnostic for ${accountId}:\n` +
+          `  sigInputChars=${cleanSig.length} sigDecodedBytes=${diagSigLen}\n` +
+          `  sigPreview=${sigPreview}\n` +
+          `  sigFull=${cleanSig}\n` +
+          `  msgBytes=${diagMsgLen} msgPreview=${msgPreview}\n` +
+          `  msgHex(first200)=${msgHex.slice(0, 200)}\n` +
+          `  pubKeyHex=${keyResult.rawKeyHex}\n` +
+          `  protobufPubKeyHex=${protobufPubKeyHex || "N/A"}\n` +
+          `  protobufSigHex=${protobufSigHex ? protobufSigHex.slice(0, 64) : "N/A"}\n` +
+          `  keyMatch=${protobufPubKeyHex ? (protobufPubKeyHex.toLowerCase() === keyResult.rawKeyHex.toLowerCase()) : "no_protobuf_key"}\n` +
+          `  hasRawMap=${!!(body.rawSignatureMap)} rawMapChars=${body.rawSignatureMap?.length || 0}\n` +
+          `  strategies=primary,b64msg,nonce,crlf,window,rawMap(hex+b64),walletKey,protobufSig\n` +
+          `  selfTest: ok=${selfTest.ok} nacl=${selfTest.naclOk} webCrypto=${selfTest.webCryptoOk} available=${selfTest.naclAvailable} | ${selfTest.details}`
+        );
         return c.json({
           error: "Signature verification failed. Ensure you signed the exact challenge message.",
           code: "SIGNATURE_INVALID",
-          _diag: {
-            sigInputChars: cleanSig.length,
-            sigDecodedBytes: diagSigLen,
-            sigPreview,
-            sigFull: cleanSig,
-            msgBytes: diagMsgLen,
-            msgPreview,
-            msgHex: msgHex.slice(0, 200),
-            pubKeyHex: keyResult.rawKeyHex,
-            protobufPubKeyHex: protobufPubKeyHex || "N/A",
-            protobufSigHex: protobufSigHex ? protobufSigHex.slice(0, 64) : "N/A",
-            keyMatch: protobufPubKeyHex ? (protobufPubKeyHex.toLowerCase() === keyResult.rawKeyHex.toLowerCase()) : "no_protobuf_key",
-            hasRawMap: !!(body.rawSignatureMap),
-            rawMapChars: body.rawSignatureMap?.length || 0,
-            strategies: "primary,b64msg,nonce,crlf,window,rawMap(hex+b64),walletKey,protobufSig",
-            selfTest: {
-              ok: selfTest.ok,
-              naclOk: selfTest.naclOk,
-              webCryptoOk: selfTest.webCryptoOk,
-              naclAvailable: selfTest.naclAvailable,
-              details: selfTest.details,
-            },
-          },
         }, 401);
       }
 
