@@ -150,15 +150,16 @@ export function LandingHero() {
   const [hovered, setHovered] = useState(false);
 
   /* animated volume counter */
-  const [vol, setVol] = useState(0);
+  const [fee, setFee] = useState("$0.0000");
   useEffect(() => {
-    const target = 813;
-    const dur = 2200;
+    const target = 0.0001;
+    const dur = 1800;
     const t0 = performance.now();
     let raf: number;
     const tick = (now: number) => {
       const p = Math.min((now - t0) / dur, 1);
-      setVol(Math.floor((1 - Math.pow(1 - p, 4)) * target));
+      const eased = 1 - Math.pow(1 - p, 4);
+      setFee(`$${(eased * target).toFixed(4)}`);
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -310,7 +311,7 @@ export function LandingHero() {
             className="flex justify-center gap-8 sm:gap-14 mb-16 sm:mb-20"
           >
             {[
-              { label: "Total Volume", value: `$${vol}M+` },
+              { label: "Avg Transaction Fee", value: fee },
               { label: "Finality", value: "< 3 sec" },
               { label: "Hedera-native", value: "100%" },
             ].map((s) => (
@@ -350,7 +351,7 @@ export function LandingHero() {
           <TeaserBadge
             icon={TrendingUp}
             label="Markets"
-            value="Top 200 Tokens"
+            value="Top 50 Tokens"
             accent="#10b981"
             className="-top-6 left-0 xl:-left-16"
             delay={0.9}

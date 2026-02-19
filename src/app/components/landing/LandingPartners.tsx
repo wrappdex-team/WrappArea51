@@ -15,7 +15,7 @@ const partners = [
 
 export function LandingPartners() {
   return (
-    <section className="py-48 bg-white relative overflow-hidden" id="ecosystem">
+    <section className="py-20 sm:py-32 md:py-48 bg-white relative overflow-hidden" id="ecosystem">
       <div className="container relative mx-auto px-4 z-10">
         <div className="text-center mb-32">
           <span className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-400 block mb-8">

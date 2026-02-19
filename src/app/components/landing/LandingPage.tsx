@@ -3,6 +3,8 @@ import { motion, useScroll, useSpring } from "motion/react";
 import { LandingNavbar } from "./LandingNavbar";
 import { LandingHero } from "./LandingHero";
 import { LandingCards } from "./LandingCards";
+import { LandingWhyWrappdex } from "./LandingWhyWrappdex";
+import { LandingProduct } from "./LandingProduct";
 import { LandingNetwork } from "./LandingNetwork";
 import { LandingRoadmap } from "./LandingRoadmap";
 import { LandingPartners } from "./LandingPartners";
@@ -78,6 +80,8 @@ export function LandingPage() {
       <main className="pt-24 md:pt-32">
         <LandingHero />
         <LandingCards />
+        <LandingWhyWrappdex />
+        <LandingProduct />
         <LandingNetwork />
         <LandingRoadmap />
         <LandingPartners />

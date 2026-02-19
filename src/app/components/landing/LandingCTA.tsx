@@ -4,7 +4,7 @@ const BLUE = "#1D63ED";
 
 export function LandingCTA() {
   return (
-    <section className="py-48 bg-black text-white relative overflow-hidden">
+    <section className="py-20 sm:py-32 md:py-48 bg-black text-white relative overflow-hidden">
       <div className="absolute inset-0 opacity-20">
         <div
           className="absolute top-0 left-0 w-full h-full"

@@ -13,7 +13,7 @@ const features = [
 
 export function LandingNetwork() {
   return (
-    <section className="py-48 bg-white" id="network">
+    <section className="py-20 sm:py-32 md:py-48 bg-white" id="network">
       <div className="container mx-auto px-4">
         <div className="flex flex-col lg:flex-row gap-32 items-center">
           <div className="flex-1">

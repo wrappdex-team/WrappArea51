@@ -88,8 +88,9 @@ export function LandingNavbar() {
           {/* Desktop Nav Links */}
           <div className="hidden lg:flex items-center gap-10 text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">
             {[
-              { name: "Custody", href: "#custody" },
-              { name: "Institutions", href: "#ecosystem" },
+              { name: "Platform", href: "#platform" },
+              { name: "Roadmap", href: "#roadmap" },
+              { name: "Ecosystem", href: "#ecosystem" },
               { name: "Network", href: "#network" },
               { name: "About Us", href: "#about" },
             ].map((item) => (
@@ -137,8 +138,9 @@ export function LandingNavbar() {
                 { name: "Docs", href: "/white-paper", internal: true },
                 { name: "Global Network", href: "https://www.reddit.com/r/Hedera/", external: true },
                 { name: "DAO Access", href: "/dao", internal: true },
-                { name: "Custody", href: "#custody" },
-                { name: "Institutions", href: "#ecosystem" },
+                { name: "Platform", href: "#platform" },
+                { name: "Roadmap", href: "#roadmap" },
+                { name: "Ecosystem", href: "#ecosystem" },
                 { name: "Network", href: "#network" },
                 { name: "About Us", href: "#about" },
               ].map((item) =>

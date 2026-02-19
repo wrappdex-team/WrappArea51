@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { Shield, ChevronRight } from "lucide-react";
+import { walletIconMap } from "./WalletIcons";
 
 const BLUE = "#1D63ED";
 
@@ -36,7 +37,7 @@ const wallets = [
 
 export function LandingCards() {
   return (
-    <section className="py-48 bg-white relative overflow-hidden" id="custody" style={{ borderBottom: "1px solid #e2e8f0" }}>
+    <section className="py-20 sm:py-32 md:py-48 bg-white relative overflow-hidden" id="custody" style={{ borderBottom: "1px solid #e2e8f0" }}>
       <div className="container mx-auto px-4 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 40 }}
@@ -101,20 +102,26 @@ export function LandingCards() {
             <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">
               <Shield size={14} style={{ color: BLUE }} /> Supported Wallets
             </div>
-            <div className="flex flex-wrap justify-center gap-x-16 gap-y-8">
-              {wallets.map((wallet) => (
-                <a
-                  key={wallet.name}
-                  href={wallet.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] font-black tracking-[0.3em] uppercase text-slate-400 transition-all hover:translate-y-[-2px]"
-                  onMouseEnter={(e) => (e.currentTarget.style.color = BLUE)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "")}
-                >
-                  {wallet.name}
-                </a>
-              ))}
+            <div className="flex flex-wrap justify-center gap-x-12 gap-y-6">
+              {wallets.map((wallet) => {
+                const Icon = walletIconMap[wallet.name];
+                return (
+                  <a
+                    key={wallet.name}
+                    href={wallet.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 text-[11px] font-black tracking-[0.2em] uppercase text-slate-400 hover:text-[#1D63ED] transition-all hover:translate-y-[-2px] group/wallet"
+                  >
+                    {Icon && (
+                      <span className="grayscale opacity-60 group-hover/wallet:grayscale-0 group-hover/wallet:opacity-100 transition-all duration-300">
+                        <Icon size={22} />
+                      </span>
+                    )}
+                    {wallet.name}
+                  </a>
+                );
+              })}
             </div>
           </div>
         </motion.div>
