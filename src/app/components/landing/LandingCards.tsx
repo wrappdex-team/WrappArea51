@@ -37,31 +37,31 @@ const wallets = [
 
 export function LandingCards() {
   return (
-    <section className="py-20 sm:py-32 md:py-48 bg-white relative overflow-hidden" id="custody" style={{ borderBottom: "1px solid #e2e8f0" }}>
+    <section className="py-12 sm:py-16 md:py-20 bg-white relative overflow-hidden" id="custody" style={{ borderBottom: "1px solid #e2e8f0" }}>
       <div className="container mx-auto px-4 relative z-10">
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 1 }}
+          transition={{ duration: 0.8 }}
           className="grid grid-cols-1 md:grid-cols-3 gap-px bg-slate-100"
-          style={{ border: "1px solid #f1f5f9", boxShadow: "0 32px 64px -16px rgba(0,0,0,0.08)" }}
+          style={{ border: "1px solid #f1f5f9", boxShadow: "0 16px 48px -12px rgba(0,0,0,0.06)" }}
         >
           {cards.map((card, i) => (
             <div
               key={i}
-              className="bg-white p-16 flex flex-col justify-between hover:bg-slate-50 transition-all duration-500 group h-full relative overflow-hidden"
+              className="bg-white px-6 py-8 sm:px-8 sm:py-10 md:px-10 md:py-12 flex flex-col justify-between hover:bg-slate-50 transition-all duration-500 group relative overflow-hidden"
             >
               <div
-                className="absolute top-0 left-0 w-full h-1 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-700 origin-left"
+                className="absolute top-0 left-0 w-full h-[2px] transform scale-x-0 group-hover:scale-x-100 transition-transform duration-700 origin-left"
                 style={{ backgroundColor: BLUE }}
               />
               <div>
-                <span className="text-[10px] font-black mb-10 block tracking-[0.3em]" style={{ color: `${BLUE}40` }}>
+                <span className="text-[9px] font-black mb-4 block tracking-[0.3em]" style={{ color: `${BLUE}40` }}>
                   0{i + 1}
                 </span>
                 <h3
-                  className={`text-4xl mb-8 transition-all duration-500 group-hover:italic ${
+                  className={`text-xl sm:text-2xl mb-3 transition-all duration-500 group-hover:italic ${
                     card.highlight ? "italic" : "text-black"
                   }`}
                   style={{
@@ -71,7 +71,7 @@ export function LandingCards() {
                 >
                   {card.title}
                 </h3>
-                <p className="text-slate-500 leading-relaxed mb-12 text-sm font-light" style={{ fontFamily: "'Inter', sans-serif" }}>
+                <p className="text-slate-500 leading-relaxed mb-6 text-xs font-light line-clamp-3" style={{ fontFamily: "'Inter', sans-serif" }}>
                   {card.desc}
                 </p>
               </div>
@@ -79,30 +79,30 @@ export function LandingCards() {
                 href={card.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] hover:text-black transition-all"
+                className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] hover:text-black transition-all"
                 style={{ color: BLUE }}
               >
                 {card.link}{" "}
-                <ChevronRight size={14} className="group-hover:translate-x-2 transition-transform" />
+                <ChevronRight size={12} className="group-hover:translate-x-1 transition-transform" />
               </a>
             </div>
           ))}
         </motion.div>
 
-        {/* Supported Wallets */}
+        {/* Supported Wallets — compact strip */}
         <motion.div
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          transition={{ delay: 0.5, duration: 1 }}
-          className="mt-32 pt-20"
+          transition={{ delay: 0.3, duration: 0.8 }}
+          className="mt-10 sm:mt-14 pt-8 sm:pt-10"
           style={{ borderTop: "1px solid #f1f5f9" }}
         >
-          <div className="flex flex-col lg:flex-row items-center justify-between gap-16">
-            <div className="flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">
-              <Shield size={14} style={{ color: BLUE }} /> Supported Wallets
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-3 text-[9px] font-black uppercase tracking-[0.35em] text-slate-400 shrink-0">
+              <Shield size={12} style={{ color: BLUE }} /> Supported Wallets
             </div>
-            <div className="flex flex-wrap justify-center gap-x-12 gap-y-6">
+            <div className="flex flex-wrap justify-center gap-x-6 gap-y-3">
               {wallets.map((wallet) => {
                 const Icon = walletIconMap[wallet.name];
                 return (
@@ -111,11 +111,11 @@ export function LandingCards() {
                     href={wallet.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-3 text-[11px] font-black tracking-[0.2em] uppercase text-slate-400 hover:text-[#1D63ED] transition-all hover:translate-y-[-2px] group/wallet"
+                    className="flex items-center gap-2 text-[10px] font-bold tracking-[0.15em] uppercase text-slate-400 hover:text-[#1D63ED] transition-all hover:translate-y-[-1px] group/wallet"
                   >
                     {Icon && (
-                      <span className="grayscale opacity-60 group-hover/wallet:grayscale-0 group-hover/wallet:opacity-100 transition-all duration-300">
-                        <Icon size={22} />
+                      <span className="grayscale opacity-50 group-hover/wallet:grayscale-0 group-hover/wallet:opacity-100 transition-all duration-300">
+                        <Icon size={16} />
                       </span>
                     )}
                     {wallet.name}

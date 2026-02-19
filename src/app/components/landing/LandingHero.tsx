@@ -9,23 +9,7 @@ import {
   BarChart3,
   Landmark,
 } from "lucide-react";
-
-/**
- * App screenshots — served from Supabase Storage (public bucket).
- *
- * Bucket: marketingshots (PUBLIC)
- * Project: ehmlclowiedoqncymegi
- *
- * These are stable, CDN-backed URLs that resolve in Figma Make, Vercel,
- * Netlify, Railway — anywhere. No virtual imports, no build plugins.
- */
-const STORAGE_BASE =
-  "https://ehmlclowiedoqncymegi.supabase.co/storage/v1/object/public/marketingshots";
-
-const desktopDark = `${STORAGE_BASE}/screendark.png`;
-const desktopLight = `${STORAGE_BASE}/screenlight.png`;
-const mobileDark = `${STORAGE_BASE}/mobildark.png`;
-const mobileLight = `${STORAGE_BASE}/mobilelight.png`;
+import { useScreenshotUrls } from "./useScreenshotUrls";
 
 const BLUE = "#1D63ED";
 const CYAN = "#06b6d4";
@@ -148,6 +132,12 @@ function TeaserBadge({
    ════════════════════════════════════════════════ */
 export function LandingHero() {
   const [hovered, setHovered] = useState(false);
+  const { marketingshots } = useScreenshotUrls();
+
+  const desktopDark = marketingshots["screendark.png"] || "";
+  const desktopLight = marketingshots["screenlight.png"] || "";
+  const mobileDark = marketingshots["mobildark.png"] || "";
+  const mobileLight = marketingshots["mobilelight.png"] || "";
 
   /* animated volume counter */
   const [fee, setFee] = useState("$0.0000");

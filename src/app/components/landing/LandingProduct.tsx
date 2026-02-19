@@ -12,6 +12,7 @@ import {
   Sparkles,
   ArrowUpRight,
 } from "lucide-react";
+import { useScreenshotUrls } from "./useScreenshotUrls";
 
 const BLUE = "#1D63ED";
 const CYAN = "#06b6d4";
@@ -19,17 +20,24 @@ const VIOLET = "#7C3AED";
 const EMERALD = "#10B981";
 const AMBER = "#F59E0B";
 
-const STORAGE =
-  "https://ehmlclowiedoqncymegi.supabase.co/storage/v1/object/public/sampleshots";
+// Screenshot filenames — resolved to signed URLs at runtime via useScreenshotUrls
+const SCREENSHOT_FILES = {
+  tradeamm: "tradeamm.png",
+  swap: "swap.png",
+  wallet: "wallet.png",
+  dao: "DAO.png",
+  vip: "vip.png",
+  bridges: "bridges.png",
+};
 
 /* ── screenshot cards with bento sizing ── */
-const featured = [
+const makeFeatured = (urls: Record<string, string>) => [
   {
     icon: BarChart3,
     title: "Trading Terminal",
     desc: "Pro-grade candlestick charts with 10 timeframes, 6 technical indicators, persistent drawing tools, and sub-cent price granularity.",
     route: "/trading",
-    screenshot: `${STORAGE}/tradeamm.png`,
+    screenshot: urls[SCREENSHOT_FILES.tradeamm] || "",
     accent: BLUE,
     span: "md:col-span-2 md:row-span-2", // hero card
     badge: "Most Popular",
@@ -40,7 +48,7 @@ const featured = [
     title: "Swap",
     desc: "Dual-engine swaps via our native AMM and SaucerSwap routing. Configurable slippage and route visualization.",
     route: "/swap",
-    screenshot: `${STORAGE}/swap.png`,
+    screenshot: urls[SCREENSHOT_FILES.swap] || "",
     accent: CYAN,
     span: "md:col-span-1 md:row-span-1",
     badge: "Lightning Fast",
@@ -51,7 +59,7 @@ const featured = [
     title: "Buy / Sell",
     desc: "Fiat on-ramp via ChangeNOW with 100+ supported currencies. CEX-style trade panel.",
     route: "/buy-sell",
-    screenshot: `${STORAGE}/wallet.png`,
+    screenshot: urls[SCREENSHOT_FILES.wallet] || "",
     accent: EMERALD,
     span: "md:col-span-1 md:row-span-1",
     badge: "100+ Currencies",
@@ -62,7 +70,7 @@ const featured = [
     title: "DAO Governance",
     desc: "Create and vote on proposals across 8 categories. Token-weighted, verified on-chain via Mirror Node.",
     route: "/dao",
-    screenshot: `${STORAGE}/DAO.png`,
+    screenshot: urls[SCREENSHOT_FILES.dao] || "",
     accent: VIOLET,
     span: "md:col-span-1 md:row-span-1",
     badge: "Community First",
@@ -73,7 +81,7 @@ const featured = [
     title: "DeFi Suite",
     desc: "Constant-product AMM with 7 whitelisted tokens, Bonzo Finance lending, and USDC-hop smart routing.",
     route: "/defi",
-    screenshot: `${STORAGE}/vip.png`,
+    screenshot: urls[SCREENSHOT_FILES.vip] || "",
     accent: AMBER,
     span: "md:col-span-1 md:row-span-1",
     badge: "Yield Farming",
@@ -84,7 +92,7 @@ const featured = [
     title: "Cross-Chain Bridges",
     desc: "Squid Router (60+ chains), HashPort (Hedera official), and Stargate (LayerZero) — one unified interface.",
     route: "/bridges",
-    screenshot: `${STORAGE}/bridges.png`,
+    screenshot: urls[SCREENSHOT_FILES.bridges] || "",
     accent: CYAN,
     span: "md:col-span-1 md:row-span-1",
     badge: "60+ Chains",
@@ -145,31 +153,31 @@ function AnimatedStat({ value, label, icon: Icon }: (typeof stats)[0]) {
     <motion.div
       onHoverStart={() => setHovered(true)}
       onHoverEnd={() => setHovered(false)}
-      className="relative flex flex-col items-center gap-3 px-6 py-5 cursor-default"
+      className="relative flex flex-col items-center gap-1.5 px-4 py-3 cursor-default"
     >
       <motion.div
-        animate={{ scale: hovered ? 1.15 : 1, y: hovered ? -4 : 0 }}
+        animate={{ scale: hovered ? 1.15 : 1, y: hovered ? -2 : 0 }}
         transition={{ type: "spring", stiffness: 400, damping: 20 }}
       >
         <Icon
-          size={18}
+          size={14}
           style={{ color: hovered ? BLUE : "#94a3b8" }}
           className="transition-colors duration-300"
         />
       </motion.div>
       <div
-        className="text-2xl md:text-3xl font-black tracking-tight transition-colors duration-300"
+        className="text-xl md:text-2xl font-black tracking-tight transition-colors duration-300"
         style={{ color: hovered ? BLUE : "#0f172a" }}
       >
         {value}
       </div>
-      <div className="text-[9px] font-black uppercase tracking-[0.25em] text-slate-400">
+      <div className="text-[8px] font-black uppercase tracking-[0.2em] text-slate-400">
         {label}
       </div>
       {hovered && (
         <motion.div
           layoutId="stat-glow"
-          className="absolute inset-0 rounded-2xl -z-10"
+          className="absolute inset-0 rounded-xl -z-10"
           style={{ background: `${BLUE}08` }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -181,9 +189,12 @@ function AnimatedStat({ value, label, icon: Icon }: (typeof stats)[0]) {
 }
 
 export function LandingProduct() {
+  const { sampleshots, loading: urlsLoading } = useScreenshotUrls();
+  const featured = makeFeatured(sampleshots);
+
   return (
     <section
-      className="py-20 sm:py-32 md:py-48 bg-white relative overflow-hidden"
+      className="py-12 sm:py-16 md:py-24 bg-white relative overflow-hidden"
       id="platform"
       style={{ borderBottom: "1px solid #e2e8f0" }}
     >
@@ -222,29 +233,29 @@ export function LandingProduct() {
       <div className="container mx-auto px-4 relative z-10">
         {/* Header */}
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 1 }}
-          className="text-center mb-16 md:mb-24"
+          transition={{ duration: 0.8 }}
+          className="text-center mb-10 md:mb-14"
         >
           <motion.span
             initial={{ opacity: 0, scale: 0.9 }}
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
-            className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.4em] px-5 py-2.5 mb-10 rounded-full"
+            className="inline-flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.35em] px-4 py-2 mb-6 rounded-full"
             style={{
               color: BLUE,
               background: `linear-gradient(135deg, ${BLUE}0a, ${CYAN}0a)`,
               border: `1px solid ${BLUE}15`,
             }}
           >
-            <Sparkles size={12} />
+            <Sparkles size={11} />
             The Platform
           </motion.span>
 
           <h2
-            className="text-5xl sm:text-6xl md:text-8xl text-black tracking-tight leading-[0.95] mb-8"
+            className="text-3xl sm:text-4xl md:text-6xl text-black tracking-tight leading-[0.95] mb-5"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
             Trade smarter. <br />
@@ -260,7 +271,7 @@ export function LandingProduct() {
           </h2>
 
           <p
-            className="text-lg md:text-xl text-slate-500 max-w-3xl mx-auto leading-relaxed font-light"
+            className="text-base md:text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed font-light"
             style={{ fontFamily: "'Inter', sans-serif" }}
           >
             Eight modules. One interface. Zero compromise. Swap, chart, bridge,
@@ -284,7 +295,7 @@ export function LandingProduct() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.8, delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5"
+          className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4"
           style={{ perspective: "1200px" }}
         >
           {featured.map((mod, i) => (
@@ -313,7 +324,7 @@ export function LandingProduct() {
                 <div
                   className={`relative overflow-hidden ${
                     mod.span.includes("row-span-2")
-                      ? "aspect-auto h-[280px] sm:h-[340px] md:h-full md:min-h-[480px]"
+                      ? "aspect-auto h-[220px] sm:h-[280px] md:h-full md:min-h-[400px]"
                       : "aspect-[16/10]"
                   }`}
                 >
@@ -340,10 +351,10 @@ export function LandingProduct() {
                 </div>
 
                 {/* Content overlay */}
-                <div className="absolute bottom-0 left-0 right-0 p-6 md:p-8 z-10">
+                <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 md:p-6 z-10">
                   {/* Badge */}
                   <span
-                    className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.2em] px-3 py-1.5 rounded-full mb-4 backdrop-blur-sm"
+                    className="inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-[0.18em] px-2.5 py-1 rounded-full mb-3 backdrop-blur-sm"
                     style={{
                       color: mod.badgeColor,
                       background: `${mod.badgeColor}20`,
@@ -355,21 +366,21 @@ export function LandingProduct() {
                   </span>
 
                   <h3
-                    className="text-2xl md:text-3xl text-white mb-2 group-hover:italic transition-all duration-500"
+                    className="text-lg sm:text-xl md:text-2xl text-white mb-1.5 group-hover:italic transition-all duration-500"
                     style={{ fontFamily: "'Playfair Display', serif" }}
                   >
                     {mod.title}
                   </h3>
 
                   <p
-                    className="text-white/60 text-xs leading-relaxed font-light max-w-md mb-4"
+                    className="text-white/60 text-[11px] leading-relaxed font-light max-w-md mb-3 line-clamp-2"
                     style={{ fontFamily: "'Inter', sans-serif" }}
                   >
                     {mod.desc}
                   </p>
 
                   <span
-                    className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 group-hover:gap-3"
+                    className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] transition-all duration-300 group-hover:gap-2.5"
                     style={{ color: mod.accent }}
                   >
                     Launch Module
@@ -389,14 +400,14 @@ export function LandingProduct() {
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          transition={{ delay: 0.4, duration: 1 }}
-          className="mt-16 md:mt-24 rounded-2xl py-8 md:py-10 px-4"
+          transition={{ delay: 0.3, duration: 0.8 }}
+          className="mt-10 md:mt-14 rounded-xl py-6 md:py-8 px-4"
           style={{
             background: "linear-gradient(135deg, #fafbff 0%, #f8fafc 100%)",
             border: "1px solid #f1f5f9",
           }}
         >
-          <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 md:gap-x-6">
+          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 md:gap-x-5">
             {stats.map((stat) => (
               <AnimatedStat key={stat.label} {...stat} />
             ))}

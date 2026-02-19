@@ -21,6 +21,13 @@ const PARTNER_BUCKET = "Partnered logos";
 const PARTNER_SIGNED_TTL = 3600; // 1 hour
 const IMG_RE = /\.(png|jpg|jpeg|webp|svg|avif|gif)$/i;
 
+// ── Screenshot Buckets (Landing Page) ─────────────────────────────
+const SCREENSHOT_SIGNED_TTL = 3600; // 1 hour
+const SCREENSHOT_BUCKETS: Record<string, string[]> = {
+  sampleshots: ["tradeamm.png", "swap.png", "wallet.png", "DAO.png", "vip.png", "bridges.png"],
+  marketingshots: ["screendark.png", "screenlight.png", "mobildark.png", "mobilelight.png"],
+};
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /** Classify an error for server-side logging without leaking internals. */
@@ -32,6 +39,59 @@ function safeErrorClass(err: unknown): string {
 // ── Route Registration ──────────────────────────────────────────────
 
 export function registerStorageRoutes(app: Hono): void {
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Screenshot URLs — returns signed URLs for landing page product images
+  // Supports both sampleshots and marketingshots buckets.
+  // No auth required — landing page is public.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.get(`${ROUTE_PREFIX}/screenshot-urls`, async (c) => {
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supabaseUrl || !serviceKey) {
+        console.log("[Screenshot URLs] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+        return c.json({ error: "Server configuration error" }, 500);
+      }
+
+      const supabase = createSupabaseClient(supabaseUrl, serviceKey);
+      const result: Record<string, Record<string, string>> = {};
+
+      for (const [bucketName, files] of Object.entries(SCREENSHOT_BUCKETS)) {
+        result[bucketName] = {};
+
+        // Try signed URLs first (works for both public and private buckets)
+        const { data: signedUrls, error: signErr } = await supabase.storage
+          .from(bucketName)
+          .createSignedUrls(files, SCREENSHOT_SIGNED_TTL);
+
+        if (signErr) {
+          console.log(`[Screenshot URLs] Signed URL error for ${bucketName}: ${signErr.message} — trying public URLs`);
+          // Fallback to public URLs
+          for (const file of files) {
+            const { data } = supabase.storage.from(bucketName).getPublicUrl(file);
+            result[bucketName][file] = data.publicUrl;
+          }
+          continue;
+        }
+
+        for (const entry of signedUrls || []) {
+          if (!entry.error && entry.signedUrl) {
+            const fileName = entry.path || files.find((f: string) => entry.signedUrl?.includes(encodeURIComponent(f))) || "";
+            result[bucketName][fileName] = entry.signedUrl;
+          }
+        }
+
+        console.log(`[Screenshot URLs] ${bucketName}: ${Object.keys(result[bucketName]).length}/${files.length} URLs generated`);
+      }
+
+      return c.json({ urls: result, ttl: SCREENSHOT_SIGNED_TTL });
+    } catch (err) {
+      console.error(`[Screenshot URLs] Unexpected error (${safeErrorClass(err)}):`, err);
+      return c.json({ error: "Screenshot URL service temporarily unavailable" }, 500);
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════════
   // Holiday Logos — lists files from Supabase Storage (auto-creates bucket)

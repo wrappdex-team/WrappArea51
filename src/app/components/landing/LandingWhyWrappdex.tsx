@@ -139,7 +139,7 @@ function InteractivePhrase({ word }: { word: HotWord }) {
 export function LandingWhyWrappdex() {
   return (
     <section
-      className="relative py-24 sm:py-32 md:py-44 overflow-hidden"
+      className="relative py-14 sm:py-20 md:py-28 overflow-hidden"
       style={{
         background:
           "linear-gradient(180deg, #080b14 0%, #0c1021 50%, #080b14 100%)",
@@ -150,13 +150,13 @@ export function LandingWhyWrappdex() {
         <motion.div
           animate={{ x: [0, 50, 0], y: [0, -30, 0] }}
           transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full blur-[200px] opacity-[0.07]"
+          className="absolute top-0 left-1/4 w-[400px] h-[400px] rounded-full blur-[160px] opacity-[0.07]"
           style={{ background: `linear-gradient(135deg, ${BLUE}, ${CYAN})` }}
         />
         <motion.div
           animate={{ x: [0, -40, 0], y: [0, 40, 0] }}
           transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-0 right-1/4 w-[500px] h-[500px] rounded-full blur-[180px] opacity-[0.05]"
+          className="absolute bottom-0 right-1/4 w-[350px] h-[350px] rounded-full blur-[140px] opacity-[0.05]"
           style={{ background: `linear-gradient(135deg, ${RED}80, ${BLUE})` }}
         />
       </div>
@@ -174,14 +174,14 @@ export function LandingWhyWrappdex() {
       <div className="container mx-auto px-4 relative z-10">
         {/* Eyebrow */}
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.8 }}
-          className="text-center mb-12 md:mb-16"
+          transition={{ duration: 0.6 }}
+          className="text-center mb-6 sm:mb-8 md:mb-10"
         >
           <span
-            className="inline-flex items-center gap-2.5 text-[10px] font-black uppercase tracking-[0.5em] px-5 py-2.5 rounded-full"
+            className="inline-flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.4em] px-4 py-2 rounded-full"
             style={{
               color: BLUE,
               background: `${BLUE}10`,
@@ -198,14 +198,14 @@ export function LandingWhyWrappdex() {
 
         {/* ── The Power Statement ── */}
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 1, delay: 0.1 }}
-          className="max-w-5xl mx-auto text-center"
+          transition={{ duration: 0.8, delay: 0.1 }}
+          className="max-w-4xl mx-auto text-center"
         >
           <h2
-            className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl leading-[1.15] sm:leading-[1.15] md:leading-[1.2] tracking-tight font-semibold"
+            className="text-2xl sm:text-3xl md:text-5xl lg:text-6xl leading-[1.2] sm:leading-[1.2] md:leading-[1.25] tracking-tight font-semibold"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
             {words.map((w, i) => (
@@ -219,19 +219,19 @@ export function LandingWhyWrappdex() {
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          transition={{ delay: 0.6, duration: 1 }}
-          className="text-center mt-10 md:mt-14 text-[10px] font-bold uppercase tracking-[0.4em] text-white/15"
+          transition={{ delay: 0.5, duration: 0.8 }}
+          className="text-center mt-6 md:mt-8 text-[9px] font-bold uppercase tracking-[0.35em] text-white/15 hidden sm:block"
         >
           Hover each phrase ↑
         </motion.p>
 
         {/* Divider stats strip */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ delay: 0.4, duration: 0.8 }}
-          className="flex flex-wrap justify-center gap-8 md:gap-14 mt-14 md:mt-20 pt-10 md:pt-14"
+          transition={{ delay: 0.3, duration: 0.6 }}
+          className="flex flex-wrap justify-center gap-6 sm:gap-8 md:gap-12 mt-8 sm:mt-12 md:mt-14 pt-8 sm:pt-10"
           style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
         >
           {[
@@ -240,14 +240,14 @@ export function LandingWhyWrappdex() {
             { val: "8", label: "Pro Modules", color: CYAN },
             { val: "3s", label: "Avg Finality", color: EMERALD },
           ].map((s) => (
-            <div key={s.label} className="flex flex-col items-center gap-2">
+            <div key={s.label} className="flex flex-col items-center gap-1.5">
               <span
-                className="text-3xl md:text-4xl font-black tracking-tight"
+                className="text-2xl md:text-3xl font-black tracking-tight"
                 style={{ color: s.color }}
               >
                 {s.val}
               </span>
-              <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-white/25">
+              <span className="text-[8px] font-bold uppercase tracking-[0.25em] text-white/25">
                 {s.label}
               </span>
             </div>
