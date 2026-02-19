@@ -202,7 +202,7 @@ function RoadmapQ({
 }: {
   quarter: string;
   title: string;
-  items: string[];
+  items: (string | { text: string; status?: "processing" })[];
   current?: boolean;
   icon: React.ElementType;
 }) {
@@ -251,24 +251,39 @@ function RoadmapQ({
         </div>
       </div>
       <ul className="space-y-2">
-        {items.map((item) => (
-          <li key={item} className="flex items-start gap-2">
-            <CheckCircle2
-              className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
-                current
-                  ? "text-emerald-400"
-                  : isDark
-                    ? "text-slate-600"
-                    : "text-gray-300"
-              }`}
-            />
-            <span
-              className={`text-xs md:text-sm ${isDark ? "text-slate-300" : "text-slate-600"}`}
-            >
-              {item}
-            </span>
-          </li>
-        ))}
+        {items.map((raw) => {
+          const item = typeof raw === "string" ? { text: raw } : raw;
+          const isProcessing = item.status === "processing";
+          return (
+            <li key={item.text} className="flex items-start gap-2">
+              {isProcessing ? (
+                <Clock
+                  className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400"
+                />
+              ) : (
+                <CheckCircle2
+                  className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
+                    current
+                      ? "text-emerald-400"
+                      : isDark
+                        ? "text-slate-600"
+                        : "text-gray-300"
+                  }`}
+                />
+              )}
+              <span
+                className={`text-xs md:text-sm ${isDark ? "text-slate-300" : "text-slate-600"}`}
+              >
+                {item.text}
+                {isProcessing && (
+                  <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-400/15 text-amber-500 border border-amber-400/25">
+                    Processing
+                  </span>
+                )}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </GlassCard>
   );
@@ -649,7 +664,13 @@ export function WhitePaper() {
 
         {/* ═══ LEGAL STRUCTURE ═══ */}
         <Section id="legal" className="mb-16">
-          <h2 className={h2}>Wyoming DUNA</h2>
+          <h2 className={h2}>
+            Wyoming DUNA
+            <span className="ml-3 inline-flex items-center gap-1.5 align-middle px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-400/15 text-amber-500 border border-amber-400/25">
+              <Clock className="w-3 h-3" />
+              Processing
+            </span>
+          </h2>
           <p className={subtitle}>
             The first DEX structured as a Decentralized Unincorporated
             Nonprofit Association under Wyoming law.
@@ -1903,8 +1924,8 @@ export function WhitePaper() {
                 "AAVE & DAI token onboarding (HashPort-bridged)",
                 "Circuit breakers for all external services",
                 "1inch DEX aggregator integration",
-                "Wyoming DUNA legal entity formation — processing",
-                "Anonymized site-wide activity feed",
+                { text: "Wyoming DUNA legal entity formation", status: "processing" as const },
+                { text: "Anonymized site-wide activity feed", status: "processing" as const },
               ]}
             />
             <RoadmapQ

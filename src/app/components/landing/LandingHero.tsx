@@ -75,6 +75,11 @@ function Word({
                   background: `linear-gradient(135deg, ${BLUE}, #06b6d4)`,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
+                  paddingLeft: "0.06em",
+                  paddingRight: "0.06em",
+                  marginLeft: "-0.03em",
+                  marginRight: "-0.03em",
+                  ...(ch === "g" && { paddingBottom: "0.15em", marginBottom: "-0.15em" }),
                 }
               : undefined
           }
