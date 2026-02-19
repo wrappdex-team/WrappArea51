@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { motion } from "motion/react";
 import { ExternalLink, Shield, Users, Briefcase } from "lucide-react";
 
@@ -6,7 +7,11 @@ const CYAN = "#06b6d4";
 const VIOLET = "#7C3AED";
 
 const TEAM_PHOTO =
-  "https://images.unsplash.com/photo-1758520144667-3041caeff3c1?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aHJlZSUyMGNvd29ya2VycyUyMGZpbnRlY2glMjBzdGFydHVwJTIwY29sbGFib3JhdGluZyUyMHNjcmVlbnMlMjBkYXJrJTIwb2ZmaWNlfGVufDF8fHx8MTc3MTUyNzcwMHww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral";
+  "https://images.unsplash.com/photo-1758520144667-3041caeff3c1?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aHJlZSUyMGNvd29ya2VycyUyMGZpbnRlY2glMjBzdGFydHVwJTIwZGFyayUyMG9mZmljZSUyMHNjcmVlbnN8ZW58MXx8fHwxNzcxNTI5Njc4fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral";
+
+/* Backup photo in case the primary Unsplash URL is blocked or expires */
+const TEAM_PHOTO_FALLBACK =
+  "https://images.unsplash.com/photo-1651608644982-349c215442f2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxidXNpbmVzcyUyMHRlYW0lMjBjb2xsYWJvcmF0aW9uJTIwc2NyZWVucyUyMHRlY2hub2xvZ3l8ZW58MXx8fHwxNzcxNTI5ODIzfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral";
 
 const roles = [
   {
@@ -110,11 +115,7 @@ export function LandingTeam() {
           }}
         >
           <div className="relative aspect-[21/9] sm:aspect-[2.2/1] overflow-hidden bg-slate-900">
-            <img
-              src={TEAM_PHOTO}
-              alt="WRAPpDEX founding team collaborating on the trading platform"
-              className="w-full h-full object-cover transition-all duration-[2s] group-hover:scale-105"
-            />
+            <TeamPhoto />
 
             {/* Dark overlay for text legibility */}
             <div
@@ -267,5 +268,23 @@ export function LandingTeam() {
         </motion.div>
       </div>
     </section>
+  );
+}
+
+/* Helper component to load the team photo with a fallback */
+function TeamPhoto() {
+  const [photoUrl, setPhotoUrl] = useState(TEAM_PHOTO);
+
+  const handleImageError = () => {
+    setPhotoUrl(TEAM_PHOTO_FALLBACK);
+  };
+
+  return (
+    <img
+      src={photoUrl}
+      alt="WRAPpDEX founding team collaborating on the trading platform"
+      className="w-full h-full object-cover transition-all duration-[2s] group-hover:scale-105"
+      onError={handleImageError}
+    />
   );
 }
