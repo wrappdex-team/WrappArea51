@@ -59,7 +59,7 @@ export function LandingTeam() {
 
                 <div className="relative aspect-[4/3] overflow-hidden bg-slate-50">
                   <img
-                    src="https://cdn.builder.io/api/v1/image/assets%2F40d47a8a19594e8684b17f309e3be30d%2Fa2d90583d2174bb7bba8a402388aee72?format=webp&width=800&height=1200"
+                    src="https://images.unsplash.com/photo-1771147372627-7fffe86cf00b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjb3Jwb3JhdGUlMjBib2FyZHJvb20lMjBtZWV0aW5nJTIwcHJvZmVzc2lvbmFsfGVufDF8fHx8MTc3MTUxODEwN3ww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral"
                     alt="Wrappdex Boardroom"
                     className="w-full h-full object-cover grayscale brightness-95 group-hover:brightness-100 transition-all duration-[2s] group-hover:scale-110"
                   />

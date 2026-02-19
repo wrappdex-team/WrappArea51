@@ -114,7 +114,7 @@ export function LandingFooter() {
               style={{ border: "1px solid #e2e8f0" }}
             >
               <img
-                src="https://cdn.builder.io/api/v1/image/assets%2F40d47a8a19594e8684b17f309e3be30d%2F330796268fbe48a7a1d0630ad3544f8c?format=webp&width=40"
+                src="https://www.google.com/s2/favicons?domain=hedera.com&sz=128"
                 className="w-5 h-5 object-contain grayscale group-hover:grayscale-0 transition-all"
                 alt="Hedera"
               />

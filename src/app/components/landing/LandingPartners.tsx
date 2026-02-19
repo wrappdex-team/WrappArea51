@@ -3,10 +3,10 @@ const BLUE = "#1D63ED";
 const partners = [
   { name: "HashPack", url: "https://www.hashpack.app/", logo: "https://avatars.githubusercontent.com/u/87255978?v=4&s=200" },
   { name: "AltLantis", url: "https://altlantis.io/", logo: "https://altlantis.io/img/logo.svg" },
-  { name: "HSuite", url: "https://hsuite.network/", logo: "https://cdn.builder.io/api/v1/image/assets%2F40d47a8a19594e8684b17f309e3be30d%2Fb1f2a4595f814c76b76bcb54139ae574?format=webp&width=800&height=1200" },
-  { name: "Hashport", url: "https://www.hashport.network/", logo: "https://cdn.builder.io/api/v1/image/assets%2F40d47a8a19594e8684b17f309e3be30d%2Ff1dc0cfa95a844cf84e8ee6c4b468f9f?format=webp&width=800&height=1200" },
+  { name: "HSuite", url: "https://hsuite.network/", logo: "https://www.google.com/s2/favicons?domain=hsuite.network&sz=128" },
+  { name: "Hashport", url: "https://www.hashport.network/", logo: "https://www.google.com/s2/favicons?domain=hashport.network&sz=128" },
   { name: "IvyFi", url: "https://www.ivyfi.io/", logo: "https://avatars.githubusercontent.com/u/192332449?v=4&s=200" },
-  { name: "Impart Global", url: "https://www.impart.global/", logo: "https://cdn.prod.website-files.com/67cb2918285aa3116f1057f7/67cb2a09ee17e67ae60705d6_IMPART-GLOBAL-LOGO.svg" },
+  { name: "Impart Global", url: "https://www.impart.global/", logo: "https://www.google.com/s2/favicons?domain=impart.global&sz=128" },
   { name: "SaucerSwap", url: "https://www.saucerswap.finance/", logo: "https://avatars.githubusercontent.com/u/112772558?v=4&s=200" },
   { name: "Bonzo Finance", url: "https://bonzo.finance/", logo: "https://avatars.githubusercontent.com/u/158205956?v=4&s=200" },
   { name: "Squid Router", url: "https://www.squidrouter.com/", logo: "https://avatars.githubusercontent.com/u/89154910?v=4&s=200" },
