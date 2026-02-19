@@ -11,22 +11,21 @@ import {
 } from "lucide-react";
 
 /**
- * App screenshots — served from /public/screenshots/.
+ * App screenshots — served from Supabase Storage (public bucket).
  *
- * The `figma:asset/...` scheme only works inside Figma Make's dev server.
- * For Vercel / Railway / any standard Vite build, reference plain paths
- * into /public/ so Vite copies them as static assets.
+ * Bucket: marketingshots (PUBLIC)
+ * Project: ehmlclowiedoqncymegi
  *
- * Place the four PNGs in your repo at:
- *   public/screenshots/desktop-dark.png
- *   public/screenshots/desktop-light.png
- *   public/screenshots/mobile-dark.png
- *   public/screenshots/mobile-light.png
+ * These are stable, CDN-backed URLs that resolve in Figma Make, Vercel,
+ * Netlify, Railway — anywhere. No virtual imports, no build plugins.
  */
-const desktopDark  = "/screenshots/desktop-dark.png";
-const desktopLight = "/screenshots/desktop-light.png";
-const mobileDark   = "/screenshots/mobile-dark.png";
-const mobileLight  = "/screenshots/mobile-light.png";
+const STORAGE_BASE =
+  "https://ehmlclowiedoqncymegi.supabase.co/storage/v1/object/public/marketingshots";
+
+const desktopDark = `${STORAGE_BASE}/screendark.png`;
+const desktopLight = `${STORAGE_BASE}/screenlight.png`;
+const mobileDark = `${STORAGE_BASE}/mobildark.png`;
+const mobileLight = `${STORAGE_BASE}/mobilelight.png`;
 
 const BLUE = "#1D63ED";
 const CYAN = "#06b6d4";
@@ -73,7 +72,7 @@ function Word({
           style={
             gradient
               ? {
-                  background: `linear-gradient(135deg, ${BLUE}, ${CYAN})`,
+                  background: `linear-gradient(135deg, ${BLUE}, #06b6d4)`,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                 }
@@ -162,7 +161,7 @@ export function LandingHero() {
   }, []);
 
   return (
-    <section className="relative overflow-hidden bg-white">
+    <section className="relative overflow-x-hidden bg-white">
       {/* ── BG: dot grid ── */}
       <div
         className="absolute inset-0 z-0 opacity-30"
@@ -184,7 +183,7 @@ export function LandingHero() {
         <div
           className="absolute top-[60%] -left-60 w-[600px] h-[600px] rounded-full opacity-[0.12]"
           style={{
-            background: `radial-gradient(circle, ${CYAN}40, transparent 70%)`,
+            background: `radial-gradient(circle, #06b6d440, transparent 70%)`,
           }}
         />
       </div>
@@ -225,7 +224,7 @@ export function LandingHero() {
 
           {/* headline */}
           <motion.h1
-            className="text-[2.8rem] sm:text-[4rem] md:text-[5.5rem] lg:text-[6.5rem] leading-[0.9] tracking-[-0.04em] text-black mx-auto max-w-5xl mb-6"
+            className="text-[2.8rem] sm:text-[4rem] md:text-[5.5rem] lg:text-[6.5rem] leading-[1.1] tracking-[-0.04em] text-black mx-auto max-w-5xl mb-6 overflow-visible py-2"
             style={{ fontFamily: "'Playfair Display', serif" }}
             variants={{
               hidden: {},
@@ -363,7 +362,7 @@ export function LandingHero() {
             icon={BarChart3}
             label="HBAR"
             value="$0.097"
-            accent={CYAN}
+            accent="#06b6d4"
             className="-top-6 right-0 xl:-right-12"
             delay={1.0}
           />
