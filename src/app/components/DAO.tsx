@@ -969,6 +969,7 @@ function ProposalList({
   canComment: boolean;
   actionLoading: boolean;
 }) {
+  const { isDark } = useTheme();
   return (
     <>
       {/* Stats row */}
@@ -1343,6 +1344,7 @@ function CommentsSection({
   onAddComment: (proposalId: string, text: string) => void;
   actionLoading: boolean;
 }) {
+  const { isDark } = useTheme();
   const [commentText, setCommentText] = useState("");
   const [showAll, setShowAll] = useState(false);
   const comments = proposal.comments ?? [];

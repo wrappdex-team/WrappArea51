@@ -119,13 +119,19 @@ async function requestChallenge(accountId: string): Promise<ChallengeResponse> {
 /**
  * Step 2: Sign the challenge message using HashConnect (HashPack wallet).
  * The user will see a signing prompt in their HashPack wallet.
- * Returns the signature as a hex string.
+ * Returns the extracted signature hex AND the raw signatureMap (if available)
+ * for server-side re-extraction fallback.
  */
-async function signChallengeMessage(accountId: string, message: string): Promise<string> {
+async function signChallengeMessage(accountId: string, message: string): Promise<{ sigHex: string; rawSignatureMap?: string }> {
   const result = await signMessage(accountId, message);
   if (!result || !result.signatures) {
     throw new Error("Signing failed — wallet may have rejected the request or is not connected");
   }
+
+  // Capture raw signatureMap for server-side fallback.
+  // If client-side protobuf extraction gets wrong bytes (e.g., pubKeyPrefix
+  // contains 0x1A 0x40), the server can re-extract from the raw protobuf.
+  const rawSignatureMap: string | undefined = result.rawSignatureMap;
 
   // Extract signature from WalletConnect result.
   // wallet-core.ts _parseSignMessageResponse already normalises most formats
@@ -195,7 +201,7 @@ async function signChallengeMessage(accountId: string, message: string): Promise
     log.warn("Auth", `Signature is ${sigHex.length} hex chars (expected 128 for raw ED25519). Server will attempt protobuf extraction.`);
   }
   
-  return sigHex;
+  return { sigHex, rawSignatureMap };
 }
 
 /**
@@ -205,11 +211,18 @@ async function submitSession(
   accountId: string,
   challengeId: string,
   signature: string,
+  rawSignatureMap?: string,
 ): Promise<SessionResponse> {
+  const body: Record<string, string> = { accountId, challengeId, signature };
+  // Include raw signatureMap so the server can re-extract the ED25519 signature
+  // from the full protobuf if the client-side extraction produced wrong bytes.
+  if (rawSignatureMap) {
+    body.rawSignatureMap = rawSignatureMap;
+  }
   const res = await fetch(`${API_BASE}/auth/session`, {
     method: "POST",
     headers: baseHeaders,
-    body: JSON.stringify({ accountId, challengeId, signature }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(15000),
   });
   const data = await res.json();
@@ -218,7 +231,30 @@ async function submitSession(
     // include _diag with byte lengths, key prefix, and strategies tried)
     log.error("Auth", `submitSession failed: HTTP ${res.status} code=${data.code} error=${data.error}`);
     if (data._diag) {
-      log.error("Auth", `Server diagnostic: ${JSON.stringify(data._diag)}`);
+      // Surface all diagnostic fields prominently for debugging
+      console.group("%c[AUTH DIAGNOSTIC] Signature Verification Failed", "color:red;font-weight:bold");
+      console.log("Signature input chars:", data._diag.sigInputChars);
+      console.log("Signature decoded bytes:", data._diag.sigDecodedBytes);
+      console.log("Signature preview:", data._diag.sigPreview);
+      console.log("Signature full hex:", data._diag.sigFull);
+      console.log("Message bytes:", data._diag.msgBytes);
+      console.log("Message preview:", data._diag.msgPreview);
+      console.log("Message hex (first 200):", data._diag.msgHex);
+      console.log("Mirror Node public key:", data._diag.pubKeyHex);
+      console.log("Protobuf pubKeyPrefix:", data._diag.protobufPubKeyHex);
+      console.log("Protobuf sig (first 64):", data._diag.protobufSigHex);
+      console.log("Keys match:", data._diag.keyMatch);
+      console.log("Has raw signatureMap:", data._diag.hasRawMap);
+      console.log("Raw signatureMap chars:", data._diag.rawMapChars);
+      console.log("Strategies tried:", data._diag.strategies);
+      if (data._diag.selfTest) {
+        console.log("Self-test OK:", data._diag.selfTest.ok);
+        console.log("Self-test nacl:", data._diag.selfTest.naclOk);
+        console.log("Self-test webCrypto:", data._diag.selfTest.webCryptoOk);
+        console.log("Self-test details:", data._diag.selfTest.details);
+      }
+      console.log("Full _diag JSON:", JSON.stringify(data._diag, null, 2));
+      console.groupEnd();
     }
     throw new Error(data.error || `HTTP ${res.status}`);
   }
@@ -259,11 +295,24 @@ export async function authenticate(accountId: string): Promise<string> {
   log.info("Auth", `Challenge received: ${challenge.challengeId}`);
 
   // Step 2: Sign in wallet
-  const signature = await signChallengeMessage(accountId, challenge.message);
-  log.info("Auth", `Signature obtained (${signature.length} hex chars)`);
+  const { sigHex, rawSignatureMap } = await signChallengeMessage(accountId, challenge.message);
+  log.info("Auth", `Signature obtained (${sigHex.length} hex chars)`);
+
+  // Client-side diagnostic: log the message bytes the server should verify against
+  // This lets us cross-check if the server has the same message bytes
+  try {
+    const clientMsgBytes = new TextEncoder().encode(challenge.message);
+    const clientMsgHex = Array.from(clientMsgBytes.slice(0, 100)).map(b => b.toString(16).padStart(2, "0")).join("");
+    console.log(`[AUTH] Client message bytes: ${clientMsgBytes.length}B, hex(first 100B): ${clientMsgHex}`);
+    console.log(`[AUTH] Client message string (first 80): ${challenge.message.slice(0, 80).replace(/\n/g, "\\n")}`);
+    console.log(`[AUTH] Client sig hex: ${sigHex}`);
+    if (rawSignatureMap) {
+      console.log(`[AUTH] Client rawSignatureMap (${rawSignatureMap.length} chars): ${rawSignatureMap.slice(0, 80)}...`);
+    }
+  } catch { /* diagnostic only */ }
 
   // Step 3: Create session
-  const session = await submitSession(accountId, challenge.challengeId, signature);
+  const session = await submitSession(accountId, challenge.challengeId, sigHex, rawSignatureMap);
   log.info("Auth", `Session created, expires in ${session.ttlMs / 60000}min`);
 
   // Cache the session

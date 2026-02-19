@@ -40,6 +40,15 @@ const DAO_V2_CMT_PREFIX = "dao_v2_c:";
 const DAO_MAX_PROPOSALS = 100;
 const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
 
+/**
+ * Validate proposalId format — must be a safe alphanumeric+dash+underscore string.
+ * Prevents KV key injection via crafted proposal IDs (ghost audit).
+ * Max 80 chars prevents DoS via oversized keys.
+ */
+function isValidProposalId(id: string): boolean {
+  return typeof id === "string" && id.length > 0 && id.length <= 80 && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
 // Global lock for INDEX-mutating operations (create/delete proposals).
 const DAO_INDEX_LOCK_CONFIG: KvLockConfig = {
   key: "dao_proposals_lock",
@@ -318,7 +327,7 @@ export function registerDaoRoutes(app: Hono): void {
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
       const proposalId = c.req.param("id");
-      if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
+      if (!proposalId || !isValidProposalId(proposalId)) return c.json({ error: "Invalid proposal ID format" }, 400);
       const body = await c.req.json();
       const { title, description, category } = body;
 
@@ -358,7 +367,7 @@ export function registerDaoRoutes(app: Hono): void {
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
       const proposalId = c.req.param("id");
-      if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
+      if (!proposalId || !isValidProposalId(proposalId)) return c.json({ error: "Invalid proposal ID format" }, 400);
 
       // Index lock — modifies the proposal list
       const result = await withKvLock(DAO_INDEX_LOCK_CONFIG, async () => {
@@ -390,7 +399,7 @@ export function registerDaoRoutes(app: Hono): void {
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
       const proposalId = c.req.param("id");
-      if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
+      if (!proposalId || !isValidProposalId(proposalId)) return c.json({ error: "Invalid proposal ID format" }, 400);
       const body = await c.req.json();
       const { direction } = body;
       if (direction !== "for" && direction !== "against") return c.json({ error: "Direction must be 'for' or 'against'" }, 400);
@@ -440,7 +449,7 @@ export function registerDaoRoutes(app: Hono): void {
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
       const proposalId = c.req.param("id");
-      if (!proposalId) return c.json({ error: "Missing proposal ID" }, 400);
+      if (!proposalId || !isValidProposalId(proposalId)) return c.json({ error: "Invalid proposal ID format" }, 400);
 
       // Pre-lock: VIP eligibility + input validation
       const vipStatus = await verifyVipEligibilityFull(accountId);

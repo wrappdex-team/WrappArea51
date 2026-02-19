@@ -407,7 +407,7 @@ export async function signMessageViaWC(
   network: HederaNetwork,
   accountId: string,
   message: string,
-): Promise<{ signatures: any[] } | null> {
+): Promise<{ signatures: any[]; rawSignatureMap?: string } | null> {
   const client = await getSignClient();
   await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
@@ -436,13 +436,21 @@ export async function signMessageViaWC(
     console.log("[WC] signMessage raw result:", typeof result,
       result ? JSON.stringify(result).slice(0, 600) : "null");
 
+    // Capture the raw signatureMap string for server-side re-extraction fallback.
+    // This ensures the server has the full protobuf data even if client-side
+    // extraction gets wrong bytes (e.g., pubKeyPrefix false-positive on 0x1A 0x40).
+    let rawSignatureMap: string | undefined;
+    if (result && typeof result === "object" && typeof result.signatureMap === "string") {
+      rawSignatureMap = result.signatureMap;
+    }
+
     // Parse the WC response — wallets return many different formats
     const signatures = _parseSignMessageResponse(result);
     if (!signatures || signatures.length === 0) {
       console.warn("[WC] Could not extract signatures from WC response");
       return null;
     }
-    return { signatures };
+    return { signatures, rawSignatureMap };
   } catch (err: any) {
     console.warn("[WC] signMessage failed:", err?.message);
     return null;
@@ -762,11 +770,71 @@ function _parseSignMessageResponse(result: any): string[] {
 }
 
 /**
+ * Read a protobuf varint starting at `pos` in `bytes`.
+ * Returns { value, newPos } or null if the read fails.
+ */
+function _readVarint(bytes: Uint8Array, pos: number): { value: number; newPos: number } | null {
+  let result = 0;
+  let shift = 0;
+  while (pos < bytes.length) {
+    const byte = bytes[pos++];
+    result |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return { value: result, newPos: pos };
+    shift += 7;
+    if (shift > 35) break; // max 5 bytes for a 32-bit varint
+  }
+  return null;
+}
+
+/**
+ * Walk a protobuf SignaturePair message and extract the ed25519 field
+ * (field 3, wire type 2, expected length 64 bytes).
+ */
+function _extractFromSignaturePair(bytes: Uint8Array): Uint8Array | null {
+  let pos = 0;
+  while (pos < bytes.length) {
+    const tagResult = _readVarint(bytes, pos);
+    if (!tagResult) break;
+    pos = tagResult.newPos;
+    const fieldNum = tagResult.value >> 3;
+    const wireType = tagResult.value & 0x07;
+
+    if (wireType === 2) { // length-delimited
+      const lenResult = _readVarint(bytes, pos);
+      if (!lenResult) break;
+      pos = lenResult.newPos;
+      const fieldLen = lenResult.value;
+
+      // Field 3 = ed25519 signature (expected 64 bytes)
+      if (fieldNum === 3 && fieldLen === 64 && pos + 64 <= bytes.length) {
+        return bytes.slice(pos, pos + 64);
+      }
+      pos += fieldLen;
+    } else if (wireType === 0) { // varint — skip
+      const skip = _readVarint(bytes, pos);
+      if (!skip) break;
+      pos = skip.newPos;
+    } else {
+      break; // unsupported wire type
+    }
+  }
+  return null;
+}
+
+/**
  * Try to extract a raw ED25519 signature from a base64-encoded protobuf
- * SignatureMap. Scans for protobuf field tag 0x1A (field 3 = ed25519,
- * wire type 2 = length-delimited) followed by length byte 0x40 (64 bytes).
- * Falls back to extracting the LAST 64 bytes if no tag is found (some
- * wallets return a simplified format).
+ * SignatureMap.
+ *
+ * Strategy 1 (proper parsing): Walk the protobuf structure —
+ *   SignatureMap.sigPair (field 1) → SignaturePair → ed25519 (field 3).
+ *   This correctly skips pubKeyPrefix data and is not fooled by
+ *   byte patterns (0x1A 0x40) that happen to appear in field data.
+ *
+ * Strategy 2 (legacy byte scan): Scan for the 0x1A 0x40 tag pair.
+ *   Kept as a fallback for non-standard wallet protobuf layouts.
+ *
+ * Strategy 3 (heuristics): Exact 64-byte payload or last-64-byte extraction.
+ *
  * Returns the signature as a hex string, or null if not found.
  */
 function _extractED25519FromProtobuf(base64Str: string): string | null {
@@ -775,34 +843,71 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-    console.log("[WC] Protobuf decode: " + bytes.length + " bytes, first 8: " +
-      Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join(" "));
+    console.log("[WC] Protobuf decode: " + bytes.length + " bytes, first 12: " +
+      Array.from(bytes.slice(0, 12)).map(b => b.toString(16).padStart(2, "0")).join(" "));
 
-    // Primary: scan for ED25519 field tag 0x1A with length 0x40 (64 bytes)
+    // ── Strategy 1: Proper protobuf walk ──────────────────────────────
+    // Parse SignatureMap → repeated SignaturePair (field 1) → ed25519 (field 3)
+    let pos = 0;
+    while (pos < bytes.length) {
+      const tagResult = _readVarint(bytes, pos);
+      if (!tagResult) break;
+      pos = tagResult.newPos;
+      const fieldNum = tagResult.value >> 3;
+      const wireType = tagResult.value & 0x07;
+
+      if (wireType === 2) { // length-delimited
+        const lenResult = _readVarint(bytes, pos);
+        if (!lenResult) break;
+        pos = lenResult.newPos;
+        const fieldLen = lenResult.value;
+
+        if (fieldNum === 1 && pos + fieldLen <= bytes.length) {
+          // field 1 = sigPair (nested SignaturePair message)
+          const sigPairBytes = bytes.slice(pos, pos + fieldLen);
+          const ed25519Sig = _extractFromSignaturePair(sigPairBytes);
+          if (ed25519Sig && ed25519Sig.length === 64) {
+            console.log("[WC] Protobuf: proper parse found ED25519 sig at sigPair offset");
+            return Array.from(ed25519Sig).map(b => b.toString(16).padStart(2, "0")).join("");
+          }
+        }
+        pos += fieldLen;
+      } else if (wireType === 0) {
+        const skip = _readVarint(bytes, pos);
+        if (!skip) break;
+        pos = skip.newPos;
+      } else {
+        break;
+      }
+    }
+
+    // ── Strategy 2: Legacy byte-pattern scan (0x1A 0x40) ─────────────
+    // Fallback for non-standard protobuf layouts. The proper parser above
+    // should handle all compliant wallets; this catches edge cases.
     for (let i = 0; i < bytes.length - 65; i++) {
-      if (bytes[i] === 0x1A && bytes[i + 1] === 0x40) {
+      if (bytes[i] === 0x1A && bytes[i + 1] === 0x40 && i + 66 <= bytes.length) {
         const sig = bytes.slice(i + 2, i + 66);
-        console.log("[WC] Found ED25519 tag at offset " + i);
+        console.log("[WC] Protobuf: legacy byte scan found 0x1A 0x40 at offset " + i);
         return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
       }
     }
 
-    // Fallback: if total is exactly 64 bytes, it IS the signature (no wrapper)
+    // ── Strategy 3: Heuristics ────────────────────────────────────────
+
+    // Exact 64 bytes = raw signature (no protobuf wrapper)
     if (bytes.length === 64) {
       console.log("[WC] Protobuf decode: exactly 64 bytes — treating as raw signature");
       return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    // Fallback: if total length suggests [pubKeyPrefix + signature] format
-    // (e.g., 4-byte prefix + 64-byte sig = 68+ bytes with protobuf overhead)
-    // Try extracting last 64 bytes as a heuristic
+    // Last-64-bytes heuristic for small payloads (e.g., pubKeyPrefix + sig)
     if (bytes.length > 64 && bytes.length <= 128) {
-      console.log("[WC] Protobuf: no 0x1A 0x40 tag found — trying last 64 bytes as heuristic (" + bytes.length + "B total)");
+      console.log("[WC] Protobuf: no tag found — trying last 64 bytes as heuristic (" + bytes.length + "B total)");
       const sig = bytes.slice(bytes.length - 64);
       return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    console.warn("[WC] Protobuf: no ED25519 field tag found in " + bytes.length + " bytes");
+    console.warn("[WC] Protobuf: all extraction strategies failed for " + bytes.length + " bytes");
   } catch (e: any) {
     console.warn("[WC] Protobuf decode error:", e?.message);
   }

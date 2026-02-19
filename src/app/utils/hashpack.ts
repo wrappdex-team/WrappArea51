@@ -41,7 +41,7 @@ import {
   subscribeWCModal,
 } from "./wallet-core";
 
-// ── Mirror Node Endpoints ──────────────────────────────────────────
+// ── Mirror Node Endpoints ─────────────────��────────────────────────
 
 const MIRROR_NODES: Record<HederaNetwork, string> = {
   mainnet: "https://mainnet-public.mirrornode.hedera.com",
@@ -507,7 +507,7 @@ export async function signTransaction(
 export async function signMessage(
   accountId: string,
   message: string,
-): Promise<{ signatures: any } | null> {
+): Promise<{ signatures: any; rawSignatureMap?: string } | null> {
   if (!_activeWcTopic) return null;
   try {
     return await signMessageViaWC(_activeWcTopic, _activeNetwork, accountId, message);
