@@ -20,10 +20,9 @@
  *   WBNB:   0.0.1157005  (8 decimals,  LayerZero bridge)
  *   WAVAX:  0.0.1157020  (8 decimals,  LayerZero bridge)
  *
- * HSuite Smart Node Integration (future):
- *   Pool creation and on-chain execution will route through HSuite validators.
- *   Docs: https://docs.hsuite.network/developers
- *   SDK:  https://github.com/HSuiteNetwork/smart-app
+ * NOTE: HSuite SmartNode integration has been removed from the roadmap.
+ * On-chain execution now uses the Hedera-native atomic CryptoTransfer model
+ * via atomic-swap-client.ts → atomic-signer.ts (server co-sign).
  */
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";

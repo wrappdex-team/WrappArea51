@@ -29,20 +29,6 @@ import type {
   HashPackConnectionResult,
   HashPackProfile,
 } from "../utils/hashpack";
-import {
-  isHashConnectSDKAvailable,
-  connectViaHashConnect,
-  connectViaMirrorNode,
-  disconnectHashConnect,
-  restoreSession,
-  onStaleSession,
-} from "../utils/hashpack";
-import {
-  connectToSmartNode,
-  disconnectSmartNode,
-  validateNFT,
-  type HSuiteNFTStatus,
-} from "../utils/hsuite";
 
 interface Wallet {
   address: string;
@@ -86,14 +72,6 @@ interface WalletContextType {
   disconnectMetaMask: () => void;
   refreshMetaMaskBalance: () => Promise<void>;
   signEvmMessage: (message: string) => Promise<string>;
-
-  // HSuite
-  hSuiteNFTStatus: HSuiteNFTStatus | null;
-  isConnectingHSuite: boolean;
-  hSuiteConnectionError: string | null;
-  connectHSuite: () => Promise<boolean>;
-  disconnectHSuite: () => void;
-  refreshHSuiteNFTStatus: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -126,12 +104,6 @@ const DEFAULT_WALLET: WalletContextType = {
   disconnectMetaMask: () => {},
   refreshMetaMaskBalance: async () => {},
   signEvmMessage: async () => "",
-  hSuiteNFTStatus: null,
-  isConnectingHSuite: false,
-  hSuiteConnectionError: null,
-  connectHSuite: async () => false,
-  disconnectHSuite: () => {},
-  refreshHSuiteNFTStatus: async () => {},
 };
 
 export function WalletProvider({ children }: { children: ReactNode }) {
@@ -159,11 +131,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [solPrice, setSolPrice] = useState(185);
   const [isConnectingMetaMask, setIsConnectingMetaMask] = useState(false);
   const [metaMaskError, setMetaMaskError] = useState<string | null>(null);
-
-  // HSuite state
-  const [hSuiteNFTStatus, setHSuiteNFTStatus] = useState<HSuiteNFTStatus | null>(null);
-  const [isConnectingHSuite, setIsConnectingHSuite] = useState(false);
-  const [hSuiteConnectionError, setHSuiteConnectionError] = useState<string | null>(null);
 
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metaMaskUnsubRef = useRef<(() => void) | null>(null);
@@ -250,21 +217,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     fetchEthPrice().then(setEthPrice);
     fetchSolPrice().then(setSolPrice);
   }, []);
-
-  // Auto-connect to HSuite when HashPack session is active
-  useEffect(() => {
-    if (hashPackSession?.accountId) {
-      connectToSmartNode(hederaNetwork)
-        .then((result) => {
-          if (result.success) {
-            validateNFT(hashPackSession.accountId, hederaNetwork)
-              .then(setHSuiteNFTStatus)
-              .catch(() => {});
-          }
-        })
-        .catch(() => {});
-    }
-  }, [hashPackSession?.accountId, hederaNetwork]);
 
   // MetaMask event subscriptions
   useEffect(() => {
@@ -547,45 +499,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (updated) setHederaAccount(updated);
   }, [hederaAccount]);
 
-  // ─── HSuite ─────────────────────────────────────────────────
-
-  const connectHSuite = useCallback(async (): Promise<boolean> => {
-    setIsConnectingHSuite(true);
-    setHSuiteConnectionError(null);
-    try {
-      const result = await connectToSmartNode(hederaNetwork);
-      if (!result.success) {
-        setHSuiteConnectionError(result.error || "Failed to connect to HSuite SmartNode.");
-        setIsConnectingHSuite(false);
-        return false;
-      }
-      if (hashPackSession?.accountId) {
-        const nftStatus = await validateNFT(hashPackSession.accountId, hederaNetwork);
-        setHSuiteNFTStatus(nftStatus);
-      }
-      setIsConnectingHSuite(false);
-      return true;
-    } catch (error: any) {
-      setHSuiteConnectionError(error.message || "Failed to connect to HSuite.");
-      setIsConnectingHSuite(false);
-      return false;
-    }
-  }, [hederaNetwork, hashPackSession?.accountId]);
-
-  const handleDisconnectHSuite = useCallback(() => {
-    setHSuiteNFTStatus(null);
-    setHSuiteConnectionError(null);
-    disconnectSmartNode();
-  }, []);
-
-  const refreshHSuiteNFTStatus = useCallback(async () => {
-    if (!hashPackSession?.accountId) return;
-    try {
-      const nftStatus = await validateNFT(hashPackSession.accountId, hederaNetwork);
-      setHSuiteNFTStatus(nftStatus);
-    } catch { /* non-critical */ }
-  }, [hashPackSession?.accountId, hederaNetwork]);
-
   // ─── Wallet connections ─────────────────────────────────────
   // Real wallet connections are handled by connectHashPack, connectHashPackMirror,
   // and connectMetaMask above. This stub satisfies the interface for external
@@ -611,7 +524,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const disconnectAll = () => {
     handleDisconnectHashPack();
     handleDisconnectMetaMask();
-    handleDisconnectHSuite();
     setConnectedWallets([]);
   };
 
@@ -647,12 +559,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         disconnectMetaMask: handleDisconnectMetaMask,
         refreshMetaMaskBalance,
         signEvmMessage,
-        hSuiteNFTStatus,
-        isConnectingHSuite,
-        hSuiteConnectionError,
-        connectHSuite,
-        disconnectHSuite: handleDisconnectHSuite,
-        refreshHSuiteNFTStatus,
       }}
     >
       {children}

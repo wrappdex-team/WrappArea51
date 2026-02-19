@@ -29,7 +29,6 @@ import { recordTrade } from "../utils/orderbook";
 import { fetchCoinPrices } from "../utils/coingecko";
 import { formatHbar } from "../utils/hedera";
 import { WalletConnectModal } from "./WalletConnectModal";
-import { orchestrateSwap } from "../utils/hsuite";
 import {
   executeSaucerSwap,
   SAUCERSWAP_PARTNER_ID,
@@ -49,7 +48,7 @@ const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
 // │  SENIOR DEV NOTE #11 — SAUCERSWAP SWAP PRODUCTION LOCK             │
 // │                                                                    │
 // │  The Hedera swap tab (Buy/Sell HBAR) is production-ready and       │
-// │  routes through SaucerSwap V1 with HSuite fallback. It is locked   │
+// │  routes through SaucerSwap V1. It is locked                        │
 // │  behind a test gate so ONLY the owner wallet (0.0.518487) can      │
 // │  execute live swaps until end-to-end testing is complete on a      │
 // │  deployed Vercel URL.                                              │
@@ -306,52 +305,27 @@ export function BuySell() {
           return;
         }
         log.debug("BuySell", "SauceSwap failed", saucerResult.error);
-        setSwapError(`SauceSwap: ${saucerResult.error} — trying HSuite...`);
+        setSwapError(`SaucerSwap: ${saucerResult.error}`);
       } catch (err: any) {
         log.debug("BuySell", "SauceSwap error", err?.message);
-      }
-
-      // HSuite fallback
-      try {
-        const result = await orchestrateSwap(
-          inputSymbol,
-          outputSymbol,
-          inputAmt,
-          effectiveSlippage,
-          accountId,
-          hederaNetwork,
-          async (txBytes: Uint8Array) => {
-            const signed = await hashPackSign(accountId, txBytes);
-            if (!signed) throw new Error("Transaction rejected by wallet");
-            return signed;
-          }
-        );
-
-        if (result.success) {
-          onSwapSuccess(result.transactionId || null, "hsuite", accountId);
-          return;
-        }
-        log.debug("BuySell", "HSuite failed", result.error);
-      } catch (err: any) {
-        log.debug("BuySell", "HSuite error", err?.message);
       }
     }
 
     // ── No simulation fallback — production mode only ──
-    // If we reach here, the wallet is either not connected or both
-    // SaucerSwap and HSuite routers failed. Show the real error.
+    // If we reach here, the wallet is either not connected or
+    // SaucerSwap router failed. Show the real error.
     if (!accountId) {
       setSwapStatus("error");
       setSwapError("Connect your HashPack wallet to execute swaps.");
     } else {
       setSwapStatus("error");
       if (!swapError) {
-        setSwapError("Both SaucerSwap and HSuite routers failed. Please try again or check your network connection.");
+        setSwapError("SaucerSwap router failed. Please try again or check your network connection.");
       }
     }
   };
 
-  const onSwapSuccess = (txId: string | null, router: "saucerswap" | "hsuite", accountId: string) => {
+  const onSwapSuccess = (txId: string | null, router: "saucerswap", accountId: string) => {
     // VIP cash register
     try {
       const vp = loadVipPrefs();
@@ -523,7 +497,7 @@ export function BuySell() {
                   Swap Testing in Progress
                 </h4>
                 <p className={`text-sm leading-relaxed max-w-sm mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
-                  The on-chain swap engine (SaucerSwap V1 + HSuite fallback) is currently locked for
+                  The on-chain swap engine (SaucerSwap V1) is currently locked for
                   founder testing. It will be available to all users once the full swap flow has been
                   verified on a live deployment.
                 </p>
@@ -539,9 +513,6 @@ export function BuySell() {
                 <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-emerald-900/20 text-emerald-400/50 border border-emerald-500/10" : "bg-emerald-50 text-emerald-700/50 border border-emerald-200/50"}`}>
                   <Zap className="w-2.5 h-2.5" />
                   SauceSwap V1
-                </span>
-                <span className={isDark ? "text-slate-600" : "text-gray-400"}>
-                  HSuite fallback
                 </span>
               </div>
               <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -826,9 +797,6 @@ export function BuySell() {
                     <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-emerald-900/20 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
                       <Zap className="w-2.5 h-2.5" />
                       SauceSwap V1
-                    </span>
-                    <span className={isDark ? "text-slate-500" : "text-gray-400"}>
-                      HSuite fallback
                     </span>
                   </div>
                 )}

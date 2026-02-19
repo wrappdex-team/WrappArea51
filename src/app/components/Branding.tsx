@@ -943,7 +943,7 @@ export function Branding() {
                 </li>
                 <li>
                   <strong className={isDark ? "text-cyan-400" : "text-cyan-600"}>Full production integrations, not roadmap promises.</strong>{" "}
-                  SaucerSwap, Chainlink oracles, HSuite SmartNodes, Bonzo Finance
+                  SaucerSwap, Chainlink oracles, Bonzo Finance
                   lending, three cross-chain bridges (Squid, HashPort, Stargate),
                   fiat on-ramp, and WalletConnect v2. All live. All in the
                   codebase today.

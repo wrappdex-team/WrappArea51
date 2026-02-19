@@ -1947,7 +1947,7 @@ export function WhitePaper() {
               icon={Target}
               items={[
                 "Formal smart contract audit (Weighted Pool Factory)",
-                "HSuite SmartNode integration for on-chain execution",
+                "Threshold-key DAO multisig for pool governance",
                 "Native staking contracts",
                 "HBAR.ħ lending market on Bonzo",
                 "Limit order types",
@@ -2053,7 +2053,7 @@ export function WhitePaper() {
             {[
               { name: "SaucerSwap", desc: "Primary DEX", color: "from-green-500 to-emerald-500" },
               { name: "Chainlink", desc: "Oracle feeds", color: "from-blue-600 to-blue-500" },
-              { name: "HSuite", desc: "DEX aggregation", color: "from-yellow-500 to-amber-500" },
+              { name: "HSuite", desc: "Ecosystem partner", color: "from-yellow-500 to-amber-500" },
               { name: "Bonzo Finance", desc: "Lending/borrowing", color: "from-purple-500 to-violet-500" },
               { name: "HashPort", desc: "Hedera bridge", color: "from-cyan-500 to-blue-500" },
               { name: "Squid", desc: "60+ chains", color: "from-indigo-600 to-blue-600" },

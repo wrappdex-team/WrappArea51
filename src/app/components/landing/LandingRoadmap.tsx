@@ -47,7 +47,7 @@ const roadmap: Quarter[] = [
     phase: "next",
     items: [
       { text: "Formal smart contract audit (Weighted Pool Factory)", status: "planned" },
-      { text: "HSuite SmartNode integration for on-chain execution", status: "planned" },
+      { text: "Threshold-key DAO multisig for pool governance", status: "planned" },
       { text: "Native staking contracts", status: "planned" },
       { text: "HBAR.ħ lending market on Bonzo", status: "planned" },
       { text: "Limit order types", status: "planned" },

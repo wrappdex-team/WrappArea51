@@ -5,7 +5,7 @@
  * account, name, symbol) from the Hedera mainnet/testnet Mirror Node REST API.
  *
  * This is used to hydrate fallback/hardcoded token data across the app
- * (hsuite.ts, smart-liquidity.ts, saucerswap.ts) with verified on-chain
+ * (smart-liquidity.ts, saucerswap.ts) with verified on-chain
  * data so we never show fabricated token IDs or supply numbers.
  *
  * Mirror Node API docs: https://docs.hedera.com/hedera/sdks-and-apis/rest-api

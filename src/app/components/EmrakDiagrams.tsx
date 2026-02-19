@@ -446,7 +446,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
         </div>
       </motion.div>
 
-      {/* Selection logic */}
+      {/* Smart Router details */}
       <motion.div
         className={`rounded-xl border p-4 ${
           isDark ? "bg-amber-500/[0.03] border-amber-500/[0.10]" : "bg-amber-50 border-amber-200"
@@ -479,7 +479,7 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
         </div>
       </motion.div>
 
-      {/* HSuite integration */}
+      {/* External DEX aggregation (planned) */}
       <motion.div
         className={`mt-3 rounded-xl border p-4 ${
           isDark ? "bg-cyan-500/[0.03] border-cyan-500/[0.10]" : "bg-cyan-50 border-cyan-200"
@@ -511,8 +511,8 @@ function SmartRouterDiagram({ isDark }: { isDark: boolean }) {
           ))}
         </div>
         <p className={`text-[10px] leading-snug ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-          Currently WRAPpDEX pools only. Future roadmap: HSuite SmartNode integration for cross-DEX
-          aggregation across SaucerSwap, Pangolin, HeliSwap. Not yet implemented.
+          Currently WRAPpDEX pools only. Future roadmap: cross-DEX aggregation via
+          1inch and native multi-hop routing across SaucerSwap, Pangolin, HeliSwap.
         </p>
       </motion.div>
     </div>
