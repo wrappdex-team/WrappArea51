@@ -63,7 +63,7 @@ function StatCard({ label, value, isDark, accent }: { label: string; value: stri
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
 // │  The CreatePoolModal currently shows only AmmPrelaunchBanner.      │
-// │  When AMM_PRELAUNCH_LOCKED is flipped to false in amm.ts,         │
+// │  When AMM_PRELAUNCH_LOCKED is flipped to false in atomic-signer,  │
 // │  restore the original form body and remove the banner import.      │
 // └─────────────────────────────────────────────────────────────────────┘
 function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {

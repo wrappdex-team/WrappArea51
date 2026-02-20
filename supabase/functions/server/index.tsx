@@ -4,7 +4,7 @@
 //
 // Modules: Auth, VIP, Spin Wheel, News, Atomic Signer, VIP Chat, DAO, Storage, Health, 1inch
 // Auth:    ED25519 challenge-response sessions (30-min TTL, KV-backed)
-// AMM:     Hedera-native atomic CryptoTransfer co-signing oracle (replaced KV-backed amm.ts)
+// AMM:     Hedera-native atomic CryptoTransfer co-signing oracle (atomic-signer.ts)
 // Storage: All state persisted in KV (survives cold starts, multi-instance safe)
 // ═══════════════════════════════════════════════════════════════════════
 

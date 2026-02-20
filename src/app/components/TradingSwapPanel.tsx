@@ -122,7 +122,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
   // │  ammPrelaunch is set from the kill-switch endpoint's               │
   // │  prelaunchLocked field. When true, the entire swap body is         │
   // │  replaced with AmmPrelaunchBanner. Remove this state +             │
-  // │  conditional when AMM_PRELAUNCH_LOCKED = false in amm.ts.          │
+  // │  conditional when AMM_PRELAUNCH_LOCKED = false in atomic-signer.   │
   // └─────────────────────────────────────────────────────────────────────┘
   const [ammPrelaunch, setAmmPrelaunch] = useState(true);
 

@@ -1,12 +1,9 @@
 /**
- * FiatTopUp — native glass-morphism fiat on-ramp UI.
+ * FiatTopUp — Native fiat on-ramp UI (glass-morphism).
  *
- * Replaces the ChangeNOW fiat iframe with a fully-styled native component
- * that matches Wrappdex's dark glass-morphism aesthetic. The user picks
- * currency + amount, then clicks "Buy" which opens ChangeNOW's fiat
- * purchase flow in a new tab with pre-filled parameters.
- *
- * No API key required — uses ChangeNOW's partner redirect URL.
+ * User selects currency + amount, clicks "Buy" → opens ChangeNOW's fiat
+ * purchase flow in a new tab with pre-filled partner redirect parameters.
+ * No API key required.
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -463,7 +460,7 @@ export function FiatTopUp() {
   );
 }
 
-// ── Sub-component ────────────────────────────────────────────────────
+// ── Sub-component ───────���────────────────────────────────────────────
 
 function FeatureCard({ isDark, icon, title, desc }: {
   isDark: boolean; icon: React.ReactNode; title: string; desc: string;

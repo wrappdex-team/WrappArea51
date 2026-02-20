@@ -66,7 +66,7 @@ const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).t
  * Route Architecture — wrappdex.io
  *
  * /                → Institutional landing page (no DEX chrome)
- * /markets         → DEX Dashboard (formerly index)
+ * /markets         → DEX Dashboard (default DEX entry)
  * /trading         → Trading terminal
  * /swap            → Token swap
  * /buy-sell        → Fiat on/off ramp

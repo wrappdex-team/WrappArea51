@@ -98,9 +98,9 @@ export const MAX_SLIPPAGE_BPS = 500; // 5%
 // SECTION 2: Token Whitelist
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Canonical HTS token IDs on Hedera mainnet. Same whitelist as the server
-// AMM (amm.ts) — kept in sync. Bridge token decimals MUST be confirmed
-// on HashScan before mainnet trading goes live.
+// Canonical HTS token IDs on Hedera mainnet. Same whitelist as
+// atomic-signer.ts (server) — kept in sync. Bridge token decimals
+// MUST be confirmed on HashScan before mainnet trading goes live.
 //
 // Oracle price resolution order:
 //   1. Exact token ID match in SaucerSwap /tokens
@@ -280,7 +280,7 @@ export function findPoolForPair(symbolA: string, symbolB: string): PoolAccountDe
 //
 // All math uses BigInt to avoid IEEE 754 precision loss.
 // These functions are PURE — no side effects, no network calls.
-// Identical to server-side math (amm.ts) for deterministic verification.
+// Identical to server-side math in atomic-signer.ts for deterministic verification.
 
 /**
  * Integer square root (Babylonian method).

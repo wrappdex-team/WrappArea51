@@ -1,8 +1,6 @@
 /**
  * Site Activity — Full-width live activity feed with admin controls.
- * Replaces the old PortfolioWidget + RecentTradesFeed dual panel.
- * Backend-ready: network-aware storage, admin reset for testnet/mainnet,
- * live data polling, and structured for future API integration.
+ * Network-aware localStorage persistence, admin reset, live polling.
  */
 
 import { useState, useEffect, useCallback } from "react";

@@ -173,11 +173,9 @@ export function DAO() {
   const isOwner = accountId === DAO_FOUNDER_ACCOUNT;
 
   // ── ED25519 Session State (security review SEC-02) ────────────────────────
-  // All mutating DAO actions (vote, comment, create, edit, delete) now
-  // require an ED25519 session — the spoofable X-Account-Id header
-  // fallback has been removed from the server's requireAuth().
-  // We track session status for UI indicators and auto-authenticate
-  // before the first mutating action.
+  // All mutating DAO actions (vote, comment, create, edit, delete) require
+  // an ED25519 session (SEC-01). Session status is tracked for UI indicators
+  // and auto-authenticated before the first mutating action.
 
   const [isAuthenticated, setIsAuthenticated] = useState(() =>
     accountId ? hasValidSession(accountId) : false

@@ -1,12 +1,9 @@
 /**
- * CrossChainExchange — native glass-morphism cross-chain swap UI.
+ * CrossChainExchange — Native cross-chain swap UI (glass-morphism).
  *
- * Replaces the ChangeNOW iframe widget with a fully-styled native component
- * that matches Wrappdex's dark glass-morphism aesthetic. The actual exchange
- * is initiated by redirecting to ChangeNOW with pre-filled parameters via
- * their partner link, so no API key is required for the basic flow.
- *
- * Approximate exchange rates are calculated from Binance/CoinGecko prices.
+ * Redirects to ChangeNOW with pre-filled parameters via partner link;
+ * no API key required for the basic flow. Exchange rates estimated
+ * from Binance/CoinGecko.
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";

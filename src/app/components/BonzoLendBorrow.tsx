@@ -1,14 +1,12 @@
 /**
- * BonzoLendBorrow — Functional Lend & Borrow widget for Bonzo Finance (Aave V2 on Hedera)
+ * BonzoLendBorrow — Lend & Borrow widget for Bonzo Finance (Aave V2 fork on Hedera).
  *
- * Replaces the static mockup in the DeFi "Lend & Borrow" tab with:
- *  - Live market data from Bonzo Data API + Mirror Node fallback
- *  - Sub-tabs: Supply Markets / Borrow Markets / My Positions
- *  - Action modals: Supply, Withdraw, Borrow, Repay
- *  - Health factor & borrow power display
- *  - Toast notifications for success/error
+ * Live market data from Bonzo Data API + Mirror Node fallback.
+ * Sub-tabs: Supply Markets / Borrow Markets / My Positions.
+ * Action modals: Supply, Withdraw, Borrow, Repay.
+ * Health factor & borrow power display with toast notifications.
  *
- * Focused tokens: HBAR, USDC, WBTC, WETH, LINK, AAVE, DAI, BONZO
+ * Supported tokens: HBAR, USDC, WBTC, WETH, LINK, AAVE, DAI, BONZO
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";

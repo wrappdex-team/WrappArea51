@@ -2,7 +2,7 @@
 // ATOMIC SIGNER — Hedera-Native CryptoTransfer Co-Signing Oracle
 // ══════════════════════════════════════════════════════════════════════
 //
-// Replaces the KV-backed AMM (amm.ts). This module is a SIGNING ORACLE:
+// This module is the WRAPpDEX signing oracle:
 //   - It does NOT hold pool state (reserves are on-chain token balances)
 //   - It does NOT compute swap amounts for clients (clients compute locally)
 //   - It VALIDATES swap math independently (re-reads reserves, recomputes)
@@ -57,7 +57,6 @@ const TOTAL_SWAP_FEE_BPS = 25;
 const BPS_BASE = 10_000n;
 
 // ── Kill Switch ──────────────────────────────────────────────────────
-// Reuses the same KV key as the old AMM for seamless migration.
 // Owner-only circuit breaker. When active, all co-signing is rejected.
 // LP removals remain allowed (users must always withdraw).
 
@@ -961,28 +960,24 @@ export function registerAtomicSignerRoutes(app: Hono) {
   });
 
   // ══════════════════════════════════════════════════════════════════════
-  // BACKWARD-COMPAT SHIMS — Old /amm/* kill switch endpoints
+  // BACKWARD-COMPAT SHIMS — /amm/* kill switch endpoints
   // ══════════════════════════════════════════════════════════════════════
-  // The frontend (TradingSwapPanel.tsx, OwnerControlPanel.tsx) still polls
-  // the old /amm/kill-switch, /amm/kill, /amm/resume paths from amm.ts.
-  // These shims serve the SAME response format using the SAME KV key,
-  // preventing 404s until the frontend is rewired to /atomic/* endpoints.
+  // TradingSwapPanel.tsx and OwnerControlPanel.tsx poll /amm/kill-switch,
+  // /amm/kill, and /amm/resume. These shims proxy to the same KV key as
+  // /atomic/admin/kill-switch, preventing 404s.
   //
-  // TODO: Remove these shims after frontend migration to atomic endpoints.
+  // TODO: Rewire frontend to /atomic/* endpoints and remove these shims.
   // ══════════════════════════════════════════════════════════════════════
 
   // GET /amm/kill-switch — Public: check if AMM is halted
-  // Response format matches old amm.ts exactly (active, activatedAt, reason, prelaunchLocked)
   app.get(`${R}/amm/kill-switch`, async (c) => {
     try {
       const state: AmmKillState | null = await kv.get(AMM_KILL_SWITCH_KEY);
-      // prelaunchLocked: false — the atomic system replaces the old prelaunch lock.
-      // All pools are paused at the registry level; the prelaunch concept is retired.
       return c.json({
         active: state?.active ?? false,
         activatedAt: state?.activatedAt ?? null,
         reason: state?.reason ?? null,
-        prelaunchLocked: false,
+        prelaunchLocked: false, // Prelaunch concept retired — pools paused at registry level
       });
     } catch {
       return c.json({ active: false, prelaunchLocked: false }, 500);

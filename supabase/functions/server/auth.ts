@@ -511,10 +511,8 @@ const ADMIN_AUDIT_MAX_ENTRIES = 500;
  * Auth: ED25519 session token (X-Session-Token) ONLY — cryptographic proof
  * that the caller controls the owner wallet's private key.
  *
- * The X-Account-Id header fallback has been REMOVED (security review SEC-01).
- * That header is client-supplied and trivially spoofable — any attacker
- * could execute owner-level operations with a single curl command.
- * All owner operations now require a signed ED25519 session.
+ * SEC-01: No header-based auth fallback. X-Account-Id is client-supplied
+ * and trivially spoofable. All owner operations require a signed ED25519 session.
  */
 export async function requireOwner(c: any): Promise<{ accountId: string } | Response> {
   // ED25519 session-based auth — cryptographic proof of wallet ownership

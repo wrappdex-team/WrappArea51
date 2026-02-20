@@ -228,7 +228,7 @@ export function PoolCreator() {
   // ┌─────────────────────────────────────────────────────────────────┐
   // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                            │
   // │  Remove this early-return block when AMM_PRELAUNCH_LOCKED      │
-  // │  is set to false in amm.ts and redeploy.                       │
+  // │  is set to false in atomic-signer.ts and redeploy.             │
   // └─────────────────────────────────────────────────────────────────┘
   const AMM_PRELAUNCH_UI_LOCKED = true;
   if (AMM_PRELAUNCH_UI_LOCKED) {

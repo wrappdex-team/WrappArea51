@@ -20,9 +20,10 @@
  *   WBNB:   0.0.1157005  (8 decimals,  LayerZero bridge)
  *   WAVAX:  0.0.1157020  (8 decimals,  LayerZero bridge)
  *
- * NOTE: HSuite SmartNode integration has been removed from the roadmap.
- * On-chain execution now uses the Hedera-native atomic CryptoTransfer model
+ * On-chain execution uses the Hedera-native atomic CryptoTransfer model
  * via atomic-swap-client.ts → atomic-signer.ts (server co-sign).
+ * This module is the legacy KV-backed AMM client; see atomic-swap-client.ts
+ * for the active settlement layer.
  */
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";

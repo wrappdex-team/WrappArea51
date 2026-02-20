@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════════════
 // ╔═══════════════════════════════════════════════════════════════════╗
-// ║  DEPRECATED — KV-BACKED AMM (REPLACED BY atomic-signer.ts)      ║
+// ║  DEPRECATED — KV-BACKED AMM (superseded by atomic-signer.ts)    ║
 // ║                                                                   ║
 // ║  This file is NOT imported in index.tsx. registerAmmRoutes() is   ║
 // ║  NEVER called. All /amm/* and /pools/* routes from this module    ║
@@ -37,12 +37,11 @@
 //   - AMM_PRELAUNCH_LOCKED = true (never went live)
 //
 // SENIOR DEV NOTE [LEGACY-01]:
-//   This module was rated 5.5/10 during architecture review. The core
-//   weakness: pool reserves exist only in KV, not on-chain. Users must
-//   trust the server to maintain reserve integrity. The atomic model
-//   (atomic-signer.ts + atomic-swap-engine.ts) eliminates this by using
-//   real Hedera account balances as reserves, verifiable via Mirror Node.
-//   See atomic-swap-types.ts [ATOMIC-01] for the decentralization roadmap.
+//   Rated 5.5/10 during architecture review. Core weakness: pool reserves
+//   exist only in KV, not on-chain — users must trust the server for
+//   reserve integrity. The atomic model (atomic-signer.ts +
+//   atomic-swap-engine.ts) uses real Hedera account balances as reserves,
+//   verifiable via Mirror Node. See [ATOMIC-01] for decentralization roadmap.
 //
 // ══════════════════════════════════════════════════════════════════════
 

@@ -387,7 +387,7 @@ export async function verifyTokenDecimals(): Promise<DecimalVerification[]> {
         log.info("HTS",
           `DECIMAL MISMATCH: ${token.symbol} (${token.htsId}) — ` +
           `registry=${token.decimals}, on-chain=${onChainDecimals}. ` +
-          `UPDATE amm.ts, saucerswap.ts, smart-liquidity.ts, Wallet.tsx!`
+          `UPDATE atomic-swap-engine.ts, saucerswap.ts, smart-liquidity.ts, Wallet.tsx!`
         );
       }
     } catch (err) {

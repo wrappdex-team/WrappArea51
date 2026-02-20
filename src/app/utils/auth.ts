@@ -227,10 +227,8 @@ async function submitSession(
   });
   const data = await res.json();
   if (!res.ok) {
-    // Log server error response. Diagnostic details (signature bytes, public
-    // keys, message hex, self-test results) are now logged SERVER-SIDE ONLY
-    // and are no longer returned in the HTTP response body. Check server
-    // logs (tagged [AUTH][DIAG]) for signature verification troubleshooting.
+    // Diagnostics (sig bytes, pubkeys, msg hex, self-test) logged server-side
+    // only — tagged [AUTH][DIAG]. Never returned in the HTTP response body.
     log.error("Auth", `submitSession failed: HTTP ${res.status} code=${data.code} error=${data.error}`);
     throw new Error(data.error || `HTTP ${res.status}`);
   }

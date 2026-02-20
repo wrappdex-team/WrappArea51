@@ -5,9 +5,9 @@
 // All operations authenticated via ED25519 challenge-response session.
 // The owner must sign a message in their HashPack wallet to prove they
 // control 0.0.518487's private key. The resulting session token (30-min
-// TTL) is sent as X-Session-Token on every admin request. The server's
-// requireOwner() ONLY accepts ED25519 sessions — the spoofable
-// X-Account-Id header fallback has been removed (security review SEC-01).
+// TTL) is sent as X-Session-Token on every admin request.
+//
+// SEC-01: requireOwner() accepts ED25519 sessions only — no header fallback.
 //
 // Sections:
 //   1. AMM Kill Switch — halt/resume all swaps + new liquidity

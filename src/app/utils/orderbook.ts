@@ -4,14 +4,14 @@
  * Persists to localStorage so trade history survives page refreshes.
  * Each trade records: wallet, pair, side, amount, price, timestamp, tx status.
  * This is NOT a limit-order book — it's an execution log for swaps routed
- * through SaucerSwap / HSuite that were initiated on this site.
+ * through SaucerSwap or the WRAPpDEX AMM that were initiated on this site.
  */
 
 // ── Types ───────────────────────────────────────────────────────────
 
 export type OrderbookRouter =
   | "saucerswap"
-  | "hsuite"
+  | "hsuite"         // Backward compat — historical trades may carry this label
   | "smart-liquidity"
   | "changenow";
 

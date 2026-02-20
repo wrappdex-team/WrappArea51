@@ -4,7 +4,7 @@ let audioCtx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 
 // ── Volume System ────────────────────────────────────────────────────
-// Replaces the old binary mute with 4-level presets: off / low / medium / high.
+// 4-level presets: off / low / medium / high.
 // Backward compatible: getSoundMuted() still works (returns true when off).
 
 export type SoundVolume = "off" | "low" | "medium" | "high";

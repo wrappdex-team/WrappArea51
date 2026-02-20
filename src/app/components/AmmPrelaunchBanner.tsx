@@ -7,8 +7,8 @@ import { Lock } from "lucide-react";
  * ┌─────────────────────────────────────────────────────────────────┐
  * │  SENIOR DEV NOTE                                               │
  * │  This component can be deleted once AMM goes live.             │
- * │  Backend flag: AMM_PRELAUNCH_LOCKED in amm.ts                  │
- * │  See the master go-live checklist in amm.ts for all usages.    │
+ * │  Backend flag: AMM_PRELAUNCH_LOCKED in atomic-signer.ts        │
+ * │  See the master go-live checklist for all usages.              │
  * └─────────────────────────────────────────────────────────────────┘
  */
 export function AmmPrelaunchBanner({

@@ -3,7 +3,7 @@
  *
  * Provides a React context + overlay UI that wraps all wallet signing
  * operations (auth challenges, DAO proposals, swaps, etc.) with clear
- * visual feedback. Replaces the previous silent-failure UX.
+ * visual feedback.
  *
  * Usage from any component:
  *   const { withSigning } = useSigning();
@@ -244,7 +244,7 @@ function SigningOverlay({
   );
 }
 
-// ── Pending State ─────────────��────────────────────────────────────────
+// ── Pending State ─────────────────────────────────────────────────────
 
 function PendingContent({
   state,

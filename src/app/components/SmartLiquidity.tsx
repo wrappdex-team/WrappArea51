@@ -273,7 +273,7 @@ function SwapPanel({ pools, isDark, accountId }: { pools: PoolState[]; isDark: b
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
 // │  Restore original form body when AMM_PRELAUNCH_LOCKED = false.    │
-// │  See amm.ts for the server-side flag.                             │
+// │  See atomic-signer.ts for the server-side flag.                   │
 // └─────────────────────────────────────────────────────────────────────┘
 
 function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {

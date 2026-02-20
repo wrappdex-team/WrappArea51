@@ -1930,10 +1930,9 @@ async function verifyIsContract(
 // factory() — the correct SaucerSwap V1 Router should return the
 // known factory address (0.0.2210218).
 
-// Pre-seed with configured primary routers so discoverSaucerSwapRouter()
-// returns immediately for known networks.  Factory-based verification is
-// still attempted (see _discoverRouterImpl) and will upgrade the cache
-// entry when it succeeds, but the pipeline no longer blocks on it.
+// Pre-seeded with known mainnet/testnet routers for immediate availability.
+// Factory-based verification (_discoverRouterImpl) upgrades the cache entry
+// asynchronously but never blocks the swap pipeline.
 let _discoveredRouter: Record<string, string> = {
   mainnet: SAUCERSWAP_V1_ROUTER.mainnet,
   testnet: SAUCERSWAP_V1_ROUTER.testnet,
@@ -3258,9 +3257,9 @@ export function formatTokenAmountRaw(rawAmount: number, decimals: number): strin
  * 3. HashConnect signer freezes (sets nodeAccountIds + txId),
  *    sends to HashPack for signing, and submits to the network
  *
- * This replaces the old sign-bytes-then-submit pattern which failed
- * because unfrozen transactions can't be serialized/deserialized
- * correctly, and headless Clients can't execute without an operator.
+ * Uses HashConnect signer's executeTransaction() which handles freezing,
+ * signing, and submission atomically. Unfrozen transactions cannot be
+ * serialized/deserialized, so the signer must own the full lifecycle.
  */
 export async function executeSaucerSwap(
   inputSymbol: string,

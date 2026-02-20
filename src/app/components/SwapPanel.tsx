@@ -2,16 +2,12 @@
  * SwapPanel — Native SaucerSwap swap widget + Pool Routes table.
  *
  * Left panel:  Compact native swap interface using SaucerSwap's public
- *              APIs and on-chain routing.  Token selection, quotes,
+ *              APIs and on-chain routing. Token selection, quotes,
  *              slippage, route visualization, and execution via HashPack.
  *
  * Right panel: SaucerSwap pool routes table with TVL, volume, fee, APR.
  *              Clicking a pool's swap button updates the left panel's
  *              token pair.
- *
- * This replaces the iframe approach (SaucerSwap blocks iframe embedding
- * via X-Frame-Options / CSP frame-ancestors) and the old 2,600+ line
- * custom implementation with a clean ~450-line native widget.
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";

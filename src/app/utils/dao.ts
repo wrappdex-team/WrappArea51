@@ -140,17 +140,14 @@ export interface Proposal {
 }
 
 // ── Helper: build authenticated headers for DAO endpoints ────────────
-// Security review SEC-02: The spoofable X-Account-Id header fallback has been
-// removed from the server's requireAuth(). ALL authenticated endpoints
-// now require an ED25519 session token (X-Session-Token header).
+// SEC-02: All authenticated endpoints require ED25519 session token
+// (X-Session-Token). No header-based identity fallback.
 //
-// If no active session exists, this returns base headers only — the
-// server will respond with 401 AUTH_REQUIRED, which surfaces as an
-// actionable error message to the user.
+// Without an active session, base headers are returned — the server
+// responds 401 AUTH_REQUIRED, surfaced as an actionable user error.
 //
-// The accountId parameter is retained for call-site compatibility but
-// is no longer sent as a header — identity is bound to the KV-backed
-// session token, not a client-supplied string.
+// The accountId parameter is retained for call-site compatibility.
+// Identity is bound to the KV-backed session token, not a client header.
 
 function walletHeaders(_accountId: string): Record<string, string> {
   const sessionToken = getSessionToken();

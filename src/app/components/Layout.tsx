@@ -588,7 +588,7 @@ export function Layout() {
             </div>
           </div>
 
-          {/* Mobile Dropdown Menu — REMOVED: replaced by bottom sheet via "More" button */}
+          {/* Mobile navigation handled via bottom sheet ("More" button) */}
         </div>
       </header>
 
