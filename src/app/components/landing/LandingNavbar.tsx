@@ -108,7 +108,7 @@ export function LandingNavbar() {
 
         <div className="hidden md:flex items-center gap-6">
           <Link to="/markets">
-            <button className="border border-black text-black font-black uppercase tracking-[0.2em] text-[10px] h-11 px-8 hover:bg-black hover:text-white transition-all shadow-sm hover:shadow-xl hover:translate-y-[-1px] cursor-pointer">
+            <button type="button" className="border border-black text-black font-black uppercase tracking-[0.2em] text-[10px] h-11 px-8 hover:bg-black hover:text-white transition-all shadow-sm hover:shadow-xl hover:translate-y-[-1px] cursor-pointer">
               Launch App
             </button>
           </Link>
@@ -116,6 +116,7 @@ export function LandingNavbar() {
 
         {/* Mobile Toggle */}
         <button
+          type="button"
           className="md:hidden text-black p-2 cursor-pointer"
           onClick={() => setIsOpen(!isOpen)}
         >
@@ -181,7 +182,7 @@ export function LandingNavbar() {
             </div>
             <div className="mt-auto">
               <Link to="/markets" className="w-full block" onClick={() => setIsOpen(false)}>
-                <button className="bg-black text-white font-black w-full h-14 uppercase tracking-[0.2em] text-xs shadow-2xl cursor-pointer">
+                <button type="button" className="bg-black text-white font-black w-full h-14 uppercase tracking-[0.2em] text-xs shadow-2xl cursor-pointer">
                   Launch App
                 </button>
               </Link>

@@ -48,81 +48,24 @@ import {
   MAX_PROTOCOL_FEE_TINYBAR,
 } from "./amm.ts";
 
-// ── Inline pure math replicas (from atomic-swap-engine.ts) ──────────
+// ── Shared math imports (from amm-math-shared.ts via amm.ts re-exports) ─
 //
-// These functions exist client-side in atomic-swap-engine.ts but not in
-// the server's amm.ts. They are pure (no deps, no side effects), so we
-// replicate them here for testing. Any divergence between these and the
-// client engine is itself a bug — the server validation must agree.
-
-function getAmountIn(
-  amountOut: bigint,
-  reserveIn: bigint,
-  reserveOut: bigint,
-  feeBps: number,
-): bigint {
-  if (amountOut <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
-  if (amountOut >= reserveOut) return 0n;
-  const feeMultiplier = BPS_BASE - BigInt(feeBps);
-  const numerator = reserveIn * amountOut * BPS_BASE;
-  const denominator = (reserveOut - amountOut) * feeMultiplier;
-  return numerator / denominator + 1n;
-}
-
-function bigIntToDecimal(raw: bigint, decimals: number): string {
-  if (raw === 0n) return "0";
-  const str = raw.toString().padStart(decimals + 1, "0");
-  const whole = str.slice(0, str.length - decimals) || "0";
-  const frac = str.slice(str.length - decimals).replace(/0+$/, "");
-  return frac ? `${whole}.${frac}` : whole;
-}
-
-function getSpotPrice(
-  reserveA: bigint, decimalsA: number,
-  reserveB: bigint, decimalsB: number,
-): number {
-  if (reserveA <= 0n || reserveB <= 0n) return 0;
-  const a = Number(reserveA) / 10 ** decimalsA;
-  const b = Number(reserveB) / 10 ** decimalsB;
-  return b / a;
-}
-
-function computeLPSharesMint(
-  amountA: bigint, amountB: bigint,
-  reserveA: bigint, reserveB: bigint,
-  totalSupply: bigint,
-): { shares: bigint; isFirstDeposit: boolean } {
-  if (totalSupply === 0n) {
-    const gm = bigIntSqrt(amountA * amountB);
-    if (gm <= MINIMUM_LIQUIDITY) {
-      return { shares: 0n, isFirstDeposit: true };
-    }
-    return { shares: gm - MINIMUM_LIQUIDITY, isFirstDeposit: true };
-  }
-  const fromA = amountA * totalSupply / reserveA;
-  const fromB = amountB * totalSupply / reserveB;
-  return { shares: fromA < fromB ? fromA : fromB, isFirstDeposit: false };
-}
-
-function computeLPSharesBurn(
-  shares: bigint,
-  reserveA: bigint, reserveB: bigint,
-  totalSupply: bigint,
-): { amountA: bigint; amountB: bigint } {
-  if (totalSupply === 0n || shares === 0n) return { amountA: 0n, amountB: 0n };
-  return {
-    amountA: shares * reserveA / totalSupply,
-    amountB: shares * reserveB / totalSupply,
-  };
-}
-
-function computeOptimalDeposit(
-  desiredAmountA: bigint,
-  reserveA: bigint, reserveB: bigint,
-): bigint {
-  if (reserveA === 0n || reserveB === 0n) return 0n;
-  return desiredAmountA * reserveB / reserveA;
-}
+// SHARED-01: These functions were previously inline replicas of client-side
+// code in atomic-swap-engine.ts. Now imported from amm-math-shared.ts (the
+// server-side single source of truth). The client-side copy in
+// src/app/utils/atomic-swap-engine.ts must still be kept in manual sync
+// (different runtime — Deno server vs Vite browser bundle).
+//
+// Any divergence between amm-math-shared.ts and atomic-swap-engine.ts is
+// itself a bug — the server validation MUST agree with client math.
+import {
+  getAmountIn,
+  bigIntToDecimal,
+  getSpotPrice,
+  computeLPSharesMint,
+  computeLPSharesBurn,
+  computeOptimalDeposit,
+} from "./amm-math-shared.ts";
 
 
 // ── 1. getAmountOut ─────────────────────────────────────────────────

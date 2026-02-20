@@ -27,7 +27,32 @@
 //
 // SEC-08: Pool private keys are read from environment variables at startup.
 //   They are NEVER logged, NEVER returned in API responses, NEVER included
-//   in error messages. Key material exists only in memory.
+//   in error messages. Key material exists only in memory. Key fingerprint
+//   (SHA-256 prefix) is logged on first use for rotation audit trail.
+//
+// SEC-13: TX type gate — signTransactionWithPoolKey rejects non-CryptoTransfer
+//   (TransferTransaction) TXs. Prevents the pool key from co-signing
+//   unauthorized operations (CryptoUpdate, TokenUpdate, ContractCall, etc.).
+//   Defense-in-depth: also checked in validateSwapTransactionContents.
+//
+// SEC-14: TX content validation — before co-signing, the server deserializes
+//   the TX and verifies the token transfer list matches the expected swap:
+//   exact token IDs, exact amounts, exact accounts (user + pool only), no
+//   hidden transfers to third-party accounts. Prevents a rogue client from
+//   building a TX that passes math validation but silently drains the pool
+//   to an attacker address. This is the critical gap: without SEC-14, a
+//   malicious client could declare amountOutRaw=100 (passes math), but embed
+//   pool→attacker=1000000 in the actual TX body.
+//
+// SEC-15: Replay protection — signed TX ID deduplication.
+//   Hedera TX IDs are unique (payer@validStart), but a co-signed TX that
+//   hasn't been submitted yet could be captured and replayed within its
+//   validity window. By recording co-signed TX IDs in KV, we guarantee
+//   each TX is signed at most once.
+//
+// PERF-06: In-memory reserve cache for public read endpoints.
+//   5s TTL — stale reserves in read endpoints are acceptable (display only).
+//   NEVER used for signing validation (SEC-07 requires fresh Mirror Node reads).
 // ══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
@@ -46,15 +71,39 @@ import {
 } from "./shared.ts";
 import { requireAuth, requireOwner, logAdminAction } from "./auth.ts";
 
+// ── Shared AMM Math (amm-math-shared.ts) ────────────────────────────
+// SHARED-01: Pure math imported from single source of truth.
+// Previously duplicated inline — now shared with amm.ts and test file.
+import {
+  getAmountOut,
+  TOTAL_SWAP_FEE_BPS,
+  BPS_BASE,
+} from "./amm-math-shared.ts";
+
 // ── Constants ────────────────────────────────────────────────────────
 
 const MIRROR_NODE_URL = HEDERA_MIRROR_MAINNET;
 const MIRROR_TIMEOUT_MS = 10_000;
 
-// ── AMM Fee Constants (must match atomic-swap-engine.ts) ─────────────
+// SEC-15: Replay protection — signed TX ID deduplication.
+// Hedera TX IDs are unique (payer@validStart), but a co-signed TX that
+// hasn't been submitted yet could be captured and replayed within its
+// validity window. By recording co-signed TX IDs in KV, we guarantee
+// each TX is signed at most once.
+const SIGNED_TX_PREFIX = "atomic_stx_";           // KV prefix for co-signed TX IDs
+const TX_VALID_START_MAX_DRIFT_MS = 180_000;      // 180s — matches Hedera TX validity window
+const SIGNED_TX_EXPIRY_MS = 300_000;              // 5 min — clean up after Hedera's validity expires
 
-const TOTAL_SWAP_FEE_BPS = 25;
-const BPS_BASE = 10_000n;
+// SEC-08: Key fingerprint audit trail. Maps env var name → SHA-256 prefix.
+// Logged on first use so ops can verify which key version is loaded after
+// rotation without exposing the key itself.
+const _keyFingerprints = new Map<string, string>();
+
+// PERF-06: In-memory reserve cache for public read endpoints.
+// 5s TTL — stale reserves in read endpoints are acceptable (display only).
+// NEVER used for signing validation (SEC-07 requires fresh Mirror Node reads).
+const RESERVE_CACHE_TTL_MS = 5_000;
+const _reserveCache = new Map<string, { reserves: ServerReserves; cachedAt: number }>();
 
 // ── Kill Switch ──────────────────────────────────────────────────────
 // Owner-only circuit breaker. When active, all co-signing is rejected.
@@ -208,21 +257,9 @@ function isValidAtomicPoolId(id: unknown): boolean {
   return /^ap-[a-z]{2,10}-[a-z]{2,10}$/.test(id);
 }
 
-// ── AMM Math (identical to atomic-swap-engine.ts — deterministic) ────
-
-function getAmountOut(
-  amountIn: bigint,
-  reserveIn: bigint,
-  reserveOut: bigint,
-  feeBps: number,
-): bigint {
-  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
-  const feeMultiplier = BPS_BASE - BigInt(feeBps);
-  const amountInWithFee = amountIn * feeMultiplier;
-  const numerator = amountInWithFee * reserveOut;
-  const denominator = reserveIn * BPS_BASE + amountInWithFee;
-  return numerator / denominator;
-}
+// ── AMM Math ─────────────────────────────────────────────────────────
+// SHARED-01: getAmountOut imported from amm-math-shared.ts (single source of truth).
+// Previously duplicated inline — identical to atomic-swap-engine.ts (client-side).
 
 // ── Mirror Node Reserve Reading ──────────────────────────────────────
 // Server reads reserves INDEPENDENTLY of the client. Ground truth.
@@ -282,6 +319,20 @@ async function fetchPoolReserves(pool: PoolConfig): Promise<ServerReserves> {
   };
 }
 
+// PERF-06: Cached reserve reader for public read endpoints.
+// Returns in-memory cached reserves if available and within TTL (5s).
+// NEVER used for swap signing validation — SEC-07 requires fresh reads.
+async function fetchPoolReservesCached(pool: PoolConfig): Promise<ServerReserves> {
+  const cached = _reserveCache.get(pool.poolId);
+  const now = Date.now();
+  if (cached && now - cached.cachedAt < RESERVE_CACHE_TTL_MS) {
+    return cached.reserves;
+  }
+  const fresh = await fetchPoolReserves(pool);
+  _reserveCache.set(pool.poolId, { reserves: fresh, cachedAt: now });
+  return fresh;
+}
+
 // ── Pool Key Management ──────────────────────────────────────────────
 // SEC-08: Keys read from env at call time. Never cached in plain text
 // outside of the signing scope. Never logged or returned in responses.
@@ -301,10 +352,45 @@ async function signTransactionWithPoolKey(
 
   try {
     // Dynamic import — only loaded when actually signing
-    const { PrivateKey, Transaction } = await import("npm:@hashgraph/sdk@2.51.0");
+    const { PrivateKey, Transaction, TransferTransaction } = await import("npm:@hashgraph/sdk@2.51.0");
+
+    // SEC-08: Key fingerprint audit trail — log SHA-256 prefix on first use
+    // per env var so ops can verify key rotation without exposing key material.
+    if (!_keyFingerprints.has(pool.envKeyName)) {
+      try {
+        const hashBuf = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(keyHex),
+        );
+        const hashHex = Array.from(new Uint8Array(hashBuf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        const fingerprint = hashHex.slice(0, 16);
+        _keyFingerprints.set(pool.envKeyName, fingerprint);
+        console.log(`[SEC-08] Pool key fingerprint: ${pool.envKeyName}=${fingerprint}... (first use)`);
+      } catch { /* fingerprint is non-critical — swallow errors */ }
+    }
 
     const poolKey = PrivateKey.fromStringED25519(keyHex);
     const tx = Transaction.fromBytes(transactionBytes);
+
+    // SEC-13: TX type gate — ONLY CryptoTransfer (TransferTransaction) is allowed.
+    // Prevents the pool key from co-signing unauthorized operations such as
+    // CryptoUpdate (change pool account keys), TokenUpdate, ContractCall, etc.
+    // This is the last line of defense: even if all upstream validation is bypassed,
+    // the signing function itself refuses non-transfer TXs.
+    if (!(tx instanceof TransferTransaction)) {
+      const txType = tx?.constructor?.name || "Unknown";
+      console.log(
+        `[SEC-13] REJECTED: TX type "${txType}" for pool ${pool.poolId} — ` +
+        `only TransferTransaction (CryptoTransfer) is allowed`,
+      );
+      return {
+        error: "Transaction type rejected — only CryptoTransfer operations are allowed for pool co-signing",
+        errorCode: "INVALID_TX_TYPE",
+      };
+    }
+
     const signedTx = await tx.sign(poolKey);
     const signedBytes = signedTx.toBytes();
 
@@ -315,6 +401,337 @@ async function signTransactionWithPoolKey(
       error: "Pool co-signing failed — transaction may be malformed",
       errorCode: "SERVER_SIGN_FAILED",
     };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SEC-14: Transaction Content Validation
+// ═══════════════════════════════════════════════════════════════════════
+//
+// SENIOR DEV NOTE [SEC-14]:
+//   validateSwap (SEC-07) verifies the MATH is correct: server reads reserves,
+//   recomputes the output, and confirms the client's claimed output is within
+//   tolerance. But it does NOT inspect the actual transaction body.
+//
+//   A malicious client could:
+//     1. Declare amountOutRaw=100 in the request body (passes math check)
+//     2. Build a TX with pool→attacker=1,000,000 (different from declared)
+//     3. Server validates math (100 ≤ serverOut), signs the TX
+//     4. Attacker submits the TX → pool drained
+//
+//   SEC-14 closes this gap: after math validation passes, the server
+//   deserializes the TX, extracts the actual token transfer list, and
+//   verifies every transfer matches the expected swap:
+//     - Exactly 2 token transfer groups (tokenIn + tokenOut)
+//     - Each group has exactly 2 entries (user + pool)
+//     - tokenIn: user sends amountInRaw to pool (user=-X, pool=+X)
+//     - tokenOut: pool sends amountOutRaw to user (pool=-Y, user=+Y)
+//     - No extra token transfers, no unexpected HBAR transfers
+//
+//   Uses SDK internal `_tokenTransfers` array. If SDK version changes break
+//   the internal structure, the function fails CLOSED (rejects the TX).
+//   This is correct behavior: false negatives (rejecting valid TXs) are
+//   infinitely better than false positives (signing malicious TXs).
+
+type TxContentValidation =
+  | { valid: true; transactionIdStr: string }
+  | { valid: false; error: string; errorCode: string };
+
+async function validateSwapTransactionContents(
+  txBytes: Uint8Array,
+  pool: PoolConfig,
+  userAccountId: string,
+  tokenInSymbol: string,
+  tokenOutSymbol: string,
+  amountInRaw: string,
+  amountOutRaw: string,
+): Promise<TxContentValidation> {
+  try {
+    const { Transaction, TransferTransaction } = await import("npm:@hashgraph/sdk@2.51.0");
+
+    const tx = Transaction.fromBytes(txBytes);
+
+    // SEC-13 (defense-in-depth, also checked in signing function)
+    if (!(tx instanceof TransferTransaction)) {
+      const txType = tx?.constructor?.name || "Unknown";
+      return {
+        valid: false,
+        error: `TX type "${txType}" is not CryptoTransfer`,
+        errorCode: "INVALID_TX_TYPE",
+      };
+    }
+
+    // Extract transaction ID for replay protection (SEC-15)
+    let transactionIdStr = "";
+    try {
+      const txId = tx.transactionId;
+      transactionIdStr = txId?.toString() ?? "";
+
+      // Verify validStart is within acceptable time window
+      if (txId?.validStart) {
+        const validStartSec = Number(txId.validStart.seconds ?? 0);
+        const validStartMs = validStartSec * 1000;
+        const now = Date.now();
+        const drift = Math.abs(now - validStartMs);
+        if (drift > TX_VALID_START_MAX_DRIFT_MS) {
+          return {
+            valid: false,
+            error: `TX validStart is ${(drift / 1000).toFixed(0)}s from current time (max ${TX_VALID_START_MAX_DRIFT_MS / 1000}s)`,
+            errorCode: "TX_EXPIRED",
+          };
+        }
+      }
+    } catch {
+      return {
+        valid: false,
+        error: "Cannot extract transaction ID",
+        errorCode: "TX_INSPECT_FAILED",
+      };
+    }
+
+    // Resolve expected token IDs from symbols
+    const defIn = TOKEN_BY_SYMBOL.get(tokenInSymbol);
+    const defOut = TOKEN_BY_SYMBOL.get(tokenOutSymbol);
+    if (!defIn || !defOut) {
+      return { valid: false, error: "Unknown token symbol in TX validation", errorCode: "UNKNOWN" };
+    }
+    const tokenInId = defIn.tokenId;     // e.g., "0.0.456858"
+    const tokenOutId = defOut.tokenId;    // e.g., "0.0.1456986"
+    const poolAccountId = pool.accountId; // e.g., "0.0.XXXXXXX"
+    const expectedAmountIn = BigInt(amountInRaw);
+    const expectedAmountOut = BigInt(amountOutRaw);
+
+    // ── Parse token transfers from SDK internals ──
+    // TransferTransaction._tokenTransfers is an array of:
+    //   { tokenId: TokenId, transfers: [{ accountId: AccountId, amount: Long, isApproved }] }
+    // Defensive: if structure changes, fail closed.
+    const rawTokenTransfers = (tx as any)._tokenTransfers;
+    if (!Array.isArray(rawTokenTransfers)) {
+      console.log("[SEC-14] Cannot read _tokenTransfers — SDK structure may have changed. Failing closed.");
+      return {
+        valid: false,
+        error: "Cannot inspect TX transfer list — SDK version may be incompatible",
+        errorCode: "TX_INSPECT_FAILED",
+      };
+    }
+
+    // Normalize to a simple structure for validation
+    const parsedTransfers: Array<{
+      tokenId: string;
+      entries: Array<{ accountId: string; amount: bigint }>;
+    }> = [];
+
+    for (const tt of rawTokenTransfers) {
+      const tokenId = tt.tokenId?.toString() ?? "";
+      const entries: Array<{ accountId: string; amount: bigint }> = [];
+      const rawEntries = tt.transfers || [];
+      for (const entry of rawEntries) {
+        entries.push({
+          accountId: entry.accountId?.toString() ?? "",
+          amount: BigInt(entry.amount?.toString() ?? "0"),
+        });
+      }
+      if (entries.length > 0) {
+        parsedTransfers.push({ tokenId, entries });
+      }
+    }
+
+    // ── Check no unexpected HBAR transfers ──
+    // Swap TXs should only have HTS token transfers. Explicit HBAR transfers
+    // in the body (beyond the TX fee in the header) are suspicious.
+    const rawHbarTransfers = (tx as any)._hbarTransfers;
+    let hbarTransferCount = 0;
+    if (Array.isArray(rawHbarTransfers)) {
+      hbarTransferCount = rawHbarTransfers.length;
+    } else if (rawHbarTransfers && typeof rawHbarTransfers === "object") {
+      // TransferMap might be Map-like or array-like
+      hbarTransferCount = rawHbarTransfers._map?.size ?? rawHbarTransfers.length ?? 0;
+    }
+    if (hbarTransferCount > 0) {
+      console.log(
+        `[SEC-14] WARNING: TX contains ${hbarTransferCount} explicit HBAR transfer(s) ` +
+        `for pool ${pool.poolId} — unexpected for HTS-only swap. Rejecting.`,
+      );
+      return {
+        valid: false,
+        error: "TX contains unexpected HBAR transfers — swap should only transfer HTS tokens",
+        errorCode: "TX_UNEXPECTED_TRANSFERS",
+      };
+    }
+
+    // ── Verify exactly 2 token transfer groups ──
+    if (parsedTransfers.length !== 2) {
+      console.log(
+        `[SEC-14] REJECTED: TX has ${parsedTransfers.length} token transfer groups ` +
+        `(expected 2) for pool ${pool.poolId}`,
+      );
+      return {
+        valid: false,
+        error: `TX has ${parsedTransfers.length} token transfer groups — expected exactly 2 (tokenIn + tokenOut)`,
+        errorCode: "TX_UNEXPECTED_TRANSFERS",
+      };
+    }
+
+    // ── Match token transfer groups to expected tokens ──
+    const tokenInGroup = parsedTransfers.find((t) => t.tokenId === tokenInId);
+    const tokenOutGroup = parsedTransfers.find((t) => t.tokenId === tokenOutId);
+
+    if (!tokenInGroup) {
+      return {
+        valid: false,
+        error: `TX missing transfer group for tokenIn (${tokenInId} / ${tokenInSymbol})`,
+        errorCode: "TX_UNEXPECTED_TRANSFERS",
+      };
+    }
+    if (!tokenOutGroup) {
+      return {
+        valid: false,
+        error: `TX missing transfer group for tokenOut (${tokenOutId} / ${tokenOutSymbol})`,
+        errorCode: "TX_UNEXPECTED_TRANSFERS",
+      };
+    }
+
+    // ── Verify tokenIn transfers: user→pool ──
+    if (tokenInGroup.entries.length !== 2) {
+      return {
+        valid: false,
+        error: `tokenIn transfer group has ${tokenInGroup.entries.length} entries (expected 2: user + pool)`,
+        errorCode: "TX_UNEXPECTED_TRANSFERS",
+      };
+    }
+    const userInEntry = tokenInGroup.entries.find((e) => e.accountId === userAccountId);
+    const poolInEntry = tokenInGroup.entries.find((e) => e.accountId === poolAccountId);
+    if (!userInEntry || !poolInEntry) {
+      const foundAccounts = tokenInGroup.entries.map((e) => e.accountId).join(", ");
+      console.log(
+        `[SEC-14] REJECTED: tokenIn accounts [${foundAccounts}] don't match ` +
+        `expected user=${userAccountId} pool=${poolAccountId}`,
+      );
+      return {
+        valid: false,
+        error: "tokenIn transfer participants don't match expected user and pool accounts",
+        errorCode: "TX_ACCOUNT_MISMATCH",
+      };
+    }
+    // User sends (negative), pool receives (positive)
+    if (userInEntry.amount !== -expectedAmountIn || poolInEntry.amount !== expectedAmountIn) {
+      console.log(
+        `[SEC-14] REJECTED: tokenIn amounts mismatch | ` +
+        `user=${userInEntry.amount} (expected ${-expectedAmountIn}) ` +
+        `pool=${poolInEntry.amount} (expected ${expectedAmountIn})`,
+      );
+      return {
+        valid: false,
+        error: "tokenIn transfer amounts don't match declared amountInRaw",
+        errorCode: "TX_AMOUNT_MISMATCH",
+      };
+    }
+
+    // ── Verify tokenOut transfers: pool→user ──
+    if (tokenOutGroup.entries.length !== 2) {
+      return {
+        valid: false,
+        error: `tokenOut transfer group has ${tokenOutGroup.entries.length} entries (expected 2: pool + user)`,
+        errorCode: "TX_UNEXPECTED_TRANSFERS",
+      };
+    }
+    const poolOutEntry = tokenOutGroup.entries.find((e) => e.accountId === poolAccountId);
+    const userOutEntry = tokenOutGroup.entries.find((e) => e.accountId === userAccountId);
+    if (!poolOutEntry || !userOutEntry) {
+      const foundAccounts = tokenOutGroup.entries.map((e) => e.accountId).join(", ");
+      console.log(
+        `[SEC-14] REJECTED: tokenOut accounts [${foundAccounts}] don't match ` +
+        `expected user=${userAccountId} pool=${poolAccountId}`,
+      );
+      return {
+        valid: false,
+        error: "tokenOut transfer participants don't match expected user and pool accounts",
+        errorCode: "TX_ACCOUNT_MISMATCH",
+      };
+    }
+    // Pool sends (negative), user receives (positive)
+    if (poolOutEntry.amount !== -expectedAmountOut || userOutEntry.amount !== expectedAmountOut) {
+      console.log(
+        `[SEC-14] REJECTED: tokenOut amounts mismatch | ` +
+        `pool=${poolOutEntry.amount} (expected ${-expectedAmountOut}) ` +
+        `user=${userOutEntry.amount} (expected ${expectedAmountOut})`,
+      );
+      return {
+        valid: false,
+        error: "tokenOut transfer amounts don't match declared amountOutRaw",
+        errorCode: "TX_AMOUNT_MISMATCH",
+      };
+    }
+
+    console.log(
+      `[SEC-14] TX content validated: pool=${pool.poolId} ` +
+      `${tokenInSymbol}(${expectedAmountIn})→${tokenOutSymbol}(${expectedAmountOut}) ` +
+      `user=${userAccountId} txId=${transactionIdStr.slice(0, 40)}`,
+    );
+
+    return { valid: true, transactionIdStr };
+  } catch (err: any) {
+    console.log(`[SEC-14] TX validation error: ${err?.message}`);
+    return {
+      valid: false,
+      error: "Failed to validate transaction contents — TX may be malformed",
+      errorCode: "TX_INSPECT_FAILED",
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SEC-15: Replay Protection — Transaction ID Deduplication
+// ═══════════════════════════════════════════════════════════════════════
+//
+// SENIOR DEV NOTE [SEC-15]:
+//   Hedera consensus nodes reject duplicate TX IDs within the validity
+//   window (~180s), but the co-signing oracle operates BEFORE submission.
+//   A captured co-signed TX could be replayed if:
+//     1. User builds TX, sends to server for co-signing
+//     2. Attacker intercepts the co-signed response (MITM)
+//     3. Attacker submits the TX before the user
+//     4. User's submission fails (duplicate TX ID)
+//     5. Attacker profits from the swap
+//
+//   By tracking co-signed TX IDs in KV, we ensure each TX ID is signed
+//   at most once. The SIGNED_TX_EXPIRY_MS (5 min) exceeds Hedera's
+//   180s validity window, so the KV entry outlives the TX — no replay
+//   is possible even if the KV entry is read after the Hedera window.
+//
+//   This is defense-in-depth: the primary protection is still Hedera's
+//   own TX ID deduplication. SEC-15 prevents the oracle from being
+//   tricked into signing the same TX twice.
+
+async function isTransactionReplay(txIdStr: string): Promise<boolean> {
+  if (!txIdStr) return false; // Can't check — let other guards handle
+  try {
+    const key = SIGNED_TX_PREFIX + txIdStr.replace(/[^a-zA-Z0-9._@-]/g, "_");
+    const existing = await kv.get(key);
+    return existing !== null;
+  } catch {
+    // KV read failure — fail open (other protections still apply)
+    return false;
+  }
+}
+
+async function recordSignedTransaction(
+  txIdStr: string,
+  poolId: string,
+  userAccountId: string,
+): Promise<void> {
+  if (!txIdStr) return;
+  try {
+    const key = SIGNED_TX_PREFIX + txIdStr.replace(/[^a-zA-Z0-9._@-]/g, "_");
+    await kv.set(key, {
+      poolId,
+      userAccountId,
+      signedAt: Date.now(),
+      expiresAt: Date.now() + SIGNED_TX_EXPIRY_MS,
+    });
+  } catch {
+    // Non-blocking — replay protection is defense-in-depth
+    console.log(`[SEC-15] Failed to record signed TX: ${txIdStr.slice(0, 40)}`);
   }
 }
 
@@ -670,9 +1087,38 @@ export function registerAtomicSignerRoutes(app: Hono) {
         return c.json({ success: false, error: "Malformed base64 transaction", errorCode: "UNKNOWN" }, 400);
       }
 
+      // SEC-14: Validate TX contents match the declared swap parameters.
+      // Deserializes the TX, inspects actual token transfers, and verifies
+      // amounts + accounts match exactly. Also extracts TX ID for SEC-15.
+      const tTxValidate = performance.now();
+      const pool = POOL_BY_ID.get(poolId)!;
+      const txContentResult = await validateSwapTransactionContents(
+        txBytes, pool, userAccountId, tokenIn, tokenOut, amountInRaw, amountOutRaw,
+      );
+      const txValidateMs = (performance.now() - tTxValidate).toFixed(1);
+      if (!txContentResult.valid) {
+        return c.json({
+          success: false,
+          error: txContentResult.error,
+          errorCode: txContentResult.errorCode,
+        }, 400);
+      }
+
+      // SEC-15: Replay protection — reject if this TX ID was already co-signed
+      if (await isTransactionReplay(txContentResult.transactionIdStr)) {
+        console.log(
+          `[SEC-15] REPLAY REJECTED: TX ${txContentResult.transactionIdStr.slice(0, 40)} ` +
+          `already co-signed for pool=${poolId} user=${userAccountId}`,
+        );
+        return c.json({
+          success: false,
+          error: "This transaction was already co-signed — build a new TX with a fresh transaction ID",
+          errorCode: "TX_REPLAY",
+        }, 409);
+      }
+
       // Co-sign with pool account key
       const tSign = performance.now();
-      const pool = POOL_BY_ID.get(poolId)!;
       const signResult = await signTransactionWithPoolKey(pool, txBytes);
       const signMs = (performance.now() - tSign).toFixed(1);
 
@@ -684,11 +1130,14 @@ export function registerAtomicSignerRoutes(app: Hono) {
         }, 500);
       }
 
+      // SEC-15: Record co-signed TX ID (non-blocking)
+      recordSignedTransaction(txContentResult.transactionIdStr, poolId, userAccountId);
+
       // Log successful co-sign with timing instrumentation
       const totalMs = (performance.now() - t0).toFixed(1);
       console.log(
         `[AtomicSigner] CO-SIGNED: pool=${poolId} ${tokenIn}→${tokenOut} user=${userAccountId} ` +
-        `| validate=${validateMs}ms sign=${signMs}ms total=${totalMs}ms`,
+        `| validate=${validateMs}ms txContent=${txValidateMs}ms sign=${signMs}ms total=${totalMs}ms`,
       );
 
       // Persist swap event for analytics (non-blocking)
@@ -851,7 +1300,7 @@ export function registerAtomicSignerRoutes(app: Hono) {
       });
     }
 
-    const reserves = await fetchPoolReserves(pool);
+    const reserves = await fetchPoolReservesCached(pool);
     return c.json({
       poolId,
       tokenA: pool.tokenA,

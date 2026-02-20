@@ -297,7 +297,7 @@ export function Layout() {
               </Tip>
               <Tip content="Join HBAR.ħ Discord">
               <a
-                href="https://discord.gg/tRSZZ9rUJ"
+                href="https://discord.gg/ZFnfRFxQZ"
                 target="_blank"
                 rel="noopener noreferrer"
                 onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(1); }}

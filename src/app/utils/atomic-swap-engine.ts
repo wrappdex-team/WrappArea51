@@ -581,7 +581,7 @@ export async function fetchAllPoolReserves(): Promise<Map<string, PoolReserves>>
 
 // ═══════════════════════════════════════════════════════════════════════
 // SECTION 6: Oracle Price Fetching (Display Only — Swaps Use Reserves)
-// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════��═══════════════════════════════════════════════════════
 
 /** In-memory oracle cache (short TTL — display prices only) */
 let _oracleCache: { prices: Record<string, number>; ts: number } | null = null;
@@ -909,7 +909,7 @@ export function computeFeeBreakdown(
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ═════════════════════════════���═════════════════════════════════════════
 // SECTION 8: Transaction Building (Hedera SDK)
 // ═══════════════════════════════════════════════════════════════════════
 //
@@ -957,7 +957,11 @@ export async function buildSwapTransaction(
       AccountId,
       TokenId,
       TransactionId,
+      Long,
     } = await import("@hashgraph/sdk");
+
+    // ATOMIC-10: Long.fromString() — see buildSwapTransaction comment
+    const toLong = (v: bigint) => Long.fromString(v.toString());
 
     const userAccount = AccountId.fromString(request.userAccountId);
     const poolAccount = AccountId.fromString(pool.accountId);
@@ -977,11 +981,11 @@ export async function buildSwapTransaction(
 
     const tx = new TransferTransaction()
       // Leg 1: User sends tokenIn to pool
-      .addTokenTransfer(tokenInId, userAccount, -Number(amountIn))
-      .addTokenTransfer(tokenInId, poolAccount, Number(amountIn))
+      .addTokenTransfer(tokenInId, userAccount, toLong(-amountIn))
+      .addTokenTransfer(tokenInId, poolAccount, toLong(amountIn))
       // Leg 2: Pool sends tokenOut to user
-      .addTokenTransfer(tokenOutId, poolAccount, -Number(amountOut))
-      .addTokenTransfer(tokenOutId, userAccount, Number(amountOut))
+      .addTokenTransfer(tokenOutId, poolAccount, toLong(-amountOut))
+      .addTokenTransfer(tokenOutId, userAccount, toLong(amountOut))
       .setNodeAccountIds(nodeAccountIds)
       .setTransactionId(txId)
       .setTransactionMemo(request.memo || `WRAPpDEX:swap:${request.tokenIn}>${request.tokenOut}`)
@@ -1028,7 +1032,11 @@ export async function buildAddLiquidityTransaction(params: {
       AccountId,
       TokenId,
       TransactionId,
+      Long,
     } = await import("@hashgraph/sdk");
+
+    // ATOMIC-10: Long.fromString() — see buildSwapTransaction comment
+    const toLong = (v: bigint) => Long.fromString(v.toString());
 
     const userAccount = AccountId.fromString(params.userAccountId);
     const poolAccount = AccountId.fromString(params.pool.accountId);
@@ -1044,16 +1052,20 @@ export async function buildAddLiquidityTransaction(params: {
 
     const txId = TransactionId.generate(userAccount);
 
+    const amtA = BigInt(params.amountARaw);
+    const amtB = BigInt(params.amountBRaw);
+    const shares = BigInt(params.sharesMintedRaw);
+
     const tx = new TransferTransaction()
       // Leg 1: User sends tokenA to pool
-      .addTokenTransfer(tokenAId, userAccount, -Number(BigInt(params.amountARaw)))
-      .addTokenTransfer(tokenAId, poolAccount, Number(BigInt(params.amountARaw)))
+      .addTokenTransfer(tokenAId, userAccount, toLong(-amtA))
+      .addTokenTransfer(tokenAId, poolAccount, toLong(amtA))
       // Leg 2: User sends tokenB to pool
-      .addTokenTransfer(tokenBId, userAccount, -Number(BigInt(params.amountBRaw)))
-      .addTokenTransfer(tokenBId, poolAccount, Number(BigInt(params.amountBRaw)))
+      .addTokenTransfer(tokenBId, userAccount, toLong(-amtB))
+      .addTokenTransfer(tokenBId, poolAccount, toLong(amtB))
       // Leg 3: Pool sends LP tokens to user
-      .addTokenTransfer(lpTokenId, poolAccount, -Number(BigInt(params.sharesMintedRaw)))
-      .addTokenTransfer(lpTokenId, userAccount, Number(BigInt(params.sharesMintedRaw)))
+      .addTokenTransfer(lpTokenId, poolAccount, toLong(-shares))
+      .addTokenTransfer(lpTokenId, userAccount, toLong(shares))
       .setNodeAccountIds(nodeAccountIds)
       .setTransactionId(txId)
       .setTransactionMemo(params.memo || `WRAPpDEX:addLiq:${params.pool.tokenA}/${params.pool.tokenB}`)
@@ -1094,7 +1106,11 @@ export async function buildRemoveLiquidityTransaction(params: {
       AccountId,
       TokenId,
       TransactionId,
+      Long,
     } = await import("@hashgraph/sdk");
+
+    // ATOMIC-10: Long.fromString() — see buildSwapTransaction comment
+    const toLong = (v: bigint) => Long.fromString(v.toString());
 
     const userAccount = AccountId.fromString(params.userAccountId);
     const poolAccount = AccountId.fromString(params.pool.accountId);
@@ -1110,16 +1126,20 @@ export async function buildRemoveLiquidityTransaction(params: {
 
     const txId = TransactionId.generate(userAccount);
 
+    const lpShares = BigInt(params.sharesRaw);
+    const amtAOut = BigInt(params.amountAOutRaw);
+    const amtBOut = BigInt(params.amountBOutRaw);
+
     const tx = new TransferTransaction()
       // Leg 1: User sends LP tokens to pool
-      .addTokenTransfer(lpTokenId, userAccount, -Number(BigInt(params.sharesRaw)))
-      .addTokenTransfer(lpTokenId, poolAccount, Number(BigInt(params.sharesRaw)))
+      .addTokenTransfer(lpTokenId, userAccount, toLong(-lpShares))
+      .addTokenTransfer(lpTokenId, poolAccount, toLong(lpShares))
       // Leg 2: Pool sends tokenA to user
-      .addTokenTransfer(tokenAId, poolAccount, -Number(BigInt(params.amountAOutRaw)))
-      .addTokenTransfer(tokenAId, userAccount, Number(BigInt(params.amountAOutRaw)))
+      .addTokenTransfer(tokenAId, poolAccount, toLong(-amtAOut))
+      .addTokenTransfer(tokenAId, userAccount, toLong(amtAOut))
       // Leg 3: Pool sends tokenB to user
-      .addTokenTransfer(tokenBId, poolAccount, -Number(BigInt(params.amountBOutRaw)))
-      .addTokenTransfer(tokenBId, userAccount, Number(BigInt(params.amountBOutRaw)))
+      .addTokenTransfer(tokenBId, poolAccount, toLong(-amtBOut))
+      .addTokenTransfer(tokenBId, userAccount, toLong(amtBOut))
       .setNodeAccountIds(nodeAccountIds)
       .setTransactionId(txId)
       .setTransactionMemo(params.memo || `WRAPpDEX:removeLiq:${params.pool.tokenA}/${params.pool.tokenB}`)
@@ -1206,7 +1226,7 @@ export async function getPoolMetrics(poolId: string): Promise<PoolMetrics | null
 
 // ═══════════════════════════════════════════════════════════════════════
 // SECTION 10: Utility / Helpers
-// ═══════════════════════════════════════════════════════════════════════
+// ══════���════════════════════════════════════════════════════════════════
 
 /** Generate HashScan URL for a transaction */
 export function getSwapHashScanUrl(transactionId: string): string {

@@ -16,6 +16,7 @@ import {
   Lock,
   Droplets,
   PowerOff,
+  WifiOff,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -36,6 +37,8 @@ import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 
 // ── AMM kill switch status polling ──────────────────────────────────
 const AMM_STATUS_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/amm/kill-switch`;
+// ── Atomic signer oracle status (richer than kill-switch) ───────────
+const ORACLE_STATUS_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/atomic/status`;
 
 // ── Animated Glow Border ────────────────────────────────────────────
 
@@ -92,7 +95,7 @@ function ParticleBurst({ show }: { show: boolean }) {
   );
 }
 
-// ── Main Component ──────────────────────────────────────────────────
+// ── Main Component ───────────────────────────────────────���──────────
 
 interface TradingSwapPanelProps {
   isDark: boolean;
@@ -126,25 +129,58 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
   // └─────────────────────────────────────────────────────────────────────┘
   const [ammPrelaunch, setAmmPrelaunch] = useState(true);
 
+  // ── Oracle / Signing Oracle Status ─────────────────────────────────
+  // oracleStale: true when the /atomic/status endpoint is unreachable or
+  //   returns data indicating the signing oracle is unhealthy. Swaps are
+  //   blocked because the server can't co-sign without a live oracle.
+  // executeSupported: true when at least one pool is active and the oracle
+  //   is live and not killed. Derived from /atomic/status.isLive.
+  const [oracleStale, setOracleStale] = useState(false);
+  const [executeSupported, setExecuteSupported] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
       try {
-        const res = await fetch(AMM_STATUS_URL, {
-          headers: { Authorization: `Bearer ${publicAnonKey}` },
-          signal: AbortSignal.timeout(6000),
-        });
-        if (!cancelled && res.ok) {
-          const data = await res.json();
-          setAmmHalted(!!data.active);
-          setAmmPrelaunch(!!data.prelaunchLocked);
+        // Fetch both endpoints in parallel — kill-switch for halt/prelaunch,
+        // atomic/status for oracle health + pool liveness
+        const [killRes, oracleRes] = await Promise.all([
+          fetch(AMM_STATUS_URL, {
+            headers: { Authorization: `Bearer ${publicAnonKey}` },
+            signal: AbortSignal.timeout(6000),
+          }),
+          fetch(ORACLE_STATUS_URL, {
+            headers: { Authorization: `Bearer ${publicAnonKey}` },
+            signal: AbortSignal.timeout(6000),
+          }).catch(() => null),
+        ]);
+
+        if (cancelled) return;
+
+        // Kill-switch endpoint
+        if (killRes.ok) {
+          const killData = await killRes.json();
+          setAmmHalted(!!killData.active);
+          setAmmPrelaunch(!!killData.prelaunchLocked);
+        }
+
+        // Oracle status endpoint
+        if (oracleRes && oracleRes.ok) {
+          const oracleData = await oracleRes.json();
+          setOracleStale(false);
+          setExecuteSupported(!!oracleData.isLive);
+        } else {
+          // Oracle unreachable — mark stale but don't block UI entirely
+          setOracleStale(true);
+          setExecuteSupported(false);
         }
       } catch {
         // Fail-closed: if we can't verify AMM status, show halted state
         // to prevent swaps against a potentially halted AMM.
         if (!cancelled) {
-          console.log("[TradingSwap] Kill switch status check failed — failing closed");
+          console.log("[TradingSwap] Status check failed — failing closed");
           setAmmHalted(true);
+          setOracleStale(true);
         }
       }
     };
@@ -237,7 +273,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
     ? "bg-slate-800/60 border border-pink-500/10 focus-within:border-pink-500/40"
     : "bg-gray-50 border border-gray-200 focus-within:border-pink-300";
 
-  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success" || ammHalted;
+  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success" || ammHalted || oracleStale || !executeSupported;
 
   return (
     <div className="h-full flex flex-col">
@@ -261,9 +297,17 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                 <div>
                   <span className={`text-sm font-bold ${isDark ? "text-slate-400" : "text-slate-500"}`}>Swap</span>
                   <div className="flex items-center gap-1">
-                    <span className={`w-1.5 h-1.5 rounded-full ${quote ? "bg-emerald-400 animate-pulse" : isDark ? "bg-slate-600" : "bg-gray-300"}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      oracleStale
+                        ? "bg-amber-400 animate-pulse"
+                        : ammHalted
+                        ? "bg-red-400"
+                        : quote
+                        ? "bg-emerald-400 animate-pulse"
+                        : isDark ? "bg-slate-600" : "bg-gray-300"
+                    }`} />
                     <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                      {quote ? "Live" : "Ready"}
+                      {oracleStale ? "Stale" : ammHalted ? "Halted" : quote ? "Live" : "Ready"}
                     </span>
                   </div>
                 </div>
@@ -292,6 +336,32 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                   <p className="text-xs font-semibold text-red-400">AMM Trading Halted</p>
                   <p className="text-[10px] text-red-400/70 mt-0.5 leading-relaxed">
                     The protocol owner has temporarily suspended all swaps. Existing liquidity can still be withdrawn.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Oracle Stale Warning — signing oracle unreachable */}
+            {oracleStale && !ammHalted && (
+              <div className="rounded-xl p-3 bg-amber-500/10 border border-amber-500/20 flex items-start gap-2.5">
+                <WifiOff className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-400">Oracle Unreachable</p>
+                  <p className="text-[10px] text-amber-400/70 mt-0.5 leading-relaxed">
+                    The signing oracle is not responding. Swaps are paused until connectivity is restored. Retrying automatically.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Pools Not Yet Live — oracle healthy but no active pools */}
+            {!executeSupported && !oracleStale && !ammHalted && (
+              <div className={`rounded-xl p-3 flex items-start gap-2.5 ${isDark ? "bg-slate-800/40 border border-slate-700/30" : "bg-blue-50 border border-blue-100"}`}>
+                <Droplets className={`w-4 h-4 shrink-0 mt-0.5 ${isDark ? "text-blue-400/60" : "text-blue-400"}`} />
+                <div>
+                  <p className={`text-xs font-semibold ${isDark ? "text-blue-400/80" : "text-blue-500"}`}>Pools Deploying</p>
+                  <p className={`text-[10px] mt-0.5 leading-relaxed ${isDark ? "text-slate-500" : "text-blue-400/70"}`}>
+                    Pool accounts are being deployed on Hedera. Swaps will activate once at least one pool is live.
                   </p>
                 </div>
               </div>
@@ -498,6 +568,10 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                   <><CheckCircle2 className="w-4 h-4" /> Swap Complete!</>
                 ) : ammHalted ? (
                   <><PowerOff className="w-4 h-4" /> Trading Halted</>
+                ) : oracleStale ? (
+                  <><WifiOff className="w-4 h-4" /> Oracle Stale</>
+                ) : !executeSupported ? (
+                  <><Droplets className="w-4 h-4" /> Pools Deploying</>
                 ) : !accountId ? (
                   <><Lock className="w-4 h-4" /> Connect Wallet</>
                 ) : !quote ? (

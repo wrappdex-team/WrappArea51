@@ -261,6 +261,7 @@ export function LandingHero() {
           >
             <Link to="/markets">
               <button
+                type="button"
                 className="relative h-14 px-10 text-white font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer overflow-hidden group transition-transform hover:-translate-y-0.5 active:translate-y-0"
                 style={{
                   background: `linear-gradient(135deg, ${BLUE}, #3b82f6)`,
@@ -288,7 +289,7 @@ export function LandingHero() {
               </button>
             </Link>
             <a href="mailto:Info@Wrappdex.io">
-              <button className="h-14 px-10 border-2 border-slate-200 text-slate-700 font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer bg-white/60 backdrop-blur-sm hover:border-slate-900 hover:bg-white transition-all duration-300">
+              <button type="button" className="h-14 px-10 border-2 border-slate-200 text-slate-700 font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer bg-white/60 backdrop-blur-sm hover:border-slate-900 hover:bg-white transition-all duration-300">
                 Partner With Us
               </button>
             </a>

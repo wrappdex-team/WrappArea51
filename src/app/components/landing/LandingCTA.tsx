@@ -37,6 +37,7 @@ export function LandingCTA() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-10">
             <a href="mailto:Info@Wrappdex.io">
               <button
+                type="button"
                 className="text-white font-black uppercase tracking-[0.3em] text-[11px] h-20 px-16 hover:bg-white hover:text-black transition-all shadow-2xl cursor-pointer"
                 style={{ backgroundColor: BLUE }}
               >
@@ -45,6 +46,7 @@ export function LandingCTA() {
             </a>
             <a href="https://hbar.guide/" target="_blank" rel="noopener noreferrer">
               <button
+                type="button"
                 className="h-20 px-16 bg-white text-black font-black uppercase tracking-[0.3em] text-[11px] transition-all cursor-pointer"
                 onMouseEnter={(e) => {
                   e.currentTarget.style.backgroundColor = BLUE;
