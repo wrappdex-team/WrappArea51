@@ -138,7 +138,7 @@ export const TokenInputPro = memo(function TokenInputPro({
               : "bg-white hover:bg-gray-50 border border-gray-200 shadow-sm"
           }`}
         >
-          <TokenIcon src={token.logo} symbol={token.symbol} size="w-7 h-7" />
+          <TokenIcon src={token.logo} symbol={token.symbol} htsId={token.htsId} size="w-7 h-7" />
           <span className={`font-extrabold text-sm ${isDark ? "text-white" : "text-slate-800"}`}>
             {token.symbol}
           </span>

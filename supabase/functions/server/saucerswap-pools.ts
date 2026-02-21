@@ -155,23 +155,26 @@ function extractArray(data: any): any[] {
 }
 
 // ── Token logo resolution ───────────────────────────────────────────
+// [C79-01] Migrated from CoinGecko (broken /large/ paths) to
+// CoinMarketCap static CDN (stable, no auth required, 64x64 PNG).
+// SaucerSwap-native tokens use SaucerSwap CDN (SVG).
 
 const KNOWN_LOGOS: Record<string, string> = {
-  HBAR:    "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
-  WHBAR:   "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
-  USDC:    "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
-  USDT:    "https://assets.coingecko.com/coins/images/325/large/Tether.png",
-  WBTC:    "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
-  WETH:    "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-  LINK:    "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
+  HBAR:    "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
+  WHBAR:   "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
+  USDC:    "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png",
+  USDT:    "https://s2.coinmarketcap.com/static/img/coins/64x64/825.png",
+  WBTC:    "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png",
+  WETH:    "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
+  LINK:    "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png",
   SAUCE:   "https://www.saucerswap.finance/images/tokens/sauce.svg",
   HBARX:   "https://www.saucerswap.finance/images/tokens/hbarx.svg",
   KARATE:  "https://www.saucerswap.finance/images/tokens/karate.svg",
   PACK:    "https://www.saucerswap.finance/images/tokens/pack.svg",
   HST:     "https://www.saucerswap.finance/images/tokens/hst.svg",
   DOVU:    "https://www.saucerswap.finance/images/tokens/dovu.svg",
-  AAVE:    "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
-  DAI:     "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+  AAVE:    "https://s2.coinmarketcap.com/static/img/coins/64x64/7278.png",
+  DAI:     "https://s2.coinmarketcap.com/static/img/coins/64x64/4943.png",
   // [C36-04] HBAR.ħ protocol token — SaucerSwap API may use various symbol names
   "HBAR.ħ": "https://www.saucerswap.finance/images/tokens/hbar.h.svg",
   "HBAR.h": "https://www.saucerswap.finance/images/tokens/hbar.h.svg",

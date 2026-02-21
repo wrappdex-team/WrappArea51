@@ -164,8 +164,8 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="flex -space-x-1.5">
-              {seedA && <TokenIcon src={seedA.logo} symbol={seedA.symbol} size="w-7 h-7" className="border-2 border-slate-900 relative z-10" />}
-              {seedB && <TokenIcon src={seedB.logo} symbol={seedB.symbol} size="w-7 h-7" className="border-2 border-slate-900" />}
+              {seedA && <TokenIcon src={seedA.logo} symbol={seedA.symbol} htsId={seedA.tokenId} size="w-7 h-7" className="border-2 border-slate-900 relative z-10" />}
+              {seedB && <TokenIcon src={seedB.logo} symbol={seedB.symbol} htsId={seedB.tokenId} size="w-7 h-7" className="border-2 border-slate-900" />}
             </div>
             <div>
               <div className="font-bold text-sm">{displaySymbol(pool.tokenA)}/{displaySymbol(pool.tokenB)}</div>

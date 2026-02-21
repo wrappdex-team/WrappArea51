@@ -51,19 +51,19 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
   {
     symbol: "HBAR", name: "HBAR", htsId: "native",
     evmAddress: "0x0000000000000000000000000000000000000000", decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
     rank: 0, isWrapped: false, isNative: true,
   },
   {
     symbol: "WHBAR", name: "Wrapped HBAR", htsId: "0.0.1456986",
     evmAddress: htsIdToEvmAddress("0.0.1456986"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
     rank: 1, isWrapped: false,
   },
   {
     symbol: "USDC", name: "USD Coin", htsId: "0.0.456858",
     evmAddress: htsIdToEvmAddress("0.0.456858"), decimals: 6,
-    logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png",
     rank: 2, isWrapped: false,
   },
   {
@@ -72,21 +72,21 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // SaucerSwap.finance lists this as their primary USDT.
     symbol: "USDT", name: "Tether USD", htsId: "0.0.1055472",
     evmAddress: htsIdToEvmAddress("0.0.1055472"), decimals: 6,
-    logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/825.png",
     rank: 3, isWrapped: true, bridge: "HashPort",
   },
   {
     // [C36-04] Removed saucerswapAliasId "0.0.1969769"
     symbol: "WBTC", name: "Wrapped Bitcoin", htsId: "0.0.1055483",
     evmAddress: htsIdToEvmAddress("0.0.1055483"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png",
     rank: 4, isWrapped: true, bridge: "HashPort",
   },
   {
     // [C36-04] Removed saucerswapAliasId "0.0.1970030"
     symbol: "LINK", name: "Chainlink", htsId: "0.0.1055495",
     evmAddress: htsIdToEvmAddress("0.0.1055495"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png",
     rank: 5, isWrapped: true, bridge: "HashPort",
   },
   {
@@ -129,19 +129,19 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // [C36-04] WETH decimals: 18 is correct (verified via HashScan).
     symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.541564",
     evmAddress: htsIdToEvmAddress("0.0.541564"), decimals: 18,
-    logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
     rank: 12, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "AAVE", name: "Aave", htsId: "0.0.1055498",
     evmAddress: htsIdToEvmAddress("0.0.1055498"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/7278.png",
     rank: 13, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "DAI", name: "Dai Stablecoin", htsId: "0.0.1055477",
     evmAddress: htsIdToEvmAddress("0.0.1055477"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4943.png",
     rank: 14, isWrapped: true, bridge: "HashPort",
   },
   {
@@ -154,33 +154,33 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
   {
     symbol: "WPOL", name: "Wrapped POL (Polygon)", htsId: "0.0.3306241",
     evmAddress: htsIdToEvmAddress("0.0.3306241"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
     rank: 16, isWrapped: true, bridge: "HashPort",
   },
   // ── HashPort / LayerZero Bridge Stablecoins ──
   {
     symbol: "USDCh", name: "USDC (HashPort)", htsId: "0.0.1055459",
     evmAddress: htsIdToEvmAddress("0.0.1055459"), decimals: 6,
-    logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png",
     rank: 20, isWrapped: true, bridge: "HashPort",
   },
   // [C36-04] USDTh (0.0.1055472) removed — merged into USDT above.
   {
     symbol: "WBNB", name: "Wrapped BNB", htsId: "0.0.1157005",
     evmAddress: htsIdToEvmAddress("0.0.1157005"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1839.png",
     rank: 22, isWrapped: true, bridge: "LayerZero",
   },
   {
     symbol: "WAVAX", name: "Wrapped AVAX", htsId: "0.0.1157020",
     evmAddress: htsIdToEvmAddress("0.0.1157020"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/5805.png",
     rank: 23, isWrapped: true, bridge: "LayerZero",
   },
   {
     symbol: "WMATIC", name: "Wrapped MATIC", htsId: "0.0.540318",
     evmAddress: htsIdToEvmAddress("0.0.540318"), decimals: 8,
-    logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
     rank: 24, isWrapped: true, bridge: "HashPort",
   },
 ];
@@ -293,51 +293,103 @@ export function getWhbarToken(): AllowedToken {
   return TOKEN_BY_SYMBOL.get("WHBAR")!;
 }
 
-// ── [C66] Dynamic Icon Resolution from SaucerSwap API ──────────────���
-// Fetches official token icons from the SaucerSwap /tokens endpoint on
-// first load and patches SAUCERSWAP_TOKENS in-place. This ensures we
-// always show the correct project-uploaded icons, even if our static
-// CDN URLs change or a new token is added.
+// ── [C66 / C79-01] Dynamic Icon Resolution from SaucerSwap API ──────
+// Fetches official token icons from our server proxy (which proxies
+// SaucerSwap /tokens endpoint with 5-min cache, no CORS issues).
+// 
+// Two-pronged approach:
+//   1. Patches SAUCERSWAP_TOKENS[].logo in-place (for existing references)
+//   2. Populates the global icon registry (for TokenIcon fallback chain)
+//
+// The icon registry allows TokenIcon to resolve icons even when the
+// React state hasn't re-rendered (e.g., stale token references).
 let _iconFetchDone = false;
 export async function fetchAndApplyTokenIcons(): Promise<void> {
   if (_iconFetchDone) return;
   _iconFetchDone = true; // Only try once per session
+
+  // Import lazily to avoid circular deps
+  const { registerTokenIcons } = await import("../../components/TokenIcon");
+
   try {
+    // [C79-01] Use our server proxy instead of direct SaucerSwap API.
+    // Direct browser → api.saucerswap.finance often fails in iframes
+    // due to CORS, CSP, or ad-blocker restrictions. Our Supabase edge
+    // function proxies the same data with guaranteed CORS headers.
+    const { ssProxy } = await import("./pools");
+    const data = await ssProxy<{ tokens: Array<{ id: string; symbol: string; icon: string }> }>("/tokens", {});
+    
+    if (!data?.tokens || !Array.isArray(data.tokens)) {
+      log.warn("TokenIcons", "Server proxy returned no token data — trying direct API fallback");
+      await _fetchIconsDirect();
+      return;
+    }
+
+    const iconByHtsId = new Map<string, string>();
+    const registryEntries: Array<{ htsId: string; iconUrl: string }> = [];
+
+    for (const t of data.tokens) {
+      const id = t.id || "";
+      const icon = t.icon || "";
+      if (id && icon) {
+        const fullUrl = icon.startsWith("http") ? icon : `https://www.saucerswap.finance${icon}`;
+        iconByHtsId.set(id, fullUrl);
+        registryEntries.push({ htsId: id, iconUrl: fullUrl });
+      }
+    }
+
+    // 1. Patch static token logos in-place
+    let updated = 0;
+    for (const token of SAUCERSWAP_TOKENS) {
+      if (token.htsId === "native") continue;
+      const apiIcon = iconByHtsId.get(token.htsId);
+      if (apiIcon) {
+        token.logo = apiIcon;
+        updated++;
+      }
+    }
+
+    // 2. Populate icon registry for TokenIcon fallback chain
+    const registered = registerTokenIcons(registryEntries);
+
+    // 3. Also register HBAR native with a known-good icon
+    const hbarIcon = "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png";
+    registerTokenIcons([{ htsId: "native", iconUrl: hbarIcon }]);
+
+    log.info("TokenIcons", `Patched ${updated} static logos, registered ${registered} in icon registry (${registryEntries.length} total from API)`);
+  } catch (e: any) {
+    log.warn("TokenIcons", `Server proxy icon fetch failed: ${e?.message || e} — trying direct API`);
+    await _fetchIconsDirect();
+  }
+}
+
+/** Direct API fallback — only used if our server proxy is down. */
+async function _fetchIconsDirect(): Promise<void> {
+  try {
+    const { registerTokenIcons } = await import("../../components/TokenIcon");
     const res = await fetch("https://api.saucerswap.finance/tokens", {
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return;
     const data = await res.json();
-    // API returns array of token objects with { id, symbol, icon, ... }
     const tokens: any[] = Array.isArray(data) ? data : Object.values(data);
-    const iconByHtsId = new Map<string, string>();
+    const registryEntries: Array<{ htsId: string; iconUrl: string }> = [];
+
     for (const t of tokens) {
       const id = t.id || t.tokenId || "";
       const icon = t.icon || t.image || "";
       if (id && icon) {
-        // SaucerSwap returns relative paths like "/images/tokens/sauce.svg"
-        const fullUrl = icon.startsWith("http")
-          ? icon
-          : `https://www.saucerswap.finance${icon}`;
-        iconByHtsId.set(id, fullUrl);
+        const fullUrl = icon.startsWith("http") ? icon : `https://www.saucerswap.finance${icon}`;
+        registryEntries.push({ htsId: id, iconUrl: fullUrl });
+        // Also patch in-place
+        const token = SAUCERSWAP_TOKENS.find(tok => tok.htsId === id);
+        if (token) token.logo = fullUrl;
       }
     }
-    // Patch token logos in-place
-    let updated = 0;
-    for (const token of SAUCERSWAP_TOKENS) {
-      if (token.htsId === "native") continue; // HBAR uses CoinGecko
-      const apiIcon = iconByHtsId.get(token.htsId);
-      if (apiIcon && apiIcon !== token.logo) {
-        token.logo = apiIcon;
-        updated++;
-      }
-    }
-    if (updated > 0) {
-      log.info("TokenIcons", `Updated ${updated} token icons from SaucerSwap API`);
-    }
+    registerTokenIcons(registryEntries);
+    log.info("TokenIcons", `Direct API fallback: registered ${registryEntries.length} icons`);
   } catch (e: any) {
-    // Non-critical — static icons remain as fallback
-    log.warn("TokenIcons", `Icon fetch failed (non-blocking): ${e?.message || e}`);
+    log.warn("TokenIcons", `Direct API also failed: ${e?.message || e}`);
   }
 }
 
@@ -414,6 +466,20 @@ export async function fetchDynamicTokens(): Promise<{
 
     // [C56] Register in dynamic lookup maps so resolveToken() and swap engine find them
     registerDynamicTokens(dynamicConverted);
+
+    // [C79-01] Register ALL dynamic token icons in the icon registry.
+    // This ensures TokenIcon's fallback chain can resolve icons for
+    // any of the 300+ SaucerSwap tokens, not just the static list.
+    try {
+      const { registerTokenIcons } = await import("../../components/TokenIcon");
+      const iconEntries = dynamicRaw
+        .filter(dt => dt.id && dt.icon)
+        .map(dt => ({
+          htsId: dt.id,
+          iconUrl: dt.icon.startsWith("http") ? dt.icon : `https://www.saucerswap.finance${dt.icon}`,
+        }));
+      registerTokenIcons(iconEntries);
+    } catch { /* non-critical */ }
 
     _dynamicTokenCache = { tokens: merged, raw: dynamicRaw, ts: Date.now() };
     log.info("DynamicTokens", `Merged ${SAUCERSWAP_TOKENS.length} static + ${dynamicConverted.length} dynamic = ${merged.length} total`);

@@ -842,8 +842,8 @@ export function SwapPanel() {
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2.5">
                             <div className="flex -space-x-2">
-                              <TokenIcon src={pool.tokenA.logo} symbol={pool.tokenA.symbol} size="w-6 h-6" className={`ring-2 relative z-10 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
-                              <TokenIcon src={pool.tokenB.logo} symbol={pool.tokenB.symbol} size="w-6 h-6" className={`ring-2 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
+                              <TokenIcon src={pool.tokenA.logo} symbol={pool.tokenA.symbol} htsId={pool.tokenA.htsId} size="w-6 h-6" className={`ring-2 relative z-10 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
+                              <TokenIcon src={pool.tokenB.logo} symbol={pool.tokenB.symbol} htsId={pool.tokenB.htsId} size="w-6 h-6" className={`ring-2 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
                             </div>
                             <div>
                               <div className={`font-bold text-xs ${isDark ? "text-white" : "text-slate-800"}`}>

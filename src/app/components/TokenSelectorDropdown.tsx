@@ -355,7 +355,7 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
                 }`}
               >
                 {/* Icon — lazy loaded */}
-                <TokenIcon src={t.logo} symbol={t.symbol} size="w-7 h-7" />
+                <TokenIcon src={t.logo} symbol={t.symbol} htsId={t.htsId} size="w-7 h-7" />
 
                 {/* Symbol + Name */}
                 <div className="flex-1 min-w-0">

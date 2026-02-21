@@ -178,19 +178,19 @@ export interface WrappedTokenSeed {
 
 export const WRAPPED_TOKENS: WrappedTokenSeed[] = [
   // ── Routing Hub ─────────────────────────────────────────────────────
-  { tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, fallbackPrice: 0.10, logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, // [C33-01] Updated from 0.28
+  { tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, fallbackPrice: 0.10, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png" }, // [C33-01] Updated from 0.28
   // ── Stablecoins ─────────────────────────────────────────────────────
-  { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
-  { tokenId: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" },
-  { tokenId: "0.0.1055477", symbol: "DAI", name: "Dai Stablecoin", decimals: 8, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png", bridge: "HashPort" },
+  { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, fallbackPrice: 1.00, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png" },
+  { tokenId: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, fallbackPrice: 1.00, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/825.png" },
+  { tokenId: "0.0.1055477", symbol: "DAI", name: "Dai Stablecoin", decimals: 8, fallbackPrice: 1.00, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4943.png", bridge: "HashPort" },
   // ── Major Wrapped Assets (HashPort / LayerZero canonical HTS IDs) ──
-  { tokenId: "0.0.1055483", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, fallbackPrice: 104000, logo: "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png", bridge: "HashPort" },
-  { tokenId: "0.0.541564", symbol: "WETH", name: "Wrapped Ether", decimals: 18, fallbackPrice: 2650, logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png", bridge: "HashPort" },
-  { tokenId: "0.0.1055495", symbol: "LINK", name: "Chainlink", decimals: 8, fallbackPrice: 16.50, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png", bridge: "HashPort" },
-  { tokenId: "0.0.1055498", symbol: "AAVE", name: "Aave", decimals: 8, fallbackPrice: 180.0, logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055483", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, fallbackPrice: 104000, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png", bridge: "HashPort" },
+  { tokenId: "0.0.541564", symbol: "WETH", name: "Wrapped Ether", decimals: 18, fallbackPrice: 2650, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055495", symbol: "LINK", name: "Chainlink", decimals: 8, fallbackPrice: 16.50, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png", bridge: "HashPort" },
+  { tokenId: "0.0.1055498", symbol: "AAVE", name: "Aave", decimals: 8, fallbackPrice: 180.0, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/7278.png", bridge: "HashPort" },
   // ── Cross-Chain (LayerZero / BiT Global) ────────────────────────────
-  { tokenId: "0.0.1157005", symbol: "WBNB", name: "Wrapped BNB", decimals: 8, fallbackPrice: 660, logo: "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png", bridge: "LayerZero" },
-  { tokenId: "0.0.1157020", symbol: "WAVAX", name: "Wrapped AVAX", decimals: 8, fallbackPrice: 25, logo: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png", bridge: "LayerZero" },
+  { tokenId: "0.0.1157005", symbol: "WBNB", name: "Wrapped BNB", decimals: 8, fallbackPrice: 660, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1839.png", bridge: "LayerZero" },
+  { tokenId: "0.0.1157020", symbol: "WAVAX", name: "Wrapped AVAX", decimals: 8, fallbackPrice: 25, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/5805.png", bridge: "LayerZero" },
 ];
 
 const TOKEN_BY_SYMBOL = new Map(WRAPPED_TOKENS.map(t => [t.symbol, t]));

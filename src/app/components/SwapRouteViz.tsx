@@ -88,7 +88,7 @@ export const SwapRouteViz = memo(function SwapRouteViz({ route, isDark }: SwapRo
                   isDark ? "bg-slate-700/50" : "bg-gray-100/80"
                 }`}
               >
-                <TokenIcon src={token.logo} symbol={token.symbol} size="w-5 h-5" />
+                <TokenIcon src={token.logo} symbol={token.symbol} htsId={token.htsId} size="w-5 h-5" />
                 <span className={`text-xs font-bold ${
                   isDark ? "text-white" : "text-slate-800"
                 }`}>
