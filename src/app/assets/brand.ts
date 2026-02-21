@@ -1,12 +1,16 @@
 /**
  * Centralized brand assets — URL constants for all logos and branding images.
  *
- * Using string constants (URLs / data URIs) instead of Vite asset imports
- * ensures the build works on Railway, Vercel, Netlify, or any standard Vite host.
+ * Partner logos (1inch, SaucerSwap Larry) are imported via figma:asset —
+ * Vite hashes them as real image files in the build output, giving us
+ * CDN caching + smaller JS bundle vs inline data URIs.
  *
- * The `figma:asset/...` scheme only works inside Figma Make's dev server.
- * For production builds these must be plain strings.
+ * Other logos use inline SVG data URIs for zero-network-request rendering.
  */
+
+// ── Official partner logo imports (Vite-bundled image assets) ────────
+import oneinchLogoPng from "figma:asset/fba6312ac6014739d2c439b2d5a75baff59d2cf0.png";
+import saucerswapLarryPng from "figma:asset/77b817d6656e35a60442704be1fb46c1c21219c1.png";
 
 // ── Production logo imports (data URIs for universal compatibility) ──
 // These are the official partner logos provided for rollout.
@@ -102,8 +106,21 @@ export const HASHPORT_LOGO = `data:image/svg+xml,${encodeURIComponent(
 )}`;
 
 // SaucerSwap — "Larry" the alien mascot logo
-// Used as the venue badge below the swap button. Inline data URI ensures
-// zero CORS / hotlinking issues (SaucerSwap's CDN blocks external refs).
-export const SAUCERSWAP_LARRY_LOGO = `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4ade80"/><stop offset="100%" stop-color="#16a34a"/></linearGradient></defs><circle cx="20" cy="20" r="19" fill="url(#sg)"/><ellipse cx="20" cy="10" rx="14" ry="4" fill="#166534" opacity="0.35"/><ellipse cx="20" cy="22" rx="10" ry="11" fill="#15803d"/><ellipse cx="15" cy="19" rx="3.5" ry="4" fill="#bbf7d0"/><ellipse cx="25" cy="19" rx="3.5" ry="4" fill="#bbf7d0"/><circle cx="15.5" cy="19.5" r="1.8" fill="#052e16"/><circle cx="25.5" cy="19.5" r="1.8" fill="#052e16"/><circle cx="16.2" cy="18.6" r="0.7" fill="#fff"/><circle cx="26.2" cy="18.6" r="0.7" fill="#fff"/><path d="M16 27q4 3 8 0" fill="none" stroke="#052e16" stroke-width="1.2" stroke-linecap="round"/><ellipse cx="10" cy="13" rx="3" ry="1.5" fill="#4ade80" transform="rotate(-25 10 13)"/><ellipse cx="30" cy="13" rx="3" ry="1.5" fill="#4ade80" transform="rotate(25 30 13)"/></svg>`
+// Official Larry PNG from SaucerSwap, imported as a Vite-bundled image asset.
+// Used as the venue badge below the swap button and in pool route headers.
+export const SAUCERSWAP_LARRY_LOGO = saucerswapLarryPng;
+
+// ── 1inch Official Logo ──────────────────────────────────────────────
+// The official 1inch DEX aggregator logo (PNG).
+// Used in venue badges and the 1inch cross-chain widget header.
+export const ONEINCH_LOGO = oneinchLogoPng;
+
+// ── SaucerSwap Official Logo (Full) ──────────────────────────────────
+// Same Larry mascot — used for larger venue badges and route visualization.
+export const SAUCERSWAP_LOGO = saucerswapLarryPng;
+
+// ── Hedera Logo ──────────────────────────────────────────────────────
+// Official Hedera Hashgraph "H" bar logo.
+export const HEDERA_LOGO = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#000"/><g fill="#fff"><rect x="12" y="10" width="3" height="20" rx="1.5"/><rect x="25" y="10" width="3" height="20" rx="1.5"/><rect x="15" y="17" width="10" height="3" rx="1"/><rect x="15" y="22" width="10" height="3" rx="1"/></g></svg>`
 )}`;

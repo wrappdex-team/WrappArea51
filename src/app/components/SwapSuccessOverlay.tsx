@@ -237,7 +237,7 @@ export function SwapSuccessOverlay({
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -12, scale: 0.96 }}
           transition={{ type: "spring", damping: 22, stiffness: 300 }}
-          className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-emerald-500/20 overflow-hidden"
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-2xl bg-[#0c0f1a]/98 backdrop-blur-2xl border border-emerald-500/15 overflow-hidden"
           role="alert"
           aria-live="assertive"
           aria-label="Swap completed successfully"

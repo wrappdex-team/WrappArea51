@@ -48,7 +48,7 @@ import {
   playVipButtonChime,
   playConnectionSuccess,
 } from "../utils/sounds";
-import { METAMASK_LOGO } from "../assets/brand";
+import { METAMASK_LOGO, ONEINCH_LOGO } from "../assets/brand";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
@@ -385,8 +385,8 @@ export function OneInchWidget() {
 
   // ── Style tokens (matching SaucerSwap section) ──
   const cardClass = isDark
-    ? "bg-slate-900/60 border border-pink-500/10 backdrop-blur-xl"
-    : "bg-white border border-gray-200 shadow-sm";
+    ? "bg-[#0c0f1a]/95 backdrop-blur-2xl border border-white/[0.04]"
+    : "bg-white/95 backdrop-blur-2xl border border-gray-200 shadow-xl";
   const inputClass = isDark
     ? "bg-slate-800/60 border border-slate-700/30"
     : "bg-gray-50 border border-gray-200";
@@ -763,19 +763,13 @@ export function OneInchWidget() {
         {/* Header — same as live widget */}
         <div className="flex items-center gap-2.5 mb-4">
           <div className="relative">
-            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ${
-              isDark
-                ? "bg-gradient-to-br from-slate-700 to-slate-800 ring-1 ring-pink-500/20"
-                : "bg-gradient-to-br from-gray-100 to-gray-200 ring-1 ring-gray-300"
-            }`}>
-              <span className="text-sm font-black bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">1"</span>
-            </div>
+            <img src={ONEINCH_LOGO} alt="1inch" className="w-9 h-9 rounded-xl shadow-lg" width={36} height={36} />
           </div>
           <div>
-            <h3 className="text-lg bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent font-bold leading-tight">
+            <h3 className={`text-lg font-extrabold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>
               1inch Swap
             </h3>
-            <p className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+            <p className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
               Cross-chain EVM aggregator
             </p>
           </div>
@@ -834,21 +828,15 @@ export function OneInchWidget() {
           <div className="flex items-center gap-2.5">
             {/* 1inch Logo */}
             <div className="relative">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ${
-                isDark
-                  ? "bg-gradient-to-br from-slate-700 to-slate-800 ring-1 ring-pink-500/20"
-                  : "bg-gradient-to-br from-gray-100 to-gray-200 ring-1 ring-gray-300"
-              }`}>
-                <span className="text-sm font-black bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">1"</span>
-              </div>
-              <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-slate-900 animate-pulse" />
+              <img src={ONEINCH_LOGO} alt="1inch" className="w-9 h-9 rounded-xl shadow-lg" width={36} height={36} />
+              <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-[#0c0f1a] animate-pulse" />
             </div>
             <div>
-              <h3 className="text-lg bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent font-bold leading-tight">
+              <h3 className={`text-lg font-extrabold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>
                 1inch Swap
               </h3>
               <div className="flex items-center gap-2">
-                <p className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                <p className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                   Cross-chain EVM aggregator
                 </p>
                 <span className={`text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1 ${

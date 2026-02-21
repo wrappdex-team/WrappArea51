@@ -13,18 +13,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ArrowDownUp,
-  ChevronDown,
-  AlertCircle,
-  CheckCircle2,
-  Loader2,
-  Settings2,
-  ArrowRight,
-  ExternalLink,
-  Shield,
   Droplets,
-  Wallet,
+  ExternalLink,
   RefreshCw,
-  Infinity as InfinityIcon,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
@@ -54,7 +45,6 @@ import {
   fetchAndApplyTokenIcons,
   type AllowedToken,
   type SwapQuote,
-  type QuoteConfidence,
   type ScoredRouteInfo,
   type PoolRoute,
   type SwapResult,
@@ -71,6 +61,12 @@ import { OneInchWidget } from "./OneInchWidget";
 import { TokenSelectorDropdown, type WalletTokenInfo } from "./TokenSelectorDropdown";
 import { Tip } from "./Tip";
 import { SwapSuccessOverlay } from "./SwapSuccessOverlay";
+import { SwapCardPro } from "./SwapCardPro";
+import { TokenInputPro } from "./TokenInputPro";
+import { SwapRouteViz } from "./SwapRouteViz";
+import { QuoteDetailsPro } from "./QuoteDetailsPro";
+import { SwapButtonPro } from "./SwapButtonPro";
+import { SlippageSettingsPro } from "./SlippageSettingsPro";
 
 const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
 const GAS_RESERVE = 1; // HBAR reserved for gas — Hedera fees are sub-cent, 1 HBAR covers dozens of txns
@@ -574,9 +570,6 @@ export function SwapPanel() {
   }, []);
 
   // ── Style tokens ──
-  const cardClass = isDark
-    ? "bg-slate-900/60 border border-pink-500/10 backdrop-blur-xl"
-    : "bg-white border border-gray-200 shadow-sm";
   const inputClass = isDark
     ? "bg-slate-800/60 border border-slate-700/30"
     : "bg-gray-50 border border-gray-200";
@@ -598,68 +591,53 @@ export function SwapPanel() {
     isDark, inputClass, livePrices, walletTokens, isWalletConnected,
   }), [isDark, inputClass, livePrices, walletTokens, isWalletConnected]);
 
+  // ── Handlers for pro components ──
+  const handleSetSlippageFromWarning = useCallback((val: number) => {
+    setSlippage(val);
+    setCustomSlippage("");
+  }, []);
+
+  const handleResetSwap = useCallback(() => {
+    setSwapStatus("idle");
+    setInputAmount("");
+    setOutputAmount("");
+    setQuote(null);
+    setScoredRoutes([]);
+    setShowSuccessOverlay(false);
+    setSwapError(null);
+  }, []);
+
+  const handleMaxInput = useCallback(() => {
+    if (inputBalance === null || inputBalance <= 0) return;
+    const max = inputToken.isNative ? Math.max(0, inputBalance - GAS_RESERVE) : inputBalance;
+    if (max > 0) setInputAmount(max.toString());
+  }, [inputBalance, inputToken.isNative]);
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* ═══ SWAP INTERFACE ═══ */}
         <div className="lg:col-span-5">
-          <div className={`rounded-2xl p-5 relative ${cardClass}`} role="form" aria-label="Token swap">
+          <SwapCardPro isDark={isDark} title="Swap">
             {/* Input Token */}
-            <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`} id="swap-input-label">You Pay</span>
-                  {isWalletConnected && (
-                    <button onClick={fetchBalances} aria-label="Refresh balances" className={`p-0.5 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-700 text-slate-600" : "hover:bg-gray-200 text-gray-400"}`}>
-                      <RefreshCw className="w-2.5 h-2.5" />
-                    </button>
-                  )}
-                </div>
-                {inputUsd > 0 && (
-                  <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    ~${inputUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                <input type="number" placeholder="0.0"
-                  aria-labelledby="swap-input-label"
-                  aria-describedby="swap-input-usd"
-                  className="bg-transparent flex-1 outline-none text-2xl min-w-0"
-                  value={inputAmount} onChange={e => { setInputAmount(e.target.value); setSwapStatus("idle"); setSwapError(null); }} />
-                <div className="relative shrink-0">
-                  <button onClick={() => { setShowInputSelector(!showInputSelector); setShowOutputSelector(false); }}
-                    aria-label={`Select input token, currently ${inputToken.symbol}`}
-                    aria-haspopup="listbox"
-                    aria-expanded={showInputSelector}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
-                    <TokenIcon src={inputToken.logo} symbol={inputToken.symbol} size="w-6 h-6" />
-                    <span className="font-bold text-sm">{inputToken.symbol}</span>
-                    <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
-                  </button>
-                  {showInputSelector && (
-                    <TokenSelectorDropdown isOpen={showInputSelector} onClose={() => setShowInputSelector(false)}
-                      onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} {...tokenSelectorShared} />
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <div className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                  {inputToken.isNative ? "Native" : `HTS: ${inputToken.htsId}`}
-                </div>
-                {isWalletConnected && inputBalance !== null && (
-                  <Tip content="Use max balance" side="top">
-                  <button onClick={() => {
-                    const max = inputToken.isNative ? Math.max(0, inputBalance - GAS_RESERVE) : inputBalance;
-                    if (max > 0) setInputAmount(max.toString());
-                  }}
-                    className={`text-xs flex items-center gap-1 transition-colors ${isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"}`}>
-                    <Wallet className="w-2.5 h-2.5" />
-                    {inputBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {inputToken.symbol}
-                  </button>
-                  </Tip>
-                )}
-              </div>
+            <div className="relative">
+              <TokenInputPro
+                label="You Pay"
+                token={inputToken}
+                amount={inputAmount}
+                usdValue={inputUsd}
+                balance={inputBalance}
+                isWalletConnected={isWalletConnected}
+                isDark={isDark}
+                onAmountChange={(v) => { setInputAmount(v); setSwapStatus("idle"); setSwapError(null); }}
+                onTokenClick={() => { setShowInputSelector(!showInputSelector); setShowOutputSelector(false); }}
+                onMaxClick={handleMaxInput}
+                onRefreshBalance={fetchBalances}
+              />
+              {showInputSelector && (
+                <TokenSelectorDropdown isOpen={showInputSelector} onClose={() => setShowInputSelector(false)}
+                  onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} {...tokenSelectorShared} />
+              )}
             </div>
 
             {/* Flip Button */}
@@ -668,455 +646,96 @@ export function SwapPanel() {
                 aria-label="Swap input and output tokens"
                 animate={{ rotate: flipCount * 180 }}
                 transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.85 }}
-                className={`p-2.5 rounded-xl border-4 transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
-                  isDark ? "bg-slate-800 border-slate-900/80 hover:bg-slate-700 text-pink-400"
-                    : "bg-white border-gray-100 hover:bg-gray-50 text-pink-600 shadow-sm"
+                className={`p-2.5 rounded-2xl border-4 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
+                  isDark
+                    ? "bg-[#0c0f1a] border-[#0c0f1a] hover:bg-slate-800 text-pink-400 shadow-lg shadow-pink-500/5"
+                    : "bg-white border-white hover:bg-gray-50 text-pink-600 shadow-md"
                 }`}>
                 <ArrowDownUp className="w-5 h-5" />
               </motion.button>
             </div>
 
             {/* Output Token */}
-            <div className={`rounded-xl p-4 mt-2 ${inputClass}`}>
-              <div className="flex items-center justify-between mb-2">
-                <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`} id="swap-output-label">You Receive</span>
-                {outputUsd > 0 && (
-                  <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    ~${outputUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                <input type="number" placeholder="0.0" readOnly
-                  aria-labelledby="swap-output-label"
-                  aria-live="polite"
-                  className={`bg-transparent flex-1 outline-none text-2xl min-w-0 ${quoteLoading ? "animate-pulse" : ""}`}
-                  value={outputAmount} />
-                <div className="relative shrink-0">
-                  <button onClick={() => { setShowOutputSelector(!showOutputSelector); setShowInputSelector(false); }}
-                    aria-label={`Select output token, currently ${outputToken.symbol}`}
-                    aria-haspopup="listbox"
-                    aria-expanded={showOutputSelector}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
-                    <TokenIcon src={outputToken.logo} symbol={outputToken.symbol} size="w-6 h-6" />
-                    <span className="font-bold text-sm">{outputToken.symbol}</span>
-                    <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
-                  </button>
-                  {showOutputSelector && (
-                    <TokenSelectorDropdown isOpen={showOutputSelector} onClose={() => setShowOutputSelector(false)}
-                      onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} {...tokenSelectorShared} />
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <div className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                  {outputToken.isNative ? "Native" : `HTS: ${outputToken.htsId}`}
-                </div>
-                {isWalletConnected && outputBalance !== null && (
-                  <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    <Wallet className="w-2.5 h-2.5" />
-                    {outputBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {outputToken.symbol}
-                  </span>
-                )}
-              </div>
+            <div className="relative">
+              <TokenInputPro
+                label="You Receive"
+                token={outputToken}
+                amount={outputAmount}
+                usdValue={outputUsd}
+                balance={outputBalance}
+                isWalletConnected={isWalletConnected}
+                readOnly
+                loading={quoteLoading}
+                isDark={isDark}
+                onTokenClick={() => { setShowOutputSelector(!showOutputSelector); setShowInputSelector(false); }}
+              />
+              {showOutputSelector && (
+                <TokenSelectorDropdown isOpen={showOutputSelector} onClose={() => setShowOutputSelector(false)}
+                  onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} {...tokenSelectorShared} />
+              )}
             </div>
 
             {/* Route Visualization */}
             {route && !isWrapUnwrap && inputAmount && parseFloat(inputAmount) > 0 && (
-              <div className={`mt-4 p-3 rounded-xl ${isDark ? "bg-slate-800/30 border border-pink-500/10" : "bg-gray-50 border border-gray-100"}`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5">
-                    <Droplets className={`w-3.5 h-3.5 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                    <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>Swap Route</span>
-                  </div>
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-pink-500/10 text-pink-400" : "bg-pink-50 text-pink-600"}`}>
-                    {route.pools.length === 1 ? "Direct" : `${route.pools.length}-hop`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {route.path.map((token, idx) => (
-                    <div key={token.symbol + idx} className="flex items-center gap-1">
-                      <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
-                        <TokenIcon src={token.logo} symbol={token.symbol} size="w-4 h-4" />
-                        <span className="text-xs font-bold">{token.symbol}</span>
-                      </div>
-                      {idx < route.path.length - 1 && (
-                        <div className="flex items-center">
-                          <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                          <span className={`text-xs px-1 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
-                            {route.pools[idx]?.fee}%
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <SwapRouteViz route={route} isDark={isDark} />
             )}
 
-            {/* Quote Summary */}
+            {/* Quote Details */}
             {quote && inputAmount && parseFloat(inputAmount) > 0 && (
-              <div className={`mt-3 p-3 rounded-xl text-sm space-y-1.5 ${inputClass}`}>
-                <div className="flex justify-between">
-                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>Rate</span>
-                  <span>1 {inputToken.symbol} = {quote.executionPrice >= 1 ? quote.executionPrice.toFixed(4) : quote.executionPrice.toFixed(8)} {outputToken.symbol}</span>
-                </div>
-                {!isWrapUnwrap && (
-                  <>
-                    <div className="flex justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Price Impact</span>
-                      <span className={quote.priceImpact > 5 ? "text-red-400" : quote.priceImpact > 1 ? "text-amber-400" : "text-emerald-400"}>
-                        {quote.priceImpact.toFixed(3)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Min. Received</span>
-                      <span>{quote.minimumOutput >= 1 ? quote.minimumOutput.toFixed(4) : quote.minimumOutput.toFixed(8)} {outputToken.symbol}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Slippage</span>
-                      <span>{effectiveSlippage}%</span>
-                    </div>
-                    {/* [C51] Quote Confidence Badge */}
-                    <div className="flex justify-between items-center">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Quote</span>
-                      <Tip content={
-                        quote.confidence === "high"
-                          ? `On-chain quote via ${quote.quoteSource || "router"}${quote.serverDurationMs ? ` (${quote.serverDurationMs}ms)` : ""}`
-                          : quote.confidence === "medium"
-                          ? `API quote via ${quote.quoteSource || "SaucerSwap"}${quote.serverDurationMs ? ` (${quote.serverDurationMs}ms)` : ""}`
-                          : "Price-based estimate — actual output may differ"
-                      } side="top">
-                        <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                          quote.confidence === "high"
-                            ? isDark ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : quote.confidence === "medium"
-                            ? isDark ? "bg-blue-500/15 text-blue-400 border border-blue-500/20" : "bg-blue-50 text-blue-700 border border-blue-200"
-                            : isDark ? "bg-amber-500/15 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-700 border border-amber-200"
-                        }`}>
-                          <Shield className="w-2.5 h-2.5" />
-                          {quote.confidence === "high" ? "On-chain" : quote.confidence === "medium" ? "API" : "Estimate"}
-                        </span>
-                      </Tip>
-                    </div>
-                    {/* [C51] Low Confidence Slippage Warning */}
-                    {autoSlippageWarning && (
-                      <div className={`flex items-start gap-2 p-2 rounded-lg text-xs ${
-                        isDark ? "bg-amber-500/10 border border-amber-500/20 text-amber-300" : "bg-amber-50 border border-amber-200 text-amber-700"
-                      }`}>
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
-                        <div className="flex-1">
-                          <span>{autoSlippageWarning.message}</span>
-                          <button
-                            onClick={() => { setSlippage(autoSlippageWarning.recommended); setCustomSlippage(""); }}
-                            className={`ml-1.5 font-bold underline underline-offset-2 transition-colors ${
-                              isDark ? "text-amber-300 hover:text-amber-200" : "text-amber-800 hover:text-amber-900"
-                            }`}
-                          >
-                            Set to {autoSlippageWarning.recommended}%
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {/* [C52] Compare Routes — expandable multi-route comparison */}
-                    {scoredRoutes.length > 1 && (
-                      <div className={`mt-1 pt-1.5 border-t ${isDark ? "border-slate-700/20" : "border-gray-100"}`}>
-                        <button
-                          onClick={() => setShowRouteComparison(prev => !prev)}
-                          className={`flex items-center gap-1.5 text-xs w-full transition-colors ${
-                            isDark ? "text-purple-400 hover:text-purple-300" : "text-purple-600 hover:text-purple-700"
-                          }`}
-                        >
-                          <Droplets className="w-3 h-3" />
-                          <span>Compare {scoredRoutes.length} routes</span>
-                          <ChevronDown className={`w-3 h-3 ml-auto transition-transform ${showRouteComparison ? "rotate-180" : ""}`} />
-                        </button>
-                        {showRouteComparison && (
-                          <div className="mt-2 space-y-1.5">
-                            {scoredRoutes.slice(0, 3).map((sr, idx) => {
-                              const isBest = idx === 0;
-                              const outputLabel = sr.humanOutput >= 1
-                                ? sr.humanOutput.toFixed(4)
-                                : sr.humanOutput.toFixed(8);
-                              return (
-                                <div
-                                  key={`${sr.source}-${idx}`}
-                                  className={`p-2 rounded-lg text-xs ${
-                                    isBest
-                                      ? isDark ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"
-                                      : isDark ? "bg-slate-800/50 border border-slate-700/30" : "bg-gray-50 border border-gray-100"
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <div className="flex items-center gap-1.5">
-                                      {isBest && (
-                                        <span className={`text-[10px] px-1 py-0.5 rounded font-bold ${
-                                          isDark ? "bg-emerald-500/20 text-emerald-400" : "bg-emerald-100 text-emerald-700"
-                                        }`}>BEST</span>
-                                      )}
-                                      <span className={isDark ? "text-slate-300 font-medium" : "text-gray-700 font-medium"}>
-                                        {sr.label}
-                                      </span>
-                                    </div>
-                                    <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[10px] font-medium ${
-                                      sr.confidence === "high"
-                                        ? isDark ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-700"
-                                        : sr.confidence === "medium"
-                                        ? isDark ? "bg-blue-500/15 text-blue-400" : "bg-blue-50 text-blue-700"
-                                        : isDark ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-700"
-                                    }`}>
-                                      <Shield className="w-2 h-2" />
-                                      {sr.confidence === "high" ? "On-chain" : sr.confidence === "medium" ? "API" : "Est."}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className={isDark ? "text-slate-400" : "text-gray-500"}>
-                                      {outputLabel} {outputToken.symbol}
-                                    </span>
-                                    <span className={`${
-                                      sr.priceImpact > 2 ? "text-red-400" : sr.priceImpact > 0.5 ? "text-amber-400" : isDark ? "text-slate-500" : "text-gray-400"
-                                    }`}>
-                                      {sr.priceImpact > 0 ? `${sr.priceImpact.toFixed(2)}% impact` : `${sr.hops} hop${sr.hops !== 1 ? "s" : ""}`}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-                {/* Quote Refresh Countdown */}
-                <div className={`pt-1.5 mt-1.5 border-t ${isDark ? "border-slate-700/30" : "border-gray-200"}`}>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                      <RefreshCw className={`w-2.5 h-2.5 ${quoteCountdown <= 5 ? "animate-spin" : ""}`} />
-                      Quote refreshes in {quoteCountdown}s
-                    </span>
-                    <Tip content="Refresh quote now" side="top">
-                    <button
-                      onClick={fetchPrices}
-                      className={`text-xs px-1.5 py-0.5 rounded transition-colors ${isDark ? "text-pink-400 hover:bg-pink-500/10" : "text-pink-600 hover:bg-pink-50"}`}
-                    >
-                      Refresh
-                    </button>
-                    </Tip>
-                  </div>
-                  <div className={`mt-1 h-[2px] rounded-full overflow-hidden ${isDark ? "bg-slate-700/30" : "bg-gray-200"}`}>
-                    <div
-                      className={`h-full rounded-full transition-all duration-1000 ease-linear ${
-                        quoteCountdown <= 5
-                          ? "bg-gradient-to-r from-amber-500 to-red-500"
-                          : "bg-gradient-to-r from-pink-500 to-purple-500"
-                      }`}
-                      style={{ width: `${(quoteCountdown / QUOTE_REFRESH_INTERVAL) * 100}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
+              <QuoteDetailsPro
+                quote={quote}
+                inputToken={inputToken}
+                outputToken={outputToken}
+                effectiveSlippage={effectiveSlippage}
+                isWrapUnwrap={isWrapUnwrap}
+                isDark={isDark}
+                quoteCountdown={quoteCountdown}
+                maxCountdown={QUOTE_REFRESH_INTERVAL}
+                onRefresh={fetchPrices}
+                autoSlippageWarning={autoSlippageWarning}
+                onSetSlippage={handleSetSlippageFromWarning}
+                scoredRoutes={scoredRoutes}
+                showRouteComparison={showRouteComparison}
+                onToggleRouteComparison={() => setShowRouteComparison(prev => !prev)}
+              />
             )}
 
             {/* Slippage Settings */}
-            <div className="mt-3">
-              <button onClick={() => setShowSlippage(!showSlippage)}
-                className={`flex items-center gap-2 text-sm w-full ${isDark ? "text-slate-400 hover:text-slate-300" : "text-gray-500 hover:text-gray-700"}`}>
-                <Settings2 className="w-4 h-4" />
-                <span>Slippage: {effectiveSlippage}%</span>
-                <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSlippage ? "rotate-180" : ""}`} />
-              </button>
-              {showSlippage && (
-                <div className={`mt-2 p-3 rounded-xl space-y-3 ${inputClass}`}>
-                  <div className="flex items-center gap-2">
-                    {SLIPPAGE_OPTIONS.map(opt => (
-                      <button key={opt} onClick={() => { setSlippage(opt); setCustomSlippage(""); }}
-                        className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
-                          slippage === opt && !customSlippage
-                            ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white"
-                            : isDark ? "bg-slate-700/50 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
-                        }`}>
-                        {opt}%
-                      </button>
-                    ))}
-                    <input type="number" placeholder="Custom"
-                      className={`w-20 px-2 py-1.5 rounded-lg text-sm outline-none ${inputClass}`}
-                      value={customSlippage} onChange={e => setCustomSlippage(e.target.value)} />
-                  </div>
-                  {/* [C53] Infinite Approval Toggle */}
-                  <div className={`flex items-center justify-between pt-2 border-t ${isDark ? "border-slate-700/30" : "border-gray-200"}`}>
-                    <Tip content={infiniteApproval
-                      ? "Approves unlimited spending for this token+router pair. Fewer popups but less granular control."
-                      : "Approves only the exact swap amount each time. More secure but requires approval for every swap."
-                    } side="top">
-                      <div className="flex items-center gap-1.5 cursor-help">
-                        <InfinityIcon className={`w-3.5 h-3.5 ${infiniteApproval ? isDark ? "text-purple-400" : "text-purple-600" : isDark ? "text-slate-500" : "text-gray-400"}`} />
-                        <span className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                          Infinite approval
-                        </span>
-                      </div>
-                    </Tip>
-                    <button
-                      onClick={toggleInfiniteApproval}
-                      aria-pressed={infiniteApproval}
-                      aria-label="Toggle infinite approval"
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
-                        infiniteApproval
-                          ? "bg-gradient-to-r from-purple-600 to-pink-600"
-                          : isDark ? "bg-slate-700" : "bg-gray-300"
-                      }`}
-                    >
-                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transform transition-transform duration-200 ${
-                        infiniteApproval ? "translate-x-[18px]" : "translate-x-[3px]"
-                      }`} />
-                    </button>
-                  </div>
-                  <p className={`text-[10px] leading-tight ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                    {infiniteApproval
-                      ? "Token approvals are set to unlimited — fewer wallet popups per swap."
-                      : "Token approvals are set to exact amounts — more secure, may require approval each swap."}
-                  </p>
-                </div>
-              )}
-            </div>
+            <SlippageSettingsPro
+              slippage={slippage}
+              customSlippage={customSlippage}
+              effectiveSlippage={effectiveSlippage}
+              showSlippage={showSlippage}
+              onToggle={() => setShowSlippage(!showSlippage)}
+              onSetSlippage={setSlippage}
+              onSetCustomSlippage={setCustomSlippage}
+              infiniteApproval={infiniteApproval}
+              onToggleInfiniteApproval={toggleInfiniteApproval}
+              isDark={isDark}
+            />
 
-            {/* ── Swap Button ── */}
-            <div className="mt-4">
-              {swapStatus === "processing" ? (
-                <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait">
-                  <div className="flex flex-col items-center gap-1">
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {/* [C27-04] Show which step the user is signing */}
-                      {swapStep
-                        ? `Step ${swapStep.step}/${swapStep.total}: Sign in wallet...`
-                        : "Awaiting wallet signature..."}
-                    </div>
-                    {swapStep && (
-                      <span className="text-xs text-amber-200/80 font-normal">
-                        {swapStep.description}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              ) : swapStatus === "success" ? (
-                <div>
-                  <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-green-500 text-white relative overflow-hidden">
-                    {/* [C28-04] Auto-close progress bar */}
-                    <div className="absolute bottom-0 left-0 h-[3px] bg-white/30 animate-[shrink_5s_linear_forwards]" style={{ width: "100%" }} />
-                    <div className="flex items-center justify-center gap-2">
-                      <CheckCircle2 className="w-4 h-4" />
-                      {isWrapUnwrap ? `${isWrapping ? "Wrap" : "Unwrap"} Complete!` : "Swap Complete!"}
-                    </div>
-                  </button>
-                  {lastTxId && (
-                    <a href={getHashScanTxUrl(lastTxId, hederaNetwork)} target="_blank" rel="noopener noreferrer"
-                      className={`flex items-center justify-center gap-1.5 mt-2 text-xs transition-colors ${isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"}`}>
-                      <ExternalLink className="w-3 h-3" />
-                      View on HashScan
-                    </a>
-                  )}
-                  <button onClick={() => { setSwapStatus("idle"); setInputAmount(""); setOutputAmount(""); setQuote(null); setScoredRoutes([]); setShowSuccessOverlay(false); }}
-                    className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}>
-                    New Swap
-                  </button>
-                </div>
-              ) : swapStatus === "error" ? (
-                <div>
-                  <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white relative overflow-hidden">
-                    {/* [C28-04] Auto-close progress bar */}
-                    <div className="absolute bottom-0 left-0 h-[3px] bg-white/30 animate-[shrink_5s_linear_forwards]" style={{ width: "100%" }} />
-                    <div className="flex items-center justify-center gap-2">
-                      <AlertCircle className="w-4 h-4" />
-                      Swap Failed
-                    </div>
-                  </button>
-                  {swapError && (
-                    <div className="flex items-start gap-1.5 mt-2 text-xs text-red-400">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <span className="break-all">{swapError}</span>
-                    </div>
-                  )}
-                  <button onClick={() => { setSwapStatus("idle"); setSwapError(null); }}
-                    className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}>
-                    Try Again
-                  </button>
-                </div>
-              ) : !isWalletConnected ? (
-                <button disabled
-                  className={`w-full py-3.5 rounded-xl font-bold ${isDark ? "bg-slate-700 text-slate-500" : "bg-gray-300 text-gray-500"} cursor-not-allowed`}>
-                  <div className="flex items-center justify-center gap-2">
-                    <Wallet className="w-4 h-4" />
-                    Connect HashPack to Swap
-                  </div>
-                </button>
-              ) : !route && !isWrapUnwrap ? (
-                <button disabled
-                  className={`w-full py-3.5 rounded-xl font-bold ${isDark ? "bg-slate-700 text-slate-500" : "bg-gray-300 text-gray-500"} cursor-not-allowed`}>
-                  <div className="flex items-center justify-center gap-2">
-                    {routeSearching ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" /> Checking Route...</>
-                    ) : (
-                      <><AlertCircle className="w-4 h-4" /> No Route Available</>
-                    )}
-                  </div>
-                </button>
-              ) : insufficientBalance ? (
-                <button disabled
-                  className={`w-full py-3.5 rounded-xl font-bold ${isDark ? "bg-red-900/40 text-red-400 border border-red-500/20" : "bg-red-50 text-red-500 border border-red-200"} cursor-not-allowed`}>
-                  <div className="flex items-center justify-center gap-2">
-                    <AlertCircle className="w-4 h-4" />
-                    Insufficient {inputToken.symbol} Balance
-                  </div>
-                </button>
-              ) : (
-                <button onClick={handleSwap} disabled={!canSwap}
-                  className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
-                    !canSwap
-                      ? isDark ? "bg-slate-700 text-slate-500 shadow-none cursor-not-allowed" : "bg-gray-300 text-gray-500 shadow-none cursor-not-allowed"
-                      : isWrapUnwrap
-                        ? "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-purple-500/30"
-                        : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
-                  }`}>
-                  {isWrapUnwrap
-                    ? `${isWrapping ? "Wrap" : "Unwrap"} ${inputToken.symbol} → ${outputToken.symbol}`
-                    : `Swap ${inputToken.symbol} → ${outputToken.symbol}`
-                  }
-                </button>
-              )}
-            </div>
-
-            {/* Mode/Venue Info */}
-            <div className={`flex items-center justify-center gap-2 mt-3 text-xs flex-wrap ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              {isWalletConnected ? (
-                <>
-                  <a
-                    href="https://www.saucerswap.finance"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all ${isDark ? "bg-emerald-900/20 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-900/30 hover:border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"}`}
-                  >
-                    <img
-                      src={SAUCERSWAP_LARRY_LOGO}
-                      alt="SaucerSwap Larry"
-                      className="w-4 h-4 rounded-full object-cover"
-                      loading="eager"
-                      decoding="async"
-                      width={16}
-                      height={16}
-                    />
-                    {isWrapUnwrap ? (isWrapping ? "Wrap HBAR" : "Unwrap WHBAR") : "SaucerSwap V1"}
-                  </a>
-                  <span>Live execution via HashPack</span>
-                </>
-              ) : (
-                <>
-                  <Shield className="w-3 h-3" />
-                  <span>Connect HashPack wallet to swap</span>
-                </>
-              )}
-            </div>
+            {/* Swap Button */}
+            <SwapButtonPro
+              status={swapStatus}
+              canSwap={!!canSwap}
+              isWalletConnected={isWalletConnected}
+              isWrapUnwrap={isWrapUnwrap}
+              isWrapping={isWrapping}
+              inputToken={inputToken}
+              outputToken={outputToken}
+              hasRoute={!!route}
+              routeSearching={routeSearching}
+              insufficientBalance={insufficientBalance}
+              swapStep={swapStep}
+              swapError={swapError}
+              lastTxId={lastTxId}
+              txUrl={lastTxId ? getHashScanTxUrl(lastTxId, hederaNetwork) : null}
+              onSwap={handleSwap}
+              onReset={handleResetSwap}
+              isDark={isDark}
+            />
 
             {/* Success Celebration Overlay */}
             {successDetails && (
@@ -1138,46 +757,60 @@ export function SwapPanel() {
                 onClose={() => setShowSuccessOverlay(false)}
               />
             )}
-          </div>
+          </SwapCardPro>
 
-          {/* ═══ 1INCH AGGREGATOR (under SaucerSwap box) ═══ */}
-          <OneInchWidget />
+          {/* ═══ 1INCH AGGREGATOR ═══ */}
+          <div className="mt-4">
+            <OneInchWidget />
+          </div>
         </div>
 
         {/* ═══ POOL ROUTES TABLE ═══ */}
         <div className="lg:col-span-7">
-          <div className={`rounded-2xl overflow-hidden ${cardClass}`}>
+          <div className={`rounded-2xl overflow-hidden ${
+            isDark
+              ? "bg-[#0c0f1a]/95 backdrop-blur-xl border border-white/[0.04]"
+              : "bg-white/95 backdrop-blur-xl border border-gray-200 shadow-xl"
+          }`}>
             <div className="flex items-center justify-between px-5 pt-4 pb-3">
-              <div className="flex items-center gap-2">
-                <Droplets className={`w-4 h-4 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                <h3 className="font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                  SaucerSwap Pool Routes
+              <div className="flex items-center gap-2.5">
+                <Droplets className={`w-5 h-5 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
+                <h3 className={`font-extrabold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>
+                  Pool Routes
                 </h3>
                 {poolsLoading ? (
                   <RefreshCw className="w-3 h-3 text-pink-400 animate-spin" />
                 ) : (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">
+                  <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                    isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  }`}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     Live
                   </span>
                 )}
               </div>
               <a href="https://www.saucerswap.finance/swap" target="_blank" rel="noopener noreferrer"
-                className={`flex items-center gap-1 text-xs transition-colors ${isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"}`}>
-                <ExternalLink className="w-3 h-3" />
+                className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                  isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"
+                }`}>
+                <img src={SAUCERSWAP_LARRY_LOGO} alt="" className="w-4 h-4 rounded-full" width={16} height={16} />
                 SaucerSwap
+                <ExternalLink className="w-3 h-3" />
               </a>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className={`text-xs uppercase tracking-wider ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    <th className="text-left px-5 py-2">Pool</th>
-                    <th className="text-right px-3 py-2">TVL</th>
-                    <th className="text-right px-3 py-2">24h Vol</th>
-                    <th className="text-right px-3 py-2">Fee</th>
-                    <th className="text-right px-3 py-2">APR</th>
-                    <th className="text-center px-3 py-2">Swap</th>
+                  <tr className={`text-[11px] uppercase tracking-wider font-semibold ${
+                    isDark ? "text-slate-500" : "text-gray-400"
+                  }`}>
+                    <th className="text-left px-5 py-2.5">Pool</th>
+                    <th className="text-right px-3 py-2.5">TVL</th>
+                    <th className="text-right px-3 py-2.5 hidden sm:table-cell">24h Vol</th>
+                    <th className="text-right px-3 py-2.5">Fee</th>
+                    <th className="text-right px-3 py-2.5">APR</th>
+                    <th className="text-center px-3 py-2.5">Swap</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1191,48 +824,66 @@ export function SwapPanel() {
                       <tr key={pool.id}
                         className={`transition-colors ${
                           isActive
-                            ? isDark ? "bg-pink-500/5" : "bg-pink-50"
-                            : isDark ? "hover:bg-slate-800/30" : "hover:bg-gray-50"
-                        } ${isDark ? "border-t border-slate-800/30" : "border-t border-gray-100"}`}>
-                        <td className="px-5 py-2.5">
-                          <div className="flex items-center gap-2">
-                            <div className="flex -space-x-1.5">
-                              <TokenIcon src={pool.tokenA.logo} symbol={pool.tokenA.symbol} size="w-5 h-5" className="ring-2 ring-slate-900/80 relative z-10" />
-                              <TokenIcon src={pool.tokenB.logo} symbol={pool.tokenB.symbol} size="w-5 h-5" className="ring-2 ring-slate-900/80" />
+                            ? isDark ? "bg-pink-500/[0.04]" : "bg-pink-50/50"
+                            : isDark ? "hover:bg-white/[0.02]" : "hover:bg-gray-50/50"
+                        } ${isDark ? "border-t border-white/[0.03]" : "border-t border-gray-100"}`}>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex -space-x-2">
+                              <TokenIcon src={pool.tokenA.logo} symbol={pool.tokenA.symbol} size="w-6 h-6" className={`ring-2 relative z-10 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
+                              <TokenIcon src={pool.tokenB.logo} symbol={pool.tokenB.symbol} size="w-6 h-6" className={`ring-2 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
                             </div>
                             <div>
-                              <div className="font-bold text-xs">{pool.tokenA.symbol}/{pool.tokenB.symbol}</div>
-                              {pool.tokenA.isWrapped || pool.tokenB.isWrapped ? (
-                                <span className={`text-xs ${isDark ? "text-purple-400" : "text-purple-600"}`}>
+                              <div className={`font-bold text-xs ${isDark ? "text-white" : "text-slate-800"}`}>
+                                {pool.tokenA.symbol}/{pool.tokenB.symbol}
+                              </div>
+                              {(pool.tokenA.isWrapped || pool.tokenB.isWrapped) && (
+                                <span className={`text-[10px] ${isDark ? "text-purple-400/70" : "text-purple-500"}`}>
                                   {pool.tokenA.bridge || pool.tokenB.bridge || "Wrapped"}
                                 </span>
-                              ) : null}
+                              )}
                             </div>
                             {isActive && (
-                              <span className={`text-xs px-1 py-0.5 rounded ${isDark ? "bg-pink-500/15 text-pink-400" : "bg-pink-100 text-pink-600"}`}>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                                isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
+                              }`}>
                                 Active
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className={`text-right px-3 py-2.5 ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                        <td className={`text-right px-3 py-3 font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>
                           {formatUsdCompact(pool.tvlUsd)}
                         </td>
-                        <td className={`text-right px-3 py-2.5 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                        <td className={`text-right px-3 py-3 hidden sm:table-cell ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                           {formatUsdCompact(pool.volume24hUsd)}
                         </td>
-                        <td className={`text-right px-3 py-2.5 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                        <td className={`text-right px-3 py-3 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
                           {pool.fee}%
                         </td>
-                        <td className="text-right px-3 py-2.5 text-emerald-400">
-                          {pool.apr}%
+                        <td className="text-right px-3 py-3">
+                          <span className={`font-semibold ${
+                            pool.apr > 50
+                              ? "text-emerald-400"
+                              : pool.apr > 10
+                              ? isDark ? "text-emerald-400/80" : "text-emerald-600"
+                              : isDark ? "text-slate-400" : "text-gray-500"
+                          }`}>
+                            {pool.apr}%
+                          </span>
                         </td>
-                        <td className="text-center px-3 py-2.5">
+                        <td className="text-center px-3 py-3">
                           <Tip content={`Swap ${pool.tokenA.symbol}/${pool.tokenB.symbol}`}>
-                          <button onClick={() => handlePoolSwap(pool)}
-                            className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-pink-500/15 text-pink-400" : "hover:bg-pink-50 text-pink-600"}`}>
-                            <ArrowDownUp className="w-3.5 h-3.5" />
-                          </button>
+                            <motion.button
+                              whileHover={{ scale: 1.1 }}
+                              whileTap={{ scale: 0.9 }}
+                              onClick={() => handlePoolSwap(pool)}
+                              className={`p-2 rounded-xl transition-colors ${
+                                isDark ? "hover:bg-pink-500/10 text-pink-400" : "hover:bg-pink-50 text-pink-600"
+                              }`}
+                            >
+                              <ArrowDownUp className="w-3.5 h-3.5" />
+                            </motion.button>
                           </Tip>
                         </td>
                       </tr>
@@ -1243,13 +894,15 @@ export function SwapPanel() {
             </div>
 
             {/* Pool legend */}
-            <div className={`px-5 py-3 border-t flex items-center gap-4 text-xs flex-wrap ${isDark ? "border-slate-800/30 text-slate-500" : "border-gray-100 text-gray-400"}`}>
-              <span className="flex items-center gap-1">
-                <span className={`w-2 h-2 rounded-full ${isDark ? "bg-pink-500/30" : "bg-pink-100"}`} />
+            <div className={`px-5 py-3 border-t flex items-center gap-4 text-[11px] flex-wrap ${
+              isDark ? "border-white/[0.03] text-slate-600" : "border-gray-100 text-gray-400"
+            }`}>
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${isDark ? "bg-pink-500/30" : "bg-pink-200"}`} />
                 Active in current route
               </span>
-              <span>{allPools.length} pools</span>
-              <span>Live data from SaucerSwap API</span>
+              <span className="font-medium">{allPools.length} pools</span>
+              <span>Powered by SaucerSwap</span>
             </div>
           </div>
 

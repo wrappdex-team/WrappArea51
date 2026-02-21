@@ -301,8 +301,8 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
   return (
     <div className={`rounded-2xl overflow-hidden ${
       isDark
-        ? "bg-slate-900/30 border border-pink-500/20 backdrop-blur-sm"
-        : "bg-white border border-gray-200 shadow-sm"
+        ? "bg-[#0c0f1a]/95 backdrop-blur-xl border border-white/[0.04]"
+        : "bg-white/95 backdrop-blur-xl border border-gray-200 shadow-xl"
     }`}>
       <div
         role="button"

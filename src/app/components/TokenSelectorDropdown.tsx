@@ -200,8 +200,8 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
         aria-label="Select token"
         className={`absolute top-full right-0 mt-2 w-80 rounded-xl shadow-2xl overflow-hidden z-50 ${
           isDark
-            ? "bg-slate-900 border border-pink-500/30"
-            : "bg-white border border-gray-200"
+            ? "bg-[#0c0f1a] border border-white/[0.06]"
+            : "bg-white border border-gray-200 shadow-xl"
         }`}
       >
         {/* Search */}
