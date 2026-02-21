@@ -12,7 +12,7 @@
 
 import { log } from "../logger";
 import type { AllowedToken } from "./tokens";
-import { TOKEN_BY_HTS_ID, HBARH_TOKEN_ID } from "./tokens";
+import { TOKEN_BY_HTS_ID, HBARH_TOKEN_ID, resolveTokenByHtsId } from "./tokens";
 
 // ── Shared Constants ────────────────────────────────────────────────
 
@@ -196,6 +196,13 @@ export async function fetchLiveTokenPrices(): Promise<Record<string, number>> {
         if (registeredToken.symbol === "WHBAR") {
           prices["HBAR"] = priceUsd;
         }
+        continue;
+      }
+
+      // [C56] Check dynamic token registry for tokens fetched via SaucerSwap API
+      const dynamicToken = resolveTokenByHtsId(htsId);
+      if (dynamicToken) {
+        prices[dynamicToken.symbol] = priceUsd;
         continue;
       }
 

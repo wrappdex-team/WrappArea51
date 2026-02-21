@@ -188,6 +188,37 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
 export const TOKEN_BY_SYMBOL = new Map(SAUCERSWAP_TOKENS.map((t) => [t.symbol, t]));
 export const TOKEN_BY_HTS_ID = new Map(SAUCERSWAP_TOKENS.map((t) => [t.htsId, t]));
 
+// ── [C56] Dynamic Token Registry ─────────────────────────────────────
+// Mutable map populated by fetchDynamicTokens(). Allows resolveToken()
+// and the execution engine to work with 300+ SaucerSwap tokens beyond
+// the hardcoded SAUCERSWAP_TOKENS list. Static entries always win.
+const _dynamicTokenBySymbol = new Map<string, AllowedToken>();
+const _dynamicTokenByHtsId = new Map<string, AllowedToken>();
+
+/**
+ * Register dynamically fetched tokens so resolveToken(), TOKEN_BY_HTS_ID
+ * lookups, and the swap engine can find them. Static tokens take priority.
+ */
+export function registerDynamicTokens(tokens: AllowedToken[]): void {
+  for (const t of tokens) {
+    // Never overwrite static tokens
+    if (!TOKEN_BY_SYMBOL.has(t.symbol)) {
+      _dynamicTokenBySymbol.set(t.symbol, t);
+    }
+    if (!TOKEN_BY_HTS_ID.has(t.htsId)) {
+      _dynamicTokenByHtsId.set(t.htsId, t);
+    }
+  }
+  console.log(`[C56] Registered ${tokens.length} dynamic tokens (total dynamic: ${_dynamicTokenBySymbol.size})`);
+}
+
+/**
+ * Look up any token (static or dynamic) by HTS ID.
+ */
+export function resolveTokenByHtsId(htsId: string): AllowedToken | undefined {
+  return TOKEN_BY_HTS_ID.get(htsId) || _dynamicTokenByHtsId.get(htsId);
+}
+
 // ── Routing Helpers ─────────────────────────────────────────────────
 
 /**
@@ -219,6 +250,10 @@ export function resolveToken(symbol: string): AllowedToken | undefined {
   const exact = TOKEN_BY_SYMBOL.get(symbol);
   if (exact) return exact;
 
+  // [C56] Check dynamic tokens (fetched from SaucerSwap API)
+  const dynamic = _dynamicTokenBySymbol.get(symbol);
+  if (dynamic) return dynamic;
+
   // HBAR (native) is its own token now -- not aliased to WHBAR
   const aliases: Record<string, string> = {
     ETH: "WETH", BTC: "WBTC", MATIC: "WMATIC", POL: "WPOL", POLY: "WPOL",
@@ -228,7 +263,9 @@ export function resolveToken(symbol: string): AllowedToken | undefined {
   };
   const upper = symbol.toUpperCase();
   const resolved = aliases[upper] || upper;
-  return TOKEN_BY_SYMBOL.get(resolved);
+  return TOKEN_BY_SYMBOL.get(resolved)
+    || _dynamicTokenBySymbol.get(resolved)
+    || resolveTokenByHtsId(resolved);
 }
 
 /**
@@ -256,7 +293,7 @@ export function getWhbarToken(): AllowedToken {
   return TOKEN_BY_SYMBOL.get("WHBAR")!;
 }
 
-// ── [C66] Dynamic Icon Resolution from SaucerSwap API ───────────────
+// ── [C66] Dynamic Icon Resolution from SaucerSwap API ──────────────���
 // Fetches official token icons from the SaucerSwap /tokens endpoint on
 // first load and patches SAUCERSWAP_TOKENS in-place. This ensures we
 // always show the correct project-uploaded icons, even if our static
@@ -301,5 +338,88 @@ export async function fetchAndApplyTokenIcons(): Promise<void> {
   } catch (e: any) {
     // Non-critical — static icons remain as fallback
     log.warn("TokenIcons", `Icon fetch failed (non-blocking): ${e?.message || e}`);
+  }
+}
+
+// ── [C56] Dynamic Token Discovery ───────────────────────────────────
+// Fetches the full SaucerSwap token list (300+ tokens) from our server
+// proxy (5-min cache). Merges with SAUCERSWAP_TOKENS — static entries
+// always take priority. Returns AllowedToken[] compatible with the
+// token selector.
+
+/** Shape returned by server proxy /saucerswap/tokens */
+export interface DynamicTokenInfo {
+  id: string;        // HTS ID e.g. "0.0.731861"
+  symbol: string;
+  name: string;
+  decimals: number;
+  icon: string;      // Full URL
+  priceUsd: number | null;
+  dueDiligenceComplete: boolean;
+  isFeeOnTransfer: boolean;
+}
+
+let _dynamicTokenCache: { tokens: AllowedToken[]; raw: DynamicTokenInfo[]; ts: number } | null = null;
+const DYNAMIC_TOKEN_CACHE_TTL_MS = 300_000; // 5 minutes (matches server cache)
+
+/**
+ * [C56] Fetch full SaucerSwap token list, merge with static registry.
+ *
+ * Returns an array of AllowedToken compatible with all existing swap logic.
+ * Static SAUCERSWAP_TOKENS entries always take priority (correct decimals,
+ * bridge info, routing aliases). Dynamic tokens fill the "All" tab.
+ *
+ * Also returns raw DynamicTokenInfo[] for price display.
+ */
+export async function fetchDynamicTokens(): Promise<{
+  allTokens: AllowedToken[];
+  dynamicRaw: DynamicTokenInfo[];
+}> {
+  // Return cache if fresh
+  if (_dynamicTokenCache && (Date.now() - _dynamicTokenCache.ts) < DYNAMIC_TOKEN_CACHE_TTL_MS) {
+    return { allTokens: _dynamicTokenCache.tokens, dynamicRaw: _dynamicTokenCache.raw };
+  }
+
+  // Import ssProxy lazily to avoid circular deps
+  const { ssProxy } = await import("./pools");
+
+  try {
+    const data = await ssProxy<{ tokens: DynamicTokenInfo[]; count: number }>("/tokens", {});
+    if (!data || !Array.isArray(data.tokens) || data.tokens.length === 0) {
+      log.warn("DynamicTokens", "Server returned empty token list — using static only");
+      return { allTokens: [...SAUCERSWAP_TOKENS], dynamicRaw: [] };
+    }
+
+    const dynamicRaw = data.tokens;
+    const staticHtsIds = new Set(SAUCERSWAP_TOKENS.map(t => t.htsId));
+    const staticSymbols = new Set(SAUCERSWAP_TOKENS.map(t => t.symbol.toUpperCase()));
+
+    // Convert dynamic tokens to AllowedToken, excluding those already in static list
+    const dynamicConverted: AllowedToken[] = dynamicRaw
+      .filter(dt => !staticHtsIds.has(dt.id) && !staticSymbols.has(dt.symbol.toUpperCase()))
+      .map((dt, idx) => ({
+        symbol: dt.symbol,
+        name: dt.name,
+        htsId: dt.id,
+        evmAddress: htsIdToEvmAddress(dt.id),
+        decimals: dt.decimals,
+        logo: dt.icon || `https://www.saucerswap.finance/images/tokens/${dt.id}.svg`,
+        rank: 1000 + idx, // After all static tokens
+        isWrapped: false,
+        isNative: false,
+      }));
+
+    // Merge: static first, then dynamic (sorted by rank)
+    const merged = [...SAUCERSWAP_TOKENS, ...dynamicConverted];
+
+    // [C56] Register in dynamic lookup maps so resolveToken() and swap engine find them
+    registerDynamicTokens(dynamicConverted);
+
+    _dynamicTokenCache = { tokens: merged, raw: dynamicRaw, ts: Date.now() };
+    log.info("DynamicTokens", `Merged ${SAUCERSWAP_TOKENS.length} static + ${dynamicConverted.length} dynamic = ${merged.length} total`);
+    return { allTokens: merged, dynamicRaw };
+  } catch (err: any) {
+    log.warn("DynamicTokens", `Fetch failed: ${err?.message || err}`);
+    return { allTokens: [...SAUCERSWAP_TOKENS], dynamicRaw: [] };
   }
 }

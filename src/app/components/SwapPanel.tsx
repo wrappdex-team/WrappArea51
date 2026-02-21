@@ -10,11 +10,10 @@
  *              token pair.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ArrowDownUp,
   ChevronDown,
-  Search,
   AlertCircle,
   CheckCircle2,
   Loader2,
@@ -25,6 +24,7 @@ import {
   Droplets,
   Wallet,
   RefreshCw,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
@@ -39,6 +39,7 @@ import {
   estimateSwapQuote,
   fetchServerQuote,
   findSwapRoute,
+  findSwapRouteAsync,
   getPoolRoutes,
   fetchPoolRoutes,
   executeSaucerSwap,
@@ -57,6 +58,7 @@ import {
   type ScoredRouteInfo,
   type PoolRoute,
   type SwapResult,
+  type SwapOptions,
 } from "../utils/saucerswap";
 import {
   SwapHistoryPanel,
@@ -66,6 +68,7 @@ import {
   type SwapHistoryEntry,
 } from "./SwapHistory";
 import { OneInchWidget } from "./OneInchWidget";
+import { TokenSelectorDropdown, type WalletTokenInfo } from "./TokenSelectorDropdown";
 import { Tip } from "./Tip";
 import { SwapSuccessOverlay } from "./SwapSuccessOverlay";
 
@@ -80,70 +83,7 @@ function isUserCancelled(r: SwapResult | null): boolean {
   return e.includes("cancelled by user") || e.includes("canceled by user") || e.includes("user_reject") || e.includes("user denied") || e.includes("user rejected");
 }
 
-// ── Extracted Token Selector (stable identity — prevents scroll reset) ──
-
-interface SaucerTokenSelectorProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSelect: (t: AllowedToken) => void;
-  excludeSymbol: string;
-  tokenSearch: string;
-  setTokenSearch: (v: string) => void;
-  isDark: boolean;
-  inputClass: string;
-  livePrices: Record<string, number>;
-}
-
-const SaucerTokenSelectorDropdown = memo(function SaucerTokenSelectorDropdown({
-  isOpen, onClose, onSelect, excludeSymbol,
-  tokenSearch, setTokenSearch, isDark, inputClass, livePrices,
-}: SaucerTokenSelectorProps) {
-  if (!isOpen) return null;
-  const filtered = SAUCERSWAP_TOKENS
-    .filter(t => t.symbol !== excludeSymbol)
-    .filter(t => !tokenSearch || t.symbol.toLowerCase().includes(tokenSearch.toLowerCase()) || t.name.toLowerCase().includes(tokenSearch.toLowerCase()));
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
-      <div
-        role="listbox"
-        aria-label="Select token"
-        className={`absolute top-full right-0 mt-2 w-72 rounded-xl shadow-2xl overflow-hidden z-50 ${isDark ? "bg-slate-900 border border-pink-500/30" : "bg-white border border-gray-200"}`}
-      >
-        <div className="p-3">
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${inputClass}`}>
-            <Search className="w-3.5 h-3.5 text-slate-500" />
-            <input
-              type="text" placeholder="Search tokens..." autoFocus
-              aria-label="Search tokens"
-              className="bg-transparent flex-1 outline-none text-sm"
-              value={tokenSearch} onChange={e => setTokenSearch(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="max-h-56 overflow-y-auto px-2 pb-2">
-          {filtered.map(t => (
-            <button key={t.symbol} onClick={() => onSelect(t)}
-              role="option"
-              aria-selected={false}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"}`}>
-              <TokenIcon src={t.logo} symbol={t.symbol} size="w-6 h-6" />
-              <div>
-                <div className="font-bold text-sm">{t.symbol}</div>
-                <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
-              </div>
-              {livePrices[t.symbol] ? (
-                <span className={`ml-auto text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                  ${livePrices[t.symbol]?.toFixed(livePrices[t.symbol] >= 1 ? 2 : 6)}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      </div>
-    </>
-  );
-});
+// ── [C56] Token Selector is now in TokenSelectorDropdown.tsx ──
 
 export function SwapPanel() {
   const { isDark } = useTheme();
@@ -158,7 +98,7 @@ export function SwapPanel() {
 
   // ── Quote / Route ──
   const [quote, setQuote] = useState<SwapQuote | null>(null);
-  const [route, setRoute] = useState<ReturnType<typeof findSwapRoute>>(null);
+  const [route, setRoute] = useState<{ path: AllowedToken[]; pools: PoolRoute[]; totalFee: number; onChain?: boolean } | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   // [C52] Scored alternative routes from server for route comparison
   const [scoredRoutes, setScoredRoutes] = useState<ScoredRouteInfo[]>([]);
@@ -203,13 +143,24 @@ export function SwapPanel() {
     isWrapUnwrap: boolean;
   } | null>(null);
 
+  // ── [C53] Infinite approval preference (persisted in localStorage) ──
+  const [infiniteApproval, setInfiniteApproval] = useState(() => {
+    try { return localStorage.getItem("wrappdex_infinite_approval") === "true"; } catch { return false; }
+  });
+  const toggleInfiniteApproval = useCallback(() => {
+    setInfiniteApproval(prev => {
+      const next = !prev;
+      try { localStorage.setItem("wrappdex_infinite_approval", String(next)); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
+
   // ── UI state ──
   const [slippage, setSlippage] = useState(0.5);
   const [customSlippage, setCustomSlippage] = useState("");
   const [showSlippage, setShowSlippage] = useState(false);
   const [showInputSelector, setShowInputSelector] = useState(false);
   const [showOutputSelector, setShowOutputSelector] = useState(false);
-  const [tokenSearch, setTokenSearch] = useState("");
   const [activePoolId, setActivePoolId] = useState<string | null>(null);
 
   // ── Swap history ──
@@ -258,8 +209,18 @@ export function SwapPanel() {
   const inputUsd = inputAmount ? parseFloat(inputAmount) * inputPrice : 0;
   const outputUsd = outputAmount ? parseFloat(outputAmount) * outputPrice : 0;
 
+  // [C53] Pre-flight balance check — shows "Insufficient balance" on button
+  const insufficientBalance = useMemo(() => {
+    if (!isWalletConnected || !inputAmount || !parseFloat(inputAmount)) return false;
+    if (inputBalance === null) return false; // Still loading
+    const amt = parseFloat(inputAmount);
+    if (amt <= 0) return false;
+    if (inputToken.isNative) return inputBalance < (amt + GAS_RESERVE);
+    return inputBalance < amt;
+  }, [isWalletConnected, inputAmount, inputBalance, inputToken.isNative]);
+
   const canSwap = isWalletConnected && inputAmount && parseFloat(inputAmount) > 0 &&
-    (isWrapUnwrap || route) && swapStatus === "idle";
+    (isWrapUnwrap || route) && swapStatus === "idle" && !insufficientBalance;
 
   // ── Fetch prices ──
   const fetchPrices = useCallback(async () => {
@@ -307,11 +268,31 @@ export function SwapPanel() {
   useEffect(() => { fetchBalances(); }, [fetchBalances]);
 
   // ── Find route when tokens change ──
+  // [C56] Try instant sync route first, then async on-chain detection fallback.
+  // This ensures any token pair with a real pool on SaucerSwap (V1 or V2) will
+  // show as routable, even if not in the static hardcoded pool list.
+  const [routeSearching, setRouteSearching] = useState(false);
   useEffect(() => {
-    if (isWrapUnwrap) { setRoute(null); return; }
-    const r = findSwapRoute(inputToken.symbol, outputToken.symbol);
-    setRoute(r);
-  }, [inputToken.symbol, outputToken.symbol, isWrapUnwrap]);
+    if (isWrapUnwrap) { setRoute(null); setRouteSearching(false); return; }
+    const syncRoute = findSwapRoute(inputToken.symbol, outputToken.symbol);
+    if (syncRoute) { setRoute(syncRoute); setRouteSearching(false); return; }
+    // No sync route — try async on-chain detection
+    setRoute(null);
+    setRouteSearching(true);
+    let cancelled = false;
+    findSwapRouteAsync(inputToken.symbol, outputToken.symbol, hederaNetwork)
+      .then(asyncRoute => {
+        if (!cancelled) {
+          setRoute(asyncRoute);
+          setRouteSearching(false);
+          if (asyncRoute?.onChain) {
+            console.log(`[C56] On-chain route found: ${asyncRoute.path.map(t => t.symbol).join(" → ")}`);
+          }
+        }
+      })
+      .catch(() => { if (!cancelled) { setRoute(null); setRouteSearching(false); } });
+    return () => { cancelled = true; };
+  }, [inputToken.symbol, outputToken.symbol, isWrapUnwrap, hederaNetwork]);
 
   // ── Calculate quote ──
   const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -439,7 +420,6 @@ export function SwapPanel() {
     }
     setShowInputSelector(false);
     setShowOutputSelector(false);
-    setTokenSearch("");
   }, [inputToken, outputToken]);
 
   // ── Execute swap ──
@@ -471,7 +451,9 @@ export function SwapPanel() {
           result = { success: false, error: msg, executionVenue: "saucerswap-v1", userCancelled: msg.toLowerCase().includes("cancelled") || msg.toLowerCase().includes("user_reject") };
         }
       } else {
-        result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork);
+        // [C53] Pass infinite approval preference — skips approve popup if allowance sufficient
+        const swapOpts: SwapOptions = { infiniteApproval };
+        result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork, swapOpts);
       }
 
       setSwapStep(null); // [C27-04] Clear step tracker after execution completes
@@ -549,7 +531,7 @@ export function SwapPanel() {
       setSwapError(err?.message || "Unknown error");
       toast.error(err?.message || "Swap failed");
     }
-  }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances]);
+  }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances, infiniteApproval]);
 
   // ── [C28-04] Auto-close success/error states after 5 seconds ──
   // Prevents stale status from blocking the UI. The user can still
@@ -599,10 +581,22 @@ export function SwapPanel() {
     ? "bg-slate-800/60 border border-slate-700/30"
     : "bg-gray-50 border border-gray-200";
 
-  // ── Shared props for extracted TokenSelector ──
-  const saucerTokenSelectorShared = useMemo(() => ({
-    tokenSearch, setTokenSearch, isDark, inputClass, livePrices,
-  }), [tokenSearch, setTokenSearch, isDark, inputClass, livePrices]);
+  // ── [C56] Wallet tokens for "Yours" tab ──
+  const walletTokens: WalletTokenInfo[] = useMemo(() => {
+    if (!hederaAccount?.tokens) return [];
+    return hederaAccount.tokens.map(t => ({
+      tokenId: t.tokenId,
+      balance: t.rawBalance,
+      decimals: t.decimals,
+      symbol: t.symbol,
+      name: t.name,
+    }));
+  }, [hederaAccount?.tokens]);
+
+  // ── Shared props for TokenSelectorDropdown ──
+  const tokenSelectorShared = useMemo(() => ({
+    isDark, inputClass, livePrices, walletTokens, isWalletConnected,
+  }), [isDark, inputClass, livePrices, walletTokens, isWalletConnected]);
 
   return (
     <div className="space-y-4">
@@ -634,7 +628,7 @@ export function SwapPanel() {
                   className="bg-transparent flex-1 outline-none text-2xl min-w-0"
                   value={inputAmount} onChange={e => { setInputAmount(e.target.value); setSwapStatus("idle"); setSwapError(null); }} />
                 <div className="relative shrink-0">
-                  <button onClick={() => { setShowInputSelector(!showInputSelector); setShowOutputSelector(false); setTokenSearch(""); }}
+                  <button onClick={() => { setShowInputSelector(!showInputSelector); setShowOutputSelector(false); }}
                     aria-label={`Select input token, currently ${inputToken.symbol}`}
                     aria-haspopup="listbox"
                     aria-expanded={showInputSelector}
@@ -644,8 +638,8 @@ export function SwapPanel() {
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
                   </button>
                   {showInputSelector && (
-                    <SaucerTokenSelectorDropdown isOpen={showInputSelector} onClose={() => { setShowInputSelector(false); setTokenSearch(""); }}
-                      onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} {...saucerTokenSelectorShared} />
+                    <TokenSelectorDropdown isOpen={showInputSelector} onClose={() => setShowInputSelector(false)}
+                      onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} {...tokenSelectorShared} />
                   )}
                 </div>
               </div>
@@ -700,7 +694,7 @@ export function SwapPanel() {
                   className={`bg-transparent flex-1 outline-none text-2xl min-w-0 ${quoteLoading ? "animate-pulse" : ""}`}
                   value={outputAmount} />
                 <div className="relative shrink-0">
-                  <button onClick={() => { setShowOutputSelector(!showOutputSelector); setShowInputSelector(false); setTokenSearch(""); }}
+                  <button onClick={() => { setShowOutputSelector(!showOutputSelector); setShowInputSelector(false); }}
                     aria-label={`Select output token, currently ${outputToken.symbol}`}
                     aria-haspopup="listbox"
                     aria-expanded={showOutputSelector}
@@ -710,8 +704,8 @@ export function SwapPanel() {
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
                   </button>
                   {showOutputSelector && (
-                    <SaucerTokenSelectorDropdown isOpen={showOutputSelector} onClose={() => { setShowOutputSelector(false); setTokenSearch(""); }}
-                      onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} {...saucerTokenSelectorShared} />
+                    <TokenSelectorDropdown isOpen={showOutputSelector} onClose={() => setShowOutputSelector(false)}
+                      onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} {...tokenSelectorShared} />
                   )}
                 </div>
               </div>
@@ -934,7 +928,7 @@ export function SwapPanel() {
                 <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSlippage ? "rotate-180" : ""}`} />
               </button>
               {showSlippage && (
-                <div className={`mt-2 p-3 rounded-xl ${inputClass}`}>
+                <div className={`mt-2 p-3 rounded-xl space-y-3 ${inputClass}`}>
                   <div className="flex items-center gap-2">
                     {SLIPPAGE_OPTIONS.map(opt => (
                       <button key={opt} onClick={() => { setSlippage(opt); setCustomSlippage(""); }}
@@ -950,6 +944,39 @@ export function SwapPanel() {
                       className={`w-20 px-2 py-1.5 rounded-lg text-sm outline-none ${inputClass}`}
                       value={customSlippage} onChange={e => setCustomSlippage(e.target.value)} />
                   </div>
+                  {/* [C53] Infinite Approval Toggle */}
+                  <div className={`flex items-center justify-between pt-2 border-t ${isDark ? "border-slate-700/30" : "border-gray-200"}`}>
+                    <Tip content={infiniteApproval
+                      ? "Approves unlimited spending for this token+router pair. Fewer popups but less granular control."
+                      : "Approves only the exact swap amount each time. More secure but requires approval for every swap."
+                    } side="top">
+                      <div className="flex items-center gap-1.5 cursor-help">
+                        <InfinityIcon className={`w-3.5 h-3.5 ${infiniteApproval ? isDark ? "text-purple-400" : "text-purple-600" : isDark ? "text-slate-500" : "text-gray-400"}`} />
+                        <span className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                          Infinite approval
+                        </span>
+                      </div>
+                    </Tip>
+                    <button
+                      onClick={toggleInfiniteApproval}
+                      aria-pressed={infiniteApproval}
+                      aria-label="Toggle infinite approval"
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
+                        infiniteApproval
+                          ? "bg-gradient-to-r from-purple-600 to-pink-600"
+                          : isDark ? "bg-slate-700" : "bg-gray-300"
+                      }`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transform transition-transform duration-200 ${
+                        infiniteApproval ? "translate-x-[18px]" : "translate-x-[3px]"
+                      }`} />
+                    </button>
+                  </div>
+                  <p className={`text-[10px] leading-tight ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                    {infiniteApproval
+                      ? "Token approvals are set to unlimited — fewer wallet popups per swap."
+                      : "Token approvals are set to exact amounts — more secure, may require approval each swap."}
+                  </p>
                 </div>
               )}
             </div>
@@ -1028,8 +1055,19 @@ export function SwapPanel() {
                 <button disabled
                   className={`w-full py-3.5 rounded-xl font-bold ${isDark ? "bg-slate-700 text-slate-500" : "bg-gray-300 text-gray-500"} cursor-not-allowed`}>
                   <div className="flex items-center justify-center gap-2">
+                    {routeSearching ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Checking Route...</>
+                    ) : (
+                      <><AlertCircle className="w-4 h-4" /> No Route Available</>
+                    )}
+                  </div>
+                </button>
+              ) : insufficientBalance ? (
+                <button disabled
+                  className={`w-full py-3.5 rounded-xl font-bold ${isDark ? "bg-red-900/40 text-red-400 border border-red-500/20" : "bg-red-50 text-red-500 border border-red-200"} cursor-not-allowed`}>
+                  <div className="flex items-center justify-center gap-2">
                     <AlertCircle className="w-4 h-4" />
-                    No Route Available
+                    Insufficient {inputToken.symbol} Balance
                   </div>
                 </button>
               ) : (

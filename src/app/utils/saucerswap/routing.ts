@@ -27,7 +27,7 @@ import {
 import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion } from "./pools";
 
-// ════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // ── SWAP PATH BUILDING ────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 
@@ -414,5 +414,183 @@ export function findSwapRoute(
     }
   }
 
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ── ASYNC ROUTE FINDING (ON-CHAIN FALLBACK) ─────────────────────────
+// ════════════════════════════════════════════════════════════════════════
+
+// ── Route cache for on-chain detection results ──
+// Caches both positive (route found) and negative (no route) results
+// to avoid redundant JSON-RPC calls when the user toggles tokens back.
+
+type AsyncRouteResult = { path: AllowedToken[]; pools: PoolRoute[]; totalFee: number; onChain: boolean } | null;
+
+interface RouteCacheEntry {
+  result: AsyncRouteResult;
+  ts: number;
+}
+
+const _asyncRouteCache = new Map<string, RouteCacheEntry>();
+const ASYNC_ROUTE_CACHE_TTL = 120_000; // 2 minutes — on-chain pool topology changes slowly
+const ASYNC_ROUTE_CACHE_MAX = 200; // cap to prevent unbounded growth with dynamic tokens
+
+function _routeCacheKey(inputSymbol: string, outputSymbol: string, network: HederaNetwork): string {
+  return `${inputSymbol}:${outputSymbol}:${network}`;
+}
+
+/**
+ * Evict stale entries and enforce max cache size.
+ * Called on every cache write — cheap when cache is small.
+ */
+function _routeCacheEvict(): void {
+  const now = Date.now();
+  for (const [key, entry] of _asyncRouteCache) {
+    if (now - entry.ts > ASYNC_ROUTE_CACHE_TTL) {
+      _asyncRouteCache.delete(key);
+    }
+  }
+  // If still over max, drop oldest entries
+  if (_asyncRouteCache.size > ASYNC_ROUTE_CACHE_MAX) {
+    const sorted = [..._asyncRouteCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    const toRemove = sorted.slice(0, sorted.length - ASYNC_ROUTE_CACHE_MAX);
+    for (const [key] of toRemove) {
+      _asyncRouteCache.delete(key);
+    }
+  }
+}
+
+/** Clear the async route cache (useful after dynamic token refresh). */
+export function clearAsyncRouteCache(): void {
+  _asyncRouteCache.clear();
+  console.log("[C56] Async route cache cleared");
+}
+
+/**
+ * [C56] Async route finding with on-chain pool detection fallback.
+ *
+ * When `findSwapRoute()` (static pool list) returns null, this function
+ * does REAL on-chain pool detection via `detectPoolVersion()` and
+ * `findBestMultiHopRoute()`. This is the same logic the execution engine
+ * uses, ensuring the UI never blocks a swap that the engine can execute.
+ *
+ * Results (including negative "no route" results) are cached for 2 minutes
+ * to avoid redundant JSON-RPC calls when the user toggles token pairs.
+ *
+ * Returns a simplified route descriptor for the UI, NOT the full execution
+ * parameters (those are computed inside executeSaucerSwapDirect).
+ */
+export async function findSwapRouteAsync(
+  inputSymbol: string,
+  outputSymbol: string,
+  network: HederaNetwork = "mainnet",
+): Promise<{ path: AllowedToken[]; pools: PoolRoute[]; totalFee: number; onChain: boolean } | null> {
+  // Try sync route first (instant, no network calls)
+  const syncRoute = findSwapRoute(inputSymbol, outputSymbol);
+  if (syncRoute) return { ...syncRoute, onChain: false };
+
+  const input = resolveToken(inputSymbol);
+  const output = resolveToken(outputSymbol);
+  if (!input || !output || input.symbol === output.symbol) return null;
+
+  // Skip wrap/unwrap pairs
+  if (
+    (input.isNative && output.symbol === "WHBAR") ||
+    (input.symbol === "WHBAR" && output.isNative)
+  ) return null;
+
+  // ── Check route cache before expensive on-chain calls ──
+  const cacheKey = _routeCacheKey(inputSymbol, outputSymbol, network);
+  const cached = _asyncRouteCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < ASYNC_ROUTE_CACHE_TTL) {
+    console.log(`[C56] Route cache hit for ${inputSymbol} → ${outputSymbol} (${cached.result ? "route" : "no-route"})`);
+    return cached.result;
+  }
+
+  const whbar = TOKEN_BY_SYMBOL.get("WHBAR");
+  if (!whbar) return null;
+
+  // Use routing-aware EVM addresses
+  const directInEvm = getSaucerswapRoutingEvmAddress(input.isNative ? whbar : input);
+  const directOutEvm = getSaucerswapRoutingEvmAddress(output.isNative ? whbar : output);
+
+  console.log(`[C56] Async route search: ${inputSymbol} → ${outputSymbol}`);
+
+  // Step 1: Check for direct on-chain pool
+  const directPool = await detectPoolVersion(directInEvm, directOutEvm, network);
+  if (directPool) {
+    console.log(`[C56] Direct on-chain pool found: ${directPool.version} (fee=${directPool.feeTier || "N/A"})`);
+    const syntheticPool: PoolRoute = {
+      id: `onchain-${input.symbol}-${output.symbol}`,
+      tokenA: input,
+      tokenB: output,
+      fee: directPool.feeTier ? directPool.feeTier / 10000 : 0.3,
+      tvlUsd: 0,
+      volume24hUsd: 0,
+      apr: 0,
+      poolAddress: directPool.poolAddress || "on-chain-detected",
+      source: directPool.version,
+    };
+    const result: AsyncRouteResult = {
+      path: [input, output],
+      pools: [syntheticPool],
+      totalFee: syntheticPool.fee,
+      onChain: true,
+    };
+    // Cache the positive result
+    _routeCacheEvict();
+    _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
+    return result;
+  }
+
+  // Step 2: Multi-hop through intermediaries
+  const intermediaries = getIntermediaryTokens(input, output);
+  const multiHop = await findBestMultiHopRoute(directInEvm, directOutEvm, intermediaries, network);
+  if (multiHop) {
+    // Resolve intermediary tokens for display
+    const midEvm = multiHop.tokens[1]; // The intermediary
+    const midHtsId = evmAddressToHtsId(midEvm);
+    const midToken = TOKEN_BY_SYMBOL.get("HBAR")?.htsId === "native" && midEvm.toLowerCase() === getSaucerswapRoutingEvmAddress(whbar).toLowerCase()
+      ? TOKEN_BY_SYMBOL.get("HBAR")!
+      : (TOKEN_BY_HTS_ID.get(midHtsId) || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken);
+
+    console.log(`[C56] Multi-hop on-chain route found: ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
+
+    const pool1: PoolRoute = {
+      id: `onchain-hop1-${input.symbol}-${midToken.symbol}`,
+      tokenA: input,
+      tokenB: midToken,
+      fee: multiHop.hops[0].feeTier ? multiHop.hops[0].feeTier / 10000 : 0.3,
+      tvlUsd: 0, volume24hUsd: 0, apr: 0,
+      poolAddress: multiHop.hops[0].poolAddress || "on-chain-detected",
+      source: multiHop.hops[0].version,
+    };
+    const pool2: PoolRoute = {
+      id: `onchain-hop2-${midToken.symbol}-${output.symbol}`,
+      tokenA: midToken,
+      tokenB: output,
+      fee: multiHop.hops[1].feeTier ? multiHop.hops[1].feeTier / 10000 : 0.3,
+      tvlUsd: 0, volume24hUsd: 0, apr: 0,
+      poolAddress: multiHop.hops[1].poolAddress || "on-chain-detected",
+      source: multiHop.hops[1].version,
+    };
+
+    const result: AsyncRouteResult = {
+      path: [input, midToken, output],
+      pools: [pool1, pool2],
+      totalFee: pool1.fee + pool2.fee,
+      onChain: true,
+    };
+    // Cache the positive result
+    _routeCacheEvict();
+    _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
+    return result;
+  }
+
+  // Cache negative result (no route) to avoid re-checking
+  console.log(`[C56] No route found for ${inputSymbol} → ${outputSymbol} (sync + on-chain)`);
+  _routeCacheEvict();
+  _asyncRouteCache.set(cacheKey, { result: null, ts: Date.now() });
   return null;
 }

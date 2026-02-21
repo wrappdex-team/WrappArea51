@@ -929,7 +929,6 @@ async function executeSaucerSwapV2MultiHop(
   inputAmount: string,
   slippagePct: number,
   accountId: string,
-  // Note: `options` parameter added after `recipientEvmAddress` below
   network: HederaNetwork,
   route: { hops: PoolVersionInfo[]; tokens: string[] },
   isInputNative: boolean,
@@ -937,6 +936,7 @@ async function executeSaucerSwapV2MultiHop(
   whbar: AllowedToken,
   rawInput: number,
   recipientEvmAddress: string,
+  options?: SwapOptions,
 ): Promise<SwapResult> {
   const { executeHederaTransaction } = await import("../hashpack");
 
@@ -1360,7 +1360,7 @@ async function executeSaucerSwapDirect(
         inputToken, outputToken, inputAmount, slippagePct,
         accountId, network, poolVersionInfo,
         isInputNative, isOutputNative, whbar,
-        rawInput, recipientEvmAddress
+        rawInput, recipientEvmAddress, options
       );
     }
 
@@ -1372,7 +1372,7 @@ async function executeSaucerSwapDirect(
         inputToken, outputToken, inputAmount, slippagePct,
         accountId, network, multiHopRoute,
         isInputNative, isOutputNative, whbar,
-        rawInput, recipientEvmAddress
+        rawInput, recipientEvmAddress, options
       );
     }
 

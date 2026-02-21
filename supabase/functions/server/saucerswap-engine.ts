@@ -21,6 +21,7 @@
 //     GET /saucerswap/resolve-evm   — Hedera ID → EVM address resolution
 //     GET /saucerswap/detect-pool   — Pool version detection (V1 vs V2)
 //     GET /saucerswap/quote         — Parallel multi-strategy quote (saucerswap-quote.ts)
+//     GET /saucerswap/tokens        — [C56] Dynamic token list (5-min cache)
 //     GET /saucerswap/engine-status — Health/debug endpoint
 //
 //   Internal utilities (exported for future phases):
@@ -1178,6 +1179,68 @@ export function registerSaucerswapEngineRoutes(app: Hono): void {
   });
 
   // ────────────────────────────────────────────────────────────────────
+  // GET /saucerswap/tokens
+  // [C56] Dynamic Token Discovery — proxies SaucerSwap /tokens API with
+  // 5-minute server-side cache. Returns normalized token list with
+  // id, symbol, name, decimals, icon URL, and priceUsd.
+  // ────────────────────────────────────────────────────────────────────
+  let _tokenListCache: { data: any[]; ts: number } | null = null;
+  const TOKEN_LIST_CACHE_TTL_MS = 300_000; // 5 minutes
+
+  app.get(`${ROUTE_PREFIX}/saucerswap/tokens`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    try {
+      // Return cached if fresh
+      if (_tokenListCache && (Date.now() - _tokenListCache.ts) < TOKEN_LIST_CACHE_TTL_MS) {
+        return c.json({ tokens: _tokenListCache.data, fromCache: true, count: _tokenListCache.data.length });
+      }
+
+      const raw = await ssFetchSaucerSwapApi("/tokens");
+      if (!raw) {
+        // Return stale cache if available, else error
+        if (_tokenListCache) {
+          return c.json({ tokens: _tokenListCache.data, fromCache: true, stale: true, count: _tokenListCache.data.length });
+        }
+        return c.json({ error: "SaucerSwap /tokens API unavailable", tokens: [] }, 502);
+      }
+
+      // Normalize — SaucerSwap /tokens returns array of objects:
+      // { id, symbol, name, decimals, icon, dueDiligenceComplete, isFeeOnTransferToken, description, website, ... }
+      const tokenArr: any[] = Array.isArray(raw) ? raw : Object.values(raw);
+      const normalized = tokenArr
+        .filter((t: any) => t.id && t.symbol)
+        .map((t: any) => {
+          const icon = t.icon || "";
+          const fullIcon = icon.startsWith("http") ? icon
+            : icon ? `https://www.saucerswap.finance${icon}`
+            : "";
+          return {
+            id: t.id,
+            symbol: t.symbol,
+            name: t.name || t.symbol,
+            decimals: typeof t.decimals === "number" ? t.decimals : 8,
+            icon: fullIcon,
+            priceUsd: t.priceUsd ?? null,
+            dueDiligenceComplete: !!t.dueDiligenceComplete,
+            isFeeOnTransfer: !!t.isFeeOnTransferToken,
+          };
+        });
+
+      _tokenListCache = { data: normalized, ts: Date.now() };
+      console.log(`[SS-Engine] Token list fetched: ${normalized.length} tokens`);
+      return c.json({ tokens: normalized, fromCache: false, count: normalized.length });
+    } catch (err: any) {
+      console.log(`[SS-Engine] /tokens error: ${err?.message || err}`);
+      if (_tokenListCache) {
+        return c.json({ tokens: _tokenListCache.data, fromCache: true, stale: true, count: _tokenListCache.data.length });
+      }
+      return c.json({ error: "Token list fetch failed", detail: err?.message || "Unknown error", tokens: [] }, 502);
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
   // GET /saucerswap/engine-status
   // [C44] Health/debug endpoint for the swap engine.
   // ────────────────────────────────────────────────────────────────────
@@ -1203,6 +1266,7 @@ export function registerSaucerswapEngineRoutes(app: Hono): void {
         v2PoolList:      { size: _ssV2Pools?.length ?? 0, ttlMs: SS_POOL_LIST_CACHE_TTL_MS },
         v1PoolList:      { size: _ssV1Pools?.length ?? 0, ttlMs: SS_POOL_LIST_CACHE_TTL_MS },
         v2FactoryEvm:    _v2FactoryEvmCache,
+        tokenList:       { size: _tokenListCache?.data?.length ?? 0, ttlMs: TOKEN_LIST_CACHE_TTL_MS, fresh: _tokenListCache ? (Date.now() - _tokenListCache.ts < TOKEN_LIST_CACHE_TTL_MS) : false },
       },
       timestamp: Date.now(),
     });
