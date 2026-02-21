@@ -54,8 +54,10 @@ import type { HederaNetwork } from "./tokens";
 // Known candidate router addresses for dynamic verification.
 // The system calls factory() on each to confirm which is correct.
 // V1RouterV3 (0.0.3045981) is the current production router.
+// [C77-07] RouterWithFee (0.0.6755814) included for diagnostic recognition
+// but NOT used for standard swap routing (different function selectors).
 export const SAUCERSWAP_V1_ROUTER_CANDIDATES: Record<string, string[]> = {
-  mainnet: ["0.0.3045981"],
+  mainnet: ["0.0.3045981", "0.0.6755814"],
   testnet: ["0.0.19264"],
 };
 

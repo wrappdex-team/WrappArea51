@@ -20,7 +20,7 @@ import {
 import {
   SAUCERSWAP_V1_ROUTER_CANDIDATES, SAUCERSWAP_V2_ROUTER,
   SAUCERSWAP_V2_QUOTER,
-  getRouterWithFee,
+  getSaucerSwapRouter,
   MIRROR_NODES, JSON_RPC_RELAY,
 } from "./contracts";
 import {
@@ -82,7 +82,7 @@ export interface ApproveResult {
 async function approveIfNeeded(params: {
   tokenHtsId: string;
   ownerAccountId: string;
-  spenderAccountId: string;  // Router HTS ID (e.g. "0.0.6755814")
+  spenderAccountId: string;  // Router HTS ID (e.g. "0.0.3045981" for V1, "0.0.3949434" for V2)
   rawInput: number;
   infiniteApproval: boolean;
   network: HederaNetwork;
@@ -274,15 +274,13 @@ async function executeSaucerSwapV2Direct(
     }
 
     // Strategy 2: Server proxy / price-based estimation fallback
-    // [C77-05] FIX: Use RouterWithFee for the fallback quote (matches V1 swap execution).
-    // Previously used getSaucerSwapRouter(network, "v1") = RouterV3, which may not match
-    // the actual V1 execution router, causing quote/execution mismatches.
+    // [C77-07] Uses RouterV3 (0.0.3045981) for quote — matches V1 swap execution router.
     if (!quote) {
       const quoteInputId = isInputNative ? whbar.htsId : getSaucerswapRoutingId(inputToken);
       const quoteOutputId = isOutputNative ? whbar.htsId : getSaucerswapRoutingId(outputToken);
       quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
         pathAddresses: [tokenInEvm, tokenOutEvm],
-        routerHtsId: getRouterWithFee(network),
+        routerHtsId: getSaucerSwapRouter(network, "v1"),
         network,
         inputToken: isInputNative ? whbar : inputToken,
         outputToken: isOutputNative ? whbar : outputToken,
@@ -571,7 +569,7 @@ async function executeSaucerSwapV2Direct(
       // resolved correctly regardless of EVM address format.
       //
       // Evidence: SaucerSwap.finance SAUCE→HBAR and USDC→HBAR both use
-      // AccountAllowanceApproveTransaction targeting 0.0.6755814 (V1 RouterWithFee).
+      // AccountAllowanceApproveTransaction targeting V1 RouterV3 (0.0.3045981).
       //
       // ATOMIC: If multicall reverts, no tokens leave the user's wallet.
 
@@ -1377,7 +1375,7 @@ async function executeSaucerSwapDirect(
     // │  [C36-02] TOKEN→HBAR: FORCE V1 ROUTING                            │
     // │                                                                    │
     // │  SaucerSwap.finance routes ALL Token→HBAR swaps through V1         │
-    // │  RouterWithFee (0.0.6755814) using swapExactTokensForETH, NOT      │
+    // │  RouterV3 (0.0.3045981) using swapExactTokensForETH, NOT          │
     // │  through V2 multicall(exactInputSingle + unwrapWETH9).             │
     // │                                                                    │
     // │  The V2 multicall approach causes CONTRACT_REVERT_EXECUTED on      │
@@ -1484,20 +1482,29 @@ async function executeSaucerSwapDirect(
     // Dynamic discovery verifies candidates by calling factory() on-chain
     // and caches the result, so this only does network calls on first swap.
     //
-    // [C36-02] For Token→HBAR: use V1 RouterWithFee (0.0.6755814) instead of
-    // RouterV3 (0.0.3045981). SaucerSwap.finance routes ALL Token→HBAR through
-    // RouterWithFee. The RouterWithFee supports the same swapExactTokensForETH
-    // function and additionally handles fee-on-transfer tokens.
-    // [C77-02] FIX: Use RouterWithFee (0.0.6755814) for ALL V1 swap types,
-    // not just Token→HBAR. SaucerSwap.finance production routes all swaps
-    // through RouterWithFee — HBAR→Token, Token→HBAR, and Token→Token.
-    // RouterWithFee is a superset of RouterV3 (0.0.3045981): it handles
-    // standard tokens identically and additionally supports fee-on-transfer
-    // tokens. Using RouterV3 for Token→Token was causing failures for some
-    // pairs where the router behavior differs subtly (e.g., allowance
-    // bridging or internal WHBAR handling).
-    let v1Router: string = getRouterWithFee(network);
-    console.log(`[HBAR.h] [C77-02] Using V1 RouterWithFee ${v1Router} for all V1 swaps (matches SaucerSwap.finance)`);
+    // [C77-07] FIX: Use V1 RouterV3 (0.0.3045981) for ALL V1 swap types.
+    //
+    // DIAGNOSIS: RouterWithFee (0.0.6755814) implements DIFFERENT function
+    // selectors than standard V1 router:
+    //   RouterV3:      swapExactETHForTokens (0x7ff36ab5)
+    //   RouterWithFee: swapExactETHForTokensSupportingFeeOnTransferTokens (0xb6f9de95)
+    //
+    // When we call swapExactETHForTokens on RouterWithFee, the EVM function
+    // dispatcher can't match the selector → falls to fallback → immediate
+    // revert with 0 gas consumed. This is visible on-chain as
+    // CONTRACT_REVERT_EXECUTED with 0 gas used.
+    //
+    // RouterV3 (0.0.3045981) is the standard production V1 router verified
+    // in SEC-16. It implements all standard UniswapV2-style swap functions:
+    //   - swapExactETHForTokens  (HBAR → Token)
+    //   - swapExactTokensForETH  (Token → HBAR)
+    //   - swapExactTokensForTokens (Token → Token)
+    //   - getAmountsOut (view, for quotes)
+    //
+    // RouterWithFee (0.0.6755814) is reserved for future fee-on-transfer
+    // token support — it will NOT be used for standard swap routing.
+    let v1Router: string = getSaucerSwapRouter(network, "v1");
+    console.log(`[HBAR.h] [C77-07] Using V1 RouterV3 ${v1Router} for all V1 swaps`);
 
     // For quote fetching, use WHBAR's htsId when input is native HBAR.
     // Use SaucerSwap alias IDs for bridge tokens (their pool IDs differ from canonical bridge IDs).

@@ -131,11 +131,13 @@ export async function findBestMultiHopRoute(
   const outLow = tokenOutEvm.toLowerCase();
 
   // [C77-01] Collect ALL valid routes, then pick the best one.
-  // Priority: all-V1 > all-V2 > mixed (V1 has broadest pair coverage,
-  // V2 has deeper liquidity but not all pairs). Previously returned the
-  // FIRST valid route regardless of version mix, causing mixed V2+V1
-  // routes to be sent to V2 exactInput (which can't traverse V1 AMM
-  // pools) → CONTRACT_REVERT_EXECUTED.
+  // [C77-08] Priority: all-V2 > all-V1 > mixed.
+  //   - V2 concentrated liquidity has tighter spreads and better execution
+  //     for major pairs (the exactInput ABI encoding is now fixed by C77-06).
+  //   - V1 has broadest pair coverage as fallback.
+  //   - Mixed routes are last resort — handled as V1 fallback by swap-engine.
+  // Previously returned the FIRST valid route regardless of version mix,
+  // causing mixed routes to revert on V2 exactInput.
   type RouteCandidate = { hops: PoolVersionInfo[]; tokens: string[]; mid: string };
   const allV1Routes: RouteCandidate[] = [];
   const allV2Routes: RouteCandidate[] = [];
@@ -176,20 +178,21 @@ export async function findBestMultiHopRoute(
       else if (isAllV2) allV2Routes.push(route);
       else mixedRoutes.push(route);
 
-      // [C77-01] Early exit if we found an all-V1 route through WHBAR
-      // (the highest-liquidity intermediary, always first in candidates).
-      // No need to check further — V1 path routing is the most reliable.
-      if (isAllV1) break;
+      // [C77-08] Early exit if we found BOTH an all-V2 and all-V1 route
+      // through the first intermediary (WHBAR). No need to check further.
+      if (allV2Routes.length > 0 && allV1Routes.length > 0) break;
+      // Also early exit if we found an all-V2 route (preferred).
+      if (isAllV2) break;
     } else {
       console.log(`[HBAR.h] Multi-hop: ${midId} -- hop1=${hop1 ? "ok" : "no"} hop2=${hop2 ? "ok" : "no"}`);
     }
   }
 
-  // [C77-01] Pick the best route: prefer all-V1, then all-V2, then mixed.
-  // V1 AMM has the broadest pair coverage and SaucerSwap.finance routes most
-  // Token→Token swaps through V1 path arrays. All-V2 uses concentrated liquidity
-  // for better execution but fewer pairs. Mixed routes are last resort.
-  const best = allV1Routes[0] || allV2Routes[0] || mixedRoutes[0] || null;
+  // [C77-08] Pick the best route: prefer all-V2, then all-V1, then mixed.
+  // V2 concentrated liquidity offers tighter spreads and better execution.
+  // V1 has broadest pair coverage as fallback.
+  // Mixed routes are last resort (swap-engine treats them as V1 path arrays).
+  const best = allV2Routes[0] || allV1Routes[0] || mixedRoutes[0] || null;
   if (best) {
     const category = allV1Routes.includes(best) ? "all-V1" : allV2Routes.includes(best) ? "all-V2" : "mixed";
     console.log(`[HBAR.h] Multi-hop: SELECTED route via ${best.mid} [${category}] (${allV1Routes.length} V1, ${allV2Routes.length} V2, ${mixedRoutes.length} mixed candidates)`);
