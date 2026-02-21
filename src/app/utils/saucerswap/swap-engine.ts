@@ -19,7 +19,8 @@ import {
 } from "./tokens";
 import {
   SAUCERSWAP_V1_ROUTER_CANDIDATES, SAUCERSWAP_V2_ROUTER,
-  getSaucerSwapRouter, getRouterWithFee,
+  SAUCERSWAP_V2_QUOTER,
+  getRouterWithFee,
   MIRROR_NODES, JSON_RPC_RELAY,
 } from "./contracts";
 import {
@@ -27,6 +28,7 @@ import {
   encodeExactInputSingle, encodeUnwrapWHBAR, encodeMulticall,
   encodeSaucerSwapETHForTokens, encodeSaucerSwapTokensForETH,
   encodeSaucerSwapCall, encodeSwapPath, encodeExactInput,
+  encodeQuoteExactInput,
 } from "./abi";
 import { makeAbort, estimateOutputFromPrices } from "./prices";
 import type { PoolVersionInfo } from "./pools";
@@ -36,7 +38,7 @@ import type { RawQuote } from "./quotes";
 import { fetchSaucerSwapQuote, fetchV2RouterQuote } from "./quotes";
 import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance } from "./balances";
 import { parseTokenAmount } from "./helpers";
-import { verifyIsContract, discoverSaucerSwapRouter } from "./verification";
+import { verifyIsContract } from "./verification";
 
 // ══════════════════════════════════════════════════════════════════════
 // ── [C53] PERSISTENT APPROVALS — "1 POPUP INSTEAD OF 2" ────────────
@@ -271,14 +273,16 @@ async function executeSaucerSwapV2Direct(
       console.log("[HBAR.h] V2 QuoterV2 quote failed:", err?.message || err);
     }
 
-    // Strategy 2: Price-based estimation fallback
-    // Use SaucerSwap alias IDs for API/router calls (bridge tokens have different pool IDs)
+    // Strategy 2: Server proxy / price-based estimation fallback
+    // [C77-05] FIX: Use RouterWithFee for the fallback quote (matches V1 swap execution).
+    // Previously used getSaucerSwapRouter(network, "v1") = RouterV3, which may not match
+    // the actual V1 execution router, causing quote/execution mismatches.
     if (!quote) {
       const quoteInputId = isInputNative ? whbar.htsId : getSaucerswapRoutingId(inputToken);
       const quoteOutputId = isOutputNative ? whbar.htsId : getSaucerswapRoutingId(outputToken);
       quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
         pathAddresses: [tokenInEvm, tokenOutEvm],
-        routerHtsId: getSaucerSwapRouter(network, "v1"),
+        routerHtsId: getRouterWithFee(network),
         network,
         inputToken: isInputNative ? whbar : inputToken,
         outputToken: isOutputNative ? whbar : outputToken,
@@ -954,23 +958,77 @@ async function executeSaucerSwapV2MultiHop(
     const packedPath = encodeSwapPath(pathHops);
     console.log(`[HBAR.h] V2 Multi-hop packed path: ${packedPath.length} bytes, ${route.tokens.length} tokens`);
 
-    // ── Quote: price-based estimation for multi-hop ──
-    // QuoterV2 doesn't easily support multi-hop simulation from browser,
-    // so we estimate based on token prices and apply wider slippage.
+    // ── [C77-04] Quote: V2 QuoterV2 on-chain multi-hop quote ──
+    // Previously used price-based estimation only. Now we first try
+    // QuoterV2's quoteExactInput() with the packed path — same contract
+    // and path encoding as the real swap — for accurate on-chain output.
+    // Falls back to price estimation if the QuoterV2 call fails.
     let estimatedOutput = 0;
     const inTok = isInputNative ? whbar : inputToken;
     const outTok = isOutputNative ? whbar : outputToken;
-    const priceEstimate = estimateOutputFromPrices(rawInput, inTok, outTok, 1);
-    if (priceEstimate && priceEstimate > 0) {
-      estimatedOutput = priceEstimate;
-      console.log(`[HBAR.h] V2 Multi-hop price estimate: ${estimatedOutput}`);
+
+    // Strategy 1: QuoterV2 quoteExactInput (on-chain, most accurate)
+    try {
+      const quoterHtsId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
+      if (quoterHtsId && quoterHtsId !== "0.0.0") {
+        const quoterEvm = await resolveContractEvmAddress(quoterHtsId, network);
+        const quoteCallData = bytesToHex(encodeQuoteExactInput(packedPath, BigInt(rawInput)));
+        const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
+        const gasHex = "0x" + (2_000_000).toString(16);
+
+        console.log(`[HBAR.h] [C77-04] V2 Multi-hop quote: quoteExactInput(${packedPath.length}B path, ${rawInput}) → quoter ${quoterEvm}`);
+        const qRes = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: makeAbort(12000),
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to: quoterEvm, data: quoteCallData, gas: gasHex }, "latest"],
+            id: 1,
+          }),
+        });
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          if (qData.result && qData.result !== "0x" && qData.result.length >= 66 && !qData.error) {
+            // quoteExactInput returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate)
+            const amountOutHex = qData.result.slice(2, 66);
+            const amountOut = BigInt("0x" + amountOutHex);
+            if (amountOut > 0n) {
+              estimatedOutput = Number(amountOut);
+              console.log(`[HBAR.h] [C77-04] V2 Multi-hop QuoterV2 quote: amountOut=${amountOut} (on-chain)`);
+            }
+          } else if (qData.error) {
+            console.log(`[HBAR.h] [C77-04] V2 Multi-hop QuoterV2 error: ${qData.error.message || JSON.stringify(qData.error).slice(0, 150)}`);
+          }
+        }
+      }
+    } catch (quoteErr: any) {
+      console.log(`[HBAR.h] [C77-04] V2 Multi-hop QuoterV2 failed:`, quoteErr?.message || quoteErr);
     }
 
-    // Wider slippage for multi-hop (more hops = more slippage risk)
-    const effectiveSlippage = Math.max(slippagePct, 5);
+    // Strategy 2: Price-based estimation fallback
+    if (estimatedOutput <= 0) {
+      const priceEstimate = estimateOutputFromPrices(rawInput, inTok, outTok, 1);
+      if (priceEstimate && priceEstimate > 0) {
+        estimatedOutput = priceEstimate;
+        console.log(`[HBAR.h] V2 Multi-hop price estimate fallback: ${estimatedOutput}`);
+      }
+    }
+
+    // [C77-04] Slippage: when QuoterV2 gave us an on-chain quote, use the
+    // user's requested slippage (more accurate → tighter protection).
+    // When falling back to price estimate, enforce 5% minimum.
+    const isOnChainQuote = estimatedOutput > 0 && estimatedOutput !== Number(
+      estimateOutputFromPrices(rawInput, inTok, outTok, 1) ?? 0
+    );
+    const effectiveSlippage = isOnChainQuote
+      ? Math.max(slippagePct, 2)  // on-chain quote: respect user setting, 2% floor
+      : Math.max(slippagePct, 5); // price estimate: 5% minimum
     const minOutput = estimatedOutput > 0
       ? Math.max(1, Math.floor(estimatedOutput * (1 - effectiveSlippage / 100)))
       : 1;
+    console.log(`[HBAR.h] V2 Multi-hop: minOutput=${minOutput}, slippage=${effectiveSlippage}%, quoteSrc=${isOnChainQuote ? "QuoterV2" : "price-estimate"}`);
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min
 
@@ -1366,8 +1424,13 @@ async function executeSaucerSwapDirect(
 
     // ── V2 multi-hop execution ──
     // [C36-02] Token→HBAR multi-hop was already redirected to V1 above.
-    if (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2")) {
-      console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute.hops.length} hops) ═══`);
+    // [C77-01] FIX: Changed from .some(v2) to .every(v2). V2 exactInput
+    // can ONLY traverse V2 concentrated-liquidity pools. If even one hop
+    // is V1 AMM, the V2 router fails to find a pool and reverts with
+    // CONTRACT_REVERT_EXECUTED. Mixed routes now fall through to V1 path
+    // where the V1 router natively handles multi-hop via path arrays.
+    if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
+      console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute.hops.length} hops, ALL V2) ═══`);
       return executeSaucerSwapV2MultiHop(
         inputToken, outputToken, inputAmount, slippagePct,
         accountId, network, multiHopRoute,
@@ -1378,9 +1441,16 @@ async function executeSaucerSwapDirect(
 
     // ── V1 multi-hop: handled by the V1 execution path below ──
     // (V1 router natively supports path arrays in swapExactTokensForTokens)
-    if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v1")) {
-      poolVersionInfo = multiHopRoute.hops[0]; // V1 uses the first hop's info
-      // pathAddresses is already set from buildSwapPath — V1 handles multi-hop natively
+    // [C77-01] Extended: also catches mixed V2+V1 routes that fell through
+    // the V2 multi-hop gate (which now requires .every(v2)). The V1 router
+    // handles multi-hop natively via path arrays, even for pairs that also
+    // have V2 concentrated-liquidity pools, because the V1 Factory still
+    // maintains the legacy AMM pairs. This is how SaucerSwap.finance
+    // routes most Token→Token swaps — through V1 path arrays.
+    if (multiHopRoute && !multiHopRoute.hops.every(h => h.version === "v2")) {
+      poolVersionInfo = { version: "v1", poolAddress: undefined };
+      console.log(`[HBAR.h] [C77-01] Multi-hop route has mixed or V1-only hops — using V1 path array routing`);
+      // pathAddresses was already set to multiHopRoute.tokens at line 1314
     }
 
     // ┌─────────────────────────────────────────────────────────────────┐
@@ -1418,20 +1488,16 @@ async function executeSaucerSwapDirect(
     // RouterV3 (0.0.3045981). SaucerSwap.finance routes ALL Token→HBAR through
     // RouterWithFee. The RouterWithFee supports the same swapExactTokensForETH
     // function and additionally handles fee-on-transfer tokens.
-    let v1Router: string;
-    if (isOutputNative && !isInputNative) {
-      // Token→HBAR: use RouterWithFee (matches SaucerSwap.finance production)
-      v1Router = getRouterWithFee(network);
-      console.log(`[HBAR.h] [C36-02] Token→HBAR: using V1 RouterWithFee ${v1Router} (matches SaucerSwap.finance)`);
-    } else {
-      const discoveredRouter = await discoverSaucerSwapRouter(network);
-      v1Router = discoveredRouter || getSaucerSwapRouter(network, "v1");
-      if (discoveredRouter) {
-        console.log(`[HBAR.h] Using dynamically verified router: ${v1Router}`);
-      } else {
-        console.warn(`[HBAR.h] Router discovery found no verified candidate — using configured default: ${v1Router}`);
-      }
-    }
+    // [C77-02] FIX: Use RouterWithFee (0.0.6755814) for ALL V1 swap types,
+    // not just Token→HBAR. SaucerSwap.finance production routes all swaps
+    // through RouterWithFee — HBAR→Token, Token→HBAR, and Token→Token.
+    // RouterWithFee is a superset of RouterV3 (0.0.3045981): it handles
+    // standard tokens identically and additionally supports fee-on-transfer
+    // tokens. Using RouterV3 for Token→Token was causing failures for some
+    // pairs where the router behavior differs subtly (e.g., allowance
+    // bridging or internal WHBAR handling).
+    let v1Router: string = getRouterWithFee(network);
+    console.log(`[HBAR.h] [C77-02] Using V1 RouterWithFee ${v1Router} for all V1 swaps (matches SaucerSwap.finance)`);
 
     // For quote fetching, use WHBAR's htsId when input is native HBAR.
     // Use SaucerSwap alias IDs for bridge tokens (their pool IDs differ from canonical bridge IDs).
@@ -1579,23 +1645,34 @@ async function executeSaucerSwapDirect(
       }
     }
 
-    // Also verify intermediate tokens in multi-hop paths
-    if (logicalPath.length > 2) {
-      for (let i = 1; i < logicalPath.length - 1; i++) {
-        const midToken = logicalPath[i];
-        if (!midToken.isNative) {
-          const midAssoc = await isTokenAssociated(accountId, midToken.htsId, network);
-          if (!midAssoc) {
-            console.warn(`[HBAR.h] SAFETY NET: Intermediate token ${midToken.symbol} NOT associated — auto-associating`);
-            try {
-              const assocSdk = await import("@hashgraph/sdk");
-              const midAssocTx = new assocSdk.TokenAssociateTransaction()
-                .setAccountId(accountId)
-                .setTokenIds([midToken.htsId]);
-              await executeHederaTransaction(accountId, midAssocTx);
-            } catch {
-              console.warn(`[HBAR.h] Could not auto-associate intermediate ${midToken.symbol} — swap may revert`);
+    // [C77-03] FIX: Check intermediate tokens from actual pathAddresses, not logicalPath.
+    // When multi-hop overrides the path (e.g., through USDC instead of WHBAR),
+    // logicalPath still has WHBAR as intermediary but the real execution path
+    // may use USDC. We must associate the REAL intermediary token.
+    if (pathAddresses.length > 2) {
+      for (let i = 1; i < pathAddresses.length - 1; i++) {
+        const midEvm = pathAddresses[i];
+        const midHtsId = evmAddressToHtsId(midEvm);
+        // Skip native HBAR/WHBAR (always accessible)
+        const midTok = SAUCERSWAP_TOKENS.find(t => t.htsId === midHtsId || getSaucerswapRoutingId(t) === midHtsId);
+        const midSymbol = midTok?.symbol || midHtsId;
+        if (midTok?.isNative) continue;
+        // WHBAR (0.0.1456986) is auto-associated via the WHBAR contract — skip
+        if (midHtsId === "0.0.1456986") continue;
+        const midAssoc = await isTokenAssociated(accountId, midHtsId, network);
+        if (!midAssoc) {
+          console.warn(`[HBAR.h] [C77-03] SAFETY NET: Intermediate token ${midSymbol} (${midHtsId}) NOT associated — auto-associating`);
+          try {
+            const assocSdk = await import("@hashgraph/sdk");
+            const midAssocTx = new assocSdk.TokenAssociateTransaction()
+              .setAccountId(accountId)
+              .setTokenIds([midHtsId]);
+            const midAssocResult = await executeHederaTransaction(accountId, midAssocTx);
+            if (!midAssocResult.success) {
+              console.warn(`[HBAR.h] [C77-03] Intermediate ${midSymbol} association failed: ${midAssocResult.error} — swap may revert`);
             }
+          } catch {
+            console.warn(`[HBAR.h] [C77-03] Could not auto-associate intermediate ${midSymbol} — swap may revert`);
           }
         }
       }
