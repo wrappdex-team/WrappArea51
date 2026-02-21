@@ -1,16 +1,11 @@
 /**
  * Centralized brand assets — URL constants for all logos and branding images.
  *
- * Partner logos (1inch, SaucerSwap Larry) are imported via figma:asset —
- * Vite hashes them as real image files in the build output, giving us
- * CDN caching + smaller JS bundle vs inline data URIs.
- *
- * Other logos use inline SVG data URIs for zero-network-request rendering.
+ * Using string constants (URLs / data URIs) instead of Vite asset imports
+ * ensures the build works on Railway, Vercel, Netlify, or any standard Vite host.
+ * CDN-hosted PNGs are used for 1inch and SaucerSwap partner logos;
+ * other logos use inline SVG data URIs for zero-network-request rendering.
  */
-
-// ── Official partner logo imports (Vite-bundled image assets) ────────
-import oneinchLogoPng from "figma:asset/fba6312ac6014739d2c439b2d5a75baff59d2cf0.png";
-import saucerswapLarryPng from "figma:asset/77b817d6656e35a60442704be1fb46c1c21219c1.png";
 
 // ── Production logo imports (data URIs for universal compatibility) ──
 // These are the official partner logos provided for rollout.
@@ -106,18 +101,18 @@ export const HASHPORT_LOGO = `data:image/svg+xml,${encodeURIComponent(
 )}`;
 
 // SaucerSwap — "Larry" the alien mascot logo
-// Official Larry PNG from SaucerSwap, imported as a Vite-bundled image asset.
+// Official Larry logo from SaucerSwap's public CDN.
 // Used as the venue badge below the swap button and in pool route headers.
-export const SAUCERSWAP_LARRY_LOGO = saucerswapLarryPng;
+export const SAUCERSWAP_LARRY_LOGO = "https://www.saucerswap.finance/images/tokens/saucerswap.svg";
 
 // ── 1inch Official Logo ──────────────────────────────────────────────
-// The official 1inch DEX aggregator logo (PNG).
+// The official 1inch DEX aggregator logo from their public CDN.
 // Used in venue badges and the 1inch cross-chain widget header.
-export const ONEINCH_LOGO = oneinchLogoPng;
+export const ONEINCH_LOGO = "https://cdn.1inch.io/logo.png";
 
 // ── SaucerSwap Official Logo (Full) ──────────────────────────────────
 // Same Larry mascot — used for larger venue badges and route visualization.
-export const SAUCERSWAP_LOGO = saucerswapLarryPng;
+export const SAUCERSWAP_LOGO = "https://www.saucerswap.finance/images/tokens/saucerswap.svg";
 
 // ── Hedera Logo ──────────────────────────────────────────────────────
 // Official Hedera Hashgraph "H" bar logo.
