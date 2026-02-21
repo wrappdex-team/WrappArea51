@@ -10,7 +10,8 @@
  * Lazy-loads icons from SaucerSwap CDN via `<img loading="lazy">`.
  */
 
-import { useState, useEffect, useMemo, memo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, memo, useCallback, useRef, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { Search, Star, Wallet, Globe, Loader2, AlertTriangle } from "lucide-react";
 import { TokenIcon } from "./TokenIcon";
 import {
@@ -51,12 +52,15 @@ export interface TokenSelectorDropdownProps {
   isWalletConnected: boolean;
   /** Dynamic price map from server (htsId -> priceUsd) */
   dynamicPrices?: Map<string, number>;
+  /** Ref to the container element that the dropdown should anchor to */
+  anchorRef?: RefObject<HTMLDivElement | null>;
 }
 
 const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
   isOpen, onClose, onSelect, excludeSymbol,
   isDark, inputClass, livePrices,
   walletTokens, isWalletConnected, dynamicPrices,
+  anchorRef,
 }: TokenSelectorDropdownProps) {
   const [tab, setTab] = useState<TabId>("popular");
   const [search, setSearch] = useState("");
@@ -66,6 +70,44 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
   const [fetchError, setFetchError] = useState(false);
   const fetchedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // ── Portal positioning: calculate fixed position from anchor ref ──
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !anchorRef?.current) {
+      setPortalPos(null);
+      return;
+    }
+    const updatePos = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const dropdownH = 440; // approximate max height
+      const viewportH = window.innerHeight;
+      const spaceBelow = viewportH - rect.bottom;
+      const spaceAbove = rect.top;
+      const openUp = spaceBelow < dropdownH && spaceAbove > spaceBelow;
+      const dropdownW = 320;
+      // Align right edge to anchor right, but keep within viewport
+      let left = rect.right - dropdownW;
+      if (left < 8) left = 8;
+      if (left + dropdownW > window.innerWidth - 8) left = window.innerWidth - dropdownW - 8;
+      setPortalPos({
+        top: openUp ? rect.top : rect.bottom + 8,
+        left,
+        openUp,
+      });
+    };
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    window.addEventListener("scroll", updatePos, true);
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", updatePos, true);
+    };
+  }, [isOpen, anchorRef]);
 
   // Auto-focus search on open
   useEffect(() => {
@@ -192,177 +234,200 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
     return human.toFixed(6);
   };
 
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
-      <div
-        role="listbox"
-        aria-label="Select token"
-        className={`absolute top-full right-0 mt-2 w-80 rounded-xl shadow-2xl overflow-hidden z-50 ${
-          isDark
-            ? "bg-[#0c0f1a] border border-white/[0.06]"
-            : "bg-white border border-gray-200 shadow-xl"
-        }`}
-      >
-        {/* Search */}
-        <div className="p-3 pb-2">
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${inputClass}`}>
-            <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <input
-              ref={searchRef}
-              type="text"
-              placeholder="Search name, symbol, or HTS ID..."
-              aria-label="Search tokens"
-              className="bg-transparent flex-1 outline-none text-sm min-w-0"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-            {loading && <Loader2 className="w-3 h-3 animate-spin text-pink-400 shrink-0" />}
-          </div>
+  const dropdownContent = (
+    <div
+      ref={dropdownRef}
+      role="listbox"
+      aria-label="Select token"
+      className={`w-80 rounded-xl shadow-2xl overflow-hidden ${
+        portalPos ? "fixed z-[9999]" : "absolute top-full right-0 mt-2 z-50"
+      } ${
+        isDark
+          ? "bg-[#0c0f1a] border border-white/[0.06]"
+          : "bg-white border border-gray-200 shadow-xl"
+      }`}
+      style={portalPos ? {
+        top: portalPos.openUp ? undefined : portalPos.top,
+        bottom: portalPos.openUp ? (window.innerHeight - portalPos.top + 8) : undefined,
+        left: portalPos.left,
+        maxHeight: portalPos.openUp
+          ? Math.min(portalPos.top - 16, 440)
+          : Math.min(window.innerHeight - portalPos.top - 16, 440),
+      } : undefined}
+    >
+      {/* Search */}
+      <div className="p-3 pb-2">
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${inputClass}`}>
+          <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+          <input
+            ref={searchRef}
+            type="text"
+            placeholder="Search name, symbol, or HTS ID..."
+            aria-label="Search tokens"
+            className="bg-transparent flex-1 outline-none text-sm min-w-0"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          {loading && <Loader2 className="w-3 h-3 animate-spin text-pink-400 shrink-0" />}
         </div>
+      </div>
 
-        {/* Tabs */}
-        <div className={`flex items-center gap-1 px-3 pb-2 border-b ${isDark ? "border-slate-800" : "border-gray-100"}`}>
-          <button onClick={() => setTab("popular")} className={tabStyle(tab === "popular")}>
-            <span className="flex items-center gap-1"><Star className="w-3 h-3" /> Popular</span>
-          </button>
-          {isWalletConnected && (
-            <button onClick={() => setTab("yours")} className={tabStyle(tab === "yours")}>
-              <span className="flex items-center gap-1">
-                <Wallet className="w-3 h-3" />
-                Yours
-                {yourTokens.length > 0 && (
-                  <span className={`text-[10px] px-1 rounded-full ${
-                    tab === "yours"
-                      ? "bg-white/20 text-white"
-                      : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-500"
-                  }`}>
-                    {yourTokens.length}
-                  </span>
-                )}
-              </span>
-            </button>
-          )}
-          <button onClick={() => setTab("all")} className={tabStyle(tab === "all")}>
+      {/* Tabs */}
+      <div className={`flex items-center gap-1 px-3 pb-2 border-b ${isDark ? "border-slate-800" : "border-gray-100"}`}>
+        <button onClick={() => setTab("popular")} className={tabStyle(tab === "popular")}>
+          <span className="flex items-center gap-1"><Star className="w-3 h-3" /> Popular</span>
+        </button>
+        {isWalletConnected && (
+          <button onClick={() => setTab("yours")} className={tabStyle(tab === "yours")}>
             <span className="flex items-center gap-1">
-              <Globe className="w-3 h-3" />
-              All
-              {allTokens.length > SAUCERSWAP_TOKENS.length && (
+              <Wallet className="w-3 h-3" />
+              Yours
+              {yourTokens.length > 0 && (
                 <span className={`text-[10px] px-1 rounded-full ${
-                  tab === "all"
+                  tab === "yours"
                     ? "bg-white/20 text-white"
                     : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-500"
                 }`}>
-                  {allTokens.length}
+                  {yourTokens.length}
                 </span>
               )}
             </span>
           </button>
-        </div>
-
-        {/* Token List */}
-        <div className="max-h-72 overflow-y-auto px-2 py-1">
-          {loading && currentList.length === 0 ? (
-            <div className="flex items-center justify-center gap-2 py-8">
-              <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
-              <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                Loading tokens...
+        )}
+        <button onClick={() => setTab("all")} className={tabStyle(tab === "all")}>
+          <span className="flex items-center gap-1">
+            <Globe className="w-3 h-3" />
+            All
+            {allTokens.length > SAUCERSWAP_TOKENS.length && (
+              <span className={`text-[10px] px-1 rounded-full ${
+                tab === "all"
+                  ? "bg-white/20 text-white"
+                  : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-500"
+              }`}>
+                {allTokens.length}
               </span>
-            </div>
-          ) : fetchError && tab === "all" && currentList.length <= SAUCERSWAP_TOKENS.length ? (
-            <div className="flex flex-col items-center gap-2 py-6">
-              <AlertTriangle className={`w-5 h-5 ${isDark ? "text-amber-400" : "text-amber-500"}`} />
-              <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                Couldn't load full token list
+            )}
+          </span>
+        </button>
+      </div>
+
+      {/* Token List */}
+      <div className="max-h-72 overflow-y-auto px-2 py-1">
+        {loading && currentList.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-8">
+            <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
+            <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              Loading tokens...
+            </span>
+          </div>
+        ) : fetchError && tab === "all" && currentList.length <= SAUCERSWAP_TOKENS.length ? (
+          <div className="flex flex-col items-center gap-2 py-6">
+            <AlertTriangle className={`w-5 h-5 ${isDark ? "text-amber-400" : "text-amber-500"}`} />
+            <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              Couldn't load full token list
+            </span>
+          </div>
+        ) : currentList.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-6">
+            <span className={`text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              {tab === "yours" ? "No tokens found in wallet" : "No matching tokens"}
+            </span>
+            {tab === "yours" && !isWalletConnected && (
+              <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                Connect wallet to see your tokens
               </span>
-            </div>
-          ) : currentList.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-6">
-              <span className={`text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                {tab === "yours" ? "No tokens found in wallet" : "No matching tokens"}
-              </span>
-              {tab === "yours" && !isWalletConnected && (
-                <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                  Connect wallet to see your tokens
-                </span>
-              )}
-            </div>
-          ) : (
-            currentList.map(t => {
-              const price = getPrice(t);
-              const walletBal = walletBalanceMap.get(t.htsId);
-              const isStatic = t.rank < 1000;
+            )}
+          </div>
+        ) : (
+          currentList.map(t => {
+            const price = getPrice(t);
+            const walletBal = walletBalanceMap.get(t.htsId);
+            const isStatic = t.rank < 1000;
 
-              return (
-                <button
-                  key={`${t.htsId}-${t.symbol}`}
-                  onClick={() => onSelect(t)}
-                  role="option"
-                  aria-selected={false}
-                  className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
-                    isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-50"
-                  }`}
-                >
-                  {/* Icon — lazy loaded */}
-                  <TokenIcon src={t.logo} symbol={t.symbol} size="w-7 h-7" />
+            return (
+              <button
+                key={`${t.htsId}-${t.symbol}`}
+                onClick={() => onSelect(t)}
+                role="option"
+                aria-selected={false}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
+                  isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-50"
+                }`}
+              >
+                {/* Icon — lazy loaded */}
+                <TokenIcon src={t.logo} symbol={t.symbol} size="w-7 h-7" />
 
-                  {/* Symbol + Name */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-sm">{t.symbol}</span>
-                      {!isStatic && (
-                        <span className={`text-[9px] px-1 py-0.5 rounded ${
-                          isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
-                        }`}>
-                          NEW
-                        </span>
-                      )}
-                    </div>
-                    <div className={`text-xs truncate ${
-                      isDark ? "text-slate-500" : "text-gray-400"
-                    }`}>
-                      {t.name}
-                    </div>
-                  </div>
-
-                  {/* Price + Balance */}
-                  <div className="text-right shrink-0">
-                    {price != null ? (
-                      <div className={`text-xs font-medium ${
-                        isDark ? "text-slate-300" : "text-gray-600"
+                {/* Symbol + Name */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-sm">{t.symbol}</span>
+                    {!isStatic && (
+                      <span className={`text-[9px] px-1 py-0.5 rounded ${
+                        isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
                       }`}>
-                        {formatPrice(price)}
-                      </div>
-                    ) : null}
-                    {walletBal && (
-                      <div className={`text-[10px] ${
-                        isDark ? "text-slate-500" : "text-gray-400"
-                      }`}>
-                        {formatBalance(walletBal.balance, walletBal.decimals)}
-                      </div>
+                        NEW
+                      </span>
                     )}
                   </div>
-                </button>
-              );
-            })
-          )}
-        </div>
+                  <div className={`text-[10px] truncate ${
+                    isDark ? "text-slate-600" : "text-gray-400"
+                  }`}>
+                    {t.name}
+                    {t.htsId && t.htsId !== "native" && (
+                      <span className="ml-1 opacity-60">{t.htsId}</span>
+                    )}
+                  </div>
+                </div>
 
-        {/* Footer — token count */}
-        <div className={`px-3 py-2 text-[10px] text-center border-t ${
-          isDark ? "border-slate-800 text-slate-600" : "border-gray-100 text-gray-400"
-        }`}>
-          {tab === "all"
-            ? `${filteredAll.length} of ${allTokens.length} tokens`
-            : tab === "yours"
-            ? `${yourTokens.length} held token${yourTokens.length !== 1 ? "s" : ""}`
-            : `${popularTokens.length} popular tokens`
-          }
-          {allTokens.length > SAUCERSWAP_TOKENS.length && (
-            <span> &middot; via SaucerSwap API</span>
-          )}
-        </div>
+                {/* Price + Balance */}
+                <div className="text-right shrink-0">
+                  {price != null ? (
+                    <div className={`text-xs font-medium ${
+                      isDark ? "text-slate-300" : "text-gray-600"
+                    }`}>
+                      {formatPrice(price)}
+                    </div>
+                  ) : null}
+                  {walletBal && (
+                    <div className={`text-[10px] ${
+                      isDark ? "text-slate-500" : "text-gray-400"
+                    }`}>
+                      {formatBalance(walletBal.balance, walletBal.decimals)}
+                    </div>
+                  )}
+                </div>
+              </button>
+            );
+          })
+        )}
       </div>
+
+      {/* Footer — token count */}
+      <div className={`px-3 py-2 text-[10px] text-center border-t ${
+        isDark ? "border-slate-800 text-slate-600" : "border-gray-100 text-gray-400"
+      }`}>
+        {tab === "all"
+          ? `${filteredAll.length} of ${allTokens.length} tokens`
+          : tab === "yours"
+          ? `${yourTokens.length} held token${yourTokens.length !== 1 ? "s" : ""}`
+          : `${popularTokens.length} popular tokens`
+        }
+        {allTokens.length > SAUCERSWAP_TOKENS.length && (
+          <span> &middot; via SaucerSwap API</span>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Click-away overlay */}
+      {createPortal(
+        <div className="fixed inset-0 z-[9998]" onClick={onClose} aria-hidden="true" />,
+        document.body
+      )}
+      {/* Dropdown — portalled when anchorRef provided, inline otherwise */}
+      {portalPos ? createPortal(dropdownContent, document.body) : dropdownContent}
     </>
   );
 });

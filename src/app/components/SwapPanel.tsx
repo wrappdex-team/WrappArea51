@@ -140,8 +140,15 @@ export function SwapPanel() {
   } | null>(null);
 
   // ── [C53] Infinite approval preference (persisted in localStorage) ──
+  // [C78-01] Default to TRUE — matches SaucerSwap behavior. After the first
+  // approval per token+router pair, all subsequent swaps are single-signing.
+  // Users can still toggle OFF in Slippage Settings for granular control.
   const [infiniteApproval, setInfiniteApproval] = useState(() => {
-    try { return localStorage.getItem("wrappdex_infinite_approval") === "true"; } catch { return false; }
+    try {
+      const stored = localStorage.getItem("wrappdex_infinite_approval");
+      // Default to true if never set (null); respect explicit "false"
+      return stored === null ? true : stored === "true";
+    } catch { return true; }
   });
   const toggleInfiniteApproval = useCallback(() => {
     setInfiniteApproval(prev => {
@@ -613,6 +620,9 @@ export function SwapPanel() {
     if (max > 0) setInputAmount(max.toString());
   }, [inputBalance, inputToken.isNative]);
 
+  const inputTokenContainerRef = useRef<HTMLDivElement>(null);
+  const outputTokenContainerRef = useRef<HTMLDivElement>(null);
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -620,7 +630,7 @@ export function SwapPanel() {
         <div className="lg:col-span-5">
           <SwapCardPro isDark={isDark} title="Swap">
             {/* Input Token */}
-            <div className="relative">
+            <div className="relative" ref={inputTokenContainerRef}>
               <TokenInputPro
                 label="You Pay"
                 token={inputToken}
@@ -636,7 +646,8 @@ export function SwapPanel() {
               />
               {showInputSelector && (
                 <TokenSelectorDropdown isOpen={showInputSelector} onClose={() => setShowInputSelector(false)}
-                  onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol} {...tokenSelectorShared} />
+                  onSelect={t => handleSelectToken(t, true)} excludeSymbol={outputToken.symbol}
+                  anchorRef={inputTokenContainerRef} {...tokenSelectorShared} />
               )}
             </div>
 
@@ -658,7 +669,7 @@ export function SwapPanel() {
             </div>
 
             {/* Output Token */}
-            <div className="relative">
+            <div className="relative" ref={outputTokenContainerRef}>
               <TokenInputPro
                 label="You Receive"
                 token={outputToken}
@@ -673,7 +684,8 @@ export function SwapPanel() {
               />
               {showOutputSelector && (
                 <TokenSelectorDropdown isOpen={showOutputSelector} onClose={() => setShowOutputSelector(false)}
-                  onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol} {...tokenSelectorShared} />
+                  onSelect={t => handleSelectToken(t, false)} excludeSymbol={inputToken.symbol}
+                  anchorRef={outputTokenContainerRef} {...tokenSelectorShared} />
               )}
             </div>
 

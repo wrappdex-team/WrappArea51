@@ -62,12 +62,16 @@ export function buildSwapPath(input: AllowedToken, output: AllowedToken): Allowe
 
 /**
  * Get intermediary tokens for multi-hop routing.
- * These are the deepest liquidity hubs on SaucerSwap.
- * Excludes the input and output tokens to avoid circular routes.
  *
- * [C26-01] Expanded from 3 to 6 intermediary candidates for deeper
- * routing coverage. Also excludes WHBAR when input/output is native
- * HBAR to prevent the self-loop bug (WHBAR->WHBAR pool check).
+ * [C78-02] Aligned with SaucerSwap's production routing strategy.
+ * SaucerSwap routes through the deepest liquidity hubs, ordered by
+ * total pool TVL. WHBAR is the primary hub (paired with nearly all
+ * tokens), followed by USDC/USDT stablecoin corridors, then SAUCE
+ * (governance token with deep incentivized pools), HBARX, DAI, WETH.
+ *
+ * Excludes the input and output tokens to avoid circular routes.
+ * [C26-01] Also excludes WHBAR when input/output is native HBAR
+ * to prevent the self-loop bug (WHBAR->WHBAR pool check).
  */
 export function getIntermediaryTokens(
   inputToken: AllowedToken,
@@ -80,14 +84,21 @@ export function getIntermediaryTokens(
   // [C36-04] Changed from "USDTh" to "USDT" after merging USDTh into USDT.
   const usdth = TOKEN_BY_SYMBOL.get("USDT");
   const hbarx = TOKEN_BY_SYMBOL.get("HBARX");
+  // [C78-02] Added DAI and WETH as intermediary candidates — these have
+  // significant V1/V2 pools on SaucerSwap (DAI/WHBAR, WETH/WHBAR, etc.)
+  const dai = TOKEN_BY_SYMBOL.get("DAI");
+  const weth = TOKEN_BY_SYMBOL.get("WETH");
 
+  // Ordered by liquidity depth — WHBAR first (highest TVL hub)
   const candidates: AllowedToken[] = [];
   if (whbar) candidates.push(whbar);
   if (usdc) candidates.push(usdc);
+  if (usdth) candidates.push(usdth);
   if (sauce) candidates.push(sauce);
   if (usdch) candidates.push(usdch);
-  if (usdth) candidates.push(usdth);
   if (hbarx) candidates.push(hbarx);
+  if (dai) candidates.push(dai);
+  if (weth) candidates.push(weth);
 
   // Exclude tokens that are the input or output themselves.
   // [C26-01] For native HBAR, also exclude WHBAR since HBAR is internally
