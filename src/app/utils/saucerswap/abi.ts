@@ -324,6 +324,35 @@ export function encodeSwapPath(hops: { tokenEvm: string; fee: number }[]): Uint8
  *   amountOutMinimum (uint256)
  *
  * [C9-05] Multi-hop routing for best-available-route execution.
+ *
+ * [C77-06] CRITICAL FIX: Added outer offset (0x20) for the struct argument.
+ *
+ * The function signature is `exactInput(ExactInputParams memory params)` where
+ * ExactInputParams is a struct containing `bytes path` (a dynamic type).
+ * Per the Solidity ABI spec, a struct with any dynamic member is itself dynamic,
+ * so the top-level argument encoding requires an OUTER offset (0x20 = 32) pointing
+ * to where the struct/tuple encoding begins. Inside the struct, the `bytes path`
+ * member gets its own INNER offset (0xa0 = 160, for 5 head fields × 32 bytes).
+ *
+ * Previously, the outer offset was MISSING — the first word after the selector
+ * was 0xa0 (the inner path offset), which the contract's ABI decoder read as
+ * "the struct starts at byte 160." At byte 160 it found pathLen instead of the
+ * struct head, causing immediate calldata decode failure → CONTRACT_REVERT_EXECUTED
+ * with 0 gas consumed. This broke 100% of V2 multi-hop swaps.
+ *
+ * Correct layout (matching Uniswap V3 SDK / ethers.js encoding):
+ *   [0]   selector               (4 bytes)
+ *   [4]   0x20                   (outer offset to struct — NEW)
+ *   [36]  0xa0                   (inner offset to path within struct)
+ *   [68]  recipient              (address, left-padded to 32B)
+ *   [100] deadline               (uint256)
+ *   [132] amountIn               (uint256)
+ *   [164] amountOutMinimum       (uint256)
+ *   [196] path.length            (uint256)
+ *   [228] path data              (right-padded to 32B boundary)
+ *
+ * Note: exactInputSingle does NOT need the outer offset because its struct
+ * (ExactInputSingleParams) contains only static types — no bytes/string.
  */
 export function encodeExactInput(
   path: Uint8Array,
@@ -334,7 +363,11 @@ export function encodeExactInput(
 ): Uint8Array {
   const selector = new Uint8Array([0xc0, 0x4b, 0x8d, 0x59]);
 
-  // Offset to path data: 5 x 32 = 160 = 0xa0
+  // [C77-06] Outer offset: the struct (tuple) starts at byte 32 from data start.
+  // This is required because ExactInputParams contains a dynamic member (bytes path).
+  const outerOffset = encodeUint256(32n);
+
+  // Inner offset to path data within the struct: 5 head fields × 32 = 160 = 0xa0
   const pathOffset = encodeUint256(160n);
 
   // Path length and padded data
@@ -345,7 +378,8 @@ export function encodeExactInput(
 
   return concatBytes(
     selector,
-    pathOffset,
+    outerOffset,     // [C77-06] 0x20 — outer offset to struct (WAS MISSING)
+    pathOffset,      // 0xa0 — inner offset to path within struct
     encodeAddress(recipient),
     encodeUint256(deadline),
     encodeUint256(amountIn),
