@@ -55,10 +55,10 @@ const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
 // │                                                                    │
 // │  TO GO LIVE: set BUYSELL_SWAP_LOCKED = false                       │
 // │                                                                    │
-// │  SaucerSwap Partner ID: When received, set SAUCERSWAP_PARTNER_ID   │
-// │  in /src/app/utils/saucerswap.ts — it will auto-attach to all API  │
-// │  calls for better rate limits and revenue sharing.                  │
-// │  Current status: ${SAUCERSWAP_PARTNER_ID ? "CONFIGURED" : "AWAITING KEY FROM SAUCERSWAP TEAM"}
+// │  SaucerSwap Partner ID: CONFIGURED in /src/app/utils/saucerswap.ts │
+// │  Auto-attaches to all API calls via x-api-key header for better    │
+// │  rate limits and revenue sharing.                                  │
+// │  Current status: ${SAUCERSWAP_PARTNER_ID ? "CONFIGURED" : "MISSING — CHECK saucerswap.ts"}
 // └─────────────────────────────────────────────────────────────────────┘
 const BUYSELL_SWAP_LOCKED = true;
 const BUYSELL_ALLOWED_ACCOUNT = "0.0.518487";

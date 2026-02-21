@@ -163,9 +163,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setHederaNetwork(savedSession.network);
       loadHederaAccountFromSession(savedSession);
     }
-    fetchHbarPrice().then(setHbarPrice);
+    fetchHbarPrice().then(setHbarPrice).catch(() => { /* non-critical */ });
     const hbarPriceIv = setInterval(() => {
-      fetchHbarPrice().then(setHbarPrice);
+      fetchHbarPrice().then(setHbarPrice).catch(() => { /* non-critical */ });
     }, 300_000);
     return () => clearInterval(hbarPriceIv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -305,7 +305,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (hederaAccount) {
       refreshIntervalRef.current = setInterval(() => refreshHederaBalance(), 30000);
       const priceInterval = setInterval(() => {
-        fetchHbarPrice().then(setHbarPrice);
+        fetchHbarPrice().then(setHbarPrice).catch(() => {
+          // [C21-01] Swallow price fetch errors — transient Mirror Node / API
+          // failures must not produce unhandled promise rejections that could
+          // destabilize React state or trigger HMR disconnect artifacts.
+        });
       }, 60000);
       return () => {
         if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
@@ -503,8 +507,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const refreshHederaBalance = useCallback(async () => {
     if (!hederaAccount) return;
-    const updated = await fetchAccountInfo(hederaAccount.accountId, hederaAccount.network);
-    if (updated) setHederaAccount(updated);
+    try {
+      const updated = await fetchAccountInfo(hederaAccount.accountId, hederaAccount.network);
+      if (updated) setHederaAccount(updated);
+    } catch (err) {
+      // [C16-04] Swallow refresh errors — a transient Mirror Node failure
+      // must not propagate into React state and trigger a disconnect/reset.
+      console.log("[WalletContext] Balance refresh failed (non-fatal):", (err as any)?.message || err);
+    }
   }, [hederaAccount]);
 
   // ─── Wallet connections ─────────────────────────────────────

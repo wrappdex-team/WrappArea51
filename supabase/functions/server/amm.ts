@@ -730,9 +730,12 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
     : allVariants;
   for (const path of variants) {
     try {
+      const _ssKey = Deno.env.get("SAUCERSWAP_API_KEY") ?? "";
+      const _ssHeaders: Record<string, string> = { Accept: "application/json" };
+      if (_ssKey) _ssHeaders["x-api-key"] = _ssKey;
       const res = await saucerswapBreaker.call(
         () => fetch(`${SAUCERSWAP_API_URL}${path}`, {
-          headers: { Accept: "application/json" },
+          headers: _ssHeaders,
           signal: AbortSignal.timeout(8000),
         }),
         isHttpFailure,

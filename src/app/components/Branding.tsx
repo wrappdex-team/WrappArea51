@@ -794,7 +794,7 @@ export function Branding() {
               { label: "Founder Account", value: "0.0.518487", mono: true },
               { label: "Network", value: "Hedera Mainnet", mono: false },
               { label: "Token Standard", value: "HTS (Hedera Token Service)", mono: false },
-              { label: "LP Pool (SaucerSwap V1)", value: "WHBAR / HBAR.ħ", mono: false },
+              { label: "LP Pool (SaucerSwap V1)", value: "HBAR / HBAR.ħ", mono: false },
               { label: "LP Token ID", value: "0.0.9356724", mono: true },
               { label: "Total Swap Fee", value: "0.25% (25 bps) — all to pool; 0.05% tracked for DAO extraction", mono: false },
               { label: "Flat Micro-Fee", value: "$0.0007 per swap (additive, anti-splitting)", mono: false },

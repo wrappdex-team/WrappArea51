@@ -36,6 +36,8 @@ import { TradingPoolsSection } from "./TradingPoolsSection";
 import { VipChatBox } from "./VipChatBox";
 import { VIPAccessGate } from "./VIPAccessGate";
 import { Tip } from "./Tip";
+import { AtomicSwapHistory } from "./AtomicSwapHistory";
+import { LPPositionTracker } from "./LPPositionTracker";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -941,6 +943,20 @@ export function Trading() {
 
       {/* Liquidity Pools Section */}
       <TradingPoolsSection isDark={isDark} />
+
+      {/* LP Position Tracker — visible to all connected users */}
+      {hederaAccount && (
+        <div className="mt-4">
+          <LPPositionTracker isDark={isDark} />
+        </div>
+      )}
+
+      {/* Atomic Swap History — visible to all connected users */}
+      {hederaAccount && (
+        <div className="mt-4">
+          <AtomicSwapHistory isDark={isDark} accountId={hederaAccount.accountId} />
+        </div>
+      )}
 
       {/* VIP Chat — only for authenticated VIP holders */}
       {isVip && hederaAccount && (

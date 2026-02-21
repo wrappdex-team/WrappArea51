@@ -48,7 +48,7 @@ import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 
 // ── Swap Panel ──────────────────────────────────────────────────────
 
-// ┌─────────────────────────────────────────────────────────────────────┐
+// ┌────────────────────��────────────────────────────────────────────────┐
 // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
 // │  SwapPanel returns AmmPrelaunchBanner while AMM is locked.        │
 // │  Remove the early-return when AMM_PRELAUNCH_LOCKED = false.       │
@@ -522,7 +522,7 @@ export function SmartLiquidity() {
             <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
               Pools start at zero reserves. Users provide all liquidity. Swaps use constant-product math (x &times; y = k)
               on real reserves — oracle prices are display-only. Rate limits scale with pool depth.
-              Top 10 tokens: <strong>WHBAR, WBTC, WETH, USDC, USDT, DAI, LINK, AAVE, WBNB, WAVAX</strong>.
+              Top 10 tokens: <strong>HBAR, WBTC, WETH, USDC, USDT, DAI, LINK, AAVE, WBNB, WAVAX</strong>.
             </div>
           </div>
         </div>

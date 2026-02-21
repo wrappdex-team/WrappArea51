@@ -125,9 +125,9 @@ const TOKEN_ID_TO_LOGO: Record<string, string> = {
   [WMATIC_TOKEN_ID]: "WMATIC",
   [WPOL_TOKEN_ID]: "WPOL",
   [USDC_BRIDGE_TOKEN_ID]: "USDCh",
-  [USDT_BRIDGE_TOKEN_ID]: "USDTh",
+  [USDT_BRIDGE_TOKEN_ID]: "USDT", // [C36-04] Was "USDTh" — merged into USDT
   [USDC_NATIVE_TOKEN_ID]: "USDC",
-  [USDT_NATIVE_TOKEN_ID]: "USDT",
+  [USDT_NATIVE_TOKEN_ID]: "USDT (Native)", // [C36-04] Distinguish from HashPort USDT
   [SAUCE_TOKEN_ID]: "SAUCE",
   [HBARX_TOKEN_ID]: "HBARX",
   [KARATE_TOKEN_ID]: "KARATE",

@@ -16,14 +16,13 @@
 //     6. Cache 60s, return
 //
 //   Auth: Public (read-only pool data — no mutations).
-//   API key: SAUCERSWAP_API_KEY env variable (optional but recommended
-//            for higher rate limits and partner attribution).
+//   API key: SAUCERSWAP_API_KEY env variable — CONFIGURED.
+//            Provides higher rate limits and partner attribution.
 //
-//   SENIOR DEV NOTE: This uses the same API key as the client-side
-//   SAUCERSWAP_PARTNER_ID in saucerswap.ts. When the key arrives,
-//   set it in BOTH places:
-//     - Supabase secret: SAUCERSWAP_API_KEY
-//     - Client constant:  SAUCERSWAP_PARTNER_ID in src/app/utils/saucerswap.ts
+//   SENIOR DEV NOTE: Same API key as the client-side SAUCERSWAP_PARTNER_ID
+//   in saucerswap.ts. Both locations are now configured:
+//     - Supabase secret: SAUCERSWAP_API_KEY  ✓
+//     - Client constant: SAUCERSWAP_PARTNER_ID in src/app/utils/saucerswap.ts  ✓
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
@@ -173,10 +172,14 @@ const KNOWN_LOGOS: Record<string, string> = {
   DOVU:    "https://www.saucerswap.finance/images/tokens/dovu.svg",
   AAVE:    "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
   DAI:     "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+  // [C36-04] HBAR.ħ protocol token — SaucerSwap API may use various symbol names
+  "HBAR.ħ": "https://www.saucerswap.finance/images/tokens/hbar.h.svg",
+  "HBAR.h": "https://www.saucerswap.finance/images/tokens/hbar.h.svg",
 };
 
 function resolveIcon(symbol: string, apiIcon?: string): string {
   const cleaned = symbol.replace("[hts]", "").replace("[HTS]", "");
+  // [C22-01] WHBAR → HBAR display: resolve icon under both names
   if (KNOWN_LOGOS[symbol]) return KNOWN_LOGOS[symbol];
   if (KNOWN_LOGOS[cleaned]) return KNOWN_LOGOS[cleaned];
   if (apiIcon) {
@@ -187,6 +190,37 @@ function resolveIcon(symbol: string, apiIcon?: string): string {
 }
 
 // ── Pool Token Parser ───────────────────────────────────────────────
+
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  [C22-01] WHBAR → HBAR Display Normalization                       │
+// │  SaucerSwap pools use WHBAR (wrapped HBAR) on-chain because HTS    │
+// │  DEXes require an ERC-20 compatible token, not native hbar.        │
+// │  WRAPpDEX auto-wraps/unwraps HBAR transparently, so pool displays │
+// │  show "HBAR" to users instead of the internal "WHBAR" wrapper.     │
+// │  The underlying token IDs and contract addresses remain unchanged. │
+// └─────────────────────────────────────────────────────────────────────┘
+const WHBAR_TOKEN_ID = "0.0.1456986";
+// [C36-04] HBAR.ħ protocol token HTS ID — normalize API variants to canonical symbol
+const HBARH_TOKEN_ID = "0.0.9356476";
+
+function normalizeTokenDisplay(token: PoolToken): PoolToken {
+  if (token.symbol === "WHBAR" || token.id === WHBAR_TOKEN_ID) {
+    return { ...token, symbol: "HBAR", name: "HBAR" };
+  }
+  // [C36-04] Normalize HBAR.ħ variants — SaucerSwap API may return "HBAR.h",
+  // "HBARh", or other variations. Map all to canonical "HBAR.ħ" so the client
+  // resolvePoolToken() can match it to our registered token.
+  const upper = token.symbol.toUpperCase().replace("[HTS]", "").replace("[hts]", "");
+  if (upper === "HBAR.H" || upper === "HBARH" || upper === "HBAR.Ħ" || token.id === HBARH_TOKEN_ID) {
+    return { ...token, symbol: "HBAR.ħ", name: "HBAR.ħ Protocol" };
+  }
+  // Strip [hts] suffix from SaucerSwap API symbols (e.g. "WBTC[hts]" → "WBTC")
+  const cleaned = token.symbol.replace("[hts]", "").replace("[HTS]", "");
+  if (cleaned !== token.symbol) {
+    return { ...token, symbol: cleaned };
+  }
+  return token;
+}
 
 function parseToken(raw: any): PoolToken {
   return {
@@ -231,8 +265,8 @@ function parseV1Pool(raw: any, farmAPRMap: Map<string, number>): ParsedPool | nu
     return {
       id: contractId || `v1-${tA.symbol}-${tB.symbol}`,
       contractId,
-      tokenA: tA,
-      tokenB: tB,
+      tokenA: normalizeTokenDisplay(tA),
+      tokenB: normalizeTokenDisplay(tB),
       tvl,
       volume24h: vol24,
       volume7d: vol7d,
@@ -282,8 +316,8 @@ function parseV2Pool(raw: any, farmAPRMap: Map<string, number>): ParsedPool | nu
     return {
       id: contractId || `v2-${tA.symbol}-${tB.symbol}-${feeRaw}`,
       contractId,
-      tokenA: tA,
-      tokenB: tB,
+      tokenA: normalizeTokenDisplay(tA),
+      tokenB: normalizeTokenDisplay(tB),
       tvl,
       volume24h: vol24,
       volume7d: vol7d,

@@ -225,7 +225,7 @@ export function getCachedExchangeRate(): NetworkExchangeRate | null {
  */
 export async function usdToTinybar(
   usdAmount: number,
-  fallbackHbarPriceUsd: number = 0.28,
+  fallbackHbarPriceUsd: number = 0.10, // [C33-01] Updated from 0.28
 ): Promise<{ tinybar: number; hbarPrice: number; source: "network" | "fallback" }> {
   const rate = await fetchNetworkExchangeRate();
 
@@ -248,7 +248,7 @@ export async function usdToTinybar(
  */
 export async function tinybarToUsd(
   tinybarAmount: number,
-  fallbackHbarPriceUsd: number = 0.28,
+  fallbackHbarPriceUsd: number = 0.10, // [C33-01] Updated from 0.28
 ): Promise<{ usd: number; hbarPrice: number; source: "network" | "fallback" }> {
   const rate = await fetchNetworkExchangeRate();
 

@@ -1354,6 +1354,46 @@ export function registerAtomicSignerRoutes(app: Hono) {
     });
   });
 
+  // ── GET /atomic/history/:accountId ─────────────────────────────────
+  // Authenticated endpoint — returns the user's atomic swap history.
+  // Reads swap events persisted to KV by the sign-swap handler.
+  // Auth required: session token must match the requested accountId.
+
+  app.get(`${R}/atomic/history/:accountId`, async (c) => {
+    const requestedAccount = c.req.param("accountId");
+    if (!isValidHederaAccountId(requestedAccount)) {
+      return c.json({ error: "Invalid account ID format" }, 400);
+    }
+
+    const authResult = await requireAuth(c);
+    if (authResult instanceof Response) return authResult;
+
+    // Ensure user can only query their own history
+    if (authResult.accountId !== requestedAccount) {
+      return c.json({ error: "Account mismatch — can only query own history" }, 403);
+    }
+
+    try {
+      // KV key format: atomic_swap_<timestamp>_<accountId>
+      const allSwaps = await kv.getByPrefix("atomic_swap_");
+
+      // Filter to this user and sort descending by timestamp
+      const userSwaps = allSwaps
+        .filter((s: any) => s && s.userAccountId === requestedAccount)
+        .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0))
+        .slice(0, 50); // Cap at 50 most recent
+
+      return c.json({
+        swaps: userSwaps,
+        count: userSwaps.length,
+        accountId: requestedAccount,
+      });
+    } catch (err: any) {
+      console.log(`[AtomicSigner] history fetch error for ${requestedAccount}: ${err?.message}`);
+      return c.json({ error: `Failed to fetch swap history: ${err?.message}` }, 500);
+    }
+  });
+
   // ── POST /atomic/admin/kill-switch ─────────────────────────────────
   // Owner-only: activate/deactivate the emergency kill switch.
   // When active, all swap and add-liquidity co-signing is rejected.

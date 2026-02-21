@@ -34,6 +34,12 @@ import {
 } from "../utils/smart-liquidity";
 import { log } from "../utils/logger";
 import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
+import { AddLiquidityModal as AtomicLiquidityModal } from "./AddLiquidityModal";
+import { findPoolForPair } from "../utils/atomic-swap-engine";
+import { TokenIcon } from "./TokenIcon";
+import { displaySymbol } from "../utils/display-symbol";
+
+// [C66] displaySymbol() centralized — canonical copy in ../utils/display-symbol.ts
 
 // ── Stat Card ───────────────────────────────────────────────────────
 
@@ -91,13 +97,30 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
 // ── Add Liquidity Modal ─────────────────────────────────────────────
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
-// │  AddLiquidityModal shows AmmPrelaunchBanner while AMM is locked.  │
-// │  Restore original form body when AMM_PRELAUNCH_LOCKED = false.    │
+// │  SENIOR DEV NOTE — ATOMIC LIQUIDITY INTEGRATION                   │
+// │  When a user clicks "Add Liquidity" on a legacy KV pool card,     │
+// │  we attempt to resolve the matching atomic pool by token pair.     │
+// │  If found, we open the full AtomicLiquidityModal. If no matching  │
+// │  atomic pool exists, we fall back to AmmPrelaunchBanner.          │
 // └─────────────────────────────────────────────────────────────────────┘
 function AddLiquidityModal({ pool, isDark, accountId, onClose, onDone }: {
   pool: PoolState; isDark: boolean; accountId: string; onClose: () => void; onDone: () => void;
 }) {
+  // Resolve legacy KV pool → atomic pool by token pair
+  const atomicPool = findPoolForPair(pool.tokenA, pool.tokenB);
+
+  if (atomicPool) {
+    return (
+      <AtomicLiquidityModal
+        isDark={isDark}
+        initialPoolId={atomicPool.poolId}
+        onClose={onClose}
+        onSuccess={onDone}
+      />
+    );
+  }
+
+  // Fallback: no matching atomic pool
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -141,11 +164,11 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="flex -space-x-1.5">
-              {seedA && <img src={seedA.logo} alt={seedA.symbol} className="w-7 h-7 rounded-full border-2 border-slate-900 relative z-10" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
-              {seedB && <img src={seedB.logo} alt={seedB.symbol} className="w-7 h-7 rounded-full border-2 border-slate-900" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+              {seedA && <TokenIcon src={seedA.logo} symbol={seedA.symbol} size="w-7 h-7" className="border-2 border-slate-900 relative z-10" />}
+              {seedB && <TokenIcon src={seedB.logo} symbol={seedB.symbol} size="w-7 h-7" className="border-2 border-slate-900" />}
             </div>
             <div>
-              <div className="font-bold text-sm">{pool.tokenA}/{pool.tokenB}</div>
+              <div className="font-bold text-sm">{displaySymbol(pool.tokenA)}/{displaySymbol(pool.tokenB)}</div>
               <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                 Fee: {formatFeeBps(pool.swapFeeBps)} &middot; {pool.swapCount} swaps
               </div>
@@ -174,11 +197,11 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
             <div className={`px-3 pb-3 border-t ${isDark ? "border-pink-500/10" : "border-gray-100"}`}>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <div className={`rounded-lg p-2 ${isDark ? "bg-slate-800/40" : "bg-gray-50"}`}>
-                  <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>{pool.tokenA}</div>
+                  <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>{displaySymbol(pool.tokenA)}</div>
                   <div className="text-xs font-bold">{displayReserve(pool.reserveA, pool.decimalsA)}</div>
                 </div>
                 <div className={`rounded-lg p-2 ${isDark ? "bg-slate-800/40" : "bg-gray-50"}`}>
-                  <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>{pool.tokenB}</div>
+                  <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>{displaySymbol(pool.tokenB)}</div>
                   <div className="text-xs font-bold">{displayReserve(pool.reserveB, pool.decimalsB)}</div>
                 </div>
               </div>

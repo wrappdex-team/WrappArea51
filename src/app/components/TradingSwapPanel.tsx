@@ -3,6 +3,14 @@
  *
  * Uses the atomic CryptoTransfer AMM engine (constant-product math).
  * Features: animated borders, neon glow, sound effects, particle bursts.
+ *
+ * SENIOR DEV NOTE [C4-02]:
+ *   Token association pre-check is integrated inline. When the user selects
+ *   an output token, we query Mirror Node to verify the token is associated
+ *   with their account. If not, an inline association prompt appears between
+ *   the quote details and the swap button. The swap button is disabled until
+ *   association completes. This prevents the confusing TOKEN_NOT_ASSOCIATED
+ *   error that would otherwise surface during the atomic CryptoTransfer.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -34,6 +42,9 @@ import { useTheme } from "../contexts/ThemeContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT } from "../assets/brand";
 import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
+import { TokenAssociationCheck, type AssociationStatus } from "./TokenAssociationCheck";
+import { AddLiquidityModal } from "./AddLiquidityModal";
+import { RemoveLiquidityModal } from "./RemoveLiquidityModal";
 
 // ── AMM kill switch status polling ──────────────────────────────────
 const AMM_STATUS_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/amm/kill-switch`;
@@ -95,7 +106,7 @@ function ParticleBurst({ show }: { show: boolean }) {
   );
 }
 
-// ── Main Component ───────────────────────────────────────���──────────
+// ── Main Component ─────────────────────────────────────────────────
 
 interface TradingSwapPanelProps {
   isDark: boolean;
@@ -117,6 +128,15 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
   const [showParticles, setShowParticles] = useState(false);
   const [isFlipping, setIsFlipping] = useState(false);
   const [hoverSwap, setHoverSwap] = useState(false);
+
+  // ── Token Association Gate (C4) ─────────────────────────────────
+  // Tracks whether the OUTPUT token is associated with the user's account.
+  // When "needed", the swap button is disabled and an inline prompt appears.
+  const [outTokenAssocStatus, setOutTokenAssocStatus] = useState<AssociationStatus>("unknown");
+  // ── Add Liquidity Modal ─────────────────────────────────────────
+  const [showLiquidityModal, setShowLiquidityModal] = useState(false);
+  // ── Remove Liquidity Modal ──────────────────────────────────────
+  const [showRemoveLiquidityModal, setShowRemoveLiquidityModal] = useState(false);
 
   // ── AMM Kill Switch Status ──────────────────────────────────────
   const [ammHalted, setAmmHalted] = useState(false);
@@ -273,7 +293,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
     ? "bg-slate-800/60 border border-pink-500/10 focus-within:border-pink-500/40"
     : "bg-gray-50 border border-gray-200 focus-within:border-pink-300";
 
-  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success" || ammHalted || oracleStale || !executeSupported;
+  const isSwapDisabled = !quote || !accountId || status === "swapping" || status === "success" || ammHalted || oracleStale || !executeSupported || outTokenAssocStatus === "needed" || outTokenAssocStatus === "associating" || outTokenAssocStatus === "checking";
 
   return (
     <div className="h-full flex flex-col">
@@ -507,6 +527,17 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
               )}
             </AnimatePresence>
 
+            {/* Token Association Check */}
+            <TokenAssociationCheck
+              accountId={accountId}
+              tokenId={tokenOut.tokenId}
+              tokenSymbol={tokenOut.symbol}
+              tokenLogo={tokenOut.logo}
+              isDark={isDark}
+              onStatusChange={setOutTokenAssocStatus}
+              compact
+            />
+
             {/* Error */}
             <AnimatePresence>
               {error && (
@@ -574,6 +605,12 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                   <><Droplets className="w-4 h-4" /> Pools Deploying</>
                 ) : !accountId ? (
                   <><Lock className="w-4 h-4" /> Connect Wallet</>
+                ) : outTokenAssocStatus === "needed" ? (
+                  <><Shield className="w-4 h-4" /> Associate Token First</>
+                ) : outTokenAssocStatus === "associating" ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Associating...</>
+                ) : outTokenAssocStatus === "checking" ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Checking...</>
                 ) : !quote ? (
                   "Enter Amount"
                 ) : (
@@ -598,10 +635,56 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
                 )}
               </div>
             )}
+
+            {/* Liquidity shortcuts */}
+            <div className="flex gap-1.5 mt-1.5">
+              <button
+                onClick={() => { setShowLiquidityModal(true); playVipButtonChime(); }}
+                className={`flex-1 py-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  isDark
+                    ? "text-purple-400/70 bg-purple-500/[0.06] border border-purple-500/10 hover:border-purple-500/30 hover:text-purple-400"
+                    : "text-purple-500/70 bg-purple-50 border border-purple-100 hover:border-purple-200 hover:text-purple-600"
+                }`}
+              >
+                <Droplets className="w-3 h-3" />
+                Add
+              </button>
+              <button
+                onClick={() => { setShowRemoveLiquidityModal(true); playVipButtonChime(); }}
+                className={`flex-1 py-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  isDark
+                    ? "text-red-400/70 bg-red-500/[0.06] border border-red-500/10 hover:border-red-500/30 hover:text-red-400"
+                    : "text-red-500/70 bg-red-50 border border-red-100 hover:border-red-200 hover:text-red-600"
+                }`}
+              >
+                <Droplets className="w-3 h-3" />
+                Remove
+              </button>
+            </div>
           </div>
           )}
         </div>
       </GlowBorder>
+
+      {/* Add Liquidity Modal */}
+      <AnimatePresence>
+        {showLiquidityModal && (
+          <AddLiquidityModal
+            isDark={isDark}
+            onClose={() => setShowLiquidityModal(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Remove Liquidity Modal */}
+      <AnimatePresence>
+        {showRemoveLiquidityModal && (
+          <RemoveLiquidityModal
+            isDark={isDark}
+            onClose={() => setShowRemoveLiquidityModal(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

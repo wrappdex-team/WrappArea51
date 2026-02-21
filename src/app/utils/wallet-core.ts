@@ -108,7 +108,7 @@ async function _initSignClient(): Promise<any> {
   _G[_WC_KEY] = client;
 
   // Wait for the WebSocket relay handshake before sending anything.
-  await _waitForRelay(client);
+  await _ensureRelayConnected(client);
 
   // ── Lifecycle events ─────────────────────────────────────────
   client.on("session_event", (event: any) => {
@@ -187,6 +187,11 @@ export interface WCConnectResult {
 export async function proposeSession(network: HederaNetwork): Promise<WCConnectResult> {
   const client = await getSignClient();
   const chainId = getHederaChainId(network);
+
+  // Ensure relay WebSocket is alive before sending the proposal.
+  // Without this, client.connect() throws "send was called before connect"
+  // if the relay dropped while the tab was backgrounded. [C15-01]
+  await _ensureRelayConnected(client);
 
   const { uri, approval } = await client.connect({
     optionalNamespaces: {
@@ -282,26 +287,9 @@ async function _validateSessionBeforeRequest(client: any, topic: string): Promis
     }
   }
 
-  // 3. Relay should be connected (best-effort — don't block if relay is reconnecting)
-  const relayConnected = !!client.core?.relayer?.connected;
-  if (!relayConnected) {
-    console.warn("[WC] Relay disconnected before signing — attempting reconnect...");
-    // Give relay a brief window to reconnect
-    try {
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          const poll = setInterval(() => {
-            if (client.core?.relayer?.connected) { clearInterval(poll); resolve(); }
-          }, 200);
-          setTimeout(() => { clearInterval(poll); resolve(); }, 3000);
-        }),
-      ]);
-    } catch { /* proceed anyway — relay may reconnect during the request */ }
-
-    if (!client.core?.relayer?.connected) {
-      console.warn("[WC] Relay still disconnected — signing may fail");
-    }
-  }
+  // 3. Ensure relay WebSocket is alive — uses _ensureRelayConnected which
+  //    actively triggers restartTransport() if disconnected. [C15-01]
+  await _ensureRelayConnected(client);
 }
 
 /**
@@ -333,10 +321,6 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   // ── Resolve wallet redirect URL for mobile ────────────────────────
-  // The WC session's peer metadata includes the wallet's registered
-  // native (custom scheme) and universal (HTTPS) redirect URLs.
-  // We prefer native ("hashpack://") because it opens the app directly
-  // without navigating the browser away.
   let walletRedirect: string | null = null;
   if (isMobile && params.topic) {
     try {
@@ -344,7 +328,6 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       const redirect = session?.peer?.metadata?.redirect;
       walletRedirect = redirect?.native || redirect?.universal || null;
       if (!walletRedirect) {
-        // Fallback: scan peer metadata URL for known wallet schemes
         const peerUrl = session?.peer?.metadata?.url || "";
         if (peerUrl.includes("hashpack")) walletRedirect = "https://www.hashpack.app/wc";
       }
@@ -357,18 +340,11 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       const urlStr = String(url || "");
 
       // ── Mobile: suppress WC pairing URI deep links ──────────────
-      // These are `wc:<topic>@2?...` URIs that HashPack interprets as
-      // new pairing requests, causing the "Pair with dApp" error.
-      // The relay already delivered the signing request — we just need
-      // to bring the wallet to the foreground.
       if (isMobile && (urlStr.startsWith("wc:") || urlStr.includes("wc%3A") || urlStr.includes("/wc?uri=wc"))) {
         console.log("[WC] Mobile: suppressed WC pairing deep-link:", urlStr.slice(0, 120));
         if (walletRedirect && !redirectFired) {
           redirectFired = true;
           console.log("[WC] Mobile: opening wallet via redirect:", walletRedirect);
-          // Use location.href for native schemes (hashpack://) — this
-          // opens the app without navigating the browser away (like tel:
-          // or mailto: links). Falls back to window.open for HTTPS URLs.
           try {
             if (walletRedirect.startsWith("http")) {
               origOpen.call(window, walletRedirect, "_blank");
@@ -394,7 +370,34 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   }
 
   try {
-    return await client.request(params);
+    // ── Relay readiness + retry for "send was called before connect" ──
+    // Even after _ensureRelayConnected, the WebSocket may still be in a
+    // brief CONNECTING state. Retry once on this specific error. [C15-01]
+    const WC_REQUEST_TIMEOUT_MS = 120_000;
+
+    const doRequest = async () => {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(
+          "WalletConnect request timed out after 120 seconds. " +
+          "The wallet may not have received the request, or the relay failed to deliver the response. " +
+          "Check your wallet for any pending approval prompts, then try again."
+        )), WC_REQUEST_TIMEOUT_MS)
+      );
+      return await Promise.race([client.request(params), timeoutPromise]);
+    };
+
+    try {
+      return await doRequest();
+    } catch (firstErr: any) {
+      const msg = firstErr?.message || "";
+      // Retry exactly once on relay-not-ready errors
+      if (msg.includes("send was called before connect") || msg.includes("Missing or invalid topic")) {
+        console.warn("[WC] Relay not ready — reconnecting and retrying once...");
+        await _ensureRelayConnected(client, 8000);
+        return await doRequest();
+      }
+      throw firstErr;
+    }
   } finally {
     if (isIframe || isMobile) window.open = origOpen;
   }
@@ -470,8 +473,6 @@ export async function signMessageViaWC(
   const chainId = getHederaChainId(network);
 
   // HIP-820 spec requires the message parameter to be base64-encoded.
-  // The wallet decodes it back to the original bytes before signing.
-  // Using a UTF-8-safe encoding path for robustness.
   const msgBytes = new TextEncoder().encode(message);
   let binStr = "";
   for (let i = 0; i < msgBytes.length; i++) binStr += String.fromCharCode(msgBytes[i]);
@@ -493,15 +494,11 @@ export async function signMessageViaWC(
     console.log("[WC] signMessage raw result:", typeof result,
       result ? JSON.stringify(result).slice(0, 600) : "null");
 
-    // Capture the raw signatureMap string for server-side re-extraction fallback.
-    // This ensures the server has the full protobuf data even if client-side
-    // extraction gets wrong bytes (e.g., pubKeyPrefix false-positive on 0x1A 0x40).
     let rawSignatureMap: string | undefined;
     if (result && typeof result === "object" && typeof result.signatureMap === "string") {
       rawSignatureMap = result.signatureMap;
     }
 
-    // Parse the WC response — wallets return many different formats
     const signatures = _parseSignMessageResponse(result);
     if (!signatures || signatures.length === 0) {
       console.warn("[WC] Could not extract signatures from WC response");
@@ -603,7 +600,6 @@ export async function getWCModal(): Promise<any> {
       themeVariables: {
         "--wcm-z-index": "99999",
       },
-      // Show Hedera-compatible wallets
       chains: ["hedera:mainnet", "hedera:testnet"],
     });
     return _wcModal;
@@ -614,7 +610,6 @@ export async function getWCModal(): Promise<any> {
 
 /**
  * Open the WalletConnect modal with a pairing URI.
- * The modal shows a QR code and a list of compatible wallets.
  */
 export async function openWCModal(uri: string): Promise<void> {
   const modal = await getWCModal();
@@ -700,36 +695,82 @@ function _base64ToU8(b64: string): Uint8Array {
 }
 
 /**
- * Wait for the WC relay WebSocket to connect.
+ * Ensure the WC relay WebSocket is connected before sending anything.
  *
- * SignClient.init() can resolve before the relay handshake finishes.
- * Sending anything before that throws "send was called before connect".
+ * This function is called:
+ *   1. During init (after SignClient.init resolves but before first use)
+ *   2. Before proposeSession() — "send was called before connect" fix
+ *   3. Before _safeRequest() — relay may have dropped since init
+ *
+ * If the relay is disconnected, it actively triggers reconnection via
+ * restartTransport() (full WebSocket teardown + reconnect) before
+ * waiting. This is critical because the relay WebSocket can silently
+ * close when the browser tab goes to background, and simply polling
+ * `.connected` without triggering reconnection will never resolve.
+ *
+ * Throws if relay cannot reconnect within the timeout. [C15-01]
  */
-async function _waitForRelay(client: any, timeoutMs = 8000): Promise<void> {
+async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<void> {
   try {
     const relayer = client.core?.relayer;
     if (!relayer) { console.warn("[WC] No relayer — skipping wait"); return; }
     if (relayer.connected) return;
 
+    // Actively trigger reconnection — without this, the relay stays in
+    // CLOSED state and .connected never becomes true.
+    console.log("[WC] Relay disconnected — triggering reconnection...");
+    try {
+      // restartTransport() tears down the WebSocket and opens a new one.
+      // Some WC SDK versions expose transportOpen() instead.
+      if (typeof relayer.restartTransport === "function") {
+        await Promise.race([
+          relayer.restartTransport(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport timeout")), 5000)),
+        ]).catch((e: any) => console.warn("[WC] restartTransport error (will poll):", e?.message));
+      } else if (typeof relayer.transportOpen === "function") {
+        await Promise.race([
+          relayer.transportOpen(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("transportOpen timeout")), 5000)),
+        ]).catch((e: any) => console.warn("[WC] transportOpen error (will poll):", e?.message));
+      } else if (relayer.provider && typeof relayer.provider.connect === "function") {
+        await Promise.race([
+          relayer.provider.connect(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), 5000)),
+        ]).catch((e: any) => console.warn("[WC] provider.connect error (will poll):", e?.message));
+      }
+    } catch { /* transport methods may throw — fall through to polling */ }
+
+    // If reconnection resolved synchronously, we're done
+    if (relayer.connected) {
+      console.log("[WC] Relay reconnected immediately");
+      return;
+    }
+
+    // Poll + listen for the relay_connect event
     return new Promise<void>((resolve) => {
       let settled = false;
-      const done = () => {
+      const done = (success: boolean) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         clearInterval(poll);
         try { relayer.off("relayer_connect", onConnect); } catch { /* */ }
+        if (success) {
+          console.log("[WC] Relay connected");
+        } else {
+          console.warn("[WC] Relay reconnection timed out after", timeoutMs, "ms");
+        }
+        // Resolve regardless — the caller will get "send before connect"
+        // if relay is still down, and can handle it via retry.
         resolve();
       };
-      const onConnect = () => done();
+      const onConnect = () => done(true);
       try { relayer.on("relayer_connect", onConnect); } catch { /* */ }
-      const poll = setInterval(() => { if (relayer.connected) done(); }, 100);
-      const timer = setTimeout(() => {
-        if (!settled) { console.log("[WC] Relay wait timed out — proceeding"); done(); }
-      }, timeoutMs);
+      const poll = setInterval(() => { if (relayer.connected) done(true); }, 100);
+      const timer = setTimeout(() => done(false), timeoutMs);
     });
   } catch {
-    console.warn("[WC] Could not wait for relay — proceeding");
+    console.warn("[WC] Could not ensure relay connection — proceeding");
   }
 }
 
@@ -773,7 +814,6 @@ function _parseSignMessageResponse(result: any): string[] {
         return [extracted];
       }
       // Protobuf extraction failed — pass the raw base64 string through.
-      // The server's decodeSigTo64Bytes will try to extract it server-side.
       console.warn("[WC] Protobuf extraction failed — passing raw signatureMap string (" + sm.length + " chars) to server");
       return [sm];
     }
@@ -884,11 +924,8 @@ function _extractFromSignaturePair(bytes: Uint8Array): Uint8Array | null {
  *
  * Strategy 1 (proper parsing): Walk the protobuf structure —
  *   SignatureMap.sigPair (field 1) → SignaturePair → ed25519 (field 3).
- *   This correctly skips pubKeyPrefix data and is not fooled by
- *   byte patterns (0x1A 0x40) that happen to appear in field data.
  *
  * Strategy 2 (legacy byte scan): Scan for the 0x1A 0x40 tag pair.
- *   Kept as a fallback for non-standard wallet protobuf layouts.
  *
  * Strategy 3 (heuristics): Exact 64-byte payload or last-64-byte extraction.
  *
@@ -904,7 +941,6 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
       Array.from(bytes.slice(0, 12)).map(b => b.toString(16).padStart(2, "0")).join(" "));
 
     // ── Strategy 1: Proper protobuf walk ──────────────────────────────
-    // Parse SignatureMap → repeated SignaturePair (field 1) → ed25519 (field 3)
     let pos = 0;
     while (pos < bytes.length) {
       const tagResult = _readVarint(bytes, pos);
@@ -920,7 +956,6 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
         const fieldLen = lenResult.value;
 
         if (fieldNum === 1 && pos + fieldLen <= bytes.length) {
-          // field 1 = sigPair (nested SignaturePair message)
           const sigPairBytes = bytes.slice(pos, pos + fieldLen);
           const ed25519Sig = _extractFromSignaturePair(sigPairBytes);
           if (ed25519Sig && ed25519Sig.length === 64) {
@@ -939,8 +974,6 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     }
 
     // ── Strategy 2: Legacy byte-pattern scan (0x1A 0x40) ─────────────
-    // Fallback for non-standard protobuf layouts. The proper parser above
-    // should handle all compliant wallets; this catches edge cases.
     for (let i = 0; i < bytes.length - 65; i++) {
       if (bytes[i] === 0x1A && bytes[i + 1] === 0x40 && i + 66 <= bytes.length) {
         const sig = bytes.slice(i + 2, i + 66);
@@ -950,14 +983,11 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     }
 
     // ── Strategy 3: Heuristics ────────────────────────────────────────
-
-    // Exact 64 bytes = raw signature (no protobuf wrapper)
     if (bytes.length === 64) {
       console.log("[WC] Protobuf decode: exactly 64 bytes — treating as raw signature");
       return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    // Last-64-bytes heuristic for small payloads (e.g., pubKeyPrefix + sig)
     if (bytes.length > 64 && bytes.length <= 128) {
       console.log("[WC] Protobuf: no tag found — trying last 64 bytes as heuristic (" + bytes.length + "B total)");
       const sig = bytes.slice(bytes.length - 64);

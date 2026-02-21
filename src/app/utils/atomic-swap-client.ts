@@ -563,7 +563,192 @@ export async function buildTokenAssociateTransaction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// SECTION 5: Internal Helpers
+// SECTION 5: LP Position Tracking (C7)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * LP position for a single pool — fetched from Mirror Node.
+ */
+export interface LPPosition {
+  poolId: string;
+  tokenA: string;
+  tokenB: string;
+  /** User's LP token balance (raw integer string) */
+  lpBalanceRaw: string;
+  /** User's LP token balance (display string) */
+  lpBalanceDisplay: string;
+  /** User's share of the pool as a percentage */
+  shareOfPool: number;
+  /** Estimated value of tokenA the position represents */
+  estimatedAmountA: string;
+  /** Estimated value of tokenB the position represents */
+  estimatedAmountB: string;
+  /** LP token total supply at query time */
+  lpTotalSupply: string;
+  /** Whether the position was successfully fetched */
+  isLive: boolean;
+}
+
+const MIRROR_NODE_MAINNET = "https://mainnet-public.mirrornode.hedera.com";
+
+/**
+ * Fetch a user's LP token balance for a specific pool.
+ *
+ * SENIOR DEV NOTE [C7-01]:
+ *   LP positions are read directly from Mirror Node — the user's account
+ *   balance of the pool's LP HTS token. No server dependency, no KV.
+ *   The position is the on-chain ground truth. Share-of-pool and estimated
+ *   token amounts are derived from current reserves (also on-chain).
+ */
+export async function fetchUserLPPosition(
+  accountId: string,
+  poolId: string,
+): Promise<LPPosition | null> {
+  const pool = POOL_BY_ID.get(poolId);
+  if (!pool || pool.lpTokenId === "PENDING" || pool.accountId === "PENDING") {
+    return null;
+  }
+
+  const tokenA = TOKEN_BY_SYMBOL.get(pool.tokenA);
+  const tokenB = TOKEN_BY_SYMBOL.get(pool.tokenB);
+  if (!tokenA || !tokenB) return null;
+
+  try {
+    // Fetch user's LP token balance from Mirror Node
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 8_000);
+    const res = await fetch(
+      `${MIRROR_NODE_MAINNET}/api/v1/accounts/${accountId}/tokens?token.id=${pool.lpTokenId}&limit=1`,
+      { signal: ctrl.signal },
+    );
+    clearTimeout(timeout);
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const tokens: Array<{ token_id: string; balance: number }> = data.tokens || [];
+
+    const lpBalanceRaw = tokens.length > 0 ? BigInt(tokens[0].balance) : 0n;
+    if (lpBalanceRaw === 0n) {
+      return {
+        poolId, tokenA: pool.tokenA, tokenB: pool.tokenB,
+        lpBalanceRaw: "0", lpBalanceDisplay: "0",
+        shareOfPool: 0, estimatedAmountA: "0", estimatedAmountB: "0",
+        lpTotalSupply: "0", isLive: true,
+      };
+    }
+
+    // Fetch reserves + LP total supply for share calculation
+    const reserves = await fetchPoolReserves(pool);
+
+    const shareOfPool = reserves.lpTotalSupply > 0n
+      ? Number(lpBalanceRaw * 10000n / reserves.lpTotalSupply) / 100
+      : 0;
+
+    // Compute estimated token amounts from share
+    const { amountA, amountB } = computeLPSharesBurn(
+      lpBalanceRaw,
+      reserves.reserveA, reserves.reserveB,
+      reserves.lpTotalSupply,
+    );
+
+    return {
+      poolId,
+      tokenA: pool.tokenA,
+      tokenB: pool.tokenB,
+      lpBalanceRaw: lpBalanceRaw.toString(),
+      lpBalanceDisplay: bigIntToDecimal(lpBalanceRaw, pool.lpDecimals),
+      shareOfPool,
+      estimatedAmountA: bigIntToDecimal(amountA, tokenA.decimals),
+      estimatedAmountB: bigIntToDecimal(amountB, tokenB.decimals),
+      lpTotalSupply: reserves.lpTotalSupply.toString(),
+      isLive: reserves.isLive,
+    };
+  } catch (err: any) {
+    log.warn("AtomicSwap", `LP position fetch failed for ${accountId} in ${poolId}: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * Fetch LP positions across all deployed pools.
+ */
+export async function fetchAllUserLPPositions(
+  accountId: string,
+): Promise<LPPosition[]> {
+  const deployedPools = POOL_REGISTRY.filter(
+    p => p.accountId !== "PENDING" && p.lpTokenId !== "PENDING",
+  );
+
+  if (deployedPools.length === 0) return [];
+
+  const results = await Promise.allSettled(
+    deployedPools.map(p => fetchUserLPPosition(accountId, p.poolId)),
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<LPPosition | null> => r.status === "fulfilled")
+    .map(r => r.value)
+    .filter((p): p is LPPosition => p !== null && p.lpBalanceRaw !== "0");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECTION 6: Atomic Swap History (C8)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Swap event record as stored in KV by the server's sign-swap handler.
+ */
+export interface AtomicSwapEvent {
+  poolId: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountInRaw: string;
+  serverAmountOutRaw: string;
+  userAccountId: string;
+  timestamp: number;
+}
+
+/**
+ * Fetch the user's atomic swap history from the server.
+ * Requires an active session (ED25519 challenge-response auth).
+ *
+ * SENIOR DEV NOTE [C8-01]:
+ *   The server reads from KV (prefix scan on `atomic_swap_*`) and
+ *   filters by accountId server-side. Auth ensures users can only
+ *   see their own history. The KV entries are written by the
+ *   sign-swap handler after successful co-signing.
+ */
+export async function fetchAtomicSwapHistory(
+  accountId: string,
+): Promise<AtomicSwapEvent[]> {
+  try {
+    const sessionToken = getSessionToken();
+    if (!sessionToken) return [];
+
+    const res = await fetch(`${SERVER_BASE}/atomic/history/${accountId}`, {
+      headers: {
+        "Authorization": `Bearer ${publicAnonKey}`,
+        "X-Session-Token": sessionToken,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      log.warn("AtomicSwap", `History fetch failed: ${errBody.error}`);
+      return [];
+    }
+
+    const data = await res.json();
+    return Array.isArray(data.swaps) ? data.swaps : [];
+  } catch (err: any) {
+    log.warn("AtomicSwap", `History fetch error: ${err?.message}`);
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECTION 7: Internal Helpers
 // ═══════════════════════════════════════════════════════════════════════
 
 function _fail(code: AtomicSwapErrorCode, message: string): AtomicSwapResult {

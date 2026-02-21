@@ -178,7 +178,7 @@ export interface WrappedTokenSeed {
 
 export const WRAPPED_TOKENS: WrappedTokenSeed[] = [
   // ── Routing Hub ─────────────────────────────────────────────────────
-  { tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, fallbackPrice: 0.28, logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" },
+  { tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8, fallbackPrice: 0.10, logo: "https://assets.coingecko.com/coins/images/3688/large/hbar.png" }, // [C33-01] Updated from 0.28
   // ── Stablecoins ─────────────────────────────────────────────────────
   { tokenId: "0.0.456858", symbol: "USDC", name: "USD Coin", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
   { tokenId: "0.0.4291336", symbol: "USDT", name: "Tether USD", decimals: 6, fallbackPrice: 1.00, logo: "https://assets.coingecko.com/coins/images/325/large/Tether.png" },

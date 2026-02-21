@@ -95,7 +95,7 @@ export function DeFi() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [expandedPool, setExpandedPool] = useState<string | null>(null);
   const [showWalletModal, setShowWalletModal] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(["pool-whbar-usdc", "pool-whbar-weth"]);
+  const [favorites, setFavorites] = useState<string[]>(["pool-hbar-usdc", "pool-hbar-weth"]);
 
   // ── Bonzo lending markets state ──
   const [bonzoMarkets, setBonzoMarkets] = useState<BonzoMarket[]>([]);

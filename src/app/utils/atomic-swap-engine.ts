@@ -39,6 +39,7 @@ import type {
   PoolMetrics,
 } from "./atomic-swap-types";
 import { log } from "./logger";
+import { SAUCERSWAP_PARTNER_ID } from "./saucerswap";
 
 // ═══════════════════════════════════════════════════════════════════════
 // SECTION 1: Constants & Configuration
@@ -112,7 +113,7 @@ export const TOKEN_WHITELIST: AtomicTokenDef[] = [
   // ── Routing Hub ─────────────────────────────────────────────────────
   {
     tokenId: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR",
-    decimals: 8, fallbackPriceUsd: 0.28, tier: 1,
+    decimals: 8, fallbackPriceUsd: 0.10, tier: 1, // [C33-01] Updated from 0.28 to match current oracle
     evmAddress: "0x000000000000000000000000000000000011F6bF",
   },
 
@@ -127,12 +128,12 @@ export const TOKEN_WHITELIST: AtomicTokenDef[] = [
   { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPriceUsd: 104000, bridge: "HashPort", tier: 1, saucerswapId: "0.0.1969769" },
   { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPriceUsd: 2650,   bridge: "HashPort", tier: 1, saucerswapId: "0.0.1969757" },
   { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPriceUsd: 16.50,  bridge: "HashPort", tier: 1, saucerswapId: "0.0.1970030" },
-  { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPriceUsd: 180.0,  bridge: "HashPort", tier: 1 },
+  { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPriceUsd: 17.25,  bridge: "HashPort", tier: 1 }, // [C33-01] Updated from 180.0
 
   // ── Cross-Chain Wrapped Assets ──────────────────────────────────────
   { tokenId: "0.0.1157005", symbol: "WBNB",   name: "Wrapped BNB",           decimals: 8,  fallbackPriceUsd: 660,    bridge: "LayerZero", tier: 1 },
-  { tokenId: "0.0.1157020", symbol: "WAVAX",  name: "Wrapped AVAX",          decimals: 8,  fallbackPriceUsd: 25,     bridge: "LayerZero", tier: 1 },
-  { tokenId: "0.0.540318",  symbol: "WMATIC", name: "Wrapped MATIC",         decimals: 8,  fallbackPriceUsd: 0.40,   bridge: "HashPort", tier: 2 },
+  { tokenId: "0.0.1157020", symbol: "WAVAX",  name: "Wrapped AVAX",          decimals: 8,  fallbackPriceUsd: 9.15,   bridge: "LayerZero", tier: 1 }, // [C33-01] Updated from 25
+  { tokenId: "0.0.540318",  symbol: "WMATIC", name: "Wrapped MATIC",         decimals: 8,  fallbackPriceUsd: 0.13,   bridge: "HashPort", tier: 2 }, // [C33-01] Updated from 0.40
 ];
 
 /** Tier 1 tokens — eligible for pool creation and routing hubs */
@@ -581,7 +582,7 @@ export async function fetchAllPoolReserves(): Promise<Map<string, PoolReserves>>
 
 // ═══════════════════════════════════════════════════════════════════════
 // SECTION 6: Oracle Price Fetching (Display Only — Swaps Use Reserves)
-// ═══════════════��═══════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 /** In-memory oracle cache (short TTL — display prices only) */
 let _oracleCache: { prices: Record<string, number>; ts: number } | null = null;
@@ -606,10 +607,10 @@ export async function fetchOraclePrices(): Promise<Record<string, number>> {
 
   // Default stablecoin prices
   prices["0.0.456858"] = 1.0;   // USDC
-  prices["0.0.4291336"] = 1.0;  // USDT
+  prices["0.0.4291336"] = 1.0;  // USDT (native — legacy, may not have SaucerSwap pools)
   prices["0.0.1055477"] = 1.0;  // DAI
   prices["0.0.1055459"] = 1.0;  // USDCh
-  prices["0.0.1055472"] = 1.0;  // USDTh
+  prices["0.0.1055472"] = 1.0;  // USDT (HashPort — primary SaucerSwap USDT) [C36-04]
 
   // Try SaucerSwap API
   const variants = ["/tokens", "/v1/tokens", "/v2/tokens"];
@@ -618,7 +619,10 @@ export async function fetchOraclePrices(): Promise<Record<string, number>> {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 8_000);
       const res = await fetch(`https://api.saucerswap.finance${path}`, {
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(SAUCERSWAP_PARTNER_ID ? { "x-api-key": SAUCERSWAP_PARTNER_ID } : {}),
+        },
         signal: ctrl.signal,
       });
       clearTimeout(timeout);
@@ -909,7 +913,7 @@ export function computeFeeBreakdown(
   };
 }
 
-// ═════════════════════════════���═════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // SECTION 8: Transaction Building (Hedera SDK)
 // ═══════════════════════════════════════════════════════════════════════
 //
@@ -1226,7 +1230,7 @@ export async function getPoolMetrics(poolId: string): Promise<PoolMetrics | null
 
 // ═══════════════════════════════════════════════════════════════════════
 // SECTION 10: Utility / Helpers
-// ══════���════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 
 /** Generate HashScan URL for a transaction */
 export function getSwapHashScanUrl(transactionId: string): string {

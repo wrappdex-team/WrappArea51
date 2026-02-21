@@ -92,6 +92,24 @@ function resolveTokenLogo(symbol: string, apiIcon?: string): string {
   return `https://www.saucerswap.finance/images/tokens/${cleaned.toLowerCase()}.svg`;
 }
 
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  [C22-01] WHBAR → HBAR Display Normalization                       │
+// │  SaucerSwap pools use WHBAR on-chain; WRAPpDEX auto-wraps, so      │
+// │  display "HBAR" to users. Token IDs remain unchanged internally.   │
+// └─────────────────────────────────────────────────────────────────────┘
+const WHBAR_TOKEN_ID = "0.0.1456986";
+
+function normalizeSymbolForDisplay(symbol: string, htsId?: string): string {
+  if (symbol === "WHBAR" || htsId === WHBAR_TOKEN_ID) return "HBAR";
+  // Strip [hts] suffix from SaucerSwap API symbols
+  return symbol.replace("[hts]", "").replace("[HTS]", "");
+}
+
+function normalizeNameForDisplay(name: string, symbol: string, htsId?: string): string {
+  if (symbol === "WHBAR" || htsId === WHBAR_TOKEN_ID) return "HBAR";
+  return name;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────
 
 function safeFloat(v: any): number {
@@ -181,14 +199,14 @@ function parseV1Pool(raw: any): LivePool | null {
     return {
       id: contractId || `v1-${symA}-${symB}`,
       tokenA: {
-        symbol: symA,
-        name: tA.name || symA,
+        symbol: normalizeSymbolForDisplay(symA, tA.id),
+        name: normalizeNameForDisplay(tA.name || symA, symA, tA.id),
         logo: resolveTokenLogo(symA, tA.icon ?? tA.image),
         htsId: tA.id || tA.tokenId || "",
       },
       tokenB: {
-        symbol: symB,
-        name: tB.name || symB,
+        symbol: normalizeSymbolForDisplay(symB, tB.id),
+        name: normalizeNameForDisplay(tB.name || symB, symB, tB.id),
         logo: resolveTokenLogo(symB, tB.icon ?? tB.image),
         htsId: tB.id || tB.tokenId || "",
       },
@@ -239,14 +257,14 @@ function parseV2Pool(raw: any): LivePool | null {
     return {
       id: contractId || `v2-${symA}-${symB}-${feeRaw}`,
       tokenA: {
-        symbol: symA,
-        name: tA.name || symA,
+        symbol: normalizeSymbolForDisplay(symA, tA.id),
+        name: normalizeNameForDisplay(tA.name || symA, symA, tA.id),
         logo: resolveTokenLogo(symA, tA.icon ?? tA.image),
         htsId: tA.id || tA.tokenId || "",
       },
       tokenB: {
-        symbol: symB,
-        name: tB.name || symB,
+        symbol: normalizeSymbolForDisplay(symB, tB.id),
+        name: normalizeNameForDisplay(tB.name || symB, symB, tB.id),
         logo: resolveTokenLogo(symB, tB.icon ?? tB.image),
         htsId: tB.id || tB.tokenId || "",
       },
@@ -308,14 +326,14 @@ async function fetchFromBackend(): Promise<{
     const pools: LivePool[] = data.pools.map((p: any) => ({
       id: p.id || p.contractId || "",
       tokenA: {
-        symbol: p.tokenA?.symbol || "???",
-        name: p.tokenA?.name || p.tokenA?.symbol || "Unknown",
+        symbol: normalizeSymbolForDisplay(p.tokenA?.symbol || "???", p.tokenA?.id),
+        name: normalizeNameForDisplay(p.tokenA?.name || p.tokenA?.symbol || "Unknown", p.tokenA?.symbol || "???", p.tokenA?.id),
         logo: resolveTokenLogo(p.tokenA?.symbol || "", p.tokenA?.icon),
         htsId: p.tokenA?.id || "",
       },
       tokenB: {
-        symbol: p.tokenB?.symbol || "???",
-        name: p.tokenB?.name || p.tokenB?.symbol || "Unknown",
+        symbol: normalizeSymbolForDisplay(p.tokenB?.symbol || "???", p.tokenB?.id),
+        name: normalizeNameForDisplay(p.tokenB?.name || p.tokenB?.symbol || "Unknown", p.tokenB?.symbol || "???", p.tokenB?.id),
         logo: resolveTokenLogo(p.tokenB?.symbol || "", p.tokenB?.icon),
         htsId: p.tokenB?.id || "",
       },

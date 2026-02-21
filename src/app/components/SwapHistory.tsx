@@ -60,7 +60,12 @@ export function loadSwapHistory(): SwapHistoryEntry[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed: SwapHistoryEntry[] = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.slice(0, 10) : [];
+    if (!Array.isArray(parsed)) return [];
+    // C25: Sanitize — transactionId may have been stored as a non-string (SDK object)
+    return parsed.slice(0, 10).map(e => ({
+      ...e,
+      transactionId: e.transactionId ? String(e.transactionId) : null,
+    }));
   } catch {
     return [];
   }

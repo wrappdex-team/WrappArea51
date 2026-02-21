@@ -41,7 +41,7 @@ import {
   subscribeWCModal,
 } from "./wallet-core";
 
-// ── Mirror Node Endpoints ─────────────────��────────────────────────
+// ── Mirror Node Endpoints ─────────────────────���──────────────────
 
 const MIRROR_NODES: Record<HederaNetwork, string> = {
   mainnet: "https://mainnet-public.mirrornode.hedera.com",
@@ -385,11 +385,32 @@ export function restoreSession(): HashPackSession | null {
  * On stale detection: clears local state and notifies subscribers.
  */
 function _scheduleSessionValidation(session: HashPackSession): void {
-  // Delay to allow SignClient init (getSignClient is lazy-async)
+  // [C16-04] Delay long enough for the SignClient to fully initialize AND
+  // complete the relay handshake. The old 2s delay was too aggressive in
+  // HMR / preview environments where module-level WC state gets reset —
+  // a new SignClient hasn't synced sessions yet, causing a false "stale"
+  // detection that disconnects the wallet every ~30 seconds.
+  //
+  // Strategy: wait 5s, then verify relay connectivity before checking
+  // session store. If relay is not connected, skip validation entirely
+  // (leave the session in localStorage — next real sign call will
+  // reconnect or fail with a clear user-facing error).
   setTimeout(async () => {
     try {
       const client = await getSignClient();
       if (!client) return;
+
+      // [C16-04] Guard: only validate if the relay appears connected.
+      // A freshly-initialized SignClient (e.g., after HMR) won't have
+      // synced sessions from the relay yet, so its session store is
+      // empty — this is NOT the same as a genuinely stale session.
+      const relayConnected = (client as any)?.core?.relayer?.connected
+        ?? (client as any)?.core?.relayer?.provider?.connection?.connected
+        ?? null;
+      if (relayConnected === false) {
+        log.info("HashPack", "Session validation deferred — relay not yet connected (SignClient may still be initializing)");
+        return;
+      }
 
       // Check if the topic is in the client's session store
       let found = false;
@@ -418,8 +439,17 @@ function _scheduleSessionValidation(session: HashPackSession): void {
           return;
         }
 
+        // [C16-04] Before declaring stale, double-check that we have at
+        // least ONE session in the store. An empty store after init
+        // usually means the relay hasn't synced yet — not a real stale.
+        const totalSessionCount = allSessions.length;
+        if (totalSessionCount === 0 && relayConnected === null) {
+          log.info("HashPack", "Session validation inconclusive — 0 sessions in store but relay state unknown. Keeping local session.");
+          return;
+        }
+
         // No WC session at all — stale
-        log.warn("HashPack", `Stale session detected for ${session.accountId} — WC topic not found in SignClient`);
+        log.warn("HashPack", `Stale session detected for ${session.accountId} — WC topic not found in SignClient (${totalSessionCount} total sessions, relay=${relayConnected})`);
         _activeWcTopic = null;
         try { localStorage.removeItem(SESSION_KEY); } catch { /* */ }
         _staleSessionCBs.forEach(cb => {
@@ -430,7 +460,7 @@ function _scheduleSessionValidation(session: HashPackSession): void {
       // SignClient init failed — can't validate, leave session as-is
       log.warn("HashPack", "Session validation skipped — SignClient unavailable", err?.message);
     }
-  }, 2000); // 2s delay — SignClient needs time to init + relay handshake
+  }, 5000); // [C16-04] Increased from 2s → 5s for relay sync time
 }
 
 export function clearSession(): void {
@@ -476,6 +506,131 @@ export async function sendHederaTransaction(
     if (msg.includes("rejected") || msg.includes("User rejected")) {
       return { success: false, error: "Transaction rejected by wallet" };
     }
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Execute an unfrozen Hedera SDK Transaction via the connected wallet.
+ *
+ * This is the primary entry point used by saucerswap.ts for all on-chain
+ * operations (swaps, approvals, token associations, wrap/unwrap).
+ *
+ * Flow:
+ *   1. Serialize the unfrozen SDK transaction to bytes via .toBytes()
+ *   2. Send to the connected wallet via WalletConnect (HIP-820)
+ *   3. The wallet freezes (sets nodeAccountIds + txId), signs, and submits
+ *   4. Poll Mirror Node for receipt confirmation
+ *
+ * Returns { success, transactionId?, error?, userCancelled? } which is
+ * the shape all SaucerSwap execution functions expect.
+ */
+export async function executeHederaTransaction(
+  accountId: string,
+  sdkTransaction: any,
+): Promise<{ success: boolean; transactionId?: string; error?: string; userCancelled?: boolean }> {
+  if (!_activeWcTopic) {
+    return { success: false, error: "No active WalletConnect session" };
+  }
+  try {
+    // [C28-02] Limit to single consensus node to prevent fee multiplication.
+    // The SDK's toBytes() creates N transaction variants (one per node).
+    // Each variant gets signed and may be submitted, costing ~0.5 HBAR per
+    // attempt. With 3 nodes default, a reverted contract call costs 3×.
+    try {
+      const sdk = await import("@hashgraph/sdk");
+      if (typeof sdkTransaction.setNodeAccountIds === "function") {
+        sdkTransaction.setNodeAccountIds([new sdk.AccountId(3)]);
+      }
+    } catch { /* non-blocking — proceed with default nodes */ }
+
+    // Serialize the SDK transaction — the wallet handles signing + execution
+    const txBytes: Uint8Array = sdkTransaction.toBytes();
+    log.info("HashPack", `Sending ${txBytes.length}B transaction via WC (single-node)`);
+    const result = await signAndExecuteTransaction(_activeWcTopic, _activeNetwork, accountId, txBytes);
+    const txId = result?.transactionId || undefined;
+
+    log.info("HashPack", `WC response received — txId: ${txId || "none"}, keys: ${result ? Object.keys(result).join(",") : "null"}`);
+
+    // Poll Mirror Node for receipt to confirm on-chain success
+    if (txId) {
+      const receipt = await pollMirrorNodeReceipt(txId, _activeNetwork);
+      if (receipt && receipt.status !== "SUCCESS") {
+        return {
+          success: false,
+          transactionId: txId,
+          error: `Transaction reverted on-chain: ${receipt.status}`,
+        };
+      }
+      // [C28-03] If mirror node polling returns null (receipt not found in time),
+      // proceed optimistically. The wallet confirmed submission, and the most
+      // likely cause of null receipt is mirror node lag — not a failed tx.
+      // If the tx actually failed on-chain, the NEXT step (swap) will fail
+      // with a clear error, costing only one extra popup vs blocking everything.
+      if (!receipt) {
+        log.warn("HashPack", `Mirror Node receipt not found for ${txId} — proceeding optimistically (wallet confirmed submission)`);
+      }
+    }
+
+    return { success: true, transactionId: txId };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    const lc = msg.toLowerCase();
+    const isUserReject =
+      lc.includes("rejected") ||
+      lc.includes("user_reject") ||
+      lc.includes("cancelled by user") ||
+      lc.includes("canceled by user") ||
+      lc.includes("user denied");
+    if (isUserReject) {
+      return { success: false, error: "Transaction rejected by wallet", userCancelled: true };
+    }
+
+    // ── Timeout recovery: check Mirror Node for recent transactions ──
+    // [C9-01] When WalletConnect times out, the wallet may have already
+    // signed and submitted the transaction. Check the account's recent
+    // transaction history to see if a contract execute succeeded.
+    const isTimeout = lc.includes("timed out") || lc.includes("timeout");
+    if (isTimeout) {
+      log.warn("HashPack", "WC timed out — checking Mirror Node for recent contract executions");
+      try {
+        const base = MIRROR_NODES[_activeNetwork];
+        const lookbackSec = 180; // check last 3 minutes
+        const since = new Date(Date.now() - lookbackSec * 1000).toISOString();
+        const url = `${base}/api/v1/transactions?account.id=${accountId}&transactiontype=CONTRACTCALL&order=desc&limit=3&timestamp=gte:${encodeURIComponent(since)}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        if (res.ok) {
+          const data = await res.json();
+          const txns = data.transactions || [];
+          const recent = txns.find((t: any) => t.result === "SUCCESS");
+          if (recent) {
+            const recentTxId = recent.transaction_id || recent.consensus_timestamp;
+            log.info("HashPack", `Found recent SUCCESS tx via Mirror Node: ${recentTxId}`);
+            return {
+              success: true,
+              transactionId: recentTxId,
+              error: "WalletConnect relay timed out, but the transaction appears to have succeeded on-chain. " +
+                "Verify in your wallet or on HashScan.",
+            };
+          }
+          // Check for recent failures
+          const failed = txns.find((t: any) => t.result && t.result !== "SUCCESS");
+          if (failed) {
+            log.warn("HashPack", `Found recent FAILED tx: ${failed.transaction_id} — result: ${failed.result}`);
+            return {
+              success: false,
+              transactionId: failed.transaction_id,
+              error: `WalletConnect timed out. A recent transaction was found but it failed: ${failed.result}. ` +
+                `Check HashScan for details.`,
+            };
+          }
+          log.info("HashPack", `No recent contract calls found in last ${lookbackSec}s — transaction may not have been submitted`);
+        }
+      } catch (mnErr: any) {
+        log.warn("HashPack", `Mirror Node fallback check failed: ${mnErr?.message}`);
+      }
+    }
+
     return { success: false, error: msg };
   }
 }

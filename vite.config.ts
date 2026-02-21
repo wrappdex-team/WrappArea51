@@ -63,6 +63,41 @@ function figmaAssetSafetyPlugin() {
   };
 }
 
+/**
+ * Workaround for the /public/_redirects directory-vs-file conflict.
+ *
+ * In the Figma Make sandbox, /public/_redirects is stuck as a directory
+ * (cannot be replaced with a flat file via the write_tool). Netlify
+ * requires a flat _redirects file at the build root for SPA routing.
+ *
+ * This plugin writes the correct flat _redirects file into dist/ after
+ * the bundle is emitted, overriding whatever Vite copied from /public/.
+ */
+function netlifyRedirectsPlugin() {
+  return {
+    name: 'netlify-redirects',
+    enforce: 'post' as const,
+    async closeBundle() {
+      const fs = await import('fs');
+      const outDir = path.resolve(__dirname, 'dist');
+      const redirectsPath = path.resolve(outDir, '_redirects');
+
+      // Remove the directory artifact if Vite copied it from /public/
+      try {
+        const stat = fs.statSync(redirectsPath);
+        if (stat.isDirectory()) {
+          fs.rmSync(redirectsPath, { recursive: true, force: true });
+        }
+      } catch (_) {
+        // Doesn't exist yet — fine
+      }
+
+      // Write the flat SPA catch-all redirect file
+      fs.writeFileSync(redirectsPath, '/*    /index.html   200\n', 'utf-8');
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => ({
   plugins: [
     // Resolve figma:asset/ imports to /public/screenshots/ paths
@@ -73,6 +108,8 @@ export default defineConfig(({ mode }) => ({
     // Tailwind is not being actively used – do not remove them
     react(),
     tailwindcss(),
+    // Write flat _redirects file for Netlify SPA routing (see plugin comment)
+    netlifyRedirectsPlugin(),
   ],
   resolve: {
     alias: {

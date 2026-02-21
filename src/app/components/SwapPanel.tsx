@@ -33,11 +33,14 @@ import { playVipCashRegister } from "../utils/sounds";
 import { loadVipPrefs, isVipEligible } from "../utils/vip";
 import { motion } from "motion/react";
 import { SAUCERSWAP_LARRY_LOGO } from "../assets/brand";
+import { TokenIcon } from "./TokenIcon";
 import {
   SAUCERSWAP_TOKENS,
   estimateSwapQuote,
+  fetchServerQuote,
   findSwapRoute,
   getPoolRoutes,
+  fetchPoolRoutes,
   executeSaucerSwap,
   formatUsdCompact,
   getHashScanTxUrl,
@@ -47,8 +50,11 @@ import {
   getNativeHbarBalance,
   getTokenBalance,
   fetchLiveTokenPrices,
+  fetchAndApplyTokenIcons,
   type AllowedToken,
   type SwapQuote,
+  type QuoteConfidence,
+  type ScoredRouteInfo,
   type PoolRoute,
   type SwapResult,
 } from "../utils/saucerswap";
@@ -121,7 +127,7 @@ const SaucerTokenSelectorDropdown = memo(function SaucerTokenSelectorDropdown({
               role="option"
               aria-selected={false}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"}`}>
-              <img src={t.logo} alt={t.symbol} className="w-6 h-6 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <TokenIcon src={t.logo} symbol={t.symbol} size="w-6 h-6" />
               <div>
                 <div className="font-bold text-sm">{t.symbol}</div>
                 <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
@@ -154,6 +160,9 @@ export function SwapPanel() {
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [route, setRoute] = useState<ReturnType<typeof findSwapRoute>>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
+  // [C52] Scored alternative routes from server for route comparison
+  const [scoredRoutes, setScoredRoutes] = useState<ScoredRouteInfo[]>([]);
+  const [showRouteComparison, setShowRouteComparison] = useState(false);
 
   // ── Prices ──
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
@@ -167,6 +176,19 @@ export function SwapPanel() {
   const [swapStatus, setSwapStatus] = useState<"idle" | "processing" | "success" | "error">("idle");
   const [swapError, setSwapError] = useState<string | null>(null);
   const [lastTxId, setLastTxId] = useState<string | null>(null);
+
+  // ── Swap step tracking [C27-04] ──
+  // Listens for "swap-step" CustomEvents from saucerswap.ts to show
+  // which step (approve vs swap) the user is signing in their wallet.
+  const [swapStep, setSwapStep] = useState<{ step: number; total: number; description: string } | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) setSwapStep(detail);
+    };
+    window.addEventListener("swap-step", handler);
+    return () => window.removeEventListener("swap-step", handler);
+  }, []);
 
   // ── Success overlay state ──
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -205,8 +227,28 @@ export function SwapPanel() {
     return () => clearInterval(iv);
   }, [livePrices]);
 
-  // ── Derived ──
-  const allPools = useMemo(() => getPoolRoutes(), []);
+  // ── Live pool data ──
+  // [C22-01] Fetches live pool data from SaucerSwap via backend proxy.
+  // Shows HBAR (native) instead of WHBAR in pool displays.
+  const [allPools, setAllPools] = useState<PoolRoute[]>(() => getPoolRoutes());
+  const [poolsLoading, setPoolsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPoolsLoading(true);
+    fetchPoolRoutes()
+      .then(pools => { if (!cancelled) setAllPools(pools); })
+      .catch(() => { /* keep static fallback */ })
+      .finally(() => { if (!cancelled) setPoolsLoading(false); });
+
+    // Refresh every 60s
+    const iv = setInterval(() => {
+      fetchPoolRoutes()
+        .then(pools => { if (!cancelled) setAllPools(pools); })
+        .catch(() => { /* keep existing data */ });
+    }, 60_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
   const effectiveSlippage = customSlippage ? parseFloat(customSlippage) || 0.5 : slippage;
   const isWrapUnwrap = isHbarWhbarPair(inputToken.symbol, outputToken.symbol);
   const isWrapping = isWrapUnwrap && inputToken.symbol === "HBAR";
@@ -231,6 +273,8 @@ export function SwapPanel() {
 
   useEffect(() => {
     fetchPrices();
+    // [C36-04] Fetch official token icons from SaucerSwap API on mount
+    fetchAndApplyTokenIcons();
     const iv = setInterval(fetchPrices, 30000);
     return () => clearInterval(iv);
   }, [fetchPrices]);
@@ -271,10 +315,18 @@ export function SwapPanel() {
 
   // ── Calculate quote ──
   const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const serverQuoteAbortRef = useRef<AbortController | null>(null);
+
+  // [C51] Phase 1: Instant client-side estimate (confidence: "low")
   useEffect(() => {
     if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+    // Cancel any in-flight server quote
+    if (serverQuoteAbortRef.current) {
+      serverQuoteAbortRef.current.abort();
+      serverQuoteAbortRef.current = null;
+    }
     const amt = parseFloat(inputAmount);
-    if (!amt || amt <= 0) { setQuote(null); setOutputAmount(""); return; }
+    if (!amt || amt <= 0) { setQuote(null); setScoredRoutes([]); setOutputAmount(""); return; }
 
     if (isWrapUnwrap) {
       setOutputAmount(inputAmount);
@@ -283,6 +335,7 @@ export function SwapPanel() {
         inputAmount: amt, outputAmount: amt, priceImpact: 0,
         route: [inputToken.symbol, outputToken.symbol],
         fee: 0, minimumOutput: amt, executionPrice: 1,
+        confidence: "high",
       });
       return;
     }
@@ -298,6 +351,68 @@ export function SwapPanel() {
     return () => { if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current); };
   }, [inputAmount, inputToken.symbol, outputToken.symbol, inputPrice, outputPrice, effectiveSlippage, isWrapUnwrap]);
 
+  // [C51] Phase 2: Async server-side quote upgrade (confidence: "high"/"medium")
+  // Fires after the client estimate is displayed, upgrades the quote in-place.
+  // Debounced by 600ms to avoid hammering the server on rapid typing.
+  useEffect(() => {
+    if (isWrapUnwrap) return;
+    const amt = parseFloat(inputAmount);
+    if (!amt || amt <= 0) return;
+    if (inputPrice <= 0 && outputPrice <= 0) return; // No prices yet
+
+    const abortCtrl = new AbortController();
+    serverQuoteAbortRef.current = abortCtrl;
+
+    const timer = setTimeout(async () => {
+      if (abortCtrl.signal.aborted) return;
+      try {
+        const result = await fetchServerQuote(
+          inputToken, outputToken, amt, effectiveSlippage, hederaNetwork,
+        );
+        if (abortCtrl.signal.aborted) return;
+        if (result && result.quote && result.quote.outputAmount > 0) {
+          setQuote(result.quote);
+          setOutputAmount(
+            result.quote.outputAmount >= 1
+              ? result.quote.outputAmount.toFixed(4)
+              : result.quote.outputAmount.toFixed(8)
+          );
+          // [C52] Update scored routes for comparison UI
+          if (result.scoredRoutes && result.scoredRoutes.length > 1) {
+            setScoredRoutes(result.scoredRoutes);
+          } else {
+            setScoredRoutes([]);
+          }
+          console.log(
+            `[C51] Quote upgraded: ${result.quote.confidence} (${result.quote.quoteSource}, ${result.quote.serverDurationMs}ms)` +
+            (result.scoredRoutes.length > 1 ? ` [C52] ${result.scoredRoutes.length} routes scored` : "")
+          );
+        }
+      } catch (err: any) {
+        if (!abortCtrl.signal.aborted) {
+          console.warn("[C51] Server quote upgrade failed:", err?.message || err);
+        }
+      }
+    }, 600);
+
+    return () => {
+      clearTimeout(timer);
+      abortCtrl.abort();
+    };
+  }, [inputAmount, inputToken, outputToken, effectiveSlippage, hederaNetwork, isWrapUnwrap, inputPrice, outputPrice]);
+
+  // [C51] Auto-widen slippage for low confidence quotes
+  const autoSlippageWarning = useMemo(() => {
+    if (!quote || isWrapUnwrap) return null;
+    if (quote.confidence === "low" && effectiveSlippage < 5) {
+      return {
+        recommended: 5,
+        message: "Quote is a price estimate — consider widening slippage to 5% for safer execution.",
+      };
+    }
+    return null;
+  }, [quote, isWrapUnwrap, effectiveSlippage]);
+
   // ── Token flip ──
   const [flipCount, setFlipCount] = useState(0);
   const flipTokens = useCallback(() => {
@@ -309,6 +424,8 @@ export function SwapPanel() {
     setInputBalance(outputBalance);
     setOutputBalance(inputBalance);
     setQuote(null);
+    setScoredRoutes([]);
+    setShowRouteComparison(false);
   }, [inputToken, outputToken, inputAmount, outputAmount, inputBalance, outputBalance]);
 
   // ── Token selection handler ──
@@ -329,6 +446,7 @@ export function SwapPanel() {
   const handleSwap = useCallback(async () => {
     if (!canSwap || !hashPackSession?.accountId) return;
     setSwapStatus("processing");
+    setSwapStep(null); // [C27-04] Reset step tracker
     setSwapError(null);
     setLastTxId(null);
 
@@ -338,10 +456,16 @@ export function SwapPanel() {
 
       if (isWrapUnwrap) {
         try {
-          const txId = isWrapping
+          // [C27-03] wrapHbar/unwrapHbar return {success, transactionId, error, userCancelled}
+          // — NOT a plain txId string. Must destructure and check success.
+          const wrapResult = isWrapping
             ? await wrapHbar(inputAmount, acct, hederaNetwork)
             : await unwrapHbar(inputAmount, acct, hederaNetwork);
-          result = { success: true, transactionId: txId, outputAmount: parseFloat(inputAmount), executionVenue: "saucerswap-v1", route: [inputToken.symbol, outputToken.symbol] };
+          if (wrapResult.success) {
+            result = { success: true, transactionId: wrapResult.transactionId, outputAmount: parseFloat(inputAmount), executionVenue: "saucerswap-v1", route: [inputToken.symbol, outputToken.symbol] };
+          } else {
+            result = { success: false, error: wrapResult.error || "Wrap/unwrap failed", executionVenue: "saucerswap-v1", userCancelled: wrapResult.userCancelled };
+          }
         } catch (err: any) {
           const msg = err?.message || "Wrap/unwrap failed";
           result = { success: false, error: msg, executionVenue: "saucerswap-v1", userCancelled: msg.toLowerCase().includes("cancelled") || msg.toLowerCase().includes("user_reject") };
@@ -350,9 +474,12 @@ export function SwapPanel() {
         result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork);
       }
 
+      setSwapStep(null); // [C27-04] Clear step tracker after execution completes
+
       if (result.success) {
         setSwapStatus("success");
-        setLastTxId(result.transactionId || null);
+        // C25: Coerce transactionId to string — SDK may return TransactionId object
+        setLastTxId(result.transactionId ? String(result.transactionId) : null);
         toast.success(`Swapped ${inputAmount} ${inputToken.symbol} → ${outputToken.symbol}`);
 
         // VIP sound
@@ -369,7 +496,8 @@ export function SwapPanel() {
           inputAmount, outputAmount: result.outputAmount?.toString() || outputAmount,
           route: result.route || [inputToken.symbol, outputToken.symbol],
           priceImpact: quote?.priceImpact || 0, slippage: effectiveSlippage,
-          transactionId: result.transactionId || null,
+          // C25: Coerce transactionId to string — SDK may return TransactionId object
+          transactionId: result.transactionId ? String(result.transactionId) : null,
           executionVenue: result.executionVenue, success: true,
           isSimulated: false, network: hederaNetwork,
           inputUsd: inputUsd || undefined, outputUsd: outputUsd || undefined,
@@ -384,8 +512,8 @@ export function SwapPanel() {
           inputAmount, outputAmount: result.outputAmount?.toString() || outputAmount,
           inputLogo: inputToken.logo, outputLogo: outputToken.logo,
           inputUsd, outputUsd,
-          transactionId: result.transactionId || null,
-          txUrl: result.transactionId ? getHashScanTxUrl(result.transactionId, hederaNetwork) : null,
+          transactionId: result.transactionId ? String(result.transactionId) : null,
+          txUrl: result.transactionId ? getHashScanTxUrl(String(result.transactionId), hederaNetwork) : null,
           slippage: effectiveSlippage,
           venue: result.executionVenue,
           isWrapUnwrap,
@@ -407,7 +535,8 @@ export function SwapPanel() {
           inputAmount, outputAmount: "0",
           route: result.route || [inputToken.symbol, outputToken.symbol],
           priceImpact: 0, slippage: effectiveSlippage,
-          transactionId: result.transactionId || null,
+          // C25: Coerce transactionId to string — SDK may return TransactionId object
+          transactionId: result.transactionId ? String(result.transactionId) : null,
           executionVenue: result.executionVenue, success: false,
           isSimulated: false, network: hederaNetwork,
           errorMessage: result.error,
@@ -422,6 +551,33 @@ export function SwapPanel() {
     }
   }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances]);
 
+  // ── [C28-04] Auto-close success/error states after 5 seconds ──
+  // Prevents stale status from blocking the UI. The user can still
+  // click "New Swap" or "Try Again" to dismiss immediately.
+  useEffect(() => {
+    if (swapStatus === "success") {
+      const timer = setTimeout(() => {
+        setSwapStatus("idle");
+        setInputAmount("");
+        setOutputAmount("");
+        setQuote(null);
+        setScoredRoutes([]);
+        setShowSuccessOverlay(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [swapStatus]);
+
+  useEffect(() => {
+    if (swapStatus === "error") {
+      const timer = setTimeout(() => {
+        setSwapStatus("idle");
+        setSwapError(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [swapStatus]);
+
   // ── Pool table handler ──
   const handlePoolSwap = useCallback((pool: PoolRoute) => {
     setInputToken(pool.tokenA);
@@ -429,6 +585,7 @@ export function SwapPanel() {
     setInputAmount("");
     setOutputAmount("");
     setQuote(null);
+    setScoredRoutes([]);
     setActivePoolId(pool.id);
     setSwapStatus("idle");
     setSwapError(null);
@@ -482,7 +639,7 @@ export function SwapPanel() {
                     aria-haspopup="listbox"
                     aria-expanded={showInputSelector}
                     className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
-                    <img src={inputToken.logo} alt={inputToken.symbol} className="w-6 h-6 rounded-full shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    <TokenIcon src={inputToken.logo} symbol={inputToken.symbol} size="w-6 h-6" />
                     <span className="font-bold text-sm">{inputToken.symbol}</span>
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
                   </button>
@@ -548,7 +705,7 @@ export function SwapPanel() {
                     aria-haspopup="listbox"
                     aria-expanded={showOutputSelector}
                     className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"}`}>
-                    <img src={outputToken.logo} alt={outputToken.symbol} className="w-6 h-6 rounded-full shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    <TokenIcon src={outputToken.logo} symbol={outputToken.symbol} size="w-6 h-6" />
                     <span className="font-bold text-sm">{outputToken.symbol}</span>
                     <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
                   </button>
@@ -587,7 +744,7 @@ export function SwapPanel() {
                   {route.path.map((token, idx) => (
                     <div key={token.symbol + idx} className="flex items-center gap-1">
                       <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
-                        <img src={token.logo} alt={token.symbol} className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                        <TokenIcon src={token.logo} symbol={token.symbol} size="w-4 h-4" />
                         <span className="text-xs font-bold">{token.symbol}</span>
                       </div>
                       {idx < route.path.length - 1 && (
@@ -627,6 +784,115 @@ export function SwapPanel() {
                       <span className={isDark ? "text-slate-400" : "text-gray-500"}>Slippage</span>
                       <span>{effectiveSlippage}%</span>
                     </div>
+                    {/* [C51] Quote Confidence Badge */}
+                    <div className="flex justify-between items-center">
+                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Quote</span>
+                      <Tip content={
+                        quote.confidence === "high"
+                          ? `On-chain quote via ${quote.quoteSource || "router"}${quote.serverDurationMs ? ` (${quote.serverDurationMs}ms)` : ""}`
+                          : quote.confidence === "medium"
+                          ? `API quote via ${quote.quoteSource || "SaucerSwap"}${quote.serverDurationMs ? ` (${quote.serverDurationMs}ms)` : ""}`
+                          : "Price-based estimate — actual output may differ"
+                      } side="top">
+                        <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                          quote.confidence === "high"
+                            ? isDark ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : quote.confidence === "medium"
+                            ? isDark ? "bg-blue-500/15 text-blue-400 border border-blue-500/20" : "bg-blue-50 text-blue-700 border border-blue-200"
+                            : isDark ? "bg-amber-500/15 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-700 border border-amber-200"
+                        }`}>
+                          <Shield className="w-2.5 h-2.5" />
+                          {quote.confidence === "high" ? "On-chain" : quote.confidence === "medium" ? "API" : "Estimate"}
+                        </span>
+                      </Tip>
+                    </div>
+                    {/* [C51] Low Confidence Slippage Warning */}
+                    {autoSlippageWarning && (
+                      <div className={`flex items-start gap-2 p-2 rounded-lg text-xs ${
+                        isDark ? "bg-amber-500/10 border border-amber-500/20 text-amber-300" : "bg-amber-50 border border-amber-200 text-amber-700"
+                      }`}>
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+                        <div className="flex-1">
+                          <span>{autoSlippageWarning.message}</span>
+                          <button
+                            onClick={() => { setSlippage(autoSlippageWarning.recommended); setCustomSlippage(""); }}
+                            className={`ml-1.5 font-bold underline underline-offset-2 transition-colors ${
+                              isDark ? "text-amber-300 hover:text-amber-200" : "text-amber-800 hover:text-amber-900"
+                            }`}
+                          >
+                            Set to {autoSlippageWarning.recommended}%
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {/* [C52] Compare Routes — expandable multi-route comparison */}
+                    {scoredRoutes.length > 1 && (
+                      <div className={`mt-1 pt-1.5 border-t ${isDark ? "border-slate-700/20" : "border-gray-100"}`}>
+                        <button
+                          onClick={() => setShowRouteComparison(prev => !prev)}
+                          className={`flex items-center gap-1.5 text-xs w-full transition-colors ${
+                            isDark ? "text-purple-400 hover:text-purple-300" : "text-purple-600 hover:text-purple-700"
+                          }`}
+                        >
+                          <Droplets className="w-3 h-3" />
+                          <span>Compare {scoredRoutes.length} routes</span>
+                          <ChevronDown className={`w-3 h-3 ml-auto transition-transform ${showRouteComparison ? "rotate-180" : ""}`} />
+                        </button>
+                        {showRouteComparison && (
+                          <div className="mt-2 space-y-1.5">
+                            {scoredRoutes.slice(0, 3).map((sr, idx) => {
+                              const isBest = idx === 0;
+                              const outputLabel = sr.humanOutput >= 1
+                                ? sr.humanOutput.toFixed(4)
+                                : sr.humanOutput.toFixed(8);
+                              return (
+                                <div
+                                  key={`${sr.source}-${idx}`}
+                                  className={`p-2 rounded-lg text-xs ${
+                                    isBest
+                                      ? isDark ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"
+                                      : isDark ? "bg-slate-800/50 border border-slate-700/30" : "bg-gray-50 border border-gray-100"
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="flex items-center gap-1.5">
+                                      {isBest && (
+                                        <span className={`text-[10px] px-1 py-0.5 rounded font-bold ${
+                                          isDark ? "bg-emerald-500/20 text-emerald-400" : "bg-emerald-100 text-emerald-700"
+                                        }`}>BEST</span>
+                                      )}
+                                      <span className={isDark ? "text-slate-300 font-medium" : "text-gray-700 font-medium"}>
+                                        {sr.label}
+                                      </span>
+                                    </div>
+                                    <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[10px] font-medium ${
+                                      sr.confidence === "high"
+                                        ? isDark ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-700"
+                                        : sr.confidence === "medium"
+                                        ? isDark ? "bg-blue-500/15 text-blue-400" : "bg-blue-50 text-blue-700"
+                                        : isDark ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-700"
+                                    }`}>
+                                      <Shield className="w-2 h-2" />
+                                      {sr.confidence === "high" ? "On-chain" : sr.confidence === "medium" ? "API" : "Est."}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className={isDark ? "text-slate-400" : "text-gray-500"}>
+                                      {outputLabel} {outputToken.symbol}
+                                    </span>
+                                    <span className={`${
+                                      sr.priceImpact > 2 ? "text-red-400" : sr.priceImpact > 0.5 ? "text-amber-400" : isDark ? "text-slate-500" : "text-gray-400"
+                                    }`}>
+                                      {sr.priceImpact > 0 ? `${sr.priceImpact.toFixed(2)}% impact` : `${sr.hops} hop${sr.hops !== 1 ? "s" : ""}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
                 {/* Quote Refresh Countdown */}
@@ -692,14 +958,26 @@ export function SwapPanel() {
             <div className="mt-4">
               {swapStatus === "processing" ? (
                 <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait">
-                  <div className="flex items-center justify-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Awaiting wallet signature...
+                  <div className="flex flex-col items-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {/* [C27-04] Show which step the user is signing */}
+                      {swapStep
+                        ? `Step ${swapStep.step}/${swapStep.total}: Sign in wallet...`
+                        : "Awaiting wallet signature..."}
+                    </div>
+                    {swapStep && (
+                      <span className="text-xs text-amber-200/80 font-normal">
+                        {swapStep.description}
+                      </span>
+                    )}
                   </div>
                 </button>
               ) : swapStatus === "success" ? (
                 <div>
-                  <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-green-500 text-white">
+                  <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-green-500 text-white relative overflow-hidden">
+                    {/* [C28-04] Auto-close progress bar */}
+                    <div className="absolute bottom-0 left-0 h-[3px] bg-white/30 animate-[shrink_5s_linear_forwards]" style={{ width: "100%" }} />
                     <div className="flex items-center justify-center gap-2">
                       <CheckCircle2 className="w-4 h-4" />
                       {isWrapUnwrap ? `${isWrapping ? "Wrap" : "Unwrap"} Complete!` : "Swap Complete!"}
@@ -712,14 +990,16 @@ export function SwapPanel() {
                       View on HashScan
                     </a>
                   )}
-                  <button onClick={() => { setSwapStatus("idle"); setInputAmount(""); setOutputAmount(""); setQuote(null); }}
+                  <button onClick={() => { setSwapStatus("idle"); setInputAmount(""); setOutputAmount(""); setQuote(null); setScoredRoutes([]); setShowSuccessOverlay(false); }}
                     className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}>
                     New Swap
                   </button>
                 </div>
               ) : swapStatus === "error" ? (
                 <div>
-                  <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white">
+                  <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white relative overflow-hidden">
+                    {/* [C28-04] Auto-close progress bar */}
+                    <div className="absolute bottom-0 left-0 h-[3px] bg-white/30 animate-[shrink_5s_linear_forwards]" style={{ width: "100%" }} />
                     <div className="flex items-center justify-center gap-2">
                       <AlertCircle className="w-4 h-4" />
                       Swap Failed
@@ -835,6 +1115,13 @@ export function SwapPanel() {
                 <h3 className="font-bold bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
                   SaucerSwap Pool Routes
                 </h3>
+                {poolsLoading ? (
+                  <RefreshCw className="w-3 h-3 text-pink-400 animate-spin" />
+                ) : (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">
+                    Live
+                  </span>
+                )}
               </div>
               <a href="https://www.saucerswap.finance/swap" target="_blank" rel="noopener noreferrer"
                 className={`flex items-center gap-1 text-xs transition-colors ${isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"}`}>
@@ -872,8 +1159,8 @@ export function SwapPanel() {
                         <td className="px-5 py-2.5">
                           <div className="flex items-center gap-2">
                             <div className="flex -space-x-1.5">
-                              <img src={pool.tokenA.logo} alt={pool.tokenA.symbol} className="w-5 h-5 rounded-full ring-2 ring-slate-900/80 relative z-10" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                              <img src={pool.tokenB.logo} alt={pool.tokenB.symbol} className="w-5 h-5 rounded-full ring-2 ring-slate-900/80" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                              <TokenIcon src={pool.tokenA.logo} symbol={pool.tokenA.symbol} size="w-5 h-5" className="ring-2 ring-slate-900/80 relative z-10" />
+                              <TokenIcon src={pool.tokenB.logo} symbol={pool.tokenB.symbol} size="w-5 h-5" className="ring-2 ring-slate-900/80" />
                             </div>
                             <div>
                               <div className="font-bold text-xs">{pool.tokenA.symbol}/{pool.tokenB.symbol}</div>
@@ -923,8 +1210,8 @@ export function SwapPanel() {
                 <span className={`w-2 h-2 rounded-full ${isDark ? "bg-pink-500/30" : "bg-pink-100"}`} />
                 Active in current route
               </span>
-              <span>{allPools.length} pools available</span>
-              <span>Data from SaucerSwap</span>
+              <span>{allPools.length} pools</span>
+              <span>Live data from SaucerSwap API</span>
             </div>
           </div>
 
