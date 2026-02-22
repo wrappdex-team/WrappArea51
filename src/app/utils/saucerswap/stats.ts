@@ -95,13 +95,14 @@ const FALLBACK_POOLS: SaucerSwapPool[] = [
   {
     id: "pool-hbar-karate",
     tokenA: { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8 },
-    tokenB: { id: "0.0.2283328", symbol: "KARATE", name: "Karate Combat", decimals: 8 },
+    // [C85] Fixed KARATE ID — was 0.0.2283328 (probably LP token), corrected to canonical 0.0.2283230
+    tokenB: { id: "0.0.2283230", symbol: "KARATE", name: "Karate Combat", decimals: 8 },
     tvlUsd: 1840000, volume24hUsd: 620000, fee: 1.0, apr: 52.1, tickSpacing: 200,
   },
   {
     id: "pool-hbar-pack",
     tokenA: { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8 },
-    tokenB: { id: "0.0.4589822", symbol: "PACK", name: "HashPack", decimals: 6 },
+    tokenB: { id: "0.0.4794920", symbol: "PACK", name: "HashPack", decimals: 6 },
     tvlUsd: 920000, volume24hUsd: 340000, fee: 0.3, apr: 31.6, tickSpacing: 60,
   },
   {
@@ -119,7 +120,8 @@ const FALLBACK_POOLS: SaucerSwapPool[] = [
   {
     id: "pool-hbar-hst",
     tokenA: { id: "0.0.1456986", symbol: "WHBAR", name: "Wrapped HBAR", decimals: 8 },
-    tokenB: { id: "0.0.786931", symbol: "HST", name: "HSuite Token", decimals: 8 },
+    // [C85] Updated HST from 0.0.786931 → 0.0.968069 (reconciliation fix)
+    tokenB: { id: "0.0.968069", symbol: "HST", name: "HSuite Token", decimals: 8 },
     tvlUsd: 680000, volume24hUsd: 210000, fee: 0.3, apr: 26.4, tickSpacing: 60,
   },
 ];

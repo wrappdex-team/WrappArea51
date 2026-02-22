@@ -46,6 +46,8 @@ interface SwapButtonProProps {
   // Handlers
   onSwap: () => void;
   onReset: () => void;
+  /** [C81-01] Called on pointerEnter to pre-warm WC relay before click */
+  onHover?: () => void;
   isDark: boolean;
 }
 
@@ -66,6 +68,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   txUrl,
   onSwap,
   onReset,
+  onHover,
   isDark,
 }: SwapButtonProProps) {
   return (
@@ -276,6 +279,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                 ? "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20"
                 : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg shadow-pink-500/20"
             }`}
+            onPointerEnter={onHover}
           >
             {/* Hover shimmer */}
             {canSwap && (

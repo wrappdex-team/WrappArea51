@@ -50,6 +50,7 @@ import {
   type SwapResult,
   type SwapOptions,
 } from "../utils/saucerswap";
+import { prewarmRelay, startRelayKeepalive } from "../utils/hashpack";
 import {
   SwapHistoryPanel,
   loadSwapHistory,
@@ -243,6 +244,16 @@ export function SwapPanel() {
     return () => clearInterval(iv);
   }, [fetchPrices]);
 
+  // [C81-01] Start relay keepalive when wallet is connected.
+  // Keeps WC WebSocket alive so wallet auto-pops on signing requests.
+  useEffect(() => {
+    if (isWalletConnected) {
+      startRelayKeepalive();
+      // Also do an immediate prewarm in case relay dropped
+      prewarmRelay();
+    }
+  }, [isWalletConnected]);
+
   // Pull-to-refresh support — re-fetch swap prices on mobile swipe-down
   useEffect(() => {
     const handlePullRefresh = () => { fetchPrices(); };
@@ -432,6 +443,11 @@ export function SwapPanel() {
     setSwapStep(null); // [C27-04] Reset step tracker
     setSwapError(null);
     setLastTxId(null);
+
+    // [C81-01] Pre-warm WC relay IMMEDIATELY — don't block on it.
+    // The pre-flight checks (balance, pool detection, quote) take 5-15s;
+    // by the time the wallet signing request fires, the relay will be warm.
+    prewarmRelay();
 
     try {
       let result: SwapResult;
@@ -746,6 +762,7 @@ export function SwapPanel() {
               txUrl={lastTxId ? getHashScanTxUrl(lastTxId, hederaNetwork) : null}
               onSwap={handleSwap}
               onReset={handleResetSwap}
+              onHover={prewarmRelay}
               isDark={isDark}
             />
 

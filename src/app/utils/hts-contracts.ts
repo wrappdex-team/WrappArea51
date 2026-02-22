@@ -116,19 +116,21 @@ export const BRIDGE_TOKEN_REGISTRY: BridgeToken[] = [
     symbol: "WBTC", name: "Wrapped Bitcoin",
     htsId: "0.0.1055483", evmAddress: htsIdToEvmAddress("0.0.1055483"),
     decimals: 8, bridge: "HashPort", originalChain: "Bitcoin",
-    saucerswapId: "0.0.1969769", coingeckoId: "wrapped-bitcoin",
+    // [C85] Updated saucerswapId from 0.0.1969769 → 0.0.10104132
+    saucerswapId: "0.0.10104132", coingeckoId: "wrapped-bitcoin",
   },
   {
     symbol: "WETH", name: "Wrapped Ether",
     htsId: "0.0.541564", evmAddress: htsIdToEvmAddress("0.0.541564"),
     decimals: 18, bridge: "HashPort", originalChain: "Ethereum",
-    saucerswapId: "0.0.1969757", coingeckoId: "weth",
+    saucerswapId: "0.0.1969708", coingeckoId: "weth",
   },
   {
     symbol: "LINK", name: "Chainlink",
     htsId: "0.0.1055495", evmAddress: htsIdToEvmAddress("0.0.1055495"),
     decimals: 8, bridge: "HashPort", originalChain: "Ethereum",
-    saucerswapId: "0.0.1970030", coingeckoId: "chainlink",
+    // [C85] Updated saucerswapId from 0.0.1970030 → 0.0.10152778
+    saucerswapId: "0.0.10152778", coingeckoId: "chainlink",
   },
   {
     symbol: "AAVE", name: "Aave",

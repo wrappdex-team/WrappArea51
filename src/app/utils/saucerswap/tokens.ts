@@ -76,18 +76,26 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 3, isWrapped: true, bridge: "HashPort",
   },
   {
-    // [C36-04] Removed saucerswapAliasId "0.0.1969769"
+    // [C82] RESTORED saucerswapAliasId — SaucerSwap V2 pools trade this ID,
+    // not the canonical bridge ID. Without it, pool detection fails →
+    // routes fall to V1 → V1 has no pair → CONTRACT_REVERT_EXECUTED.
+    // [C85] Updated alias from 0.0.1969769 → 0.0.10104132 (SaucerSwap API
+    // now lists this as the primary WBTC token; old alias was V2-era).
     symbol: "WBTC", name: "Wrapped Bitcoin", htsId: "0.0.1055483",
     evmAddress: htsIdToEvmAddress("0.0.1055483"), decimals: 8,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png",
     rank: 4, isWrapped: true, bridge: "HashPort",
+    saucerswapAliasId: "0.0.10104132",
   },
   {
-    // [C36-04] Removed saucerswapAliasId "0.0.1970030"
+    // [C82] RESTORED saucerswapAliasId — same issue as WBTC above.
+    // [C85] Updated alias from 0.0.1970030 → 0.0.10152778 (SaucerSwap API
+    // now lists this as the primary LINK token; old alias was V2-era).
     symbol: "LINK", name: "Chainlink", htsId: "0.0.1055495",
     evmAddress: htsIdToEvmAddress("0.0.1055495"), decimals: 8,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png",
     rank: 5, isWrapped: true, bridge: "HashPort",
+    saucerswapAliasId: "0.0.10152778",
   },
   {
     symbol: "SAUCE", name: "SaucerSwap", htsId: "0.0.731861",
@@ -108,8 +116,12 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 8, isWrapped: false,
   },
   {
-    symbol: "PACK", name: "HashPack", htsId: "0.0.4589822",
-    evmAddress: htsIdToEvmAddress("0.0.4589822"), decimals: 6,
+    // [C85] Updated from 0.0.4589822 (old/deprecated) → 0.0.4794920 (current active
+    // PACK token on SaucerSwap & Hedera mainnet). The old ID was never in any active
+    // SaucerSwap pool — caused wallet token ID mismatch (Mirror Node returned the
+    // real ID, our registry had the wrong one).
+    symbol: "PACK", name: "HashPack", htsId: "0.0.4794920",
+    evmAddress: htsIdToEvmAddress("0.0.4794920"), decimals: 6,
     logo: "https://www.saucerswap.finance/images/tokens/pack.svg",
     rank: 9, isWrapped: false,
   },
@@ -120,17 +132,22 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 10, isWrapped: false,
   },
   {
-    symbol: "HST", name: "HSuite Token", htsId: "0.0.786931",
-    evmAddress: htsIdToEvmAddress("0.0.786931"), decimals: 8,
+    // [C85] Updated from 0.0.786931 → 0.0.968069 (reconciliation detected mismatch
+    // with SaucerSwap API — the old ID was a deprecated HST token).
+    symbol: "HST", name: "HSuite Token", htsId: "0.0.968069",
+    evmAddress: htsIdToEvmAddress("0.0.968069"), decimals: 8,
     logo: "https://www.saucerswap.finance/images/tokens/hst.svg",
     rank: 11, isWrapped: false,
   },
   {
     // [C36-04] WETH decimals: 18 is correct (verified via HashScan).
+    // [C85] RESTORED saucerswapAliasId — same issue as WBTC/LINK above.
+    // SaucerSwap V2 pools use 0.0.1969708, not the canonical bridge ID.
     symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.541564",
     evmAddress: htsIdToEvmAddress("0.0.541564"), decimals: 18,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
     rank: 12, isWrapped: true, bridge: "HashPort",
+    saucerswapAliasId: "0.0.1969708",
   },
   {
     symbol: "AAVE", name: "Aave", htsId: "0.0.1055498",
@@ -445,6 +462,44 @@ export async function fetchDynamicTokens(): Promise<{
     const dynamicRaw = data.tokens;
     const staticHtsIds = new Set(SAUCERSWAP_TOKENS.map(t => t.htsId));
     const staticSymbols = new Set(SAUCERSWAP_TOKENS.map(t => t.symbol.toUpperCase()));
+
+    // ── [C85] TOKEN ID RECONCILIATION ────────────────────────────────
+    // Detect when the SaucerSwap API returns a token with the same symbol
+    // as our static registry but a DIFFERENT HTS ID. This catches cases
+    // where tokens migrate to new IDs (like PACK 0.0.4589822 → 0.0.4794920)
+    // and prevents the UI from showing two different IDs in different places.
+    //
+    // When a mismatch is detected:
+    //   1. Log a loud [RECONCILE] warning with both IDs
+    //   2. Register the API's ID in dynamic lookup maps so wallet matching works
+    //   3. Also register the API's ID in TOKEN_BY_HTS_ID for reverse lookups
+    // ─────────────────────────────────────────────────────────────────
+    const staticBySymbol = new Map(SAUCERSWAP_TOKENS.map(t => [t.symbol.toUpperCase(), t]));
+    for (const dt of dynamicRaw) {
+      const upperSym = dt.symbol.toUpperCase();
+      const staticEntry = staticBySymbol.get(upperSym);
+      if (staticEntry && staticEntry.htsId !== "native" && staticEntry.htsId !== dt.id) {
+        // Check if this is already a known alias
+        if (staticEntry.saucerswapAliasId === dt.id) continue;
+
+        console.warn(
+          `[RECONCILE] Token ID mismatch for ${dt.symbol}: ` +
+          `static registry has ${staticEntry.htsId}, ` +
+          `SaucerSwap API returns ${dt.id}. ` +
+          `The static registry should be updated to match the API. ` +
+          `Registering API ID ${dt.id} as additional lookup key.`
+        );
+
+        // Register the API's ID so wallet token matching works
+        // (wallet has the real on-chain ID from Mirror Node)
+        if (!TOKEN_BY_HTS_ID.has(dt.id)) {
+          TOKEN_BY_HTS_ID.set(dt.id, staticEntry);
+        }
+        if (!_dynamicTokenByHtsId.has(dt.id)) {
+          _dynamicTokenByHtsId.set(dt.id, staticEntry);
+        }
+      }
+    }
 
     // Convert dynamic tokens to AllowedToken, excluding those already in static list
     const dynamicConverted: AllowedToken[] = dynamicRaw

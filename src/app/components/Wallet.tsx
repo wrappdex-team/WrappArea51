@@ -81,9 +81,11 @@ const WHBAR_TOKEN_ID = "0.0.1456986";
 const SAUCE_TOKEN_ID = "0.0.731861";
 const HBARX_TOKEN_ID = "0.0.834116";
 const KARATE_TOKEN_ID = "0.0.2283230";
-const PACK_TOKEN_ID = "0.0.4589822";
+// [C85] Updated from 0.0.4589822 → 0.0.4794920 (current active PACK on SaucerSwap mainnet)
+const PACK_TOKEN_ID = "0.0.4794920";
 const DOVU_TOKEN_ID = "0.0.3716059";
-const HST_TOKEN_ID = "0.0.786931";
+// [C85] Updated from 0.0.786931 → 0.0.968069 (SaucerSwap API reconciliation)
+const HST_TOKEN_ID = "0.0.968069";
 const WPOL_TOKEN_ID = "0.0.3306241";
 const SS_LP_TOKEN_ID = LP_TOKEN_WHBAR_HBARH.tokenId; // "0.0.9356724"
 
@@ -113,13 +115,20 @@ const TOKEN_LOGOS: Record<string, string> = {
 };
 
 // ── HTS token ID → logo key (covers all allowlisted tokens) ────────
+// [C85] Also includes SaucerSwap alias IDs for bridge tokens so wallet
+// tokens matched via alias also resolve to the correct logo.
 const TOKEN_ID_TO_LOGO: Record<string, string> = {
   [WHBAR_TOKEN_ID]: "WHBAR",
   [WBTC_TOKEN_ID]: "WBTC",
+  "0.0.1969769": "WBTC",  // SaucerSwap old alias
+  "0.0.10104132": "WBTC", // SaucerSwap current alias [C85]
   [AAVE_TOKEN_ID]: "AAVE",
   [DAI_TOKEN_ID]: "DAI",
   [WETH_TOKEN_ID]: "WETH",
+  "0.0.1969708": "WETH",  // SaucerSwap alias
   [LINK_TOKEN_ID]: "LINK",
+  "0.0.1970030": "LINK",  // SaucerSwap old alias
+  "0.0.10152778": "LINK", // SaucerSwap current alias [C85]
   [WBNB_TOKEN_ID]: "WBNB",
   [WAVAX_TOKEN_ID]: "WAVAX",
   [WMATIC_TOKEN_ID]: "WMATIC",
@@ -137,10 +146,14 @@ const TOKEN_ID_TO_LOGO: Record<string, string> = {
 };
 
 // Build a reverse lookup: HTS ID → logo URL (populated from SAUCERSWAP_TOKENS)
+// [C85] Also indexes saucerswapAliasId so alias-matched tokens get correct logos
 const HTS_ID_TO_LOGO_URL: Record<string, string> = {};
 for (const t of SAUCERSWAP_TOKENS) {
   if (t.htsId !== "native" && t.logo) {
     HTS_ID_TO_LOGO_URL[t.htsId] = t.logo;
+    if (t.saucerswapAliasId) {
+      HTS_ID_TO_LOGO_URL[t.saucerswapAliasId] = t.logo;
+    }
   }
 }
 
@@ -525,16 +538,28 @@ export function Wallet() {
     let foundLp = false;
 
     // ── Curated allowlist lookup by HTS ID (membership + trusted symbol/name) ──
-    const allowlistByHtsId = new Map(
-      SAUCERSWAP_TOKENS.filter(t => t.htsId !== "native").map(t => [t.htsId, t])
-    );
+    // [C85] Also index by saucerswapAliasId and build a symbol→token map
+    // for fallback matching when Mirror Node returns a different ID than
+    // our static registry (e.g., token migrations, bridge alias IDs).
+    const allowlistByHtsId = new Map<string, typeof SAUCERSWAP_TOKENS[0]>();
+    const allowlistBySymbol = new Map<string, typeof SAUCERSWAP_TOKENS[0]>();
+    for (const t of SAUCERSWAP_TOKENS) {
+      if (t.htsId === "native") continue;
+      allowlistByHtsId.set(t.htsId, t);
+      if (t.saucerswapAliasId) allowlistByHtsId.set(t.saucerswapAliasId, t);
+      allowlistBySymbol.set(t.symbol.toUpperCase(), t);
+    }
 
     // Process all tokens from the paginated mirror node list
     hederaAccount.tokens.forEach((token) => {
       const isHbarh = token.tokenId === HBARH_TOKEN_ID;
       const isWbtc = token.tokenId === WBTC_TOKEN_ID;
       const isLp = token.tokenId === SS_LP_TOKEN_ID;
-      const isAllowlisted = allowlistByHtsId.has(token.tokenId);
+      // [C85] Check allowlist by HTS ID first, then fall back to symbol match.
+      // This catches tokens whose on-chain ID (from Mirror Node) differs from
+      // our registry — e.g., after token migrations or bridge alias mismatches.
+      const isAllowlisted = allowlistByHtsId.has(token.tokenId)
+        || (token.symbol && allowlistBySymbol.has(token.symbol.toUpperCase()));
 
       // Skip zero-balance tokens unless they are special (HBAR.ħ, LP)
       if (!isHbarh && !isLp && token.balance <= 0) return;
@@ -568,7 +593,10 @@ export function Wallet() {
       else if (isLp) { displaySymbol = LP_TOKEN_WHBAR_HBARH.symbol; displayName = LP_TOKEN_WHBAR_HBARH.name; }
       else {
         // Priority 1: Our curated allowlist — human-reviewed, always trusted
-        const curated = allowlistByHtsId.get(token.tokenId);
+        // [C85] Try by HTS ID first, then fall back to symbol match for
+        // tokens whose on-chain ID differs from our registry.
+        const curated = allowlistByHtsId.get(token.tokenId)
+          || (token.symbol ? allowlistBySymbol.get(token.symbol.toUpperCase()) : undefined);
         if (curated) {
           displaySymbol = curated.symbol;
           displayName = curated.name;

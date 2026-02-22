@@ -45,7 +45,7 @@ export const SwapCardPro = memo(function SwapCardPro({
         <div
           className="absolute inset-0 rounded-2xl"
           style={{
-            background: isDark
+            backgroundImage: isDark
               ? "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(139,92,246,0.2), rgba(6,182,212,0.15), rgba(236,72,153,0.3))"
               : "linear-gradient(135deg, rgba(236,72,153,0.15), rgba(139,92,246,0.1), rgba(6,182,212,0.08), rgba(236,72,153,0.15))",
             backgroundSize: "300% 300%",

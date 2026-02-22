@@ -22,10 +22,232 @@ import {
   TOKEN_BY_HTS_ID,
   resolveToken,
   getSaucerswapRoutingEvmAddress,
+  getSaucerswapRoutingId,
   evmAddressToHtsId,
+  htsIdToEvmAddress,
 } from "./tokens";
 import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion } from "./pools";
+
+// ══════════════════════════════════════════════════════���═══════════════
+// ── [C82] API-BASED POOL GRAPH ROUTING ──────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Instead of making N individual detectPoolVersion() calls per swap
+// (each making 4-6 network requests), we build a routing graph from the
+// cached SaucerSwap API pool lists (V2 + V1). Route finding is then a
+// simple BFS through the in-memory graph — instant, reliable, no
+// transient network failures causing wrong routing.
+//
+// This matches how SaucerSwap.finance routes: they build a local graph
+// from their own pool data and find optimal paths locally.
+// ═══════════════════════════════════════════════════════════════════════
+
+interface PoolEdge {
+  otherToken: string;  // HTS ID of the other token in the pool
+  version: "v1" | "v2";
+  fee: number;         // Fee tier (e.g. 3000 = 0.3%)
+  poolAddress?: string;
+}
+
+/** Pool graph: tokenHtsId → array of edges to other tokens */
+type PoolGraph = Map<string, PoolEdge[]>;
+
+let _poolGraph: PoolGraph | null = null;
+let _poolGraphTs = 0;
+const POOL_GRAPH_TTL_MS = 300_000; // 5 min (matches API cache TTL)
+
+/**
+ * [C82] Build a routing graph from SaucerSwap V2 + V1 pool API caches.
+ * The graph maps each token HTS ID to its connected pools.
+ * Returns a cached graph if fresh (5-min TTL).
+ */
+async function buildPoolGraph(network: HederaNetwork): Promise<PoolGraph> {
+  if (_poolGraph && Date.now() - _poolGraphTs < POOL_GRAPH_TTL_MS) {
+    return _poolGraph;
+  }
+
+  const graph: PoolGraph = new Map();
+
+  const addEdge = (tokenA: string, tokenB: string, version: "v1" | "v2", fee: number, poolAddr?: string) => {
+    if (!tokenA || !tokenB || tokenA === tokenB) return;
+    if (!graph.has(tokenA)) graph.set(tokenA, []);
+    if (!graph.has(tokenB)) graph.set(tokenB, []);
+    graph.get(tokenA)!.push({ otherToken: tokenB, version, fee, poolAddress: poolAddr });
+    graph.get(tokenB)!.push({ otherToken: tokenA, version, fee, poolAddress: poolAddr });
+  };
+
+  // Lazy import to avoid circular deps
+  const { fetchSaucerSwapV2PoolList } = await import("./pools");
+
+  // ── Add V2 pools ──
+  try {
+    const v2Pools = await fetchSaucerSwapV2PoolList();
+    if (v2Pools && v2Pools.length > 0) {
+      for (const pool of v2Pools) {
+        const tA = (pool as any).tokenA || (pool as any).token0 || {};
+        const tB = (pool as any).tokenB || (pool as any).token1 || {};
+        const idA = tA.id || (pool as any).token0Id || "";
+        const idB = tB.id || (pool as any).token1Id || "";
+        const fee = (pool as any).fee ?? (pool as any).feeTier ?? (pool as any).feeRate ?? 3000;
+        const poolAddr = (pool as any).contractId || undefined;
+        if (idA && idB) {
+          addEdge(idA, idB, "v2", fee, poolAddr);
+        }
+      }
+      log.info("PoolGraph", `Added ${v2Pools.length} V2 pools to graph`);
+    }
+  } catch (e: any) {
+    log.warn("PoolGraph", `V2 pool fetch failed: ${e?.message}`);
+  }
+
+  // ── Add V1 pools ──
+  try {
+    const { saucerFetch } = await import("./prices");
+    // V1 pools may already be cached
+    const v1Res = await saucerFetch("/v1/pools", 10000);
+    if (v1Res) {
+      const v1Data = await v1Res.json();
+      const v1Pools: any[] = Array.isArray(v1Data) ? v1Data : Object.values(v1Data);
+      for (const pool of v1Pools) {
+        const rawA = pool.tokenA;
+        const rawB = pool.tokenB;
+        const idA = typeof rawA === "string" ? rawA
+          : (rawA?.id || rawA?.tokenId || pool.token0?.id || pool.token0Id || "");
+        const idB = typeof rawB === "string" ? rawB
+          : (rawB?.id || rawB?.tokenId || pool.token1?.id || pool.token1Id || "");
+        const poolAddr = pool.contractId || undefined;
+        if (idA && idB) {
+          addEdge(idA, idB, "v1", 3000, poolAddr); // V1 AMM has fixed 0.3% fee
+        }
+      }
+      log.info("PoolGraph", `Added ${v1Pools.length} V1 pools to graph (total nodes: ${graph.size})`);
+    }
+  } catch (e: any) {
+    log.warn("PoolGraph", `V1 pool fetch failed: ${e?.message}`);
+  }
+
+  _poolGraph = graph;
+  _poolGraphTs = Date.now();
+  return graph;
+}
+
+/**
+ * [C82] Resolve a token HTS ID to its graph key.
+ *
+ * SaucerSwap pools may use alias IDs (e.g. WBTC 0.0.1969769) while our
+ * token registry uses canonical IDs (0.0.1055483). This function checks
+ * if the canonical ID is in the graph; if not, tries the saucerswapAliasId.
+ */
+function resolveGraphKey(htsId: string, graph: PoolGraph): string {
+  if (graph.has(htsId)) return htsId;
+  // Check if this token has an alias that IS in the graph
+  const token = TOKEN_BY_HTS_ID.get(htsId);
+  if (token?.saucerswapAliasId && graph.has(token.saucerswapAliasId)) {
+    return token.saucerswapAliasId;
+  }
+  return htsId;
+}
+
+/**
+ * [C82] Find the optimal route through the pool graph using BFS.
+ *
+ * Returns the best 1-hop or 2-hop route, preferring:
+ *   1. Direct V2 pool (single hop, tightest spread)
+ *   2. Direct V1 pool (single hop)
+ *   3. All-V2 2-hop route (through any intermediary in the graph)
+ *   4. All-V1 2-hop route
+ *   5. Mixed 2-hop route (last resort)
+ *
+ * The graph already contains ALL pools from SaucerSwap API — no
+ * on-chain calls needed. This replaces sequential detectPoolVersion().
+ */
+export async function findRouteViaGraph(
+  inputHtsId: string,
+  outputHtsId: string,
+  network: HederaNetwork,
+): Promise<{
+  direct: PoolVersionInfo | null;
+  multiHop: { hops: PoolVersionInfo[]; tokens: string[] } | null;
+} | null> {
+  const graph = await buildPoolGraph(network);
+  if (graph.size === 0) return null;
+
+  const inKey = resolveGraphKey(inputHtsId, graph);
+  const outKey = resolveGraphKey(outputHtsId, graph);
+
+  log.info("PoolGraph", `Finding route: ${inputHtsId} (graph key: ${inKey}) → ${outputHtsId} (graph key: ${outKey})`);
+
+  // ── Step 1: Check for direct pool ──
+  const inEdges = graph.get(inKey) || [];
+  let bestDirect: PoolEdge | null = null;
+
+  for (const edge of inEdges) {
+    if (edge.otherToken === outKey) {
+      if (!bestDirect || (edge.version === "v2" && bestDirect.version !== "v2")) {
+        bestDirect = edge;
+      }
+    }
+  }
+
+  if (bestDirect) {
+    log.info("PoolGraph", `Direct pool found: ${bestDirect.version} fee=${bestDirect.fee}`);
+    return {
+      direct: { version: bestDirect.version, feeTier: bestDirect.fee, poolAddress: bestDirect.poolAddress },
+      multiHop: null,
+    };
+  }
+
+  // ── Step 2: BFS for 2-hop routes ──
+  type TwoHopRoute = {
+    mid: string;
+    hop1: PoolEdge;
+    hop2: PoolEdge;
+    score: number; // lower is better
+  };
+  const candidates: TwoHopRoute[] = [];
+
+  for (const hop1 of inEdges) {
+    const midKey = hop1.otherToken;
+    if (midKey === inKey || midKey === outKey) continue;
+
+    const midEdges = graph.get(midKey) || [];
+    for (const hop2 of midEdges) {
+      if (hop2.otherToken === outKey) {
+        // Score: V2+V2=0, V2+V1=1, V1+V2=1, V1+V1=2
+        const score = (hop1.version === "v1" ? 1 : 0) + (hop2.version === "v1" ? 1 : 0);
+        candidates.push({ mid: midKey, hop1, hop2, score });
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    log.info("PoolGraph", `No route found in graph (${graph.size} nodes)`);
+    return null;
+  }
+
+  // Sort by score (prefer all-V2), then by lowest total fees
+  candidates.sort((a, b) => {
+    if (a.score !== b.score) return a.score - b.score;
+    return (a.hop1.fee + a.hop2.fee) - (b.hop1.fee + b.hop2.fee);
+  });
+
+  const best = candidates[0];
+  const category = best.score === 0 ? "all-V2" : best.score === 2 ? "all-V1" : "mixed";
+  log.info("PoolGraph", `Best 2-hop route via ${best.mid}: ${best.hop1.version}(fee=${best.hop1.fee}) → ${best.hop2.version}(fee=${best.hop2.fee}) [${category}] (${candidates.length} total candidates)`);
+
+  // Convert graph HTS IDs to EVM addresses for swap-engine compatibility
+  return {
+    direct: null,
+    multiHop: {
+      hops: [
+        { version: best.hop1.version, feeTier: best.hop1.fee, poolAddress: best.hop1.poolAddress },
+        { version: best.hop2.version, feeTier: best.hop2.fee, poolAddress: best.hop2.poolAddress },
+      ],
+      tokens: [htsIdToEvmAddress(inKey), htsIdToEvmAddress(best.mid), htsIdToEvmAddress(outKey)],
+    },
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // ── SWAP PATH BUILDING ────────────────────────────────────────────────
@@ -565,6 +787,71 @@ export async function findSwapRouteAsync(
   const directOutEvm = getSaucerswapRoutingEvmAddress(output.isNative ? whbar : output);
 
   console.log(`[C56] Async route search: ${inputSymbol} → ${outputSymbol}`);
+
+  // [C82] Step 0: Try graph-first routing (instant, no network calls)
+  try {
+    const inputRoutingId = getSaucerswapRoutingId(input.isNative ? whbar : input);
+    const outputRoutingId = getSaucerswapRoutingId(output.isNative ? whbar : output);
+    const graphRoute = await findRouteViaGraph(inputRoutingId, outputRoutingId, network);
+    if (graphRoute) {
+      if (graphRoute.direct) {
+        const syntheticPool: PoolRoute = {
+          id: `graph-${input.symbol}-${output.symbol}`,
+          tokenA: input, tokenB: output,
+          fee: graphRoute.direct.feeTier ? graphRoute.direct.feeTier / 10000 : 0.3,
+          tvlUsd: 0, volume24hUsd: 0, apr: 0,
+          poolAddress: graphRoute.direct.poolAddress || "graph-detected",
+          source: graphRoute.direct.version,
+        };
+        const result: AsyncRouteResult = {
+          path: [input, output], pools: [syntheticPool],
+          totalFee: syntheticPool.fee, onChain: true,
+        };
+        _routeCacheEvict();
+        _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
+        console.log(`[C56] [C82] Graph: direct ${graphRoute.direct.version} fee=${graphRoute.direct.feeTier}`);
+        return result;
+      } else if (graphRoute.multiHop) {
+        const midEvm = graphRoute.multiHop.tokens[1];
+        const midHtsId = evmAddressToHtsId(midEvm);
+        // Resolve intermediary: check WHBAR special case, then canonical ID, then alias ID
+        let midToken: AllowedToken;
+        if (midEvm.toLowerCase() === getSaucerswapRoutingEvmAddress(whbar).toLowerCase()) {
+          midToken = TOKEN_BY_SYMBOL.get("HBAR")!;
+        } else {
+          midToken = TOKEN_BY_HTS_ID.get(midHtsId)
+            || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === midHtsId)
+            || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken;
+        }
+        const pool1: PoolRoute = {
+          id: `graph-hop1-${input.symbol}-${midToken.symbol}`,
+          tokenA: input, tokenB: midToken,
+          fee: graphRoute.multiHop.hops[0].feeTier ? graphRoute.multiHop.hops[0].feeTier / 10000 : 0.3,
+          tvlUsd: 0, volume24hUsd: 0, apr: 0,
+          poolAddress: graphRoute.multiHop.hops[0].poolAddress || "graph-detected",
+          source: graphRoute.multiHop.hops[0].version,
+        };
+        const pool2: PoolRoute = {
+          id: `graph-hop2-${midToken.symbol}-${output.symbol}`,
+          tokenA: midToken, tokenB: output,
+          fee: graphRoute.multiHop.hops[1].feeTier ? graphRoute.multiHop.hops[1].feeTier / 10000 : 0.3,
+          tvlUsd: 0, volume24hUsd: 0, apr: 0,
+          poolAddress: graphRoute.multiHop.hops[1].poolAddress || "graph-detected",
+          source: graphRoute.multiHop.hops[1].version,
+        };
+        const result: AsyncRouteResult = {
+          path: [input, midToken, output], pools: [pool1, pool2],
+          totalFee: pool1.fee + pool2.fee, onChain: true,
+        };
+        _routeCacheEvict();
+        _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
+        console.log(`[C56] [C82] Graph: multi-hop ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
+        return result;
+      }
+    }
+  } catch (graphErr: any) {
+    console.warn(`[C56] [C82] Graph routing failed in UI route finder: ${graphErr?.message}`);
+  }
 
   // Step 1: Check for direct on-chain pool
   const directPool = await detectPoolVersion(directInEvm, directOutEvm, network);

@@ -33,7 +33,7 @@ import {
 import { makeAbort, estimateOutputFromPrices } from "./prices";
 import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion, resolveAccountEvmAddress, resolveContractEvmAddress } from "./pools";
-import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute } from "./routing";
+import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute, findRouteViaGraph } from "./routing";
 import type { RawQuote } from "./quotes";
 import { fetchSaucerSwapQuote, fetchV2RouterQuote } from "./quotes";
 import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance } from "./balances";
@@ -132,7 +132,10 @@ async function approveIfNeeded(params: {
   }}));
 
   // ── Send native HTS approve transaction ──
-  const { executeHederaTransaction } = await import("../hashpack");
+  // [C81-02] Use fast-path execution — skips Mirror Node receipt polling.
+  // The approval TX doesn't need receipt confirmation; if it fails, the
+  // subsequent swap TX will revert with a clear error. Saves 5-25 seconds.
+  const { executeHederaTransactionFast } = await import("../hashpack");
   let sdk: any;
   try {
     sdk = await import("@hashgraph/sdk");
@@ -147,8 +150,8 @@ async function approveIfNeeded(params: {
   const approveTx = new sdk.AccountAllowanceApproveTransaction()
     .approveTokenAllowance(tokenHtsId, ownerAccountId, spenderAccountId, approveAmount);
 
-  const approveResult = await executeHederaTransaction(ownerAccountId, approveTx);
-  console.log(`[C53] Approve result: ${JSON.stringify(approveResult)}`);
+  const approveResult = await executeHederaTransactionFast(ownerAccountId, approveTx);
+  console.log(`[C53] Approve result (fast): ${JSON.stringify(approveResult)}`);
 
   if (!approveResult.success) {
     return {
@@ -368,7 +371,9 @@ async function executeSaucerSwapV2Direct(
           const assocTx = new assocSdk.TokenAssociateTransaction()
             .setAccountId(accountId)
             .setTokenIds([assocHtsId]);
-          const assocResult = await executeHederaTransaction(accountId, assocTx);
+          // [C81-02] Fast-path — association prerequisite
+          const { executeHederaTransactionFast: v2AssocExec } = await import("../hashpack");
+          const assocResult = await v2AssocExec(accountId, assocTx);
           if (!assocResult.success) {
             return {
               success: false,
@@ -1076,7 +1081,9 @@ async function executeSaucerSwapV2MultiHop(
           const assocTx = new assocSdk.TokenAssociateTransaction()
             .setAccountId(accountId)
             .setTokenIds([assocHtsId]);
-          const assocResult = await executeHederaTransaction(accountId, assocTx);
+          // [C81-02] Fast-path — association prerequisite
+          const { executeHederaTransactionFast: v2mhAssocExec } = await import("../hashpack");
+          const assocResult = await v2mhAssocExec(accountId, assocTx);
           if (!assocResult.success) {
             return {
               success: false,
@@ -1347,6 +1354,44 @@ async function executeSaucerSwapDirect(
     const directInEvm = getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken);
     const directOutEvm = getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken);
 
+    // ═══════════════════════════════════════════════════════════════════
+    // ── [C82] GRAPH-FIRST ROUTING ─────────────────────────────────────
+    //
+    // Try the API-based pool graph FIRST (instant, no network calls).
+    // The graph is built from cached SaucerSwap V2+V1 pool lists and
+    // finds optimal routes via BFS — matching SaucerSwap.finance's
+    // routing strategy.
+    //
+    // Falls back to individual detectPoolVersion() calls only if the
+    // graph is empty (API unavailable).
+    // ═══════════════════════════════════════════════════════════════════
+    const inputRoutingId = getSaucerswapRoutingId(isInputNative ? whbar : inputToken);
+    const outputRoutingId = getSaucerswapRoutingId(isOutputNative ? whbar : outputToken);
+
+    try {
+      const graphRoute = await findRouteViaGraph(inputRoutingId, outputRoutingId, network);
+      if (graphRoute) {
+        if (graphRoute.direct) {
+          poolVersionInfo = graphRoute.direct;
+          pathAddresses = [directInEvm, directOutEvm];
+          console.log(`[HBAR.h] [C82] Graph: direct pool ${poolVersionInfo.version} fee=${poolVersionInfo.feeTier}`);
+        } else if (graphRoute.multiHop) {
+          multiHopRoute = graphRoute.multiHop;
+          pathAddresses = multiHopRoute.tokens;
+          console.log(`[HBAR.h] [C82] Graph: multi-hop ${multiHopRoute.tokens.map(t => evmAddressToHtsId(t)).join(" → ")}`);
+          multiHopRoute.hops.forEach((h, i) => {
+            console.log(`[HBAR.h] [C82]   Hop ${i}: ${h.version} fee=${h.feeTier}`);
+          });
+        }
+      }
+    } catch (graphErr: any) {
+      console.warn(`[HBAR.h] [C82] Graph routing failed: ${graphErr?.message} — falling back to on-chain detection`);
+    }
+
+    // ── Fallback: individual pool detection (only if graph didn't find a route) ──
+    if (!poolVersionInfo && !multiHopRoute) {
+      console.log(`[HBAR.h] [C82] Graph returned no route — falling back to on-chain detection`);
+
     // ── Step 1: ALWAYS check for a DIRECT pool first (most efficient) ──
     poolVersionInfo = await detectPoolVersion(directInEvm, directOutEvm, network);
 
@@ -1370,6 +1415,7 @@ async function executeSaucerSwapDirect(
         pathAddresses = multiHopRoute.tokens;
       }
     }
+    } // end fallback if (!poolVersionInfo && !multiHopRoute)
 
     // ┌─────────────────────────────────────────────────────────────────────┐
     // │  [C36-02] TOKEN→HBAR: FORCE V1 ROUTING                            │
@@ -1627,7 +1673,9 @@ async function executeSaucerSwapDirect(
           const assocTx = new assocSdk.TokenAssociateTransaction()
             .setAccountId(accountId)
             .setTokenIds([outputHtsId]);
-          const assocResult = await executeHederaTransaction(accountId, assocTx);
+          // [C81-02] Fast-path — association is a prerequisite, no receipt needed
+          const { executeHederaTransactionFast: assocExecFast } = await import("../hashpack");
+          const assocResult = await assocExecFast(accountId, assocTx);
           if (!assocResult.success) {
             return {
               success: false,
@@ -1674,7 +1722,9 @@ async function executeSaucerSwapDirect(
             const midAssocTx = new assocSdk.TokenAssociateTransaction()
               .setAccountId(accountId)
               .setTokenIds([midHtsId]);
-            const midAssocResult = await executeHederaTransaction(accountId, midAssocTx);
+            // [C81-02] Fast-path for intermediary association
+            const { executeHederaTransactionFast: midExecFast } = await import("../hashpack");
+            const midAssocResult = await midExecFast(accountId, midAssocTx);
             if (!midAssocResult.success) {
               console.warn(`[HBAR.h] [C77-03] Intermediate ${midSymbol} association failed: ${midAssocResult.error} — swap may revert`);
             }

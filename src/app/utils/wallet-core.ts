@@ -579,6 +579,68 @@ export function getWalletConnectProjectId(): string {
   return WC_PROJECT_ID;
 }
 
+// ── Relay Prewarm ──────────────────────────────────────────────────────
+
+/**
+ * [C81-01] Pre-warm the WalletConnect relay WebSocket connection.
+ *
+ * Call this EARLY — at swap button hover, swap panel mount, or the very
+ * start of handleSwap() — so the relay is already connected by the time
+ * the wallet signing request is dispatched.
+ *
+ * Without this, the relay may be in a CLOSED state (browser backgrounded
+ * the tab, relay server dropped the connection) and `_safeRequest()` has
+ * to reconnect synchronously, causing the wallet to NOT auto-popup.
+ *
+ * This is fire-and-forget — errors are silently caught.
+ */
+export async function prewarmRelay(): Promise<void> {
+  try {
+    const client = await getSignClient();
+    await _ensureRelayConnected(client, 8000);
+  } catch {
+    // Non-critical — _safeRequest will retry before actual signing
+  }
+}
+
+/** Keepalive interval ID — set once per session. */
+let _relayKeepaliveId: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * [C81-01] Start a relay keepalive that pings every 25 seconds.
+ *
+ * WalletConnect relay WebSockets typically drop after 30-60 seconds of
+ * inactivity. This keepalive ensures the connection stays warm so wallet
+ * signing requests are delivered instantly.
+ *
+ * Call once after wallet connection. Safe to call multiple times.
+ */
+export function startRelayKeepalive(): void {
+  if (_relayKeepaliveId) return;
+  _relayKeepaliveId = setInterval(async () => {
+    try {
+      if (!_signClient) return;
+      const relayer = _signClient.core?.relayer;
+      if (relayer && !relayer.connected) {
+        console.log("[WC] Keepalive: relay disconnected — reconnecting");
+        await _ensureRelayConnected(_signClient, 5000);
+      }
+    } catch {
+      // Best effort — don't throw in keepalive
+    }
+  }, 25_000);
+}
+
+/**
+ * Stop the relay keepalive (on disconnect).
+ */
+export function stopRelayKeepalive(): void {
+  if (_relayKeepaliveId) {
+    clearInterval(_relayKeepaliveId);
+    _relayKeepaliveId = null;
+  }
+}
+
 // ── WalletConnect Modal ────────────────────────────────────────────────
 
 let _wcModal: any = null;

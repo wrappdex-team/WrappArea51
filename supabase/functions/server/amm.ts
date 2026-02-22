@@ -541,16 +541,17 @@ const TOKEN_WHITELIST: TokenDef[] = [
   { tokenId: "0.0.1055472", symbol: "USDTh",  name: "USDT (HashPort)",       decimals: 6,  fallbackPrice: 1.00,   bridge: "HashPort", tier: 2 },
 
   // ── Major Wrapped Assets (HashPort / LayerZero bridges) ───────────
-  // WBTC: HashPort/LayerZero bridge. SaucerSwap lists a different WBTC (0.0.1969769).
+  // [C85] Updated saucerswapId aliases to current SaucerSwap API values
+  // WBTC: HashPort bridge. SaucerSwap now lists 0.0.10104132 (was 0.0.1969769).
   { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPrice: 104000, bridge: "HashPort", tier: 1,
-    saucerswapId: "0.0.1969769" },
-  // WETH: HashPort bridge (token ID 0.0.541564). SaucerSwap lists 0.0.1969757 (18 dec).
+    saucerswapId: "0.0.10104132" },
+  // WETH: HashPort bridge (token ID 0.0.541564). SaucerSwap lists 0.0.1969708 (18 dec).
   // NOTE: Decimals MUST be confirmed on HashScan — HashPort may bridge at 8 or 18.
   { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPrice: 2650,   bridge: "HashPort", tier: 1,
-    saucerswapId: "0.0.1969757" },
-  // LINK: HashPort bridge. SaucerSwap lists 0.0.1970030.
+    saucerswapId: "0.0.1969708" },
+  // LINK: HashPort bridge. SaucerSwap now lists 0.0.10152778 (was 0.0.1970030).
   { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPrice: 16.50,  bridge: "HashPort", tier: 1,
-    saucerswapId: "0.0.1970030" },
+    saucerswapId: "0.0.10152778" },
   // AAVE: HashPort bridge (same ID as SaucerSwap — no alias needed)
   // NOTE: Decimals (8) need HashScan confirmation — could be 18 if HashPort preserved ERC-20 decimals.
   { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPrice: 180.0,  bridge: "HashPort", tier: 1 },
@@ -757,7 +758,7 @@ async function fetchOraclePrices(): Promise<Record<string, number>> {
             continue;
           }
           // Secondary: SaucerSwap alias → our canonical token ID
-          // (e.g. SaucerSwap WBTC 0.0.1969769 → our WBTC 0.0.1055483)
+          // (e.g. SaucerSwap WBTC 0.0.10104132 → our WBTC 0.0.1055483)
           const aliasTarget = SAUCERSWAP_ALIAS_MAP.get(id);
           if (aliasTarget && !prices[aliasTarget]) {
             prices[aliasTarget] = price;

@@ -29,7 +29,7 @@ import {
 import { bytesToHex, encodeGetPool, encodeGetPair } from "./abi";
 import { saucerFetch, makeAbort } from "./prices";
 
-// ════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════��════════════════════
 // ── SHARED INFRASTRUCTURE ─────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 
@@ -370,11 +370,12 @@ export async function discoverV2Factory(network: HederaNetwork): Promise<string 
   return null;
 }
 
-// ════════════════════════════════════════════════════════════════════════
+// ═════════════════��══════════════════════════════════════════════════════
 // ── V2 POOL LIST FETCHER ──────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 
-async function fetchSaucerSwapV2PoolList(): Promise<SaucerSwapV2PoolEntry[] | null> {
+// [C82] Exported so the pool graph builder in routing.ts can use the cached list.
+export async function fetchSaucerSwapV2PoolList(): Promise<SaucerSwapV2PoolEntry[] | null> {
   // Return cached if fresh
   if (_ssV2PoolsCache && Date.now() - _ssV2PoolsFetchTs < SS_POOLS_CACHE_TTL_MS) {
     return _ssV2PoolsCache;
