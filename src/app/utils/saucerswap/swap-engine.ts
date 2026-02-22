@@ -14,7 +14,7 @@
 
 import type { HederaNetwork, AllowedToken } from "./tokens";
 import {
-  resolveToken, getWhbarToken, evmAddressToHtsId,
+  resolveToken, getWhbarToken, htsIdToEvmAddress, evmAddressToHtsId,
   SAUCERSWAP_TOKENS, getSaucerswapRoutingId, getSaucerswapRoutingEvmAddress,
 } from "./tokens";
 import {
@@ -35,7 +35,7 @@ import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion, resolveAccountEvmAddress, resolveContractEvmAddress } from "./pools";
 import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute, findRouteViaGraph } from "./routing";
 import type { RawQuote } from "./quotes";
-import { fetchSaucerSwapQuote, fetchV2RouterQuote } from "./quotes";
+import { fetchSaucerSwapQuote, fetchV2RouterQuote, fetchRouterQuote } from "./quotes";
 import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance } from "./balances";
 import { parseTokenAmount } from "./helpers";
 import { verifyIsContract } from "./verification";
@@ -1453,9 +1453,36 @@ async function executeSaucerSwapDirect(
       }
     }
 
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [C95] TOKEN→TOKEN MULTI-HOP: FORCE V1 ROUTING                    │
+    // │                                                                    │
+    // │  SaucerSwap.finance routes ALL Token→Token multi-hop swaps through │
+    // │  V1 RouterV3 (swapExactTokensForTokens), NOT V2 exactInput.       │
+    // │                                                                    │
+    // │  V2 multi-hop (exactInput) causes CONTRACT_REVERT_EXECUTED on      │
+    // │  Hedera for Token→Token paths. The V2 SwapRouter's callback-based  │
+    // │  transferFrom chain (pool→callback→transferFrom→HTS precompile)    │
+    // │  fails when the caller is a smart contract and the token is HTS.   │
+    // │  View calls (QuoterV2.quoteExactInput) succeed because they don't  │
+    // │  actually transfer tokens — only the real swap reverts.            │
+    // │                                                                    │
+    // │  Fix: Force V1 for ALL Token→Token multi-hop, same as C36-02      │
+    // │  does for Token→HBAR. V1 swapExactTokensForTokens handles         │
+    // │  multi-hop natively via path arrays and is proven on mainnet.      │
+    // └─────────────────────────────────────────────────────────────────────┘
+    if (!isInputNative && !isOutputNative && multiHopRoute) {
+      console.log(`[HBAR.h] [C95] Token→Token multi-hop: forcing V1 routing (matches SaucerSwap.finance production)`);
+      if (multiHopRoute.hops.some(h => h.version === "v2")) {
+        console.log(`[HBAR.h] [C95]   Original route had V2 hops: ${multiHopRoute.hops.map(h => `${h.version}(fee=${h.feeTier})`).join(" → ")}`);
+      }
+      poolVersionInfo = { version: "v1", poolAddress: undefined };
+      multiHopRoute = null;
+    }
+
     // ── V2 single-hop execution ──
-    // [C36-02] Token→HBAR was already redirected to V1 above, so this only
-    // fires for HBAR→Token or Token→Token (no multicall needed — no revert risk).
+    // [C36-02] Token→HBAR and [C95] Token→Token multi-hop were already
+    // redirected to V1 above. V2 single-hop only fires for HBAR→Token or
+    // Token→Token direct pools (single-hop, no callback chain issues).
     if (poolVersionInfo?.version === "v2" && !multiHopRoute) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (single-hop) ═══ fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"}`);
       return executeSaucerSwapV2Direct(
@@ -1467,12 +1494,12 @@ async function executeSaucerSwapDirect(
     }
 
     // ── V2 multi-hop execution ──
-    // [C36-02] Token→HBAR multi-hop was already redirected to V1 above.
+    // [C36-02] Token→HBAR and [C95] Token→Token multi-hop were already
+    // redirected to V1 above. V2 multi-hop now only fires for HBAR→Token
+    // multi-hop (payable — no transferFrom issues since Router wraps HBAR).
     // [C77-01] FIX: Changed from .some(v2) to .every(v2). V2 exactInput
     // can ONLY traverse V2 concentrated-liquidity pools. If even one hop
-    // is V1 AMM, the V2 router fails to find a pool and reverts with
-    // CONTRACT_REVERT_EXECUTED. Mixed routes now fall through to V1 path
-    // where the V1 router natively handles multi-hop via path arrays.
+    // is V1 AMM, the V2 router fails to find a pool and reverts.
     if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute.hops.length} hops, ALL V2) ═══`);
       return executeSaucerSwapV2MultiHop(
@@ -1495,6 +1522,144 @@ async function executeSaucerSwapDirect(
       poolVersionInfo = { version: "v1", poolAddress: undefined };
       console.log(`[HBAR.h] [C77-01] Multi-hop route has mixed or V1-only hops — using V1 path array routing`);
       // pathAddresses was already set to multiHopRoute.tokens at line 1314
+    }
+
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [C95] V1 MULTI-HOP PATH ADDRESS REBUILD & VALIDATION             │
+    // │                                                                    │
+    // │  The pool graph may return EVM addresses derived from V2 alias     │
+    // │  token IDs (e.g. LINK alias 0.0.10152778 instead of canonical      │
+    // │  0.0.1055495). V1 Factory pairs are registered with canonical      │
+    // │  bridge token addresses, so getPair() fails with alias addresses.  │
+    // │                                                                    │
+    // │  Fix: rebuild pathAddresses using canonical htsIds. Validate with  │
+    // │  V1 getAmountsOut before executing. If canonical fails, try alias  │
+    // │  addresses as fallback. If both fail, abort cleanly.               │
+    // └─────────────────────────────────────────────────────────────────────┘
+    if (poolVersionInfo?.version === "v1" && pathAddresses.length > 2) {
+      const whbarEvm = htsIdToEvmAddress(whbar.htsId);
+
+      // Build canonical path (using token.htsId, NOT saucerswapAliasId)
+      const canonicalPath: string[] = [
+        htsIdToEvmAddress((isInputNative ? whbar : inputToken).htsId),
+      ];
+      for (let i = 1; i < pathAddresses.length - 1; i++) {
+        const midHtsId = evmAddressToHtsId(pathAddresses[i]);
+        if (midHtsId === whbar.htsId) {
+          canonicalPath.push(whbarEvm);
+        } else {
+          // Look up token — midHtsId might be a saucerswapAliasId, not canonical
+          const midToken = SAUCERSWAP_TOKENS.find(
+            t => t.htsId === midHtsId || t.saucerswapAliasId === midHtsId
+          );
+          // Use canonical htsId (not alias) for V1 Factory pair lookup
+          canonicalPath.push(htsIdToEvmAddress(midToken ? midToken.htsId : midHtsId));
+        }
+      }
+      canonicalPath.push(
+        htsIdToEvmAddress((isOutputNative ? whbar : outputToken).htsId),
+      );
+
+      // Build alias path (using getSaucerswapRoutingEvmAddress — alias-aware)
+      const aliasInputEvm = getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken);
+      const aliasOutputEvm = getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken);
+      const aliasPath = [aliasInputEvm, ...pathAddresses.slice(1, -1), aliasOutputEvm];
+
+      const canonicalDesc = canonicalPath.map(a => evmAddressToHtsId(a)).join(" → ");
+      const aliasDesc = aliasPath.map(a => evmAddressToHtsId(a)).join(" → ");
+      const pathsAreSame = canonicalPath.length === aliasPath.length &&
+        canonicalPath.every((addr, idx) => addr.toLowerCase() === aliasPath[idx]?.toLowerCase());
+
+      console.log(`[HBAR.h] [C95] V1 multi-hop path rebuild:`);
+      console.log(`[HBAR.h] [C95]   Graph path:     ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+      console.log(`[HBAR.h] [C95]   Canonical path: ${canonicalDesc}`);
+      console.log(`[HBAR.h] [C95]   Alias path:     ${aliasDesc}${pathsAreSame ? " (same as canonical)" : ""}`);
+
+      // Validate with V1 getAmountsOut — prevents sending doomed transactions
+      const v1RouterForValidation = getSaucerSwapRouter(network, "v1");
+      let useCanonical = false;
+      let useAlias = false;
+      let v1ValidatedOutput: bigint | null = null;
+
+      try {
+        const canonicalQuote = await fetchRouterQuote(
+          BigInt(rawInput), canonicalPath, v1RouterForValidation, network
+        );
+        if (canonicalQuote !== null && canonicalQuote > 0n) {
+          useCanonical = true;
+          v1ValidatedOutput = canonicalQuote;
+          console.log(`[HBAR.h] [C95] ✓ Canonical path VALID — V1 getAmountsOut=${canonicalQuote}`);
+        } else {
+          console.log(`[HBAR.h] [C95] ✗ Canonical path: V1 getAmountsOut returned ${canonicalQuote}`);
+        }
+      } catch (e: any) {
+        console.log(`[HBAR.h] [C95] ✗ Canonical path: V1 getAmountsOut failed: ${e?.message}`);
+      }
+
+      // If canonical failed and alias is different, try alias path
+      if (!useCanonical && !pathsAreSame) {
+        try {
+          const aliasQuote = await fetchRouterQuote(
+            BigInt(rawInput), aliasPath, v1RouterForValidation, network
+          );
+          if (aliasQuote !== null && aliasQuote > 0n) {
+            useAlias = true;
+            v1ValidatedOutput = aliasQuote;
+            console.log(`[HBAR.h] [C95] ✓ Alias path VALID — V1 getAmountsOut=${aliasQuote}`);
+          } else {
+            console.log(`[HBAR.h] [C95] ✗ Alias path: V1 getAmountsOut returned ${aliasQuote}`);
+          }
+        } catch (e: any) {
+          console.log(`[HBAR.h] [C95] ✗ Alias path: V1 getAmountsOut failed: ${e?.message}`);
+        }
+      }
+
+      // Also try the original graph path if neither canonical nor alias worked
+      if (!useCanonical && !useAlias) {
+        const graphPathIsDifferent = !pathsAreSame &&
+          !pathAddresses.every((addr, idx) => addr.toLowerCase() === canonicalPath[idx]?.toLowerCase());
+        if (graphPathIsDifferent) {
+          try {
+            const graphQuote = await fetchRouterQuote(
+              BigInt(rawInput), pathAddresses, v1RouterForValidation, network
+            );
+            if (graphQuote !== null && graphQuote > 0n) {
+              v1ValidatedOutput = graphQuote;
+              console.log(`[HBAR.h] [C95] ✓ Graph path VALID — V1 getAmountsOut=${graphQuote}`);
+              // Keep pathAddresses as-is (graph path)
+            }
+          } catch (e: any) {
+            console.log(`[HBAR.h] [C95] ✗ Graph path: V1 getAmountsOut failed: ${e?.message}`);
+          }
+        }
+      }
+
+      if (useCanonical) {
+        pathAddresses = canonicalPath;
+        console.log(`[HBAR.h] [C95] ═══ Using CANONICAL path for V1 execution ═══`);
+      } else if (useAlias) {
+        pathAddresses = aliasPath;
+        console.log(`[HBAR.h] [C95] ═══ Using ALIAS path for V1 execution ═══`);
+      } else if (v1ValidatedOutput && v1ValidatedOutput > 0n) {
+        console.log(`[HBAR.h] [C95] ═══ Using GRAPH path for V1 execution ═══`);
+      } else {
+        // No V1 path works — abort before wasting gas on a doomed transaction
+        const midTokens = pathAddresses.slice(1, -1).map(a => {
+          const id = evmAddressToHtsId(a);
+          const tok = SAUCERSWAP_TOKENS.find(t => t.htsId === id || getSaucerswapRoutingId(t) === id);
+          return tok?.symbol || id;
+        }).join(", ");
+        console.error(`[HBAR.h] [C95] ═══ ABORT: No valid V1 multi-hop route found ═══`);
+        console.error(`[HBAR.h] [C95]   Tried: canonical, alias, and graph paths`);
+        console.error(`[HBAR.h] [C95]   Intermediaries: ${midTokens}`);
+        return {
+          success: false,
+          error: `No valid V1 route for ${inputToken.symbol} → ${outputToken.symbol} through ${midTokens}. ` +
+            `The V1 Factory does not have AMM pairs for this path. ` +
+            `Try swapping to HBAR first, then HBAR → ${outputToken.symbol}.`,
+          executionVenue: "saucerswap-v1",
+        };
+      }
     }
 
     // ┌─────────────────────────────────────────────────────────────────┐
@@ -1963,6 +2128,13 @@ async function executeSaucerSwapDirect(
 
       // Swap step: swapExactTokensForTokens
       console.log(`[HBAR.h] Step ${v1SwapStep2}: swapExactTokensForTokens`);
+      // [C95] Log the ACTUAL path being sent to V1 router — critical for debugging
+      console.log(`[HBAR.h] [C95] V1 Token→Token execution path (${pathAddresses.length} tokens):`);
+      pathAddresses.forEach((addr, idx) => {
+        const id = evmAddressToHtsId(addr);
+        const tok = SAUCERSWAP_TOKENS.find(t => t.htsId === id || getSaucerswapRoutingId(t) === id);
+        console.log(`[HBAR.h] [C95]   [${idx}] ${addr} → ${id} (${tok?.symbol || "???"})`);
+      });
       const functionData = encodeSaucerSwapCall(
         BigInt(rawInput),
         BigInt(minOutput),
@@ -1983,7 +2155,14 @@ async function executeSaucerSwapDirect(
         success: swapResult.success,
         transactionId: swapResult.transactionId || undefined,
         outputAmount: quote ? quote.amountOut / Math.pow(10, outputToken.decimals) : undefined,
-        route: logicalPath.map((t) => t.symbol),
+        // [C95] Build display route from actual pathAddresses (may differ from logicalPath after path rebuild)
+        route: pathAddresses.length > 2
+          ? pathAddresses.map(addr => {
+              const id = evmAddressToHtsId(addr);
+              const tok = SAUCERSWAP_TOKENS.find(t => t.htsId === id || getSaucerswapRoutingId(t) === id);
+              return tok?.symbol || id;
+            })
+          : logicalPath.map((t) => t.symbol),
         priceImpact: quote?.priceImpact,
         error: swapResult.error
           ? swapResult.error + (swapResult.transactionId ? ` (tx: ${swapResult.transactionId})` : "")
