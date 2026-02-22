@@ -86,9 +86,14 @@ export async function wrapHbar(
 /**
  * Unwrap WHBAR back to native HBAR.
  *
- * Calls the WHBAR contract's withdraw(uint256) function which burns
- * the specified WHBAR tokens and sends equivalent native HBAR back
- * to the caller.
+ * Uses the SaucerSwap WhbarHelper contract (0.0.5808826 on mainnet)
+ * which handles the full unwrap flow:
+ *   1. Transfers WHBAR from user to the helper contract
+ *   2. Helper approves the WHBAR contract to burn the tokens
+ *   3. Helper calls WHBAR.withdraw(this, user, amount) → sends native HBAR
+ *
+ * The user must first approve the WhbarHelper to spend their WHBAR.
+ * This function handles both the approval and the unwrap in sequence.
  *
  * @param amount  Amount in HBAR units (e.g., "10" for 10 WHBAR → 10 HBAR)
  * @param accountId  Hedera account ID
@@ -102,7 +107,7 @@ export async function unwrapHbar(
   try {
     const { executeHederaTransaction } = await import("../hashpack");
     const sdk = await import("@hashgraph/sdk");
-    const { ContractExecuteTransaction, ContractId, Hbar } = sdk;
+    const { ContractExecuteTransaction, ContractId, AccountId, TokenId, AccountAllowanceApproveTransaction } = sdk;
 
     const whbar = getWhbarToken();
     const hbarAmount = parseFloat(amount);
@@ -111,27 +116,54 @@ export async function unwrapHbar(
     }
 
     const rawAmount = Math.floor(hbarAmount * Math.pow(10, 8)); // WHBAR has 8 decimals
+    const WHBAR_TOKEN_ID = whbar.htsId; // 0.0.1456986
 
-    // withdraw(uint256) selector: keccak256("withdraw(uint256)") = 0x2e1a7d4d
-    const selector = new Uint8Array([0x2e, 0x1a, 0x7d, 0x4d]);
-    const amountBytes = encodeUint256(BigInt(rawAmount));
-    const functionData = new Uint8Array(selector.length + amountBytes.length);
-    functionData.set(selector, 0);
-    functionData.set(amountBytes, selector.length);
+    // WhbarHelper contract handles the full unwrap sequence
+    // (transfer WHBAR → approve → withdraw → send HBAR to user)
+    const WHBAR_HELPER: Record<string, string> = {
+      mainnet: "0.0.5808826",
+      testnet: "0.0.15057",
+    };
+    const helperContractId = WHBAR_HELPER[network] || WHBAR_HELPER.mainnet;
 
-    // [C16-01] Call the WHBAR contract (0.0.1456985), NOT the token ID
-    // (0.0.1456986). withdraw() is a custom function on the deploying
-    // contract — the HTS system contract at the token ID only handles
-    // standard ERC-20 operations.
-    const whbarContractId = SAUCERSWAP_WHBAR_CONTRACT[network] || SAUCERSWAP_WHBAR_CONTRACT.mainnet;
-    console.log(`[HBAR.h] Unwrapping ${hbarAmount} WHBAR → HBAR via withdraw(${rawAmount}) on ${whbarContractId}`);
+    console.log(`[WHBAR] Unwrapping ${hbarAmount} WHBAR → HBAR via WhbarHelper ${helperContractId}`);
+
+    // Step 1: Approve the WhbarHelper to spend our WHBAR tokens
+    // The helper needs to transferFrom(user → helper) before it can call withdraw
+    console.log(`[WHBAR] Step 1: Approving WhbarHelper ${helperContractId} to spend ${rawAmount} WHBAR (${WHBAR_TOKEN_ID})`);
+    const approveTx = new AccountAllowanceApproveTransaction()
+      .approveTokenAllowance(
+        TokenId.fromString(WHBAR_TOKEN_ID),
+        AccountId.fromString(accountId),
+        AccountId.fromString(helperContractId),
+        rawAmount
+      );
+
+    const approveResult = await executeHederaTransaction(accountId, approveTx);
+    if (!approveResult.success) {
+      console.warn("[WHBAR] Approval failed:", approveResult.error);
+      return {
+        success: false,
+        error: approveResult.error || "WHBAR allowance approval failed",
+        userCancelled: approveResult.userCancelled,
+      };
+    }
+    console.log("[WHBAR] Approval succeeded:", approveResult.transactionId);
+
+    // Step 2: Call WhbarHelper.unwrapWhbar(uint256 wad)
+    // Use the SDK's setFunction which computes keccak256 selector automatically
+    console.log(`[WHBAR] Step 2: Calling WhbarHelper.unwrapWhbar(${rawAmount}) on ${helperContractId}`);
+    const { ContractFunctionParameters } = sdk;
     const tx = new ContractExecuteTransaction()
-      .setContractId(ContractId.fromString(whbarContractId))
+      .setContractId(ContractId.fromString(helperContractId))
       .setGas(800_000)
-      .setFunctionParameters(functionData);
+      .setFunction(
+        "unwrapWhbar",
+        new ContractFunctionParameters().addUint256(rawAmount)
+      );
 
     const result = await executeHederaTransaction(accountId, tx);
-    console.log("[HBAR.h] Unwrap result:", JSON.stringify(result));
+    console.log("[WHBAR] Unwrap result:", JSON.stringify(result));
     return {
       success: result.success,
       transactionId: result.transactionId || undefined,
@@ -139,7 +171,7 @@ export async function unwrapHbar(
       userCancelled: result.userCancelled,
     };
   } catch (err: any) {
-    console.error("[HBAR.h] Unwrap error:", err);
+    console.error("[WHBAR] Unwrap error:", err);
     const errMsg = err?.message || "WHBAR unwrapping failed";
     const errLower = errMsg.toLowerCase();
     const isCancellation =

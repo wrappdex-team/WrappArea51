@@ -275,26 +275,53 @@ export async function fetchTopPools(limit: number = 10): Promise<SaucerSwapPool[
     if (!Array.isArray(data) || data.length === 0) return FALLBACK_POOLS.slice(0, limit);
 
     return data
-      .map((pool: any) => ({
-        id: pool.id || pool.contractId || "pool-" + (pool.tokenA?.symbol || "X") + "-" + (pool.tokenB?.symbol || "Y"),
-        tokenA: {
-          id: pool.tokenA?.id || "",
-          symbol: pool.tokenA?.symbol || "???",
-          name: pool.tokenA?.name || "Unknown",
-          decimals: pool.tokenA?.decimals ?? 8,
-        },
-        tokenB: {
-          id: pool.tokenB?.id || "",
-          symbol: pool.tokenB?.symbol || "???",
-          name: pool.tokenB?.name || "Unknown",
-          decimals: pool.tokenB?.decimals ?? 8,
-        },
-        tvlUsd: parseFloat(pool.tvl || pool.tvlUsd || "0"),
-        volume24hUsd: parseFloat(pool.volume24h || pool.volume24hUsd || "0"),
-        fee: parseFloat(pool.fee || "0.3") / 10000,
-        apr: parseFloat(pool.apr || "0"),
-        tickSpacing: pool.tickSpacing ?? 60,
-      }))
+      .map((pool: any) => {
+        // ── TVL: prefer pre-computed USD fields; sanity-check raw values ──
+        // Never use raw `liquidity` (concentrated-liquidity L-value) as TVL.
+        let tvlUsd = parseFloat(pool.tvlUsd || pool.tvlUSD || pool.liquidityUsd || "0");
+        if (tvlUsd <= 0) {
+          const rawTvl = parseFloat(pool.tvl || "0");
+          // Only use if reasonable (< $1B for a single pool)
+          if (rawTvl > 0 && rawTvl < 1_000_000_000) tvlUsd = rawTvl;
+        }
+        // Compute from reserves + prices as last resort
+        if (tvlUsd <= 0) {
+          const pA = parseFloat(pool.tokenA?.priceUsd || "0");
+          const pB = parseFloat(pool.tokenB?.priceUsd || "0");
+          const dA = pool.tokenA?.decimals ?? 8;
+          const dB = pool.tokenB?.decimals ?? 8;
+          const rA = parseFloat(pool.totalValueLockedToken0 || pool.reserve0 || "0");
+          const rB = parseFloat(pool.totalValueLockedToken1 || pool.reserve1 || "0");
+          if (rA > 0 && pA > 0) tvlUsd += (rA / Math.pow(10, dA)) * pA;
+          if (rB > 0 && pB > 0) tvlUsd += (rB / Math.pow(10, dB)) * pB;
+        }
+
+        const feeRaw = parseFloat(pool.fee || pool.feeTier || "0");
+        // Normalize fee: if >= 100 it's basis points (e.g. 3000 → 0.3%)
+        const fee = feeRaw >= 100 ? feeRaw / 10000 : feeRaw > 1 ? feeRaw / 100 : feeRaw;
+
+        return {
+          id: pool.id || pool.contractId || "pool-" + (pool.tokenA?.symbol || "X") + "-" + (pool.tokenB?.symbol || "Y"),
+          tokenA: {
+            id: pool.tokenA?.id || "",
+            symbol: pool.tokenA?.symbol || "???",
+            name: pool.tokenA?.name || "Unknown",
+            decimals: pool.tokenA?.decimals ?? 8,
+          },
+          tokenB: {
+            id: pool.tokenB?.id || "",
+            symbol: pool.tokenB?.symbol || "???",
+            name: pool.tokenB?.name || "Unknown",
+            decimals: pool.tokenB?.decimals ?? 8,
+          },
+          tvlUsd,
+          volume24hUsd: parseFloat(pool.volume24h || pool.volume24hUsd || pool.volumeUSD || "0"),
+          fee,
+          apr: parseFloat(pool.apr || pool.feeAPR || "0"),
+          tickSpacing: pool.tickSpacing ?? 60,
+        };
+      })
+      .filter((p: SaucerSwapPool) => p.tvlUsd >= 100) // filter dust pools
       .sort((a: SaucerSwapPool, b: SaucerSwapPool) => b.tvlUsd - a.tvlUsd)
       .slice(0, limit);
   } catch {

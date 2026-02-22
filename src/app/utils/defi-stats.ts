@@ -179,10 +179,36 @@ function parseV1Pool(raw: any): LivePool | null {
     const symA = tA.symbol || tA.name || "???";
     const symB = tB.symbol || tB.name || "???";
 
-    const tvl = safeFloat(raw.tvl ?? raw.liquidity ?? raw.liquidityUsd ?? raw.totalLiquidity ?? 0);
+    // ── TVL: check pre-computed USD first, sanity-check raw `liquidity` ──
+    // V1 API's `liquidity` may be the LP token total supply or raw reserve
+    // value, not USD. Only use it if it looks like a plausible USD amount
+    // (under $1B for a single pool on Hedera).
+    let tvl = safeFloat(
+      raw.tvlUsd ?? raw.tvlUSD ?? raw.liquidityUsd ?? raw.liquidityUSD ?? 0
+    );
+    if (tvl <= 0) {
+      const rawTvl = safeFloat(raw.tvl ?? raw.totalLiquidity ?? 0);
+      if (rawTvl > 0 && rawTvl < 1_000_000_000) {
+        tvl = rawTvl;
+      }
+    }
+    // Last resort: compute from reserves + prices
+    if (tvl <= 0) {
+      const priceA = safeFloat(tA.priceUsd ?? tA.price ?? 0);
+      const priceB = safeFloat(tB.priceUsd ?? tB.price ?? 0);
+      const decA = safeFloat(tA.decimals ?? 8);
+      const decB = safeFloat(tB.decimals ?? 8);
+      const resA = safeFloat(raw.reserveA ?? raw.reserve0 ?? raw.tokenAAmount ?? 0);
+      const resB = safeFloat(raw.reserveB ?? raw.reserve1 ?? raw.tokenBAmount ?? 0);
+      if (resA > 0 && priceA > 0) tvl += (resA / Math.pow(10, decA)) * priceA;
+      if (resB > 0 && priceB > 0) tvl += (resB / Math.pow(10, decB)) * priceB;
+    }
     if (tvl < MIN_TVL_DISPLAY) return null;
 
-    const vol24 = safeFloat(raw.volume24h ?? raw.volume24Hr ?? raw.dailyVolume ?? 0);
+    const vol24 = safeFloat(
+      raw.volume24h ?? raw.volume24Hr ?? raw.volume24hUsd ?? raw.volume24hUSD ??
+      raw.volumeUSD ?? raw.dailyVolume ?? 0
+    );
     const vol7d = safeFloat(raw.volume7d ?? raw.weeklyVolume ?? 0);
 
     const feeRaw = safeFloat(raw.fee ?? raw.lpFee ?? raw.feeRate ?? raw.lpFeeRate ?? 0);
@@ -237,19 +263,63 @@ function parseV2Pool(raw: any): LivePool | null {
     const symA = tA.symbol || tA.name || "???";
     const symB = tB.symbol || tB.name || "???";
 
-    const tvl = safeFloat(raw.tvl ?? raw.tvlUsd ?? raw.liquidity ?? raw.liquidityUsd ?? 0);
+    // ── TVL: try pre-computed USD fields first, NEVER use raw `liquidity` ──
+    // The V2 API's `liquidity` field is the concentrated-liquidity L value
+    // (a massive raw integer), NOT a USD amount. Using it directly produces
+    // TVL values in the trillions. Instead, compute TVL from token reserves
+    // and prices when the API doesn't provide a pre-computed USD field.
+    let tvl = safeFloat(
+      raw.tvlUSD ?? raw.tvlUsd ?? raw.tvl_usd ??
+      raw.totalValueLockedUSD ?? raw.totalValueLocked ??
+      raw.liquidityUsd ?? raw.liquidityUSD ?? 0
+    );
+
+    // If no pre-computed TVL, compute from token amounts + prices
+    if (tvl <= 0) {
+      const priceA = safeFloat(tA.priceUsd ?? tA.price ?? 0);
+      const priceB = safeFloat(tB.priceUsd ?? tB.price ?? 0);
+      const decA = safeFloat(tA.decimals ?? 8);
+      const decB = safeFloat(tB.decimals ?? 8);
+
+      // Try totalValueLockedToken fields (raw smallest-unit amounts)
+      const tvlToken0 = safeFloat(raw.totalValueLockedToken0 ?? raw.tvlToken0 ?? raw.amount0 ?? raw.reserve0 ?? 0);
+      const tvlToken1 = safeFloat(raw.totalValueLockedToken1 ?? raw.tvlToken1 ?? raw.amount1 ?? raw.reserve1 ?? 0);
+
+      if (tvlToken0 > 0 && priceA > 0) tvl += (tvlToken0 / Math.pow(10, decA)) * priceA;
+      if (tvlToken1 > 0 && priceB > 0) tvl += (tvlToken1 / Math.pow(10, decB)) * priceB;
+
+      // Last resort: try the `tvl` field but check if it's a reasonable USD value
+      // (under $1B — SaucerSwap total TVL is ~$50-100M)
+      if (tvl <= 0) {
+        const rawTvl = safeFloat(raw.tvl ?? 0);
+        if (rawTvl > 0 && rawTvl < 1_000_000_000) {
+          tvl = rawTvl;
+        }
+      }
+    }
+
     if (tvl < MIN_TVL_DISPLAY) return null;
 
-    const vol24 = safeFloat(raw.volume24h ?? raw.volume24hUsd ?? raw.dailyVolume ?? 0);
-    const vol7d = safeFloat(raw.volume7d ?? raw.weeklyVolume ?? 0);
+    // ── Volume: try all known field variants ──
+    const vol24 = safeFloat(
+      raw.volume24h ?? raw.volume24hUsd ?? raw.volume24hUSD ??
+      raw.volumeUSD ?? raw.volumeUsd ?? raw.dailyVolume ??
+      raw.volumeToken0USD ?? raw.volume24Hr ?? 0
+    );
+    const vol7d = safeFloat(raw.volume7d ?? raw.volume7dUSD ?? raw.weeklyVolume ?? 0);
 
     const feeRaw = safeFloat(raw.fee ?? raw.feeTier ?? 0);
     const fee = normalizeFee(feeRaw);
 
-    let feeAPR = safeFloat(raw.apr ?? raw.apy ?? raw.feeApr ?? 0);
-    if (feeAPR <= 0 && tvl > 0 && fee > 0) {
+    // ── APR: use API value or compute from volume + fee ──
+    let feeAPR = safeFloat(raw.apr ?? raw.apy ?? raw.feeApr ?? raw.feeAPR ?? raw.fee_apr ?? 0);
+    if (feeAPR <= 0 && tvl > 0 && fee > 0 && vol24 > 0) {
+      // Standard DEX fee APR: (daily_volume × fee_rate × 365) / tvl
       feeAPR = (vol24 * (fee / 100) * 365) / tvl * 100;
     }
+
+    const farmAPR = safeFloat(raw.farmAPR ?? raw.farmApr ?? raw.farm_apr ?? raw.rewardApr ?? 0);
+    const totalAPR = feeAPR + farmAPR;
 
     const utilization = tvl > 0 ? Math.min((vol24 / tvl) * 100, 100) : 0;
     const contractId = raw.contractId || raw.id?.toString() || raw.poolAddress || "";
@@ -271,9 +341,9 @@ function parseV2Pool(raw: any): LivePool | null {
       tvl,
       volume24h: vol24,
       volume7d: vol7d,
-      apr: Math.round(feeAPR * 10) / 10,
+      apr: Math.round(totalAPR * 10) / 10,
       feeAPR: Math.round(feeAPR * 10) / 10,
-      farmAPR: 0,
+      farmAPR: Math.round(farmAPR * 10) / 10,
       fee: Math.round(fee * 10000) / 10000,
       utilization: Math.round(utilization * 10) / 10,
       source: "v2",
@@ -394,6 +464,12 @@ async function fetchDirectFromSaucerSwap(): Promise<{
   // Parse V1 allData (preferred — most fields)
   if (v1AllData) {
     const raw = extractPoolArray(v1AllData);
+    // [C88] Diagnostic: log first V1 pool's keys
+    if (raw.length > 0) {
+      const sample = raw[0];
+      log.info("DeFiStats", `V1 sample pool keys: ${Object.keys(sample).join(", ")}`);
+      log.info("DeFiStats", `V1 sample tvl=${sample.tvl}, liquidity=${String(sample.liquidity).slice(0, 20)}, volume24h=${sample.volume24h}, apr=${sample.apr}, lpFee=${sample.lpFee}, fee=${sample.fee}`);
+    }
     const parsed = raw.map(parseV1Pool).filter((p): p is LivePool => p !== null);
     allPools.push(...parsed);
     log.info("DeFiStats", `V1 allData: ${parsed.length} pools from ${raw.length} entries`);
@@ -410,6 +486,13 @@ async function fetchDirectFromSaucerSwap(): Promise<{
   // Parse V2 pools
   if (v2Pools) {
     const raw = extractPoolArray(v2Pools);
+    // [C88] Diagnostic: log first pool's keys so we can see what the API actually returns
+    if (raw.length > 0) {
+      const sample = raw[0];
+      log.info("DeFiStats", `V2 sample pool keys: ${Object.keys(sample).join(", ")}`);
+      log.info("DeFiStats", `V2 sample tokenA keys: ${sample.tokenA ? Object.keys(sample.tokenA).join(", ") : "N/A"}`);
+      log.info("DeFiStats", `V2 sample tvl=${sample.tvl}, tvlUSD=${sample.tvlUSD}, tvlUsd=${sample.tvlUsd}, liquidity=${String(sample.liquidity).slice(0, 20)}, volume24h=${sample.volume24h}, apr=${sample.apr}`);
+    }
     const parsed = raw.map(parseV2Pool).filter((p): p is LivePool => p !== null);
     allPools.push(...parsed);
     log.info("DeFiStats", `V2 pools: ${parsed.length} pools from ${raw.length} entries`);
