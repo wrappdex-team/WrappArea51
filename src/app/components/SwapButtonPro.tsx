@@ -51,6 +51,8 @@ interface SwapButtonProProps {
   /** [C81-01] Called on pointerEnter to pre-warm WC relay before click */
   onHover?: () => void;
   isDark: boolean;
+  /** [C100-S11] Pre-flight approval status: true=needs approve popup, false=1-click swap, null=unknown */
+  approvalNeeded?: boolean | null;
 }
 
 export const SwapButtonPro = memo(function SwapButtonPro({
@@ -73,6 +75,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   onReset,
   onHover,
   isDark,
+  approvalNeeded,
 }: SwapButtonProProps) {
   return (
     <div className="mt-5 space-y-2">
@@ -315,7 +318,13 @@ export const SwapButtonPro = memo(function SwapButtonPro({
               ) : (
                 <>
                   <Zap className="w-4 h-4" />
-                  Swap {inputToken.symbol}
+                  {approvalNeeded === false ? (
+                    <>Swap {inputToken.symbol}</>
+                  ) : approvalNeeded === true ? (
+                    <>Approve & Swap {inputToken.symbol}</>
+                  ) : (
+                    <>Swap {inputToken.symbol}</>
+                  )}
                   <ArrowRight className="w-4 h-4" />
                   {outputToken.symbol}
                 </>
@@ -324,6 +333,31 @@ export const SwapButtonPro = memo(function SwapButtonPro({
           </motion.button>
         )}
       </AnimatePresence>
+
+      {/* [C100-S11] Pre-flight popup count indicator */}
+      {status === "idle" && canSwap && !isWrapUnwrap && approvalNeeded !== null && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className={`flex items-center justify-center gap-1.5 text-[11px] font-medium ${
+            approvalNeeded === false
+              ? isDark ? "text-emerald-400/70" : "text-emerald-600/70"
+              : isDark ? "text-amber-400/60" : "text-amber-600/60"
+          }`}
+        >
+          {approvalNeeded === false ? (
+            <>
+              <CheckCircle2 className="w-3 h-3" />
+              1-click swap — already approved
+            </>
+          ) : (
+            <>
+              <Zap className="w-3 h-3" />
+              2 signatures — approve + swap
+            </>
+          )}
+        </motion.div>
+      )}
     </div>
   );
 });

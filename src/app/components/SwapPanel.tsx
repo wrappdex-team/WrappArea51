@@ -34,6 +34,7 @@ import {
   getPoolRoutes,
   fetchPoolRoutes,
   executeSaucerSwap,
+  checkSwapPrerequisites,
   formatUsdCompact,
   getHashScanTxUrl,
   isHbarWhbarPair,
@@ -49,6 +50,7 @@ import {
   type PoolRoute,
   type SwapResult,
   type SwapOptions,
+  type SwapPrerequisites,
 } from "../utils/saucerswap";
 import { prewarmRelay, startRelayKeepalive } from "../utils/hashpack";
 import {
@@ -126,6 +128,37 @@ export function SwapPanel() {
     window.addEventListener("swap-step", handler);
     return () => window.removeEventListener("swap-step", handler);
   }, []);
+
+  // ── [C100-S11] Pre-flight swap prerequisites ──
+  // Runs in parallel with quote fetching to probe allowance + association
+  // status BEFORE the user clicks "Swap". Tells the UI exactly how many
+  // wallet popups to expect: 1 (swap only) or 2 (approve + swap).
+  const [swapPrereqs, setSwapPrereqs] = useState<SwapPrerequisites | null>(null);
+  useEffect(() => {
+    if (!isWalletConnected || !hashPackSession?.accountId || isWrapUnwrap) {
+      setSwapPrereqs(null);
+      return;
+    }
+    const amt = parseFloat(inputAmount);
+    if (!amt || amt <= 0) { setSwapPrereqs(null); return; }
+
+    let cancelled = false;
+    const maxAutoAssoc = hederaAccount?.maxAutoAssociations;
+
+    // Debounce: 400ms after user stops typing
+    const timer = setTimeout(() => {
+      checkSwapPrerequisites(
+        inputToken.symbol, outputToken.symbol, inputAmount,
+        hashPackSession.accountId, hederaNetwork, maxAutoAssoc,
+      ).then(prereqs => {
+        if (!cancelled) setSwapPrereqs(prereqs);
+      }).catch(() => {
+        if (!cancelled) setSwapPrereqs(null);
+      });
+    }, 400);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [inputToken.symbol, outputToken.symbol, inputAmount, hashPackSession?.accountId, hederaNetwork, isWalletConnected, isWrapUnwrap, hederaAccount?.maxAutoAssociations]);
 
   // ── Success overlay state ──
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -474,7 +507,11 @@ export function SwapPanel() {
         }
       } else {
         // [C53] Pass infinite approval preference — skips approve popup if allowance sufficient
-        const swapOpts: SwapOptions = { infiniteApproval };
+        // [C100-S11] Pass maxAutoAssociations — skips association popups if account has auto-association
+        const swapOpts: SwapOptions = {
+          infiniteApproval,
+          maxAutoAssociations: hederaAccount?.maxAutoAssociations,
+        };
         result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork, swapOpts);
       }
 
@@ -553,7 +590,7 @@ export function SwapPanel() {
       setSwapError(err?.message || "Unknown error");
       toast.error(err?.message || "Swap failed");
     }
-  }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances, infiniteApproval]);
+  }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances, infiniteApproval, hederaAccount?.maxAutoAssociations]);
 
   // ── [C28-04] Auto-close success/error states after 5 seconds ──
   // Prevents stale status from blocking the UI. The user can still
@@ -768,6 +805,7 @@ export function SwapPanel() {
               onReset={handleResetSwap}
               onHover={prewarmRelay}
               isDark={isDark}
+              approvalNeeded={swapPrereqs?.approvalNeeded ?? null}
             />
 
             {/* Success Celebration Overlay */}

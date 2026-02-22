@@ -19,6 +19,8 @@ export interface HederaAccountInfo {
   deleted: boolean;
   tokens: HederaTokenBalance[];
   nfts: number;
+  /** [C100-S11] Max automatic token associations (-1 = unlimited, 0 = none). */
+  maxAutoAssociations: number;
   stakingInfo: {
     stakedNodeId: number | null;
     stakedAccountId: string | null;
@@ -102,6 +104,8 @@ export async function fetchAccountInfo(
       deleted: data.deleted || false,
       tokens,
       nfts: data.balance?.tokens?.filter((t: { token_id: string }) => t.balance === 0).length ?? 0,
+      maxAutoAssociations: typeof data.max_automatic_token_associations === "number"
+        ? data.max_automatic_token_associations : 0,
       stakingInfo: {
         stakedNodeId: data.staked_node_id ?? null,
         stakedAccountId: data.staked_account_id ?? null,

@@ -21,6 +21,7 @@ import {
   TOKEN_BY_SYMBOL,
   TOKEN_BY_HTS_ID,
   resolveToken,
+  resolveTokenByHtsId,
   getSaucerswapRoutingEvmAddress,
   getSaucerswapRoutingId,
   evmAddressToHtsId,
@@ -29,7 +30,7 @@ import {
 import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion } from "./pools";
 
-// ══════════════════════════════════════════════════════���═══════════════
+// ═════════════════════════════════════════════════════════════════════
 // ── [C82] API-BASED POOL GRAPH ROUTING ──────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 //
@@ -149,6 +150,115 @@ function resolveGraphKey(htsId: string, graph: PoolGraph): string {
   return htsId;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ── [C100-S6] ALIAS-AWARE GRAPH HELPERS ─────────────────────────────
+//
+// Bridge tokens exist in the graph under TWO different HTS IDs:
+//   • V1 pools use the CANONICAL ID  (e.g. LINK 0.0.1055495)
+//   • V2 pools use the ALIAS ID      (e.g. LINK 0.0.10152778)
+//
+// These are separate nodes in the graph. Without alias-awareness,
+// BFS starting from one node misses edges on the other, causing:
+//   • V2 routes invisible when starting from canonical ID
+//   • V1 routes invisible when starting from alias ID
+//
+// These helpers merge edges from both nodes for comprehensive routing
+// and resolve EVM addresses correctly per pool version.
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * [C100-S6] Get ALL edges for a token, merging canonical and alias nodes.
+ *
+ * For a bridge token like LINK:
+ *   • Canonical node (0.0.1055495) has V1 edges
+ *   • Alias node (0.0.10152778) has V2 edges
+ * This function returns edges from BOTH, enabling BFS to find routes
+ * through either pool version from any starting point.
+ */
+function getAllEdges(htsId: string, graph: PoolGraph): PoolEdge[] {
+  const edges: PoolEdge[] = [];
+  const seen = new Set<string>(); // Dedup edges by otherToken+version+fee
+
+  const addEdges = (nodeId: string) => {
+    const nodeEdges = graph.get(nodeId);
+    if (!nodeEdges) return;
+    for (const e of nodeEdges) {
+      const key = `${e.otherToken}:${e.version}:${e.fee}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push(e);
+      }
+    }
+  };
+
+  // 1. Direct lookup
+  addEdges(htsId);
+
+  // 2. Cross-reference via token registry
+  const token = resolveTokenByHtsId(htsId);
+  if (token) {
+    // If we were given the alias, also check canonical
+    if (token.htsId !== htsId) addEdges(token.htsId);
+    // If we were given the canonical, also check alias
+    const aliasId = getSaucerswapRoutingId(token);
+    if (aliasId !== htsId) addEdges(aliasId);
+  }
+
+  return edges;
+}
+
+/**
+ * [C100-S6] Get ALL known graph keys (canonical + alias) for a token.
+ * Used for matching: when checking "does this edge connect to the output?",
+ * we need to check against both the canonical and alias output keys.
+ */
+function getAllGraphKeys(htsId: string, graph: PoolGraph): Set<string> {
+  const keys = new Set<string>();
+  keys.add(htsId);
+
+  const token = resolveTokenByHtsId(htsId);
+  if (token) {
+    if (graph.has(token.htsId)) keys.add(token.htsId);
+    const aliasId = getSaucerswapRoutingId(token);
+    if (graph.has(aliasId)) keys.add(aliasId);
+  }
+
+  // Also check reverse: if htsId is canonical, check if alias exists in graph
+  const directToken = TOKEN_BY_HTS_ID.get(htsId);
+  if (directToken?.saucerswapAliasId && graph.has(directToken.saucerswapAliasId)) {
+    keys.add(directToken.saucerswapAliasId);
+  }
+
+  return keys;
+}
+
+/**
+ * [C100-S6] Resolve a graph key to the correct EVM address for a given pool version.
+ *
+ * V2 pools use ERC20Wrapper (alias) addresses — the packed path for exactInput
+ * MUST encode these addresses, not canonical bridge token addresses.
+ * V1 pools use canonical bridge token addresses.
+ *
+ * Priority:
+ *   1. Look up token in registry (static + dynamic)
+ *   2. If found, use getSaucerswapRoutingId for V2, token.htsId for V1
+ *   3. If not found, use graphKey as-is (likely already correct from API data)
+ */
+function resolveEvmForVersion(graphKey: string, version: "v1" | "v2"): string {
+  const token = resolveTokenByHtsId(graphKey);
+  if (token) {
+    if (version === "v2") {
+      // V2: use alias EVM address (ERC20Wrapper that V2 pools are paired with)
+      return htsIdToEvmAddress(getSaucerswapRoutingId(token));
+    } else {
+      // V1: use canonical EVM address (original bridge token)
+      return htsIdToEvmAddress(token.htsId);
+    }
+  }
+  // Not in registry — graphKey came from pool API, should already be correct
+  return htsIdToEvmAddress(graphKey);
+}
+
 /**
  * [C82] Find the optimal route through the pool graph using BFS.
  *
@@ -179,11 +289,11 @@ export async function findRouteViaGraph(
   log.info("PoolGraph", `Finding route: ${inputHtsId} (graph key: ${inKey}) → ${outputHtsId} (graph key: ${outKey})`);
 
   // ── Step 1: Check for direct pool ──
-  const inEdges = graph.get(inKey) || [];
+  const inEdges = getAllEdges(inKey, graph);
   let bestDirect: PoolEdge | null = null;
 
   for (const edge of inEdges) {
-    if (edge.otherToken === outKey) {
+    if (getAllGraphKeys(edge.otherToken, graph).has(outKey)) {
       if (!bestDirect || (edge.version === "v2" && bestDirect.version !== "v2")) {
         bestDirect = edge;
       }
@@ -207,13 +317,18 @@ export async function findRouteViaGraph(
   };
   const candidates: TwoHopRoute[] = [];
 
+  // [C100-S6] Pre-compute all known keys for input/output to avoid
+  // self-loops when intermediary is a canonical/alias twin of input/output.
+  const inKeys = getAllGraphKeys(inKey, graph);
+  const outKeys = getAllGraphKeys(outKey, graph);
+
   for (const hop1 of inEdges) {
     const midKey = hop1.otherToken;
-    if (midKey === inKey || midKey === outKey) continue;
+    if (inKeys.has(midKey) || outKeys.has(midKey)) continue;
 
-    const midEdges = graph.get(midKey) || [];
+    const midEdges = getAllEdges(midKey, graph);
     for (const hop2 of midEdges) {
-      if (hop2.otherToken === outKey) {
+      if (outKeys.has(hop2.otherToken)) {
         // Score: V2+V2=0, V2+V1=1, V1+V2=1, V1+V1=2
         const score = (hop1.version === "v1" ? 1 : 0) + (hop2.version === "v1" ? 1 : 0);
         candidates.push({ mid: midKey, hop1, hop2, score });
@@ -236,6 +351,23 @@ export async function findRouteViaGraph(
   const category = best.score === 0 ? "all-V2" : best.score === 2 ? "all-V1" : "mixed";
   log.info("PoolGraph", `Best 2-hop route via ${best.mid}: ${best.hop1.version}(fee=${best.hop1.fee}) → ${best.hop2.version}(fee=${best.hop2.fee}) [${category}] (${candidates.length} total candidates)`);
 
+  // [C100-S6] Convert graph HTS IDs to version-appropriate EVM addresses.
+  // V2 hops MUST use alias (ERC20Wrapper) addresses in the packed path.
+  // V1 hops MUST use canonical (original bridge token) addresses.
+  // For all-V2 routes (score=0): all tokens resolve to alias EVM.
+  // For all-V1 routes (score=2): all tokens resolve to canonical EVM.
+  // For mixed routes: each token resolves based on the hop version it
+  // participates in. Since mixed routes go to V1 execution anyway,
+  // canonical is used for safety.
+  const routeVersion: "v1" | "v2" = best.score === 0 ? "v2" : "v1";
+  const inEvm = resolveEvmForVersion(inKey, best.hop1.version);
+  const midEvm = resolveEvmForVersion(best.mid, routeVersion);
+  const outEvm = resolveEvmForVersion(outKey, best.hop2.version);
+
+  if (routeVersion === "v2") {
+    log.info("PoolGraph", `[C100-S6] V2 alias resolution: in=${inKey}→${evmAddressToHtsId(inEvm)}, mid=${best.mid}→${evmAddressToHtsId(midEvm)}, out=${outKey}→${evmAddressToHtsId(outEvm)}`);
+  }
+
   // Convert graph HTS IDs to EVM addresses for swap-engine compatibility
   return {
     direct: null,
@@ -244,7 +376,7 @@ export async function findRouteViaGraph(
         { version: best.hop1.version, feeTier: best.hop1.fee, poolAddress: best.hop1.poolAddress },
         { version: best.hop2.version, feeTier: best.hop2.fee, poolAddress: best.hop2.poolAddress },
       ],
-      tokens: [htsIdToEvmAddress(inKey), htsIdToEvmAddress(best.mid), htsIdToEvmAddress(outKey)],
+      tokens: [inEvm, midEvm, outEvm],
     },
   };
 }

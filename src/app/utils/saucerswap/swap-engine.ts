@@ -25,6 +25,7 @@ import type { HederaNetwork, AllowedToken } from "./tokens";
 import {
   resolveToken, getWhbarToken, htsIdToEvmAddress, evmAddressToHtsId,
   SAUCERSWAP_TOKENS, getSaucerswapRoutingId, getSaucerswapRoutingEvmAddress,
+  resolveTokenByHtsId,
 } from "./tokens";
 import {
   SAUCERSWAP_V1_ROUTER_CANDIDATES, SAUCERSWAP_V2_ROUTER,
@@ -45,7 +46,7 @@ import { detectPoolVersion, resolveAccountEvmAddress, resolveContractEvmAddress 
 import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute, findRouteViaGraph } from "./routing";
 import type { RawQuote } from "./quotes";
 import { fetchSaucerSwapQuote, fetchV2RouterQuote, fetchRouterQuote } from "./quotes";
-import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance } from "./balances";
+import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance, fetchMaxAutoAssociations } from "./balances";
 import { parseTokenAmount } from "./helpers";
 import { verifyIsContract } from "./verification";
 
@@ -98,12 +99,31 @@ async function approveIfNeeded(params: {
   tokenSymbol: string;
   stepNumber: number;
   totalSteps: number;
+  /** [C100-S7] Router version for diagnostics — validates the right router is targeted */
+  routerVersion?: "v1" | "v2";
 }): Promise<ApproveResult> {
   const {
     tokenHtsId, ownerAccountId, spenderAccountId,
     rawInput, infiniteApproval, network, tokenSymbol,
-    stepNumber, totalSteps,
+    stepNumber, totalSteps, routerVersion,
   } = params;
+
+  // ┌─────────────────────────────────────────────────────────────────────┐
+  // │  [C100-S7] ROUTER TARGETING ASSERTION                              │
+  // │                                                                     │
+  // │  V2 swaps MUST approve V2 Router (0.0.3949434 mainnet).            │
+  // │  V1 swaps MUST approve V1 Router (discovered at runtime).          │
+  // │  If routerVersion is provided, validate the spender matches.       │
+  // │  The HTS precompile checks allowances by canonical token ID +      │
+  // │  spender account ID — wrong spender = CONTRACT_REVERT_EXECUTED.    │
+  // └─────────────────────────────────────────────────────────────────────┘
+  if (routerVersion) {
+    const expectedV2 = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
+    if (routerVersion === "v2" && spenderAccountId !== expectedV2) {
+      console.error(`[C100-S7] CRITICAL: V2 swap targeting wrong router! Expected ${expectedV2}, got ${spenderAccountId}`);
+    }
+    console.log(`[C100-S7] Approval target: ${tokenSymbol} (${tokenHtsId}) → ${routerVersion.toUpperCase()} Router ${spenderAccountId}`);
+  }
 
   // ── Check existing allowance via Mirror Node ──
   const existingAllowance = await fetchTokenAllowance(
@@ -160,6 +180,33 @@ async function approveIfNeeded(params: {
       userCancelled: approveResult.userCancelled,
       existingAllowance, approvedAmount: 0,
     };
+  }
+
+  // ── [C100-S7] Post-approval verification ──
+  // Re-query the Mirror Node to confirm the allowance was set correctly.
+  // Non-blocking: if verification fails, proceed anyway (the swap TX will
+  // revert with a clear error if the allowance is actually missing).
+  // Mirror Node may have a brief propagation delay — retry once after 1s.
+  if (routerVersion) {
+    try {
+      let verifiedAllowance = await fetchTokenAllowance(
+        ownerAccountId, tokenHtsId, spenderAccountId, network,
+      );
+      if (verifiedAllowance < rawInput) {
+        // Mirror Node may lag — retry once after a short delay
+        await new Promise(r => setTimeout(r, 1200));
+        verifiedAllowance = await fetchTokenAllowance(
+          ownerAccountId, tokenHtsId, spenderAccountId, network,
+        );
+      }
+      if (verifiedAllowance >= rawInput) {
+        console.log(`[C100-S7] ✓ Post-approval verified: ${tokenSymbol} allowance ${verifiedAllowance} >= ${rawInput} for ${routerVersion.toUpperCase()} Router ${spenderAccountId}`);
+      } else {
+        console.warn(`[C100-S7] ⚠ Post-approval check: ${tokenSymbol} allowance ${verifiedAllowance} < ${rawInput} for ${spenderAccountId} — Mirror Node may be lagging, proceeding anyway`);
+      }
+    } catch (verifyErr: any) {
+      console.log(`[C100-S7] Post-approval verification skipped: ${verifyErr?.message || verifyErr}`);
+    }
   }
 
   return {
@@ -340,6 +387,14 @@ async function executeSaucerSwapV2Direct(
     console.log("[HBAR.h] MinOutput:", minOutput, `(quote: ${quote?.amountOut ?? "none"}, source: ${quote?.source ?? "none"})`);
     console.log("[HBAR.h] Slippage:", effectiveSlippageLog, `% (requested: ${slippagePct}%) | Deadline:`, deadline);
     console.log("[HBAR.h] Mode:", isInputNative ? "HBAR→Token(V2)" : isOutputNative ? "Token→HBAR(V2)" : "Token→Token(V2)");
+    // [C100-S7] Approval chain diagnostics for V2 direct swaps
+    if (!isInputNative) {
+      console.log(`[C100-S7] ── V2 DIRECT APPROVAL CHAIN ──`);
+      console.log(`[C100-S7]   Token: ${inputToken.symbol} (canonical HTS ID: ${inputToken.htsId})`);
+      console.log(`[C100-S7]   Alias: ${inputToken.saucerswapAliasId || "none (same as canonical)"}`);
+      console.log(`[C100-S7]   Spender: V2 Router ${v2RouterId}`);
+      console.log(`[C100-S7]   Amount: ${rawInput} (raw smallest unit)`);
+    }
     console.log("[HBAR.h] ═══════════════════════════════════════════");
 
     // ── Token association check ──
@@ -349,7 +404,14 @@ async function executeSaucerSwapV2Direct(
     //   stays in the router's EVM balance and is unwrapped atomically.
     //   The user never receives WHBAR, so no association required.
     // - HBAR→Token: handled separately (isInputNative block).
+    // [C100-S11] Auto-association: if account has maxAutoAssociations != 0,
+    // Hedera auto-associates on first transfer — skip the popup entirely.
+    const _v2AutoAssoc = options?.maxAutoAssociations;
+    const _v2HasAutoAssoc = _v2AutoAssoc === -1 || (_v2AutoAssoc !== undefined && _v2AutoAssoc > 0);
     if (!isOutputNative) {
+      if (_v2HasAutoAssoc) {
+        console.log(`[C100-S11] V2: Auto-association enabled (maxAutoAssociations=${_v2AutoAssoc}) — skipping output token association popup for ${outputToken.symbol}`);
+      } else {
       const assocHtsId = outputToken.htsId;
       const assocSymbol = outputToken.symbol;
 
@@ -384,6 +446,7 @@ async function executeSaucerSwapV2Direct(
         }
       } else {
         console.log(`[HBAR.h] V2: ${assocSymbol} association confirmed ✓`);
+      }
       }
     }
 
@@ -563,14 +626,26 @@ async function executeSaucerSwapV2Direct(
       // resolved correctly regardless of EVM address format.
       //
       // Evidence: SaucerSwap.finance SAUCE→HBAR and USDC→HBAR both use
-      // AccountAllowanceApproveTransaction targeting V1 RouterV3 (0.0.3045981).
+      // AccountAllowanceApproveTransaction with native HTS token IDs.
+      // [C100-S7] V2 swaps target V2 Router (0.0.3949434), NOT V1 Router.
+      // V1 swaps target V1 RouterV3 (0.0.3045981). Each router checks
+      // allowances independently via the HTS precompile.
       //
       // ATOMIC: If multicall reverts, no tokens leave the user's wallet.
 
       // ── Step 1: [C53] Smart approve — skips if allowance sufficient ──
+      // [C100-S7] Approval uses CANONICAL token HTS ID (inputToken.htsId).
+      // The HTS precompile checks allowances by canonical ID + spender.
+      // Even though V2 pools may use alias (ERC20Wrapper) addresses in the
+      // packed path, the SwapRouter's transferFrom ultimately resolves to
+      // the canonical token's allowance table.
       const infiniteApproval = !!(options?.infiniteApproval);
+      const canonicalTokenId = inputToken.htsId;
+      if (inputToken.saucerswapAliasId && inputToken.saucerswapAliasId !== canonicalTokenId) {
+        console.log(`[C100-S7] V2 Direct: canonical=${canonicalTokenId}, alias=${inputToken.saucerswapAliasId} — approving CANONICAL for V2 Router`);
+      }
       const v2ApproveResult = await approveIfNeeded({
-        tokenHtsId: inputToken.htsId,
+        tokenHtsId: canonicalTokenId,
         ownerAccountId: accountId,
         spenderAccountId: v2RouterId,
         rawInput,
@@ -579,6 +654,7 @@ async function executeSaucerSwapV2Direct(
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
         totalSteps: 2,
+        routerVersion: "v2",
       });
 
       if (!v2ApproveResult.success) {
@@ -617,7 +693,15 @@ async function executeSaucerSwapV2Direct(
         //
         // SENIOR DEV NOTE: recipient MUST be the router's EVM address,
         // NOT the user's. The unwrapWETH9 function checks address(this).balance.
-        console.log(`[HBAR.h] V2 Step ${v2SwapStep}: multicall(exactInputSingle + unwrapWETH9) — Token→HBAR [C34-01]`);
+        // [C100-S9] WHBAR contract verification — log the split architecture
+        // for post-mortem diagnostics if the multicall reverts.
+        console.log(`[C100-S9] V2 Token→HBAR multicall structure:`);
+        console.log(`[C100-S9]   ┌ exactInputSingle(${inputToken.symbol}→WHBAR, recipient=ROUTER ${routerEvmAddress})`);
+        console.log(`[C100-S9]   └ unwrapWETH9(0, user=${recipientEvmAddress})`);
+        console.log(`[C100-S9]   WHBAR: contract=0.0.1456985 (withdraw), token=${whbar.htsId} (ERC-20)`);
+        console.log(`[C100-S9]   tokenOut EVM: ${tokenOutEvm} (should be WHBAR long-zero)`);
+
+        console.log(`[HBAR.h] V2 Step ${v2SwapStep}: multicall(exactInputSingle + unwrapWETH9) — Token→HBAR [C34-01/C100-S9]`);
         window.dispatchEvent(new CustomEvent("swap-step", { detail: {
           step: v2SwapStep, total: v2TotalSteps,
           description: `Swap ${inputToken.symbol} → HBAR via V2 Router (atomic)`,
@@ -939,16 +1023,45 @@ async function executeSaucerSwapV2MultiHop(
   try {
     const v2RouterId = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
 
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [C100-S6] V2 PACKED PATH ALIAS RESOLUTION                         │
+    // │                                                                     │
+    // │  V2 pools use ERC20Wrapper (alias) addresses for bridge tokens.     │
+    // │  The packed path for exactInput MUST encode these alias addresses,  │
+    // │  not canonical bridge token addresses.                              │
+    // │                                                                     │
+    // │  Safety net: even if the route source (findRouteViaGraph or         │
+    // │  findBestMultiHopRoute) already provided alias addresses, this      │
+    // │  step re-validates each token to guarantee correctness.             │
+    // │  Cost: negligible (in-memory registry lookups, no network calls).   │
+    // └─────────────────────────────────────────────────────────────────────┘
+    const v2PathTokens = route.tokens.map((tokenEvm, idx) => {
+      const htsId = evmAddressToHtsId(tokenEvm);
+      // Look up via resolveTokenByHtsId (checks static + dynamic registries)
+      const token = resolveTokenByHtsId(htsId)
+        || SAUCERSWAP_TOKENS.find(t => t.saucerswapAliasId === htsId);
+      if (token) {
+        const aliasEvm = getSaucerswapRoutingEvmAddress(token);
+        if (aliasEvm.toLowerCase() !== tokenEvm.toLowerCase()) {
+          console.log(`[HBAR.h] [C100-S6] V2 path token[${idx}]: ${htsId} → ${evmAddressToHtsId(aliasEvm)} (alias applied)`);
+        }
+        return aliasEvm;
+      }
+      // Unknown token (API-only or V2-native) — use as-is
+      return tokenEvm;
+    });
+
     // Build packed path: token0 + fee0 + token1 + fee1 + token2 + ...
     const pathHops: { tokenEvm: string; fee: number }[] = [];
-    for (let i = 0; i < route.tokens.length; i++) {
+    for (let i = 0; i < v2PathTokens.length; i++) {
       pathHops.push({
-        tokenEvm: route.tokens[i],
+        tokenEvm: v2PathTokens[i],
         fee: i < route.hops.length ? (route.hops[i].feeTier || 3000) : 0,
       });
     }
     const packedPath = encodeSwapPath(pathHops);
-    console.log(`[HBAR.h] V2 Multi-hop packed path: ${packedPath.length} bytes, ${route.tokens.length} tokens`);
+    console.log(`[HBAR.h] [C100-S6] V2 Multi-hop packed path: ${packedPath.length} bytes, ${v2PathTokens.length} tokens, ` +
+      `addrs: ${v2PathTokens.map(a => evmAddressToHtsId(a)).join(" → ")}`);
 
     // ── [C77-04] Quote: V2 QuoterV2 on-chain multi-hop quote ──
     // Previously used price-based estimation only. Now we first try
@@ -1044,12 +1157,28 @@ async function executeSaucerSwapV2MultiHop(
     console.log("[HBAR.h] MinOutput:", minOutput, `(estimate: ${estimatedOutput}, slippage: ${effectiveSlippage}%)`);
     console.log("[HBAR.h] V2 Router:", v2RouterId);
     console.log("[HBAR.h] Mode:", isInputNative ? "HBAR→Multi→Token" : "Token→Multi→Token");
+    // [C100-S7] Approval chain diagnostics — trace the exact approval parameters
+    // that will be used for the HTS precompile allowance check.
+    if (!isInputNative) {
+      console.log(`[C100-S7] ── APPROVAL CHAIN ──`);
+      console.log(`[C100-S7]   Token: ${inputToken.symbol} (canonical HTS ID: ${inputToken.htsId})`);
+      console.log(`[C100-S7]   Alias: ${inputToken.saucerswapAliasId || "none (same as canonical)"}`);
+      console.log(`[C100-S7]   Spender: V2 Router ${v2RouterId}`);
+      console.log(`[C100-S7]   Amount: ${rawInput} (raw smallest unit)`);
+      console.log(`[C100-S7]   Owner: ${accountId}`);
+    }
     console.log("[HBAR.h] ═══════════════════════════════════════════");
 
     // ── Token association check for output [C30-01] ──
     // Token→HBAR with multicall: WHBAR stays in router, no user association needed.
     // Token→Token: user must be associated with output token.
+    // [C100-S11] Auto-association: skip popup if account has auto-association enabled.
+    const _v2mhAutoAssoc = options?.maxAutoAssociations;
+    const _v2mhHasAutoAssoc = _v2mhAutoAssoc === -1 || (_v2mhAutoAssoc !== undefined && _v2mhAutoAssoc > 0);
     if (!isOutputNative) {
+      if (_v2mhHasAutoAssoc) {
+        console.log(`[C100-S11] V2 Multi-hop: Auto-association enabled (maxAutoAssociations=${_v2mhAutoAssoc}) — skipping output token association popup for ${outputToken.symbol}`);
+      } else {
       const assocHtsId = outputToken.htsId;
       const assocSymbol = outputToken.symbol;
 
@@ -1078,6 +1207,7 @@ async function executeSaucerSwapV2MultiHop(
             executionVenue: "saucerswap-v2",
           };
         }
+      }
       }
     }
 
@@ -1148,9 +1278,18 @@ async function executeSaucerSwapV2MultiHop(
       // ═══ Token → Multi-hop → Token or HBAR via V2 ═══
 
       // ── Step 1: [C53] Smart approve — skips if allowance sufficient ──
+      // [C100-S7] V2 multi-hop approval uses:
+      //   • Token: CANONICAL HTS ID (inputToken.htsId) — NOT the alias
+      //   • Spender: V2 Router (0.0.3949434) — NOT V1 Router
+      // The HTS precompile checks allowances by canonical ID, even though
+      // the V2 packed path encodes alias (ERC20Wrapper) addresses.
       const mhInfiniteApproval = !!(options?.infiniteApproval);
+      const mhCanonicalTokenId = inputToken.htsId;
+      if (inputToken.saucerswapAliasId && inputToken.saucerswapAliasId !== mhCanonicalTokenId) {
+        console.log(`[C100-S7] V2 Multi-hop: canonical=${mhCanonicalTokenId}, alias=${inputToken.saucerswapAliasId} — approving CANONICAL for V2 Router`);
+      }
       const mhApproveResult = await approveIfNeeded({
-        tokenHtsId: inputToken.htsId,
+        tokenHtsId: mhCanonicalTokenId,
         ownerAccountId: accountId,
         spenderAccountId: v2RouterId,
         rawInput,
@@ -1159,6 +1298,7 @@ async function executeSaucerSwapV2MultiHop(
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
         totalSteps: 2,
+        routerVersion: "v2",
       });
 
       if (!mhApproveResult.success) {
@@ -1180,7 +1320,14 @@ async function executeSaucerSwapV2MultiHop(
         // [C34-01] Same multicall pattern as single-hop Token→HBAR:
         // multicall(exactInput(recipient=ROUTER) + unwrapWETH9(0, user))
         // swapFunctionData already has recipient=routerEvmAddress (set above via [C34-01]).
-        console.log(`[HBAR.h] V2 Multi-hop Step ${mhSwapStep}: multicall(exactInput + unwrapWETH9) — Token→HBAR [C34-01]`);
+        // [C100-S9] WHBAR contract verification for multi-hop Token→HBAR
+        console.log(`[C100-S9] V2 Multi-hop Token→HBAR multicall structure:`);
+        console.log(`[C100-S9]   ┌ exactInput(packed_path, recipient=ROUTER ${routerEvmAddress})`);
+        console.log(`[C100-S9]   └ unwrapWETH9(0, user=${recipientEvmAddress})`);
+        console.log(`[C100-S9]   WHBAR: contract=0.0.1456985 (withdraw), token=${whbar.htsId} (ERC-20)`);
+        console.log(`[C100-S9]   Route: ${route.tokens.map(t => evmAddressToHtsId(t)).join(" → ")}`);
+
+        console.log(`[HBAR.h] V2 Multi-hop Step ${mhSwapStep}: multicall(exactInput + unwrapWETH9) — Token→HBAR [C34-01/C100-S9]`);
         window.dispatchEvent(new CustomEvent("swap-step", { detail: {
           step: mhSwapStep, total: mhTotalSteps,
           description: `Swap ${inputToken.symbol} → HBAR via V2 Router (multi-hop, atomic)`,
@@ -1191,7 +1338,7 @@ async function executeSaucerSwapV2MultiHop(
 
         console.log(`[HBAR.h] V2 Multi-hop: multicall calldata ${multicallData.length}B ` +
           `(swap=${swapFunctionData.length}B + unwrap=${unwrapCalldata.length}B) ` +
-          `swapRecipient=${routerEvmAddress} unwrapRecipient=${recipientEvmAddress} [C34-01]`);
+          `swapRecipient=${routerEvmAddress} unwrapRecipient=${recipientEvmAddress} [C34-01/C100-S9]`);
 
         const multicallTx = new ContractExecuteTransaction()
           .setContractId(ContractId.fromString(v2RouterId))
@@ -1397,71 +1544,222 @@ async function executeSaucerSwapDirect(
     } // end fallback if (!poolVersionInfo && !multiHopRoute)
 
     // ┌─────────────────────────────────────────────────────────────────────┐
-    // │  [C36-02] TOKEN→HBAR: FORCE V1 ROUTING                            │
+    // │  [C100 Step 9] TOKEN→HBAR: SMART V2-FIRST ROUTING                 │
     // │                                                                    │
-    // │  SaucerSwap.finance routes ALL Token→HBAR swaps through V1         │
-    // │  RouterV3 (0.0.3045981) using swapExactTokensForETH, NOT          │
-    // │  through V2 multicall(exactInputSingle + unwrapWETH9).             │
+    // │  Replaces C36-02 blanket V1 force. The original C36 revert was    │
+    // │  caused by using address(0) as a recipient sentinel (fixed in     │
+    // │  C34-01). The V2 multicall pattern is now correct:                │
     // │                                                                    │
-    // │  The V2 multicall approach causes CONTRACT_REVERT_EXECUTED on      │
-    // │  Hedera — likely because SaucerSwap's WHBAR has a split            │
-    // │  contract/token architecture (contract 0.0.1456985 vs HTS token    │
-    // │  0.0.1456986) that differs from standard WETH9 assumed by the      │
-    // │  Uniswap V3 SwapRouter's unwrapWETH9 function.                     │
+    // │    multicall([                                                     │
+    // │      exactInput/exactInputSingle(recipient = ROUTER),             │
+    // │      unwrapWETH9(0, userAddress)                                  │
+    // │    ])                                                              │
     // │                                                                    │
-    // │  Fix: When output is native HBAR, override any V2 pool detection   │
-    // │  to V1. The V1 swapExactTokensForETH handles WHBAR→HBAR unwrap    │
-    // │  internally and is proven working on SaucerSwap mainnet.           │
+    // │  WHBAR architecture on SaucerSwap:                                │
+    // │    • Contract: 0.0.1456985 (handles deposit/withdraw)             │
+    // │    • HTS Token: 0.0.1456986 (ERC-20 via HTS precompile)          │
+    // │    • V2 Router WETH9 address → 0.0.1456985 contract              │
+    // │    • unwrapWETH9 calls WHBAR contract's withdraw(), which burns   │
+    // │      WHBAR tokens and sends native HBAR to the user               │
     // │                                                                    │
-    // │  Evidence: USDC→HBAR via V2 multicall reverted (C36 smoke test),   │
-    // │  while SaucerSwap.finance's identical swap succeeds via V1.         │
+    // │  Strategy (mirrors C100-S5 Token→Token pattern):                  │
+    // │    1. Try V2 execution first (better pricing, concentrated liq)   │
+    // │    2. On success → return immediately                             │
+    // │    3. On user cancel → return (respect user intent)               │
+    // │    4. On CONTRACT_REVERT → fall through to V1 execution           │
+    // │    5. V1 swapExactTokensForETH as safety net (proven on mainnet)  │
     // └─────────────────────────────────────────────────────────────────────┘
+    let _v2TokenHbarError: string | undefined;
+
     if (isOutputNative && !isInputNative) {
-      if (poolVersionInfo?.version === "v2") {
-        console.log(`[HBAR.h] [C36-02] Token→HBAR: overriding V2 pool → V1 (matches SaucerSwap.finance production)`);
-        console.log(`[HBAR.h]   V2 pool was: fee=${poolVersionInfo.feeTier}, addr=${poolVersionInfo.poolAddress}`);
-        console.log(`[HBAR.h]   Reason: V2 multicall(exactInputSingle+unwrapWETH9) reverts on Hedera`);
+      // ── V2 Direct Token→HBAR (single-hop) ──
+      if (poolVersionInfo?.version === "v2" && !multiHopRoute) {
+        console.log(`[HBAR.h] [C100-S9] Token→HBAR: trying V2 direct first ` +
+          `(multicall pattern, fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"})`);
+        console.log(`[C100-S9] WHBAR compatibility: contract=0.0.1456985, token=0.0.1456986, ` +
+          `recipient=${recipientEvmAddress} (user), swap→ROUTER then unwrapWETH9→user`);
+
+        const v2DirectResult = await executeSaucerSwapV2Direct(
+          inputToken, outputToken, inputAmount, slippagePct,
+          accountId, network, poolVersionInfo,
+          isInputNative, isOutputNative, whbar,
+          rawInput, recipientEvmAddress, options
+        );
+
+        // V2 succeeded — return immediately (best case)
+        if (v2DirectResult.success) {
+          console.log(`[HBAR.h] [C100-S9] ✓ V2 direct Token→HBAR SUCCEEDED — no V1 fallback needed`);
+          return v2DirectResult;
+        }
+
+        // User cancelled — respect their intent, don't retry with V1
+        if (v2DirectResult.userCancelled) {
+          console.log(`[HBAR.h] [C100-S9] User cancelled V2 Token→HBAR — not retrying`);
+          return v2DirectResult;
+        }
+
+        // V2 failed (CONTRACT_REVERT or other error) — fall back to V1
+        _v2TokenHbarError = v2DirectResult.error;
+        console.log(`[HBAR.h] [C100-S9] V2 direct Token→HBAR REVERTED: ${_v2TokenHbarError}`);
+        console.log(`[HBAR.h] [C100-S9] Falling back to V1 swapExactTokensForETH...`);
+        {
+          const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
+          console.log(`[C100-S9] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
+        }
+
+        // Notify UI about the V2→V1 fallback
+        window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+          step: 0, total: 2,
+          description: `V2 multicall reverted — retrying with V1 Router...`,
+        }}));
+
+        // Reset to V1
         poolVersionInfo = { version: "v1", poolAddress: undefined };
-        // pathAddresses stays [directInEvm, directOutEvm] — V1 router handles the path
       }
-      if (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2")) {
-        console.log(`[HBAR.h] [C36-02] Token→HBAR multi-hop: overriding V2 hops → V1 (matches SaucerSwap.finance production)`);
-        // Force V1 multi-hop — V1 router natively supports path arrays
-        poolVersionInfo = { version: "v1", poolAddress: undefined };
-        multiHopRoute = null; // Clear V2 multi-hop; V1 will use pathAddresses directly
+
+      // ── V2 Multi-hop Token→HBAR ──
+      if (multiHopRoute) {
+        const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
+
+        if (allHopsV2) {
+          console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: trying V2 first ` +
+            `(${multiHopRoute.hops.length} hops, all V2, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
+          console.log(`[C100-S9] WHBAR compatibility: multicall(exactInput→ROUTER + unwrapWETH9→user) ` +
+            `contract=0.0.1456985, token=0.0.1456986`);
+
+          const v2MhResult = await executeSaucerSwapV2MultiHop(
+            inputToken, outputToken, inputAmount, slippagePct,
+            accountId, network, multiHopRoute,
+            isInputNative, isOutputNative, whbar,
+            rawInput, recipientEvmAddress, options
+          );
+
+          // V2 succeeded — return immediately
+          if (v2MhResult.success) {
+            console.log(`[HBAR.h] [C100-S9] ✓ V2 multi-hop Token→HBAR SUCCEEDED — no V1 fallback needed`);
+            return v2MhResult;
+          }
+
+          // User cancelled — respect their intent
+          if (v2MhResult.userCancelled) {
+            console.log(`[HBAR.h] [C100-S9] User cancelled V2 Token→HBAR multi-hop — not retrying`);
+            return v2MhResult;
+          }
+
+          // V2 failed — fall back to V1
+          _v2TokenHbarError = v2MhResult.error;
+          console.log(`[HBAR.h] [C100-S9] V2 multi-hop Token→HBAR REVERTED: ${_v2TokenHbarError}`);
+          console.log(`[HBAR.h] [C100-S9] Falling back to V1 routing...`);
+          {
+            const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
+            console.log(`[C100-S9] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
+          }
+
+          // Notify UI about the V2→V1 fallback
+          window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+            step: 0, total: 2,
+            description: `V2 multi-hop reverted — retrying with V1 Router...`,
+          }}));
+
+          // Reset to V1
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+        } else {
+          // Mixed V2+V1 or all-V1 hops — go straight to V1
+          console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: mixed/V1 hops — using V1 directly`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+        }
       }
     }
 
     // ┌─────────────────────────────────────────────────────────────────────┐
-    // │  [C95] TOKEN→TOKEN MULTI-HOP: FORCE V1 ROUTING                    │
-    // │                                                                    │
-    // │  SaucerSwap.finance routes ALL Token→Token multi-hop swaps through │
-    // │  V1 RouterV3 (swapExactTokensForTokens), NOT V2 exactInput.       │
-    // │                                                                    │
-    // │  V2 multi-hop (exactInput) causes CONTRACT_REVERT_EXECUTED on      │
-    // │  Hedera for Token→Token paths. The V2 SwapRouter's callback-based  │
-    // │  transferFrom chain (pool→callback→transferFrom→HTS precompile)    │
-    // │  fails when the caller is a smart contract and the token is HTS.   │
-    // │  View calls (QuoterV2.quoteExactInput) succeed because they don't  │
-    // │  actually transfer tokens — only the real swap reverts.            │
-    // │                                                                    │
-    // │  Fix: Force V1 for ALL Token→Token multi-hop, same as C36-02      │
-    // │  does for Token→HBAR. V1 swapExactTokensForTokens handles         │
-    // │  multi-hop natively via path arrays and is proven on mainnet.      │
+    // │  [C100 Step 5] TOKEN→TOKEN MULTI-HOP: SMART V2-FIRST ROUTING      │
+    // │                                                                     │
+    // │  Replaces the C95 blanket V1 force. Instead of forcing ALL         │
+    // │  Token→Token multi-hop to V1, tries V2 first (better pricing,     │
+    // │  concentrated liquidity) and falls back to V1 only if V2 reverts.  │
+    // │                                                                     │
+    // │  Why V2 can now work (it couldn't in C95):                         │
+    // │    • Step 4: Dynamic alias discovery resolves V2 ERC20Wrapper IDs  │
+    // │    • Step 6: Alias EVM addresses in V2 packed paths (upcoming)     │
+    // │    • QuoterV2 succeeding is necessary but not sufficient — the     │
+    // │      real swap can still revert due to HTS precompile edge cases.  │
+    // │      Fallback to V1 handles those cases automatically.             │
+    // │                                                                     │
+    // │  Fallback logic:                                                    │
+    // │    1. If all hops are V2 → attempt V2 execution                    │
+    // │    2. If V2 succeeds → return (best case)                          │
+    // │    3. If user cancels → return (respect user intent)               │
+    // │    4. If V2 reverts → fall through to V1 execution (safety net)    │
+    // │    5. If V1 also fails → return combined error (V2 + V1 details)   │
     // └─────────────────────────────────────────────────────────────────────┘
+    let _v2MultiHopError: string | undefined;
+
     if (!isInputNative && !isOutputNative && multiHopRoute) {
-      console.log(`[HBAR.h] [C95] Token→Token multi-hop: forcing V1 routing (matches SaucerSwap.finance production)`);
-      if (multiHopRoute.hops.some(h => h.version === "v2")) {
-        console.log(`[HBAR.h] [C95]   Original route had V2 hops: ${multiHopRoute.hops.map(h => `${h.version}(fee=${h.feeTier})`).join(" → ")}`);
+      const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
+
+      if (allHopsV2) {
+        console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: trying V2 first ` +
+          `(${multiHopRoute.hops.length} hops, all V2, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
+
+        const v2Result = await executeSaucerSwapV2MultiHop(
+          inputToken, outputToken, inputAmount, slippagePct,
+          accountId, network, multiHopRoute,
+          isInputNative, isOutputNative, whbar,
+          rawInput, recipientEvmAddress, options
+        );
+
+        // V2 succeeded — return immediately (best case)
+        if (v2Result.success) {
+          console.log(`[HBAR.h] [C100-S5] ✓ V2 multi-hop SUCCEEDED — no V1 fallback needed`);
+          return v2Result;
+        }
+
+        // User cancelled — respect their intent, don't retry with V1
+        if (v2Result.userCancelled) {
+          console.log(`[HBAR.h] [C100-S5] User cancelled V2 multi-hop — not retrying`);
+          return v2Result;
+        }
+
+        // V2 failed (CONTRACT_REVERT or other error) — fall back to V1
+        _v2MultiHopError = v2Result.error;
+        console.log(`[HBAR.h] [C100-S5] V2 multi-hop REVERTED: ${_v2MultiHopError}`);
+        console.log(`[HBAR.h] [C100-S5] Falling back to V1 routing...`);
+        // [C100-S7] Router transition: V2 approval (0.0.3949434) was granted
+        // but the V2 swap reverted. V1 fallback requires a NEW approval
+        // targeting the V1 Router — the V2 allowance does NOT transfer.
+        {
+          const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
+          console.log(`[C100-S7] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
+        }
+
+        // Notify UI about the V2→V1 fallback
+        window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+          step: 0, total: 2,
+          description: `V2 route reverted — retrying with V1 Router...`,
+        }}));
+
+        // Reset to V1 — V1 path rebuild block below will validate canonical
+        // addresses with V1 getAmountsOut before executing.
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+        multiHopRoute = null;
+        // pathAddresses still holds the graph-route tokens — the V1 path
+        // rebuild block (below) will convert them to canonical EVM addresses.
+      } else {
+        // Mixed V2+V1 or all-V1 hops — V2 exactInput requires ALL-V2 pools,
+        // so we go straight to V1 (no V2 attempt for mixed routes).
+        console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: mixed/V1 hops — using V1 directly`);
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+        multiHopRoute = null;
       }
-      poolVersionInfo = { version: "v1", poolAddress: undefined };
-      multiHopRoute = null;
     }
 
     // ── V2 single-hop execution ──
-    // [C36-02] Token→HBAR and [C95] Token→Token multi-hop were already
-    // redirected to V1 above. V2 single-hop only fires for HBAR→Token or
-    // Token→Token direct pools (single-hop, no callback chain issues).
+    // [C100-S9] Token→HBAR V2 direct is tried above with V1 fallback.
+    // [C100-S5] Token→Token multi-hop tries V2 first (handled above).
+    // This gate fires for: HBAR→Token, Token→Token direct, or any V2
+    // single-hop that wasn't consumed by the S9/S5 try-first blocks.
     if (poolVersionInfo?.version === "v2" && !multiHopRoute) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (single-hop) ═══ fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"}`);
       return executeSaucerSwapV2Direct(
@@ -1473,9 +1771,10 @@ async function executeSaucerSwapDirect(
     }
 
     // ── V2 multi-hop execution ──
-    // [C36-02] Token→HBAR and [C95] Token→Token multi-hop were already
-    // redirected to V1 above. V2 multi-hop now only fires for HBAR→Token
-    // multi-hop (payable — no transferFrom issues since Router wraps HBAR).
+    // [C100-S9] Token→HBAR multi-hop V2 is tried above with V1 fallback.
+    // [C100-S5] Token→Token multi-hop is handled above with V2-first/V1-fallback.
+    // This gate fires for HBAR→Token multi-hop (payable — no transferFrom
+    // issues since the Router wraps the incoming HBAR automatically).
     // [C77-01] FIX: Changed from .some(v2) to .every(v2). V2 exactInput
     // can ONLY traverse V2 concentrated-liquidity pools. If even one hop
     // is V1 AMM, the V2 router fails to find a pool and reverts.
@@ -1504,7 +1803,7 @@ async function executeSaucerSwapDirect(
     }
 
     // ┌─────────────────────────────────────────────────────────────────────┐
-    // │  [C95] V1 MULTI-HOP PATH ADDRESS REBUILD & VALIDATION             │
+    // │  [C95/C100-S5] V1 MULTI-HOP PATH ADDRESS REBUILD & VALIDATION     │
     // │                                                                    │
     // │  The pool graph may return EVM addresses derived from V2 alias     │
     // │  token IDs (e.g. LINK alias 0.0.10152778 instead of canonical      │
@@ -1514,6 +1813,11 @@ async function executeSaucerSwapDirect(
     // │  Fix: rebuild pathAddresses using canonical htsIds. Validate with  │
     // │  V1 getAmountsOut before executing. If canonical fails, try alias  │
     // │  addresses as fallback. If both fail, abort cleanly.               │
+    // │                                                                    │
+    // │  [C100-S5] This block also serves as the V1 fallback path after   │
+    // │  V2 multi-hop execution reverts. The V2→V1 fallback sets          │
+    // │  poolVersionInfo=v1 and multiHopRoute=null, so execution falls    │
+    // │  through to this rebuild + validation before V1 execution.         │
     // └─────────────────────────────────────────────────────────────────────┘
     if (poolVersionInfo?.version === "v1" && pathAddresses.length > 2) {
       const whbarEvm = htsIdToEvmAddress(whbar.htsId);
@@ -1628,13 +1932,20 @@ async function executeSaucerSwapDirect(
           const tok = SAUCERSWAP_TOKENS.find(t => t.htsId === id || getSaucerswapRoutingId(t) === id);
           return tok?.symbol || id;
         }).join(", ");
-        console.error(`[HBAR.h] [C95] ═══ ABORT: No valid V1 multi-hop route found ═══`);
-        console.error(`[HBAR.h] [C95]   Tried: canonical, alias, and graph paths`);
-        console.error(`[HBAR.h] [C95]   Intermediaries: ${midTokens}`);
+        console.error(`[HBAR.h] [C100-S5] ═══ ABORT: No valid V1 multi-hop route found ═══`);
+        console.error(`[HBAR.h] [C100-S5]   Tried: canonical, alias, and graph paths`);
+        console.error(`[HBAR.h] [C100-S5]   Intermediaries: ${midTokens}`);
+        if (_v2MultiHopError) {
+          console.error(`[HBAR.h] [C100-S5]   Prior V2 error: ${_v2MultiHopError}`);
+        }
+        // [C100-S5] Include V2 error context when this is a V1 fallback abort
+        const v2Context = _v2MultiHopError
+          ? ` V2 also failed: ${_v2MultiHopError.slice(0, 120)}.`
+          : "";
         return {
           success: false,
-          error: `No valid V1 route for ${inputToken.symbol} → ${outputToken.symbol} through ${midTokens}. ` +
-            `The V1 Factory does not have AMM pairs for this path. ` +
+          error: `No valid route for ${inputToken.symbol} → ${outputToken.symbol} through ${midTokens}. ` +
+            `V1 Factory does not have AMM pairs for this path.${v2Context} ` +
             `Try swapping to HBAR first, then HBAR → ${outputToken.symbol}.`,
           executionVenue: "saucerswap-v1",
         };
@@ -1792,8 +2103,14 @@ async function executeSaucerSwapDirect(
     // Even though SwapPanel should handle this, we check again here as
     // a final guard. Swapping to an unassociated token causes
     // CONTRACT_REVERT_EXECUTED, burning the entire gas limit with no output.
+    // [C100-S11] Auto-association: skip popup if account has auto-association enabled.
     // ══════════════════════════════════════════════════════════════════
+    const _v1AutoAssoc = options?.maxAutoAssociations;
+    const _v1HasAutoAssoc = _v1AutoAssoc === -1 || (_v1AutoAssoc !== undefined && _v1AutoAssoc > 0);
     if (!isOutputNative) {
+      if (_v1HasAutoAssoc) {
+        console.log(`[C100-S11] V1: Auto-association enabled (maxAutoAssociations=${_v1AutoAssoc}) — skipping output token association popup for ${outputToken.symbol}`);
+      } else {
       const outputHtsId = outputToken.htsId;
       const isAssoc = await isTokenAssociated(accountId, outputHtsId, network);
       if (!isAssoc) {
@@ -1827,13 +2144,15 @@ async function executeSaucerSwapDirect(
       } else {
         console.log(`[HBAR.h] Output token ${outputToken.symbol} association confirmed ✓`);
       }
+      }
     }
 
     // [C77-03] FIX: Check intermediate tokens from actual pathAddresses, not logicalPath.
     // When multi-hop overrides the path (e.g., through USDC instead of WHBAR),
     // logicalPath still has WHBAR as intermediary but the real execution path
     // may use USDC. We must associate the REAL intermediary token.
-    if (pathAddresses.length > 2) {
+    // [C100-S11] Skip intermediate association checks if auto-association is enabled.
+    if (pathAddresses.length > 2 && !_v1HasAutoAssoc) {
       for (let i = 1; i < pathAddresses.length - 1; i++) {
         const midEvm = pathAddresses[i];
         const midHtsId = evmAddressToHtsId(midEvm);
@@ -1918,8 +2237,8 @@ async function executeSaucerSwapDirect(
     // ══════════════════════════════════════════════════════════════════
     // [C36-03] FIX: `dryRunResult` was previously `const` inside the `if (isInputNative)`
     // block, making it inaccessible to the Token→HBAR and Token→Token execution branches
-    // that reference `dryRunResult.ok`. With C36-02 routing Token→HBAR through V1,
-    // this would cause a ReferenceError. Now declared at function scope with a default.
+    // that reference `dryRunResult.ok`. Now declared at function scope with a default.
+    // [C100-S9] Still needed: V2→V1 fallback paths reach the V1 execution branches.
     let dryRunResult: DryRunResult = { ok: true, simulated: false, reason: "Skipped for token-input swap [C16-02]" };
     if (isInputNative) {
     dryRunResult = await preSwapDryRun({
@@ -1997,9 +2316,15 @@ async function executeSaucerSwapDirect(
 
     } else if (isOutputNative) {
       // ═══ Token → HBAR (native): use swapExactTokensForETH ═══
+      // [C100-S9] This path executes when V2 was either not attempted (V1 pool)
+      // or V2 reverted and fell back here. Log V2 context if available.
+      if (_v2TokenHbarError) {
+        console.log(`[HBAR.h] [C100-S9] V1 fallback for Token→HBAR (V2 failed: ${_v2TokenHbarError})`);
+      }
       console.log("[HBAR.h] Native HBAR output — using swapExactTokensForETH");
 
       // Step 1: [C53] Smart approve — skips if allowance sufficient
+      // [C100-S7] V1 Token→HBAR: targets V1 Router with canonical token ID
       const v1ApproveResult1 = await approveIfNeeded({
         tokenHtsId: inputToken.htsId,
         ownerAccountId: accountId,
@@ -2010,6 +2335,7 @@ async function executeSaucerSwapDirect(
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
         totalSteps: 2,
+        routerVersion: "v1",
       });
 
       if (!v1ApproveResult1.success) {
@@ -2051,8 +2377,10 @@ async function executeSaucerSwapDirect(
         outputAmount: quote ? quote.amountOut / Math.pow(10, 8) : undefined,
         route: displayRoute,
         priceImpact: quote?.priceImpact,
+        // [C100-S9] Append V2 error context if this is a V2→V1 fallback
         error: swapResult.error
-          ? swapResult.error + (swapResult.transactionId ? ` (tx: ${swapResult.transactionId})` : "")
+          ? swapResult.error + (swapResult.transactionId ? ` (tx: ${swapResult.transactionId})` : "") +
+            (_v2TokenHbarError ? ` [V2 also failed: ${_v2TokenHbarError}]` : "")
           : undefined,
         executionVenue: "saucerswap-v1",
         quoteSource: quote?.source || "none",
@@ -2064,6 +2392,7 @@ async function executeSaucerSwapDirect(
       // ═══ Token → Token: standard swapExactTokensForTokens ═══
 
       // Step 1: [C53] Smart approve — skips if allowance sufficient
+      // [C100-S7] V1 Token→Token: targets V1 Router with canonical token ID
       const v1ApproveResult2 = await approveIfNeeded({
         tokenHtsId: inputToken.htsId,
         ownerAccountId: accountId,
@@ -2074,6 +2403,7 @@ async function executeSaucerSwapDirect(
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
         totalSteps: 2,
+        routerVersion: "v1",
       });
 
       if (!v1ApproveResult2.success) {
@@ -2177,6 +2507,12 @@ async function executeSaucerSwapDirect(
 export interface SwapOptions {
   /** If true, approve MAX_SAFE_INTEGER allowance instead of exact amount. */
   infiniteApproval?: boolean;
+  /**
+   * [C100-S11] Account's max_automatic_token_associations from Mirror Node.
+   * -1 = unlimited, 0 = none, positive = that many slots.
+   * When -1 or >0, association popups are skipped entirely (Hedera auto-associates).
+   */
+  maxAutoAssociations?: number;
 }
 
 export async function executeSaucerSwap(
@@ -2227,4 +2563,156 @@ export async function executeSaucerSwap(
   }
 
   return executeSaucerSwapDirect(inputToken, outputToken, inputAmount, slippagePct, accountId, network, options);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── [C100-S11] PRE-FLIGHT SWAP PREREQUISITES ───────────────────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// Lightweight, non-blocking check that probes allowance + association
+// status BEFORE the user clicks "Swap". The UI uses this to:
+//   • Display "Swap" (1 popup) vs "Approve & Swap" (2 popups)
+//   • Show a pre-association prompt if needed
+//   • Never surprise the user with 3+ wallet popups
+//
+// Called during the quote phase — runs in parallel with quote fetching.
+// No wallet interaction, no popups. Pure Mirror Node reads.
+
+export interface SwapPrerequisites {
+  /** True if the output token is not associated with the user's account */
+  associationNeeded: boolean;
+  /** True if the input token allowance is insufficient for the target router */
+  approvalNeeded: boolean;
+  /** Expected number of wallet popups: 1 (swap only) or 2 (approve + swap) */
+  expectedPopups: 1 | 2;
+  /** True if the account has auto-association enabled (unlimited or positive slots) */
+  autoAssociationAvailable: boolean;
+  /** Allowance details for diagnostics */
+  allowanceInfo: {
+    current: number;
+    needed: number;
+    spender: string;
+    routerVersion: "v1" | "v2" | "unknown";
+  };
+}
+
+/**
+ * [C100-S11] Check swap prerequisites without triggering any wallet popups.
+ *
+ * Probes:
+ *   1. Output token association status (skip if auto-association enabled)
+ *   2. Input token allowance vs both V1 and V2 routers
+ *
+ * Returns a summary that tells the UI exactly how many popups to expect.
+ * If the input is native HBAR, approval is never needed (payable call).
+ */
+export async function checkSwapPrerequisites(
+  inputSymbol: string,
+  outputSymbol: string,
+  inputAmount: string,
+  accountId: string,
+  network: HederaNetwork,
+  maxAutoAssociations?: number,
+): Promise<SwapPrerequisites> {
+  const inputToken = resolveToken(inputSymbol);
+  const outputToken = resolveToken(outputSymbol);
+
+  // Defaults: conservative (assume worst case until proven otherwise)
+  const result: SwapPrerequisites = {
+    associationNeeded: false,
+    approvalNeeded: true,
+    expectedPopups: 2,
+    autoAssociationAvailable: false,
+    allowanceInfo: { current: 0, needed: 0, spender: "", routerVersion: "unknown" },
+  };
+
+  if (!inputToken || !outputToken) return result;
+
+  const isInputNative = !!inputToken.isNative;
+  const isOutputNative = !!outputToken.isNative;
+
+  // ── Auto-association check ──
+  // If maxAutoAssociations is -1 (unlimited) or > 0 (slots available),
+  // the network auto-associates tokens on first transfer — no popup needed.
+  let autoAssoc = typeof maxAutoAssociations === "number" ? maxAutoAssociations : -99;
+  if (autoAssoc === -99) {
+    // Not provided by caller — fetch from Mirror Node
+    try {
+      autoAssoc = await fetchMaxAutoAssociations(accountId, network);
+    } catch {
+      autoAssoc = 0;
+    }
+  }
+  result.autoAssociationAvailable = autoAssoc === -1 || autoAssoc > 0;
+
+  // ── Association check ──
+  // Only needed for non-HBAR output tokens when auto-association is off
+  if (!isOutputNative && !result.autoAssociationAvailable) {
+    try {
+      const isAssoc = await isTokenAssociated(accountId, outputToken.htsId, network);
+      result.associationNeeded = !isAssoc;
+    } catch {
+      // Conservative: assume associated to avoid false negatives
+      result.associationNeeded = false;
+    }
+  }
+
+  // ── Allowance check ──
+  // HBAR input = payable call, never needs approval
+  if (isInputNative) {
+    result.approvalNeeded = false;
+    result.expectedPopups = 1;
+    result.allowanceInfo = { current: 0, needed: 0, spender: "N/A (HBAR)", routerVersion: "unknown" };
+    console.log(`[C100-S11] Pre-flight: HBAR input → 1 popup (swap only)`);
+    return result;
+  }
+
+  // For token inputs, check allowance against BOTH V1 and V2 routers.
+  // The smart routing in executeSaucerSwapDirect will pick V2 or V1 at runtime;
+  // we check both so we know the best case. If either has sufficient allowance
+  // AND the routing picks that version, the approve popup is skipped.
+  const rawNeeded = parseTokenAmount(inputAmount, inputToken.decimals);
+  if (rawNeeded <= 0) {
+    result.expectedPopups = 1;
+    result.approvalNeeded = false;
+    return result;
+  }
+
+  const v1Router = getSaucerSwapRouter(network, "v1");
+  const v2RouterId = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
+
+  // Parallel allowance probe — both routers at once
+  const [v1Allowance, v2Allowance] = await Promise.all([
+    fetchTokenAllowance(accountId, inputToken.htsId, v1Router, network).catch(() => 0),
+    fetchTokenAllowance(accountId, inputToken.htsId, v2RouterId, network).catch(() => 0),
+  ]);
+
+  const bestAllowance = Math.max(v1Allowance, v2Allowance);
+  const bestRouter = v2Allowance >= v1Allowance ? v2RouterId : v1Router;
+  const bestVersion = v2Allowance >= v1Allowance ? "v2" as const : "v1" as const;
+
+  result.allowanceInfo = {
+    current: bestAllowance,
+    needed: rawNeeded,
+    spender: bestRouter,
+    routerVersion: bestVersion,
+  };
+
+  if (bestAllowance >= rawNeeded) {
+    result.approvalNeeded = false;
+    result.expectedPopups = 1;
+    console.log(
+      `[C100-S11] Pre-flight: ${inputToken.symbol} allowance ${bestAllowance} >= ${rawNeeded} ` +
+      `for ${bestVersion.toUpperCase()} Router ${bestRouter} → 1 popup (swap only) ✓`,
+    );
+  } else {
+    result.approvalNeeded = true;
+    result.expectedPopups = 2;
+    console.log(
+      `[C100-S11] Pre-flight: ${inputToken.symbol} allowance ${bestAllowance} < ${rawNeeded} ` +
+      `(best: ${bestVersion.toUpperCase()} Router ${bestRouter}) → 2 popups (approve + swap)`,
+    );
+  }
+
+  return result;
 }

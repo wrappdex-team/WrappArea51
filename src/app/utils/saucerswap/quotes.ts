@@ -14,7 +14,7 @@
 
 import { log } from "../logger";
 import type { AllowedToken, HederaNetwork } from "./tokens";
-import { resolveToken, evmAddressToHtsId } from "./tokens";
+import { resolveToken, evmAddressToHtsId, getSaucerswapRoutingId } from "./tokens";
 import {
   MIRROR_NODES,
   JSON_RPC_RELAY,
@@ -627,6 +627,10 @@ export async function fetchServerQuote(
   const outputHtsId = outputToken.isNative ? "HBAR" : outputToken.htsId;
   const rawAmountIn = Math.floor(inputAmount * Math.pow(10, inputToken.decimals)).toString();
 
+  // [C99] Resolve alias IDs for V2 routing — only send if different from canonical
+  const inputAliasId = !inputToken.isNative ? getSaucerswapRoutingId(inputToken) : undefined;
+  const outputAliasId = !outputToken.isNative ? getSaucerswapRoutingId(outputToken) : undefined;
+
   const startMs = Date.now();
 
   try {
@@ -672,6 +676,10 @@ export async function fetchServerQuote(
       inputDecimals: inputToken.decimals.toString(),
       outputDecimals: outputToken.decimals.toString(),
       network,
+      // [C99] Pass alias hints — server uses these to extend TOKEN_ALIAS_MAP
+      // for V2 QuoterV2 calls. Only sent when alias differs from canonical.
+      ...(inputAliasId && inputAliasId !== inputHtsId ? { inputAliasId } : {}),
+      ...(outputAliasId && outputAliasId !== outputHtsId ? { outputAliasId } : {}),
     }, 18000);
 
     const durationMs = Date.now() - startMs;

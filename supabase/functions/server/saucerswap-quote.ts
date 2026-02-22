@@ -56,22 +56,282 @@ const V2_QUOTER_IDS: Record<string, string> = {
 /** WHBAR Token HTS ID — used as intermediary for multi-hop. */
 const WHBAR_HTS_ID = "0.0.1456986";
 
+// ════════════════════════════════════════════════════════════════════
+// [C99] TOKEN ALIAS MAP — V2 ERC20Wrapper Resolution
+// ═════════════════════════════════════════════════════════════════════
+//
+// SaucerSwap V2 pools use ERC20Wrapper versions of HashPort bridge tokens.
+// These wrapper tokens have DIFFERENT HTS IDs (and therefore different EVM
+// addresses) than the canonical bridge tokens users hold in their wallets.
+//
+// Example: LINK
+//   Canonical (user holds):  0.0.1055495  → EVM 0x...101917
+//   V2 Wrapper (pool uses):  0.0.10152778 → EVM 0x...9af70a
+//
+// When calling V2 QuoterV2 or V2 SwapRouter, we MUST use the wrapper EVM
+// address. V1 Router uses canonical addresses (V1 Factory pairs are
+// registered with canonical HTS IDs).
+//
+// This map is the server-side equivalent of client-side `saucerswapAliasId`.
+// ═════════════════════════════════════════════════════════════════════
+
+const TOKEN_ALIAS_MAP: Record<string, string> = {
+  "0.0.1055483": "0.0.10104132",  // WBTC: canonical → V2 wrapper
+  "0.0.1055495": "0.0.10152778",  // LINK: canonical → V2 wrapper
+  "0.0.541564":  "0.0.1969708",   // WETH: canonical → V2 wrapper
+};
+
+/**
+ * [C99] Request-scoped alias overlay from client hints.
+ *
+ * When the client sends `inputAliasId` / `outputAliasId` query params,
+ * these are registered here BEFORE strategy execution and cleared AFTER.
+ * This lets the client's dynamic token registry (which includes aliases
+ * discovered via the SaucerSwap /tokens API reconciliation) extend the
+ * server's hardcoded TOKEN_ALIAS_MAP without mutating it.
+ *
+ * Safe for single-threaded Deno — ssQuote() is awaited sequentially.
+ */
+let _requestAliases: Map<string, string> | null = null;
+
+/**
+ * [C99] Resolve a token HTS ID to its V2 alias if one exists.
+ * [C100 Step 4] Updated: checks dynamic API-discovered aliases between
+ * client hints and the hardcoded fallback. This makes the server
+ * self-healing — new V2 ERC20Wrappers are discovered automatically.
+ *
+ * Resolution priority:
+ *   1. Request-scoped client hints     (per-request, highest fidelity)
+ *   2. Dynamic API-discovered aliases  (self-healing, refreshed 5 min)
+ *   3. Hardcoded TOKEN_ALIAS_MAP       (fallback when API unavailable)
+ *   4. Original HTS ID                 (no alias known)
+ */
+function resolveV2AliasId(htsId: string): string {
+  // 1. Request-scoped client hints (per-request from client token registry)
+  if (_requestAliases?.has(htsId)) return _requestAliases.get(htsId)!;
+  // 2. Dynamic API-discovered aliases (self-healing, refreshed every 5 min)
+  if (_dynamicAliasMap?.has(htsId)) return _dynamicAliasMap.get(htsId)!;
+  // 3. Hardcoded server-side map (fallback when SaucerSwap API is unavailable)
+  return TOKEN_ALIAS_MAP[htsId] || htsId;
+}
+
+/**
+ * [C99] Convert an HTS ID to EVM address, using V2 alias if available.
+ * Use this for ALL V2 QuoterV2 / SwapRouter calls.
+ * V1 Router calls should use plain htsIdToEvmAddress() (canonical).
+ */
+function resolveV2Evm(htsId: string): string {
+  return htsIdToEvmAddress(resolveV2AliasId(htsId));
+}
+
 // [C52] Full intermediary candidate list — tested in parallel for Token→Token
 // pairs with no direct pool. Ordered by typical liquidity depth.
 // [C90] Expanded: added common bridge tokens (WBNB, WETH, WBTC, DAI) that
 // serve as secondary liquidity hubs for exotic pairs.
-const INTERMEDIARY_TOKENS: { htsId: string; symbol: string }[] = [
+// [C99] Fixed: corrected HTS IDs to match client token registry, added
+// v2AliasId for bridge tokens whose V2 pools use wrapper addresses.
+const INTERMEDIARY_TOKENS: { htsId: string; symbol: string; v2AliasId?: string }[] = [
   { htsId: "0.0.1456986", symbol: "WHBAR" },
   { htsId: "0.0.456858",  symbol: "USDC" },
   { htsId: "0.0.1055472", symbol: "USDT" },
   { htsId: "0.0.731861",  symbol: "SAUCE" },
   { htsId: "0.0.834116",  symbol: "HBARX" },
   { htsId: "0.0.1055459", symbol: "USDCh" },
-  { htsId: "0.0.1055481", symbol: "WETH" },
-  { htsId: "0.0.1055482", symbol: "WBTC" },
+  // [C99] Fixed WETH: was 0.0.1055481 (wrong ID), correct is 0.0.541564
+  { htsId: "0.0.541564",  symbol: "WETH",  v2AliasId: "0.0.1969708" },
+  // [C99] Fixed WBTC: was 0.0.1055482 (wrong ID), correct is 0.0.1055483
+  { htsId: "0.0.1055483", symbol: "WBTC",  v2AliasId: "0.0.10104132" },
   { htsId: "0.0.1157005", symbol: "WBNB" },
-  { htsId: "0.0.1055480", symbol: "LINK" },
+  // [C99] Fixed LINK: was 0.0.1055480 (wrong ID), correct is 0.0.1055495
+  { htsId: "0.0.1055495", symbol: "LINK",  v2AliasId: "0.0.10152778" },
 ];
+
+// ═════════════════════════════════════════════════════════════════════
+// [C100 Step 3] V2-ONLY TOKEN REGISTRY
+// ═════════════════════════════════════════════════════════════════════
+//
+// Tokens known to exist EXCLUSIVELY on SaucerSwap V2 (no V1 AMM pairs).
+// V1 Router getAmountsOut() will always revert for these tokens, but each
+// reverted RPC call still takes 2–12s on Hedera's relay. By maintaining
+// this set, V1 strategies bail instantly (O(1) lookup) instead of burning
+// network round-trips that are guaranteed to fail.
+//
+// How to verify: call V1 Factory.getPair(tokenA, WHBAR) — if it returns
+// address(0), the token has no V1 pair with the primary liquidity hub.
+// If it also has no V1 pair with USDC/SAUCE, it's V2-only.
+//
+// Extend this set when new V2-only tokens are added to the platform.
+// ═════════════════════════════════════════════════════════════════════
+
+const V2_ONLY_TOKENS: Set<string> = new Set([
+  "0.0.4794920",   // PACK  — HashPack utility token, V2-only pools
+  "0.0.2283230",   // KARATE — V2-only pools
+  "0.0.3716059",   // DOVU  — V2-only pools
+]);
+
+/**
+ * [C100 Step 3] Check if a token has NO V1 liquidity (V2-only).
+ * V1 strategies (Router getAmountsOut) should bail immediately for these tokens
+ * to avoid wasting 2–12s per RPC call on guaranteed reverts.
+ */
+function isV2OnlyToken(htsId: string): boolean {
+  return V2_ONLY_TOKENS.has(htsId);
+}
+
+/**
+ * [C100 Step 3] V1-specific RPC timeout.
+ * V1 reverts are fast on Hedera (~2-3s), but the relay can delay up to 12s.
+ * This tighter ceiling prevents V1 probes from dominating overall quote latency
+ * for tokens that DO have V1 pairs but the pair lookup is slow.
+ */
+const V1_RPC_TIMEOUT_MS = 5_000;
+
+// ═════════════════════════════════════════════════════════════════════
+// [C100 Step 4] DYNAMIC ALIAS DISCOVERY FROM SAUCERSWAP /tokens API
+// ═════════════════════════════════════════════════════════════════════
+//
+// Makes the server self-healing: when SaucerSwap adds a new V2
+// ERC20Wrapper for any bridge token, the next /tokens fetch discovers
+// it automatically. No code changes needed.
+//
+// Discovery logic:
+//   1. Fetch /tokens from SaucerSwap API (shared cache with prices)
+//   2. Group tokens by normalized symbol (case-insensitive)
+//   3. For BRIDGE_TOKEN_SYMBOLS with 2+ entries per symbol:
+//      • Lowest entity number = canonical (original bridge token)
+//      • Highest entity number = V2 ERC20Wrapper (created later)
+//      • Map: canonical → alias
+//   4. Cache for 5 minutes (same TTL as prices/token list)
+//
+// Resolution priority for resolveV2AliasId():
+//   1. Request-scoped client hints     (per-request, highest fidelity)
+//   2. Dynamic API-discovered aliases  (self-healing, refreshed 5 min)
+//   3. Hardcoded TOKEN_ALIAS_MAP       (fallback when API unavailable)
+//   4. Original HTS ID                 (no alias known)
+// ═════════════════════════════════════════════════════════════════════
+
+/**
+ * Bridge token symbols known to potentially have V2 ERC20Wrapper aliases.
+ * The /tokens API is scanned for symbols in this set — when multiple HTS IDs
+ * share the same symbol, the lowest entity number is canonical (original
+ * bridge token from HashPort/Axelar) and the highest is the V2 wrapper.
+ *
+ * Intentionally broad: including a symbol that doesn't yet have a wrapper
+ * costs nothing (API scan skips it). Not including a symbol that DOES have
+ * a wrapper means it won't be auto-discovered until added here.
+ */
+const BRIDGE_TOKEN_SYMBOLS: Set<string> = new Set([
+  "WBTC", "WETH", "LINK", "AAVE", "UNI", "USDT", "USDC",
+  "WBNB", "DAI", "MATIC", "WFTM", "WAVAX", "CRV", "SUSHI",
+  "YFI", "COMP", "MKR", "SNX", "GRT", "FXS",
+]);
+
+/** Dynamic alias map: canonical HTS ID → V2 wrapper HTS ID. */
+let _dynamicAliasMap: Map<string, string> | null = null;
+let _dynamicAliasMapTs = 0;
+
+/** Shared raw token data from SaucerSwap /tokens API. */
+let _rawTokenData: any[] | null = null;
+let _rawTokenDataTs = 0;
+
+/** Cache TTL for dynamic alias map and raw token data: 5 minutes. */
+const DYNAMIC_ALIAS_TTL_MS = 300_000;
+
+/** Parse entity number from HTS ID: "0.0.1055483" → 1055483 */
+function parseEntityNum(htsId: string): number {
+  const parts = htsId.split(".");
+  return parseInt(parts[parts.length - 1] || "0", 10);
+}
+
+/**
+ * [C100 Step 4] Shared raw token data cache.
+ *
+ * Both `ensureTokenPrices()` and `ensureDynamicAliasMap()` need the
+ * same /tokens API response. This shared cache ensures we make at most
+ * ONE API call per 5-minute window, not two.
+ */
+async function ensureRawTokenData(): Promise<any[]> {
+  if (_rawTokenData && Date.now() - _rawTokenDataTs < DYNAMIC_ALIAS_TTL_MS) {
+    return _rawTokenData;
+  }
+  const data = await ssFetchSaucerSwapApi("/tokens");
+  if (!data) return _rawTokenData || [];
+  const tokens: any[] = Array.isArray(data) ? data : Object.values(data);
+  _rawTokenData = tokens;
+  _rawTokenDataTs = Date.now();
+  return tokens;
+}
+
+/**
+ * [C100 Step 4] Build canonical → V2 alias map from live SaucerSwap API.
+ *
+ * Scans the /tokens response for bridge token symbols with multiple HTS IDs.
+ * For each such group, maps the lowest entity number (canonical bridge token)
+ * to the highest (V2 ERC20Wrapper).
+ *
+ * Also logs non-bridge symbols with multiple IDs for diagnostic review
+ * (potential new bridge tokens to add to BRIDGE_TOKEN_SYMBOLS).
+ */
+async function ensureDynamicAliasMap(): Promise<Map<string, string>> {
+  if (_dynamicAliasMap && Date.now() - _dynamicAliasMapTs < DYNAMIC_ALIAS_TTL_MS) {
+    return _dynamicAliasMap;
+  }
+
+  try {
+    const tokens = await ensureRawTokenData();
+    if (tokens.length === 0) {
+      console.log("[SS-Quote] [C100-S4] Dynamic alias: no token data, using hardcoded fallback");
+      return _dynamicAliasMap || new Map();
+    }
+
+    // Group tokens by normalized symbol
+    const bySymbol = new Map<string, { id: string; entityNum: number }[]>();
+    for (const t of tokens) {
+      const sym = (t.symbol || "").toUpperCase().trim();
+      const id = t.id || t.tokenId || t.token_id || "";
+      if (!sym || !id || !id.startsWith("0.0.")) continue;
+
+      if (!bySymbol.has(sym)) bySymbol.set(sym, []);
+      bySymbol.get(sym)!.push({ id, entityNum: parseEntityNum(id) });
+    }
+
+    const aliasMap = new Map<string, string>();
+
+    for (const [symbol, entries] of bySymbol) {
+      if (entries.length < 2) continue;
+
+      // Sort by entity number ascending — lowest = canonical (created first)
+      entries.sort((a, b) => a.entityNum - b.entityNum);
+
+      const canonical = entries[0];
+      const alias = entries[entries.length - 1];
+      if (canonical.id === alias.id) continue;
+
+      if (BRIDGE_TOKEN_SYMBOLS.has(symbol)) {
+        // Known bridge symbol — auto-discover V2 wrapper
+        aliasMap.set(canonical.id, alias.id);
+        // Only log when the discovered alias differs from the hardcoded one
+        if (TOKEN_ALIAS_MAP[canonical.id] !== alias.id) {
+          console.log(`[SS-Quote] [C100-S4] NEW dynamic alias: ${symbol} ${canonical.id} → ${alias.id}`);
+        }
+      } else if (entries.length >= 2) {
+        // Non-bridge symbol with multiple IDs — log for diagnostics.
+        // This helps operators discover new bridge tokens that need
+        // adding to BRIDGE_TOKEN_SYMBOLS.
+        console.log(`[SS-Quote] [C100-S4] Multi-ID symbol (not bridge): ${symbol} → ` +
+          entries.map(e => e.id).join(", "));
+      }
+    }
+
+    _dynamicAliasMap = aliasMap;
+    _dynamicAliasMapTs = Date.now();
+    console.log(`[SS-Quote] [C100-S4] Dynamic alias map: ${aliasMap.size} pairs from ${tokens.length} API tokens`);
+    return aliasMap;
+  } catch (err: any) {
+    console.log(`[SS-Quote] [C100-S4] Dynamic alias error: ${err?.message || err}`);
+    return _dynamicAliasMap || new Map();
+  }
+}
 
 /** Quote cache TTL: 10 seconds. */
 const QUOTE_CACHE_TTL_MS = 10_000;
@@ -120,6 +380,42 @@ async function raceRpcAndMirror(
 }
 
 /**
+ * [C100 Step 3] Variant of raceRpcAndMirror with an explicit hard timeout.
+ *
+ * Used by V1 strategies to enforce a tighter ceiling (V1_RPC_TIMEOUT_MS = 5s)
+ * than the default RPC/Mirror timeouts (12s/10s). V1 Router reverts are fast
+ * on Hedera (~2-3s for a non-existent pair), so 5s is generous for success
+ * and tight enough to prevent V1 failures from dominating quote latency.
+ *
+ * Returns null if neither RPC nor Mirror produces a valid result within the
+ * given timeout — the same contract as raceRpcAndMirror.
+ */
+async function raceRpcAndMirrorWithTimeout(
+  toEvm: string, calldata: string, network: string, timeoutMs: number,
+  gasLimit: number = 1_500_000,
+): Promise<string | null> {
+  const validate = (r: any): r is string =>
+    r != null && typeof r === "string" && r !== "0x" && r.length > 2;
+
+  const rpcP = ssFetchJsonRpc(
+    "eth_call", [{ to: toEvm, data: calldata, gas: GAS_HEX }, "latest"], network,
+  ).then(r => { if (validate(r)) return r as string; throw new Error("rpc-empty"); });
+
+  const mirrorP = ssMirrorContractCall(toEvm, calldata, network, gasLimit)
+    .then(r => { if (validate(r)) return r as string; throw new Error("mirror-empty"); });
+
+  const timeoutP = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error("v1-fast-timeout")), timeoutMs)
+  );
+
+  try {
+    return await Promise.race([Promise.any([rpcP, mirrorP]), timeoutP]);
+  } catch {
+    return null; // Both failed, returned empty, or timed out
+  }
+}
+
+/**
  * Fallback token prices in USD.
  * [C33-01] Updated to current market values.
  * Used when SaucerSwap /tokens API is unavailable.
@@ -129,22 +425,25 @@ const FALLBACK_PRICES_USD: Record<string, number> = {
   "0.0.731861": 0.045,   // SAUCE
   "0.0.456858": 1.0,     // USDC
   "0.0.1055472": 1.0,    // USDT
-  "0.0.1055482": 104000, // WBTC
-  "0.0.1055481": 2650,   // WETH
-  "0.0.1055480": 16.50,  // LINK
+  "0.0.1055483": 104000, // WBTC (canonical)
+  "0.0.10104132": 104000,// WBTC (V2 alias)
+  "0.0.541564": 2650,    // WETH (canonical)
+  "0.0.1969708": 2650,   // WETH (V2 alias)
+  "0.0.1055495": 16.50,  // LINK (canonical)
+  "0.0.10152778": 16.50, // LINK (V2 alias)
   "0.0.834116": 0.11,    // HBARX
   "0.0.7374029": 0.000001, // HBAR.h
   "0.0.968069": 0.018,   // HST
   "0.0.1157005": 660,    // WBNB
   "0.0.1055459": 1.0,    // USDCh
-  "0.0.6792100": 0.015,  // PACK
-  "0.0.3157928": 0.002,  // DOVU
-  "0.0.4722969": 0.0003, // KARATE
+  "0.0.4794920": 0.015,  // PACK (correct ID)
+  "0.0.3716059": 0.002,  // DOVU (correct ID)
+  "0.0.2283230": 0.0003, // KARATE (correct ID)
 };
 
 const VALID_NETWORKS = new Set(["mainnet", "testnet"]);
 
-// ═════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
 // TYPES
 // ═════════════════════════════════════════════════════════════════════
 
@@ -308,7 +607,9 @@ async function resolveContract(contractId: string, network: string): Promise<str
 async function ensureTokenPrices(): Promise<Map<string, number>> {
   if (_tokenPrices && Date.now() - _tokenPricesTs < TOKEN_PRICE_TTL_MS) return _tokenPrices;
 
-  const data = await ssFetchSaucerSwapApi("/tokens");
+  // [C100 Step 4] Use shared raw token data cache to avoid redundant
+  // /tokens API calls (ensureDynamicAliasMap uses the same data).
+  const tokens = await ensureRawTokenData();
   const prices = new Map<string, number>();
 
   // Seed with fallbacks
@@ -316,8 +617,7 @@ async function ensureTokenPrices(): Promise<Map<string, number>> {
     prices.set(id, price);
   }
 
-  if (data) {
-    const tokens = Array.isArray(data) ? data : Object.values(data);
+  if (tokens.length > 0) {
     for (const t of tokens as any[]) {
       const priceUsd = parseFloat(t.priceUsd || t.price || "0");
       const htsId = t.id || t.tokenId || t.token_id || "";
@@ -335,17 +635,27 @@ async function ensureTokenPrices(): Promise<Map<string, number>> {
 // QUOTE STRATEGIES  [C46]
 // ═════════════════════════════════════════════════════════════════════
 
-/** Strategy 1: V1 Router getAmountsOut() — [C92] parallel RPC + Mirror race */
+/** Strategy 1: V1 Router getAmountsOut() — [C92] parallel RPC + Mirror race.
+ * [C100 Step 3] Fast-bails for V2-only tokens + V1-specific 5s timeout. */
 async function strategyV1Router(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
   inputHtsId: string, outputHtsId: string, network: string,
 ): Promise<QuoteResult | null> {
+  // [C100 Step 3] Fast bail — V2-only tokens have zero V1 liquidity,
+  // so getAmountsOut will always revert. Skip to save 2–12s of RPC latency.
+  if (isV2OnlyToken(inputHtsId) || isV2OnlyToken(outputHtsId)) {
+    console.log(`[SS-Quote] [C100] V1 direct skipped — ${isV2OnlyToken(inputHtsId) ? inputHtsId : outputHtsId} is V2-only`);
+    return null;
+  }
+
   const routerId = V1_ROUTER_IDS[network] || V1_ROUTER_IDS.mainnet;
   const routerEvm = await resolveContract(routerId, network);
   const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, tokenOutEvm]);
 
   // [C92] Race RPC + Mirror in parallel — whichever succeeds first wins
-  const result = await raceRpcAndMirror(routerEvm, calldata, network);
+  // [C100 Step 3] V1-specific 5s timeout — reverts are fast on Hedera,
+  // so 5s is generous for success and tight enough to avoid dominating latency.
+  const result = await raceRpcAndMirrorWithTimeout(routerEvm, calldata, network, V1_RPC_TIMEOUT_MS);
   if (result) {
     const out = decodeAmountsOut(result);
     if (out !== null && out > 0n) {
@@ -360,11 +670,19 @@ async function strategyV1Router(
 /** [C90] Strategy 1b: V1 Router multi-hop via WHBAR.
  * getAmountsOut with 3-token path: tokenIn → WHBAR → tokenOut.
  * Catches exotic pairs that have V1 AMM liquidity through WHBAR hub.
- * [C92] Uses parallel RPC + Mirror race. */
+ * [C92] Uses parallel RPC + Mirror race.
+ * [C100 Step 3] Fast-bails for V2-only tokens + V1-specific 5s timeout. */
 async function strategyV1RouterMultiHop(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
   inputHtsId: string, outputHtsId: string, network: string,
 ): Promise<QuoteResult | null> {
+  // [C100 Step 3] Fast bail — if either token is V2-only, the V1 leg
+  // involving it (tokenIn→WHBAR or WHBAR→tokenOut) will always revert.
+  if (isV2OnlyToken(inputHtsId) || isV2OnlyToken(outputHtsId)) {
+    console.log(`[SS-Quote] [C100] V1 multi-hop skipped — ${isV2OnlyToken(inputHtsId) ? inputHtsId : outputHtsId} is V2-only`);
+    return null;
+  }
+
   const whbarEvm = htsIdToEvmAddress(WHBAR_HTS_ID);
   // Skip if either token is already WHBAR
   if (tokenInEvm.toLowerCase() === whbarEvm.toLowerCase() ||
@@ -375,7 +693,8 @@ async function strategyV1RouterMultiHop(
   const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, whbarEvm, tokenOutEvm]);
 
   // [C92] Race RPC + Mirror in parallel
-  const result = await raceRpcAndMirror(routerEvm, calldata, network);
+  // [C100 Step 3] V1-specific 5s timeout
+  const result = await raceRpcAndMirrorWithTimeout(routerEvm, calldata, network, V1_RPC_TIMEOUT_MS);
   if (result) {
     const out = decodeAmountsOut(result);
     if (out !== null && out > 0n) {
@@ -392,7 +711,8 @@ async function strategyV1RouterMultiHop(
 /** Strategy 2: V2 QuoterV2 quoteExactInputSingle() — [C92] ALL fee tiers + parallel race.
  * This is the #1 fix for missing quotes: instead of trying ONE fee tier,
  * we probe ALL 5 SaucerSwap V2 tiers in parallel and pick the best output.
- * Each tier races RPC + Mirror simultaneously. */
+ * Each tier races RPC + Mirror simultaneously.
+ * [C99] Uses V2 alias EVM addresses for bridge tokens. */
 async function strategyV2Quoter(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
   _fee: number, inputHtsId: string, outputHtsId: string, network: string,
@@ -400,11 +720,19 @@ async function strategyV2Quoter(
   const quoterId = V2_QUOTER_IDS[network] || V2_QUOTER_IDS.mainnet;
   const quoterEvm = await resolveContract(quoterId, network);
 
+  // [C99] V2 pools use wrapper addresses for bridge tokens — resolve aliases
+  const v2InEvm = resolveV2Evm(inputHtsId);
+  const v2OutEvm = resolveV2Evm(outputHtsId);
+  const usedAlias = v2InEvm !== tokenInEvm || v2OutEvm !== tokenOutEvm;
+  if (usedAlias) {
+    console.log(`[SS-Quote] [C99] V2 quoter using alias addresses: in=${inputHtsId}→${resolveV2AliasId(inputHtsId)}, out=${outputHtsId}→${resolveV2AliasId(outputHtsId)}`);
+  }
+
   // [C92] Try ALL V2 fee tiers in parallel — pick the one with highest output.
   // Previously only tried the detected fee (or default 3000), missing pools
   // at other tiers entirely. This is the root cause of many "no quote" failures.
   const feeProbes = V2_FEE_TIERS.map(async (fee): Promise<QuoteResult | null> => {
-    const calldata = encodeQuoteExactInputSingle(tokenInEvm, tokenOutEvm, amountIn, fee);
+    const calldata = encodeQuoteExactInputSingle(v2InEvm, v2OutEvm, amountIn, fee);
     const result = await raceRpcAndMirror(quoterEvm, calldata, network);
     if (result && result.length >= 66) {
       const cleanHex = result.startsWith("0x") ? result.slice(2) : result;
@@ -418,6 +746,29 @@ async function strategyV2Quoter(
     }
     return null;
   });
+
+  // [C99] If alias addresses differ from canonical, also probe with canonical
+  // addresses. Some V2 pools may use canonical IDs (non-bridge tokens paired
+  // with bridge tokens where only one side has an alias).
+  if (usedAlias) {
+    for (const fee of V2_FEE_TIERS) {
+      feeProbes.push((async (): Promise<QuoteResult | null> => {
+        const calldata = encodeQuoteExactInputSingle(tokenInEvm, tokenOutEvm, amountIn, fee);
+        const result = await raceRpcAndMirror(quoterEvm, calldata, network);
+        if (result && result.length >= 66) {
+          const cleanHex = result.startsWith("0x") ? result.slice(2) : result;
+          const out = BigInt("0x" + cleanHex.slice(0, 64));
+          if (out > 0n) {
+            return {
+              amountOut: out.toString(), source: "v2-quoter", confidence: "high",
+              priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v2", feeTier: fee,
+            };
+          }
+        }
+        return null;
+      })());
+    }
+  }
 
   // Wait for all tiers to complete (failed tiers return null quickly on revert)
   const results = await Promise.allSettled(feeProbes);
@@ -441,7 +792,8 @@ async function strategyV2Quoter(
   return best;
 }
 
-/** Strategy 3: V2 QuoterV2 quoteExactInput() multi-hop through WHBAR. */
+/** Strategy 3: V2 QuoterV2 quoteExactInput() multi-hop through WHBAR.
+ * [C99] Uses V2 alias EVM addresses for bridge tokens in packed path. */
 async function strategyV2MultiHop(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
   inputHtsId: string, outputHtsId: string, network: string,
@@ -455,20 +807,28 @@ async function strategyV2MultiHop(
   const quoterId = V2_QUOTER_IDS[network] || V2_QUOTER_IDS.mainnet;
   const quoterEvm = await resolveContract(quoterId, network);
 
+  // [C99] V2 pools use wrapper addresses for bridge tokens
+  const v2InEvm = resolveV2Evm(inputHtsId);
+  const v2OutEvm = resolveV2Evm(outputHtsId);
+  const usedAlias = v2InEvm !== tokenInEvm || v2OutEvm !== tokenOutEvm;
+  if (usedAlias) {
+    console.log(`[SS-Quote] [C99] V2 multi-hop using alias: in=${inputHtsId}→${resolveV2AliasId(inputHtsId)}, out=${outputHtsId}→${resolveV2AliasId(outputHtsId)}`);
+  }
+
   // Try common fee combos for the 2-hop path: tokenIn → WHBAR → tokenOut
   // [C90] Expanded to cover ALL SaucerSwap V2 fee tiers (100, 500, 1500, 3000, 10000).
   // Promise.any returns the FIRST successful result — we get speed AND coverage.
   const feeCombos: [number, number][] = [
-    [3000, 3000], [1500, 3000], [3000, 1500], [1500, 1500],
-    [10000, 3000], [3000, 10000], [500, 3000], [3000, 500],
-    [10000, 10000], [500, 500], [100, 3000], [3000, 100],
+    [3000, 3000], [1500, 3000], [3000, 1500], [10000, 3000],
+    [3000, 10000], [500, 3000], [3000, 500],
   ];
 
   const probes = feeCombos.map(async ([fee1, fee2]) => {
+    // [C99] Use alias EVM addresses in packed path for V2 pools
     const packedPath = encodePackedPath([
-      { tokenEvm: tokenInEvm, fee: fee1 },
+      { tokenEvm: v2InEvm, fee: fee1 },
       { tokenEvm: whbarEvm, fee: fee2 },
-      { tokenEvm: tokenOutEvm, fee: 0 },
+      { tokenEvm: v2OutEvm, fee: 0 },
     ]);
     const calldata = encodeQuoteExactInput(packedPath, amountIn);
 
@@ -477,7 +837,7 @@ async function strategyV2MultiHop(
       const amountOutHex = rpcResult.slice(2, 66);
       const out = BigInt("0x" + amountOutHex);
       if (out > 0n) {
-        console.log(`[SS-Quote] V2 multi-hop (RPC): amountOut=${out} fees=${fee1}/${fee2}`);
+        console.log(`[SS-Quote] V2 multi-hop (RPC): amountOut=${out} fees=${fee1}/${fee2}${usedAlias ? " [C99-alias]" : ""}`);
         return {
           amountOut: out.toString(), source: "v2-multihop", confidence: "high" as const, priceImpact: 0,
           route: [inputHtsId, WHBAR_HTS_ID, outputHtsId], poolVersion: "v2" as const, feeTier: fee1,
@@ -486,6 +846,32 @@ async function strategyV2MultiHop(
     }
     throw new Error("no-result"); // Signal Promise.any to try next
   });
+
+  // [C99] If alias addresses are different, also try canonical addresses as fallback
+  if (usedAlias) {
+    for (const [fee1, fee2] of feeCombos.slice(0, 4)) { // Top 4 fee combos for canonical fallback
+      probes.push((async () => {
+        const packedPath = encodePackedPath([
+          { tokenEvm: tokenInEvm, fee: fee1 },
+          { tokenEvm: whbarEvm, fee: fee2 },
+          { tokenEvm: tokenOutEvm, fee: 0 },
+        ]);
+        const calldata = encodeQuoteExactInput(packedPath, amountIn);
+        const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: quoterEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
+        if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length >= 66) {
+          const out = BigInt("0x" + rpcResult.slice(2, 66));
+          if (out > 0n) {
+            console.log(`[SS-Quote] V2 multi-hop (RPC, canonical fallback): amountOut=${out} fees=${fee1}/${fee2}`);
+            return {
+              amountOut: out.toString(), source: "v2-multihop", confidence: "high" as const, priceImpact: 0,
+              route: [inputHtsId, WHBAR_HTS_ID, outputHtsId], poolVersion: "v2" as const, feeTier: fee1,
+            };
+          }
+        }
+        throw new Error("no-result");
+      })());
+    }
+  }
 
   try {
     return await Promise.any(probes);
@@ -558,7 +944,7 @@ async function strategyPriceEstimate(
 
 // ═════════════════════════════════════════════════════════════════════
 // [C52] SMART MULTI-ROUTE SCORING
-// ═════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
 //
 // For Token→Token pairs with no direct pool, tests ALL intermediary
 // candidates in parallel and returns scored routes.
@@ -583,6 +969,12 @@ export interface ScoredRoute {
  * [C52] Test all intermediary candidates for a Token→Token pair.
  * Each intermediary is tested with BOTH V1 and V2 routing in parallel.
  * Returns all successful routes, unsorted (scoring happens in orchestrator).
+ *
+ * [C100 Step 3] V1 probes are SKIPPED entirely when input or output is a
+ * V2-only token (PACK, KARATE, DOVU). This eliminates 10+ RPC calls that
+ * would all revert, saving 2–12s of accumulated latency per intermediary.
+ * Remaining V1 probes (for tokens with V1 liquidity) use the tighter
+ * V1_RPC_TIMEOUT_MS (5s) via raceRpcAndMirrorWithTimeout.
  */
 async function probeAllIntermediaries(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
@@ -599,37 +991,60 @@ async function probeAllIntermediaries(
 
   if (candidates.length === 0) return [];
 
+  // [C100 Step 3] Determine if V1 probes should be skipped.
+  // If either the input or output token is V2-only, ALL V1 multi-hop paths
+  // through any intermediary will fail (the V1 leg involving the V2-only
+  // token always reverts). Skip all V1 probes to avoid wasted RPC calls.
+  const skipV1 = isV2OnlyToken(inputHtsId) || isV2OnlyToken(outputHtsId);
+  if (skipV1) {
+    console.log(`[SS-Quote] [C100] Skipping ALL V1 intermediary probes — ` +
+      `${isV2OnlyToken(inputHtsId) ? inputHtsId : outputHtsId} is V2-only ` +
+      `(${candidates.length} intermediaries × V1 probes eliminated)`);
+  }
+
   const [routerEvm, quoterEvm] = await Promise.all([
-    resolveContract(routerId, network),
+    // [C100 Step 3] Only resolve V1 router if we'll actually use it
+    skipV1 ? Promise.resolve("") : resolveContract(routerId, network),
     resolveContract(quoterId, network),
   ]);
 
   const probes: Promise<QuoteResult | null>[] = [];
 
+  // [C99] Resolve V2 alias EVM addresses for input/output tokens
+  const v2InEvm = resolveV2Evm(inputHtsId);
+  const v2OutEvm = resolveV2Evm(outputHtsId);
+
   for (const mid of candidates) {
     const midEvm = htsIdToEvmAddress(mid.htsId);
+    // [C99] V2 alias EVM for intermediary token (uses v2AliasId if present)
+    const midV2Evm = mid.v2AliasId ? htsIdToEvmAddress(mid.v2AliasId) : midEvm;
 
     // V1 multi-hop: tokenIn → mid → tokenOut via getAmountsOut
-    probes.push((async (): Promise<QuoteResult | null> => {
-      try {
-        const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, midEvm, tokenOutEvm]);
-        const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: routerEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
-        if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length > 2) {
-          const out = decodeAmountsOut(rpcResult);
-          if (out !== null && out > 0n) {
-            return {
-              amountOut: out.toString(), source: `v1-via-${mid.symbol}`, confidence: "high",
-              priceImpact: 0, route: [inputHtsId, mid.htsId, outputHtsId], poolVersion: "v1",
-            };
+    // [C99] V1 uses CANONICAL addresses (V1 Factory pairs registered with canonical IDs)
+    // [C100 Step 3] Skipped entirely for V2-only tokens; uses 5s timeout otherwise
+    if (!skipV1) {
+      probes.push((async (): Promise<QuoteResult | null> => {
+        try {
+          const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, midEvm, tokenOutEvm]);
+          // [C100 Step 3] Use V1-specific 5s timeout instead of default 12s
+          const rpcResult = await raceRpcAndMirrorWithTimeout(routerEvm, calldata, network, V1_RPC_TIMEOUT_MS);
+          if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length > 2) {
+            const out = decodeAmountsOut(rpcResult);
+            if (out !== null && out > 0n) {
+              return {
+                amountOut: out.toString(), source: `v1-via-${mid.symbol}`, confidence: "high",
+                priceImpact: 0, route: [inputHtsId, mid.htsId, outputHtsId], poolVersion: "v1",
+              };
+            }
           }
-        }
-      } catch { /* non-fatal */ }
-      return null;
-    })());
+        } catch { /* non-fatal */ }
+        return null;
+      })());
+    }
 
     // V2 multi-hop: tokenIn → mid → tokenOut via quoteExactInput
     // [C90] Expanded fee combos to cover ALL SaucerSwap V2 tiers.
-    // This is the key fix for exotic pairs — wrong fee tier = no quote.
+    // [C99] Uses V2 ALIAS addresses for bridge tokens in packed path.
     const feeCombos: [number, number][] = [
       [3000, 3000], [1500, 3000], [3000, 1500], [10000, 3000],
       [3000, 10000], [500, 3000], [3000, 500],
@@ -637,10 +1052,11 @@ async function probeAllIntermediaries(
     for (const [fee1, fee2] of feeCombos) {
       probes.push((async (): Promise<QuoteResult | null> => {
         try {
+          // [C99] Use V2 alias addresses in packed path
           const packedPath = encodePackedPath([
-            { tokenEvm: tokenInEvm, fee: fee1 },
-            { tokenEvm: midEvm, fee: fee2 },
-            { tokenEvm: tokenOutEvm, fee: 0 },
+            { tokenEvm: v2InEvm, fee: fee1 },
+            { tokenEvm: midV2Evm, fee: fee2 },
+            { tokenEvm: v2OutEvm, fee: 0 },
           ]);
           const calldata = encodeQuoteExactInput(packedPath, amountIn);
           const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: quoterEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
@@ -670,7 +1086,10 @@ async function probeAllIntermediaries(
     if (r.status === "fulfilled" && r.value) routes.push(r.value);
   }
 
-  console.log(`[C52] Multi-route probed ${probes.length} combos → ${routes.length} valid routes`);
+  // [C100 Step 3] Enhanced logging — shows V1/V2 split for diagnostics
+  const v1Count = routes.filter(r => r.poolVersion === "v1").length;
+  const v2Count = routes.filter(r => r.poolVersion === "v2").length;
+  console.log(`[C52] Multi-route probed ${probes.length} combos → ${routes.length} valid routes (V1=${v1Count}, V2=${v2Count}${skipV1 ? ", V1-skipped" : ""})`);
   return routes;
 }
 
@@ -730,8 +1149,10 @@ export async function ssQuote(params: {
   inputDecimals: number;
   outputDecimals: number;
   network: string;
+  inputAliasId?: string;
+  outputAliasId?: string;
 }): Promise<{ best: QuoteResult | null; allQuotes: QuoteResult[]; scoredRoutes: ScoredRoute[]; poolInfo: PoolVersionInfo | null }> {
-  const { inputToken, outputToken, amountIn, slippage, inputDecimals, outputDecimals, network } = params;
+  const { inputToken, outputToken, amountIn, slippage, inputDecimals, outputDecimals, network, inputAliasId, outputAliasId } = params;
   const amountInBigInt = BigInt(amountIn);
 
   // Resolve tokens to EVM addresses (HBAR → WHBAR for routing)
@@ -740,16 +1161,49 @@ export async function ssQuote(params: {
   const tokenInEvm = htsIdToEvmAddress(inputHtsId);
   const tokenOutEvm = htsIdToEvmAddress(outputHtsId);
 
+  // [C100 Step 4] Pre-warm dynamic alias map from SaucerSwap /tokens API.
+  // Must run BEFORE registering request aliases so that resolveV2AliasId()
+  // has all three layers available. The call is instant on cache hit (5-min TTL).
+  await ensureDynamicAliasMap();
+
+  // [C99] Register request-scoped alias hints from client
+  if (inputAliasId) {
+    _requestAliases = new Map();
+    _requestAliases.set(inputHtsId, inputAliasId);
+  }
+  if (outputAliasId) {
+    if (!_requestAliases) _requestAliases = new Map();
+    _requestAliases.set(outputHtsId, outputAliasId);
+  }
+
   // Check quote cache
   const cacheKey = `${network}:${inputHtsId}:${outputHtsId}:${amountIn}`;
   const cachedEntry = _quoteCache.get(cacheKey);
   if (cachedEntry && Date.now() - cachedEntry.ts < QUOTE_CACHE_TTL_MS) {
+    _requestAliases = null; // [C99] Clean up before early return
     return { best: cachedEntry.value, allQuotes: [cachedEntry.value], scoredRoutes: [], poolInfo: null };
   }
 
+  // [C99] Wrap strategy execution in try/finally to guarantee alias cleanup
+  try {
+
   // Detect pool (uses C45 cache internally)
   const poolInfo = await ssDetectPoolVersion(tokenInEvm, tokenOutEvm, network);
-  const fee = poolInfo?.feeTier || 3000;
+  // [C99] If no pool found with canonical addresses and token has V2 alias,
+  // retry pool detection with V2 alias EVM addresses
+  let effectivePoolInfo = poolInfo;
+  if (!poolInfo) {
+    const v2InEvm = resolveV2Evm(inputHtsId);
+    const v2OutEvm = resolveV2Evm(outputHtsId);
+    if (v2InEvm !== tokenInEvm || v2OutEvm !== tokenOutEvm) {
+      console.log(`[SS-Quote] [C99] Retrying pool detection with V2 alias addresses`);
+      effectivePoolInfo = await ssDetectPoolVersion(v2InEvm, v2OutEvm, network);
+      if (effectivePoolInfo) {
+        console.log(`[SS-Quote] [C99] Pool found via V2 alias: ${effectivePoolInfo.version} fee=${effectivePoolInfo.feeTier}`);
+      }
+    }
+  }
+  const fee = effectivePoolInfo?.feeTier || 3000;
 
   // [C52] Determine if multi-route probing is needed:
   // If there's no direct pool detected, probe ALL intermediaries in parallel
@@ -837,6 +1291,11 @@ export async function ssQuote(params: {
   }
 
   return { best, allQuotes, scoredRoutes, poolInfo };
+
+  } finally {
+    // [C99] Guarantee alias cleanup — prevents leaking across requests on error
+    _requestAliases = null;
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -897,6 +1356,8 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
     const inputDecimals = parseInt(c.req.query("inputDecimals") || "8", 10);
     const outputDecimals = parseInt(c.req.query("outputDecimals") || "8", 10);
     const network       = normalizeNetwork(c.req.query("network"));
+    const inputAliasId  = c.req.query("inputAliasId");
+    const outputAliasId = c.req.query("outputAliasId");
 
     // Validate inputs
     if (!inputToken || (!inputToken.startsWith("0.0.") && inputToken !== "HBAR")) {
@@ -923,6 +1384,7 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
 
       const { best, allQuotes, scoredRoutes, poolInfo } = await ssQuote({
         inputToken, outputToken, amountIn, slippage, inputDecimals, outputDecimals, network,
+        inputAliasId, outputAliasId,
       });
 
       const durationMs = Date.now() - startMs;
@@ -954,6 +1416,8 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
         poolInfo,
         fromCache: wasCached,
         durationMs,
+        // [C100 Step 4] Diagnostics: how many dynamic aliases are active
+        dynamicAliases: _dynamicAliasMap?.size ?? 0,
       });
     } catch (err: any) {
       console.log(`[SS-Quote] /quote error: ${err?.message || err}`);

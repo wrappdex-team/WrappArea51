@@ -140,3 +140,66 @@ export async function getNativeHbarBalance(
     return 0;
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// ── [C100-S11] PRE-FLIGHT ASSOCIATION CHECK ────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// Batch-check which tokens from a given list are already associated
+// with the account. Used at connection time and during swap pre-flight
+// to determine if association popups are needed.
+
+/**
+ * [C100-S11] Check association status for multiple tokens in parallel.
+ * Returns a Map of tokenId → isAssociated.
+ */
+export async function batchCheckAssociations(
+  accountId: string,
+  tokenIds: string[],
+  network: HederaNetwork = "mainnet",
+): Promise<Map<string, boolean>> {
+  const result = new Map<string, boolean>();
+  if (tokenIds.length === 0) return result;
+
+  // Fetch all in parallel (Mirror Node is fast for these queries)
+  const checks = await Promise.all(
+    tokenIds.map(async (tokenId) => {
+      const assoc = await isTokenAssociated(accountId, tokenId, network);
+      return { tokenId, assoc };
+    }),
+  );
+
+  for (const { tokenId, assoc } of checks) {
+    result.set(tokenId, assoc);
+  }
+  return result;
+}
+
+/**
+ * [C100-S11] Check if account has auto-association enabled.
+ * Queries the Mirror Node for max_automatic_token_associations.
+ * Returns: -1 (unlimited), 0 (none), or positive int (limited slots).
+ */
+export async function fetchMaxAutoAssociations(
+  accountId: string,
+  network: HederaNetwork = "mainnet",
+): Promise<number> {
+  try {
+    const base = MIRROR_NODES[network] || MIRROR_NODES.mainnet;
+    const res = await fetch(
+      `${base}/api/v1/accounts/${accountId}`,
+      { signal: makeAbort(8000) },
+    );
+    if (!res.ok) return 0;
+    const data = await res.json();
+    // Mirror Node returns max_automatic_token_associations:
+    //   -1 = unlimited, 0 = none, positive = that many slots
+    const val = data.max_automatic_token_associations;
+    const result = typeof val === "number" ? val : 0;
+    console.log(`[C100-S11] maxAutoAssociations for ${accountId}: ${result} (${result === -1 ? "unlimited" : result === 0 ? "none" : result + " slots"})`);
+    return result;
+  } catch (err: any) {
+    console.log(`[C100-S11] Failed to fetch maxAutoAssociations: ${err?.message || err}`);
+    return 0;
+  }
+}
