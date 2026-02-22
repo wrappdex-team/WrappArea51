@@ -58,6 +58,8 @@ const WHBAR_HTS_ID = "0.0.1456986";
 
 // [C52] Full intermediary candidate list — tested in parallel for Token→Token
 // pairs with no direct pool. Ordered by typical liquidity depth.
+// [C90] Expanded: added common bridge tokens (WBNB, WETH, WBTC, DAI) that
+// serve as secondary liquidity hubs for exotic pairs.
 const INTERMEDIARY_TOKENS: { htsId: string; symbol: string }[] = [
   { htsId: "0.0.1456986", symbol: "WHBAR" },
   { htsId: "0.0.456858",  symbol: "USDC" },
@@ -65,6 +67,10 @@ const INTERMEDIARY_TOKENS: { htsId: string; symbol: string }[] = [
   { htsId: "0.0.731861",  symbol: "SAUCE" },
   { htsId: "0.0.834116",  symbol: "HBARX" },
   { htsId: "0.0.1055459", symbol: "USDCh" },
+  { htsId: "0.0.1055481", symbol: "WETH" },
+  { htsId: "0.0.1055482", symbol: "WBTC" },
+  { htsId: "0.0.1157005", symbol: "WBNB" },
+  { htsId: "0.0.1055480", symbol: "LINK" },
 ];
 
 /** Quote cache TTL: 10 seconds. */
@@ -89,12 +95,18 @@ const FALLBACK_PRICES_USD: Record<string, number> = {
   "0.0.1456986": 0.10,   // WHBAR
   "0.0.731861": 0.045,   // SAUCE
   "0.0.456858": 1.0,     // USDC
-  "0.0.1055483": 1.0,    // USDT
+  "0.0.1055472": 1.0,    // USDT
   "0.0.1055482": 104000, // WBTC
   "0.0.1055481": 2650,   // WETH
   "0.0.1055480": 16.50,  // LINK
   "0.0.834116": 0.11,    // HBARX
   "0.0.7374029": 0.000001, // HBAR.h
+  "0.0.968069": 0.018,   // HST
+  "0.0.1157005": 660,    // WBNB
+  "0.0.1055459": 1.0,    // USDCh
+  "0.0.6792100": 0.015,  // PACK
+  "0.0.3157928": 0.002,  // DOVU
+  "0.0.4722969": 0.0003, // KARATE
 };
 
 const VALID_NETWORKS = new Set(["mainnet", "testnet"]);
@@ -322,6 +334,36 @@ async function strategyV1Router(
   return null;
 }
 
+/** [C90] Strategy 1b: V1 Router multi-hop via WHBAR.
+ * getAmountsOut with 3-token path: tokenIn → WHBAR → tokenOut.
+ * Catches exotic pairs that have V1 AMM liquidity through WHBAR hub. */
+async function strategyV1RouterMultiHop(
+  amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
+  inputHtsId: string, outputHtsId: string, network: string,
+): Promise<QuoteResult | null> {
+  const whbarEvm = htsIdToEvmAddress(WHBAR_HTS_ID);
+  // Skip if either token is already WHBAR
+  if (tokenInEvm.toLowerCase() === whbarEvm.toLowerCase() ||
+      tokenOutEvm.toLowerCase() === whbarEvm.toLowerCase()) return null;
+
+  const routerId = V1_ROUTER_IDS[network] || V1_ROUTER_IDS.mainnet;
+  const routerEvm = await resolveContract(routerId, network);
+  const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, whbarEvm, tokenOutEvm]);
+
+  const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: routerEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
+  if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length > 2) {
+    const out = decodeAmountsOut(rpcResult);
+    if (out !== null && out > 0n) {
+      console.log(`[SS-Quote] V1 multi-hop via WHBAR (RPC): amountOut=${out}`);
+      return {
+        amountOut: out.toString(), source: "v1-multihop-whbar", confidence: "high",
+        priceImpact: 0, route: [inputHtsId, WHBAR_HTS_ID, outputHtsId], poolVersion: "v1",
+      };
+    }
+  }
+  return null;
+}
+
 /** Strategy 2: V2 QuoterV2 quoteExactInputSingle() */
 async function strategyV2Quoter(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
@@ -371,8 +413,13 @@ async function strategyV2MultiHop(
   const quoterEvm = await resolveContract(quoterId, network);
 
   // Try common fee combos for the 2-hop path: tokenIn → WHBAR → tokenOut
-  // [C46] All combos probed in PARALLEL via Promise.any for speed.
-  const feeCombos: [number, number][] = [[3000, 3000], [1500, 3000], [3000, 1500], [1500, 1500], [10000, 3000]];
+  // [C90] Expanded to cover ALL SaucerSwap V2 fee tiers (100, 500, 1500, 3000, 10000).
+  // Promise.any returns the FIRST successful result — we get speed AND coverage.
+  const feeCombos: [number, number][] = [
+    [3000, 3000], [1500, 3000], [3000, 1500], [1500, 1500],
+    [10000, 3000], [3000, 10000], [500, 3000], [3000, 500],
+    [10000, 10000], [500, 500], [100, 3000], [3000, 100],
+  ];
 
   const probes = feeCombos.map(async ([fee1, fee2]) => {
     const packedPath = encodePackedPath([
@@ -538,8 +585,12 @@ async function probeAllIntermediaries(
     })());
 
     // V2 multi-hop: tokenIn → mid → tokenOut via quoteExactInput
-    // Try most common fee combos
-    const feeCombos: [number, number][] = [[3000, 3000], [1500, 3000], [3000, 1500]];
+    // [C90] Expanded fee combos to cover ALL SaucerSwap V2 tiers.
+    // This is the key fix for exotic pairs — wrong fee tier = no quote.
+    const feeCombos: [number, number][] = [
+      [3000, 3000], [1500, 3000], [3000, 1500], [10000, 3000],
+      [3000, 10000], [500, 3000], [3000, 500],
+    ];
     for (const [fee1, fee2] of feeCombos) {
       probes.push((async (): Promise<QuoteResult | null> => {
         try {
@@ -668,6 +719,8 @@ export async function ssQuote(params: {
   );
   const strategiesPromise = Promise.allSettled([
     strategyV1Router(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network),
+    // [C90] V1 multi-hop via WHBAR — catches pairs where V1 has both legs but no direct pair
+    strategyV1RouterMultiHop(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network),
     poolInfo?.version === "v2" || !poolInfo
       ? strategyV2Quoter(amountInBigInt, tokenInEvm, tokenOutEvm, fee, inputHtsId, outputHtsId, network)
       : Promise.resolve(null),

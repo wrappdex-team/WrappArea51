@@ -527,6 +527,10 @@ export interface SaucerTokenPriceEntry {
 let _allTokenPriceCache: { data: Map<string, SaucerTokenPriceEntry>; ts: number } | null = null;
 const ALL_TOKEN_PRICE_TTL_MS = 60_000; // 1 minute
 
+// [C90] Simple price-by-HTS-ID cache for estimateOutputFromPrices fallback.
+// Populated from fetchAllTokenPricesById() results and fetchLiveTokenPrices().
+const _allTokenPriceByIdCache = new Map<string, number>();
+
 /**
  * Fetch ALL token prices from SaucerSwap, keyed by HTS token ID.
  * Returns a Map<htsId, SaucerTokenPriceEntry> covering every token
@@ -567,6 +571,10 @@ export async function fetchAllTokenPricesById(): Promise<Map<string, SaucerToken
       };
 
       priceMap.set(htsId, entry);
+      // [C90] Populate HTS ID price cache for estimateOutputFromPrices fallback
+      if (priceUsd > 0) {
+        _allTokenPriceByIdCache.set(htsId, priceUsd);
+      }
     }
 
     if (priceMap.size > 0) {
@@ -602,6 +610,26 @@ export function estimateOutputFromPrices(
   // Read prices through the proxy (tries: fresh live -> non-zero fallback -> stale live)
   let inputPrice = TOKEN_PRICES_USD[inputSym];
   let outputPrice = TOKEN_PRICES_USD[outputSym];
+
+  // [C90] HTS ID fallback: when symbol lookup fails (exotic/bridge tokens
+  // whose symbols don't match our registry), try fetching price by HTS ID
+  // from the live price cache. This catches WBNB, WAVAX, and other tokens
+  // that the SaucerSwap /tokens API returns with a price but our symbol
+  // registry doesn't map.
+  if ((inputPrice == null || inputPrice <= 0) && inputToken.htsId) {
+    const byId = _allTokenPriceByIdCache.get(inputToken.htsId);
+    if (byId && byId > 0) {
+      inputPrice = byId;
+      console.log(`[HBAR.h] estimateOutputFromPrices: ${inputSym} price rescued via HTS ID ${inputToken.htsId}: $${byId}`);
+    }
+  }
+  if ((outputPrice == null || outputPrice <= 0) && outputToken.htsId) {
+    const byId = _allTokenPriceByIdCache.get(outputToken.htsId);
+    if (byId && byId > 0) {
+      outputPrice = byId;
+      console.log(`[HBAR.h] estimateOutputFromPrices: ${outputSym} price rescued via HTS ID ${outputToken.htsId}: $${byId}`);
+    }
+  }
 
   // Guard: reject only genuinely missing/undefined prices, not zero
   if (inputPrice == null || outputPrice == null || outputPrice <= 0) {
