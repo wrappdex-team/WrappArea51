@@ -1,5 +1,5 @@
 /**
- * [C72 → C89] SaucerSwap HBAR Wrapping / Unwrapping
+ * [C72 → C89 → C97] SaucerSwap HBAR Wrapping / Unwrapping
  *
  * Extracted from the monolith saucerswap.ts for maintainability.
  * Contains: wrapHbar, unwrapHbar
@@ -11,15 +11,26 @@
  *   - Fallback: direct WHBAR contract withdraw(address,address,uint256)
  *     if WhbarHelper reverts
  *
+ * [C97] Static SDK import via hedera-sdk.ts (replaces dynamic imports)
+ *
  * Dependencies: tokens (getWhbarToken), contracts (SAUCERSWAP_WHBAR_CONTRACT),
- *               abi (encodeUint256)
- * Dynamic: @hashgraph/sdk, hashpack (executeHederaTransaction[Fast])
+ *               abi (encodeUint256), hedera-sdk
+ * Dynamic: hashpack (executeHederaTransaction[Fast])
  */
 
 import type { HederaNetwork } from "./tokens";
 import { getWhbarToken } from "./tokens";
 import { SAUCERSWAP_WHBAR_CONTRACT } from "./contracts";
 import { encodeUint256 } from "./abi";
+import {
+  ContractExecuteTransaction,
+  ContractId,
+  ContractFunctionParameters,
+  Hbar,
+  AccountAllowanceApproveTransaction,
+  TokenId,
+  AccountId,
+} from "../hedera-sdk";
 
 // ══════════════════════════════════════════════════════════════════════
 // ── WHBAR Helper & Contract Addresses ───────────────────────────────
@@ -52,8 +63,6 @@ export async function wrapHbar(
 ): Promise<{ success: boolean; transactionId?: string; error?: string; userCancelled?: boolean }> {
   try {
     const { executeHederaTransaction } = await import("../hashpack");
-    const sdk = await import("@hashgraph/sdk");
-    const { ContractExecuteTransaction, ContractId, Hbar } = sdk;
 
     const whbar = getWhbarToken();
     const hbarAmount = parseFloat(amount);
@@ -68,16 +77,22 @@ export async function wrapHbar(
     // (0.0.1456986). deposit() is a custom function on the deploying
     // contract — the HTS system contract at the token ID only handles
     // standard ERC-20 operations.
-    const whbarContractId = SAUCERSWAP_WHBAR_CONTRACT[network] || SAUCERSWAP_WHBAR_CONTRACT.mainnet;
-    console.log(`[WHBAR] Wrapping ${hbarAmount} HBAR → WHBAR via deposit() on ${whbarContractId}`);
-    const tx = new ContractExecuteTransaction()
-      .setContractId(ContractId.fromString(whbarContractId))
-      .setGas(800_000)
-      .setFunctionParameters(depositSelector)
-      .setPayableAmount(new Hbar(hbarAmount));
+    const contractId = SAUCERSWAP_WHBAR_CONTRACT[network] || SAUCERSWAP_WHBAR_CONTRACT.mainnet;
 
+    const tx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(contractId))
+      .setGas(800_000)
+      .setPayableAmount(new Hbar(hbarAmount))
+      .setFunctionParameters(depositSelector);
+
+    console.log(`[WHBAR] Wrapping ${hbarAmount} HBAR via contract ${contractId}`);
     const result = await executeHederaTransaction(accountId, tx);
-    console.log("[WHBAR] Wrap result:", JSON.stringify(result));
+
+    if (result.success) {
+      console.log(`[WHBAR] Wrap success: ${result.transactionId}`);
+    } else {
+      console.warn(`[WHBAR] Wrap failed: ${result.error}`);
+    }
     return {
       success: result.success,
       transactionId: result.transactionId || undefined,
@@ -86,8 +101,7 @@ export async function wrapHbar(
     };
   } catch (err: any) {
     console.error("[WHBAR] Wrap error:", err);
-    const errMsg = err?.message || "HBAR wrapping failed";
-    return { success: false, error: errMsg, userCancelled: _isCancellation(errMsg) || undefined };
+    return { success: false, error: err?.message || "HBAR wrapping failed" };
   }
 }
 
@@ -96,20 +110,14 @@ export async function wrapHbar(
 // ══════════════════════════════════════════════════════════════════════
 
 /**
- * [C89] Unwrap WHBAR back to native HBAR.
+ * Unwrap WHBAR back to native HBAR.
  *
- * Primary path: WhbarHelper contract (0.0.5808826 on mainnet)
- *   1. Fast-path HTS allowance approval (user → WhbarHelper, skip receipt poll)
- *   2. 5s consensus wait (Hedera finality = 3-5s)
- *   3. Call WhbarHelper.unwrapWhbar(uint256) with 1.5M gas
- *
- * The WhbarHelper internally does:
- *   - safeTransferFrom(WHBAR, user → helper)
- *   - safeApprove(WHBAR, whbarContract, amount)
- *   - WHBAR.withdraw(helper, user, amount)
+ * Primary path: WhbarHelper.unwrapWhbar(uint256 wad)
+ *   - Requires HTS allowance for the WhbarHelper contract
+ *   - Fast-path approval + 2s consensus wait + contract call
  *
  * Fallback: If WhbarHelper reverts, try direct WHBAR contract
- *   withdraw(address, address, uint256) which only needs the user
+ *   withdraw(address src, address dst, uint wad) which only needs the user
  *   to call it directly (no allowance needed if src == msg.sender).
  */
 export async function unwrapHbar(
@@ -117,7 +125,6 @@ export async function unwrapHbar(
   accountId: string,
   network: HederaNetwork
 ): Promise<{ success: boolean; transactionId?: string; error?: string; userCancelled?: boolean }> {
-  const sdk = await import("@hashgraph/sdk");
   const { executeHederaTransactionFast, executeHederaTransaction } = await import("../hashpack");
 
   const whbar = getWhbarToken();
@@ -136,7 +143,7 @@ export async function unwrapHbar(
   // ── PRIMARY PATH: WhbarHelper ────────────────────────────────────
   try {
     const result = await _unwrapViaHelper(
-      sdk, executeHederaTransactionFast, executeHederaTransaction,
+      executeHederaTransactionFast, executeHederaTransaction,
       accountId, rawAmount, WHBAR_TOKEN_ID, helperContractId,
     );
     if (result.success) return result;
@@ -149,24 +156,25 @@ export async function unwrapHbar(
   }
 
   // ── FALLBACK: Direct WHBAR contract withdraw ─────────────────────
-  // Call withdraw(address src, address dst, uint wad) directly on the
-  // WHBAR contract. When src == msg.sender (the user), no allowance needed.
   try {
     console.log(`[WHBAR] Fallback: direct withdraw on ${whbarContractId}`);
     return await _unwrapDirect(
-      sdk, executeHederaTransaction,
+      executeHederaTransaction,
       accountId, rawAmount, whbarContractId, network,
     );
   } catch (err: any) {
     console.error("[WHBAR] Direct withdraw failed:", err);
-    return { success: false, error: err?.message || "WHBAR unwrapping failed (both paths)", userCancelled: _isCancellation(err?.message || "") || undefined };
+    return {
+      success: false,
+      error: err?.message || "WHBAR unwrapping failed (both paths)",
+      userCancelled: _isCancellation(err?.message || "") || undefined,
+    };
   }
 }
 
 // ── WhbarHelper Path ──────────────────────────────────────────────────
 
 async function _unwrapViaHelper(
-  sdk: any,
   executeFast: typeof import("../hashpack")["executeHederaTransactionFast"],
   executeFull: typeof import("../hashpack")["executeHederaTransaction"],
   accountId: string,
@@ -174,12 +182,7 @@ async function _unwrapViaHelper(
   whbarTokenId: string,
   helperContractId: string,
 ): Promise<{ success: boolean; transactionId?: string; error?: string; userCancelled?: boolean }> {
-  const { AccountAllowanceApproveTransaction, TokenId, AccountId, ContractExecuteTransaction, ContractId, ContractFunctionParameters } = sdk;
-
   // ── Step 1: Fast-path HTS allowance approval ──────────────────────
-  // Uses executeHederaTransactionFast (skip Mirror Node receipt polling)
-  // matching the pattern from swap-engine.ts approveIfNeeded().
-  // The wallet signs + submits; we proceed after a consensus wait.
   console.log(`[WHBAR] Step 1/2: Approving WhbarHelper ${helperContractId} for ${rawAmount} WHBAR (fast path)`);
 
   const approveTx = new AccountAllowanceApproveTransaction()
@@ -202,9 +205,6 @@ async function _unwrapViaHelper(
   console.log("[WHBAR] Approval submitted:", approveResult.transactionId);
 
   // ── Consensus wait ─────────────────────────────────────────────────
-  // Hedera consensus finality is 3-5s. The fast-path already waits 3s
-  // internally, but we add 2s more to be safe — the WhbarHelper's
-  // safeTransferFrom WILL revert if the allowance isn't committed yet.
   console.log("[WHBAR] Waiting 2s for consensus finality...");
   await new Promise(r => setTimeout(r, 2000));
 
@@ -216,7 +216,7 @@ async function _unwrapViaHelper(
 
   const tx = new ContractExecuteTransaction()
     .setContractId(ContractId.fromString(helperContractId))
-    .setGas(1_500_000) // 1.5M gas for 3 nested calls (transferFrom + approve + withdraw)
+    .setGas(1_500_000)
     .setFunction("unwrapWhbar", params);
 
   const result = await executeFull(accountId, tx);
@@ -232,17 +232,13 @@ async function _unwrapViaHelper(
 // ── Direct WHBAR Withdraw Path ────────────────────────────────────────
 
 async function _unwrapDirect(
-  sdk: any,
   executeFull: typeof import("../hashpack")["executeHederaTransaction"],
   accountId: string,
   rawAmount: number,
   whbarContractId: string,
   network: HederaNetwork,
 ): Promise<{ success: boolean; transactionId?: string; error?: string; userCancelled?: boolean }> {
-  const { ContractExecuteTransaction, ContractId, ContractFunctionParameters } = sdk;
-
   // Get the user's EVM address for the withdraw(address,address,uint256) call.
-  // On Hedera, account 0.0.X has EVM address 0x + hex(X) zero-padded to 20 bytes.
   const accountNum = parseInt(accountId.split(".")[2], 10);
   const evmAddress = "0x" + accountNum.toString(16).padStart(40, "0");
 
@@ -279,6 +275,7 @@ function _isCancellation(msg: string): boolean {
     lc.includes("rejected in hashpack") ||
     lc.includes("user denied") ||
     lc.includes("user rejected") ||
-    lc.includes("rejected by wallet")
+    lc.includes("user cancelled") ||
+    lc.includes("user canceled")
   );
 }

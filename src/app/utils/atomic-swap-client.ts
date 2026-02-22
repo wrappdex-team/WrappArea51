@@ -67,6 +67,9 @@ import {
 } from "./atomic-swap-engine";
 import { sendHederaTransaction } from "./hashpack";
 import { log } from "./logger";
+import {
+  TokenAssociateTransaction, AccountId, TokenId, TransactionId,
+} from "./hedera-sdk";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { getSessionToken } from "./auth";
 
@@ -542,13 +545,6 @@ export async function buildTokenAssociateTransaction(
   tokenId: string,
 ): Promise<{ transactionBytes: Uint8Array } | { error: string }> {
   try {
-    const {
-      TokenAssociateTransaction,
-      AccountId,
-      TokenId,
-      TransactionId,
-    } = await import("@hashgraph/sdk");
-
     const tx = new TokenAssociateTransaction()
       .setAccountId(AccountId.fromString(accountId))
       .setTokenIds([TokenId.fromString(tokenId)])

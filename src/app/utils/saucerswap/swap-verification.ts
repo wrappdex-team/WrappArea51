@@ -18,6 +18,7 @@ import { makeAbort } from "./prices";
 import { isTokenAssociated, getTokenBalance, getNativeHbarBalance } from "./balances";
 import { formatTxIdForMirrorNode } from "./helpers";
 import { findSwapRoute } from "./routing";
+import { TokenAssociateTransaction } from "../hedera-sdk";
 
 // ══════════════════════════════════════════════════════════════════════
 // ── POST-SWAP VERIFICATION ──────────────────────────────────────────
@@ -353,8 +354,6 @@ export async function ensureTokenAssociated(
   // Need to associate — use executeHederaTransaction from hashpack
   try {
     const { executeHederaTransaction } = await import("../hashpack");
-    const sdk = await import("@hashgraph/sdk");
-    const { TokenAssociateTransaction } = sdk;
 
     const associateTx = new TokenAssociateTransaction()
       .setAccountId(accountId)

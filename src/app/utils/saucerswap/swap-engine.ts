@@ -9,9 +9,18 @@
  *
  * Dependencies: tokens, contracts, abi, prices, pools, routing, quotes,
  *               balances, helpers, verification
- * Dynamic: @hashgraph/sdk, hashpack (executeHederaTransaction)
+ * Static: @hashgraph/sdk (via hedera-sdk.ts — C96)
+ * Dynamic: hashpack (executeHederaTransaction)
  */
 
+import {
+  ContractExecuteTransaction,
+  ContractId,
+  Hbar,
+  AccountAllowanceApproveTransaction,
+  TokenAssociateTransaction,
+  AccountId,
+} from "../hedera-sdk";
 import type { HederaNetwork, AllowedToken } from "./tokens";
 import {
   resolveToken, getWhbarToken, htsIdToEvmAddress, evmAddressToHtsId,
@@ -136,18 +145,8 @@ async function approveIfNeeded(params: {
   // The approval TX doesn't need receipt confirmation; if it fails, the
   // subsequent swap TX will revert with a clear error. Saves 5-25 seconds.
   const { executeHederaTransactionFast } = await import("../hashpack");
-  let sdk: any;
-  try {
-    sdk = await import("@hashgraph/sdk");
-  } catch (e: any) {
-    return {
-      needed: true, skipped: false, success: false,
-      error: "Hedera SDK not available: " + (e?.message || "unknown"),
-      existingAllowance, approvedAmount: 0,
-    };
-  }
 
-  const approveTx = new sdk.AccountAllowanceApproveTransaction()
+  const approveTx = new AccountAllowanceApproveTransaction()
     .approveTokenAllowance(tokenHtsId, ownerAccountId, spenderAccountId, approveAmount);
 
   const approveResult = await executeHederaTransactionFast(ownerAccountId, approveTx);
@@ -315,15 +314,6 @@ async function executeSaucerSwapV2Direct(
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min
 
-    // Dynamic SDK import
-    let sdk: any;
-    try {
-      sdk = await import("@hashgraph/sdk");
-    } catch (e: any) {
-      return { success: false, error: "Hedera SDK not available: " + (e?.message || "unknown"), executionVenue: "saucerswap-v2" };
-    }
-    const { ContractExecuteTransaction, ContractId, Hbar, AccountAllowanceApproveTransaction } = sdk;
-
     // ── Verify V2 Router is a contract ──
     const routerContractInfo = await verifyIsContract(v2RouterId, network);
     if (!routerContractInfo) {
@@ -367,8 +357,7 @@ async function executeSaucerSwapV2Direct(
       if (!isAssoc) {
         console.warn(`[HBAR.h] V2: ${assocSymbol} (${assocHtsId}) NOT associated — auto-associating`);
         try {
-          const assocSdk = await import("@hashgraph/sdk");
-          const assocTx = new assocSdk.TokenAssociateTransaction()
+          const assocTx = new TokenAssociateTransaction()
             .setAccountId(accountId)
             .setTokenIds([assocHtsId]);
           // [C81-02] Fast-path — association prerequisite
@@ -1035,15 +1024,6 @@ async function executeSaucerSwapV2MultiHop(
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min
 
-    // Dynamic SDK import
-    let sdk: any;
-    try {
-      sdk = await import("@hashgraph/sdk");
-    } catch (e: any) {
-      return { success: false, error: "Hedera SDK not available: " + (e?.message || "unknown"), executionVenue: "saucerswap-v2" };
-    }
-    const { ContractExecuteTransaction, ContractId, Hbar, AccountAllowanceApproveTransaction } = sdk;
-
     // Verify V2 Router
     const routerContractInfo = await verifyIsContract(v2RouterId, network);
     if (!routerContractInfo) {
@@ -1077,8 +1057,7 @@ async function executeSaucerSwapV2MultiHop(
       if (!isAssoc) {
         console.warn(`[HBAR.h] V2 Multi-hop: ${assocSymbol} (${assocHtsId}) NOT associated — auto-associating`);
         try {
-          const assocSdk = await import("@hashgraph/sdk");
-          const assocTx = new assocSdk.TokenAssociateTransaction()
+          const assocTx = new TokenAssociateTransaction()
             .setAccountId(accountId)
             .setTokenIds([assocHtsId]);
           // [C81-02] Fast-path — association prerequisite
@@ -1759,20 +1738,6 @@ async function executeSaucerSwapDirect(
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min deadline
 
-    // Dynamic import of Hedera SDK
-    let sdk: any;
-    try {
-      sdk = await import("@hashgraph/sdk");
-    } catch (e: any) {
-      return {
-        success: false,
-        error: "Hedera SDK not available: " + (e?.message || "unknown"),
-        executionVenue: "saucerswap-v1",
-      };
-    }
-
-    const { ContractExecuteTransaction, ContractId, Hbar, AccountAllowanceApproveTransaction } = sdk;
-
     // ══════════════════════════════════════════════════════════════════
     // ── CRITICAL SAFETY: Verify the router is a real smart contract ──
     // Prevents sending HBAR/tokens to a random account that isn't the
@@ -1834,8 +1799,7 @@ async function executeSaucerSwapDirect(
       if (!isAssoc) {
         console.warn(`[HBAR.h] SAFETY NET: Output token ${outputToken.symbol} (${outputHtsId}) NOT associated — auto-associating`);
         try {
-          const assocSdk = await import("@hashgraph/sdk");
-          const assocTx = new assocSdk.TokenAssociateTransaction()
+          const assocTx = new TokenAssociateTransaction()
             .setAccountId(accountId)
             .setTokenIds([outputHtsId]);
           // [C81-02] Fast-path — association is a prerequisite, no receipt needed
@@ -1883,8 +1847,7 @@ async function executeSaucerSwapDirect(
         if (!midAssoc) {
           console.warn(`[HBAR.h] [C77-03] SAFETY NET: Intermediate token ${midSymbol} (${midHtsId}) NOT associated — auto-associating`);
           try {
-            const assocSdk = await import("@hashgraph/sdk");
-            const midAssocTx = new assocSdk.TokenAssociateTransaction()
+            const midAssocTx = new TokenAssociateTransaction()
               .setAccountId(accountId)
               .setTokenIds([midHtsId]);
             // [C81-02] Fast-path for intermediary association

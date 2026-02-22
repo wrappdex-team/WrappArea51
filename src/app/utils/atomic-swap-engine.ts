@@ -40,6 +40,9 @@ import type {
 } from "./atomic-swap-types";
 import { log } from "./logger";
 import { SAUCERSWAP_PARTNER_ID } from "./saucerswap";
+import {
+  TransferTransaction, AccountId, TokenId, TransactionId, Long,
+} from "./hedera-sdk";
 
 // ═══════════════════════════════════════════════════════════════════════
 // SECTION 1: Constants & Configuration
@@ -956,18 +959,6 @@ export async function buildSwapTransaction(
     const defOut = TOKEN_BY_SYMBOL.get(request.tokenOut);
     if (!defIn || !defOut) return { error: "Unknown token" };
 
-    // Dynamic import of Hedera SDK (tree-shaking friendly)
-    const {
-      TransferTransaction,
-      AccountId,
-      TokenId,
-      TransactionId,
-      Long,
-    } = await import("@hashgraph/sdk");
-
-    // ATOMIC-10: Long.fromString() — see buildSwapTransaction comment
-    const toLong = (v: bigint) => Long.fromString(v.toString());
-
     const userAccount = AccountId.fromString(request.userAccountId);
     const poolAccount = AccountId.fromString(pool.accountId);
     const tokenInId = TokenId.fromString(defIn.tokenId);
@@ -1032,17 +1023,6 @@ export async function buildAddLiquidityTransaction(params: {
     if (params.pool.accountId === "PENDING") return { error: "Pool not deployed" };
     if (params.pool.lpTokenId === "PENDING") return { error: "LP token not created" };
 
-    const {
-      TransferTransaction,
-      AccountId,
-      TokenId,
-      TransactionId,
-      Long,
-    } = await import("@hashgraph/sdk");
-
-    // ATOMIC-10: Long.fromString() — see buildSwapTransaction comment
-    const toLong = (v: bigint) => Long.fromString(v.toString());
-
     const userAccount = AccountId.fromString(params.userAccountId);
     const poolAccount = AccountId.fromString(params.pool.accountId);
     const tokenAId = TokenId.fromString(defA.tokenId);
@@ -1105,17 +1085,6 @@ export async function buildRemoveLiquidityTransaction(params: {
     if (!defA || !defB) return { error: "Unknown token" };
     if (params.pool.accountId === "PENDING") return { error: "Pool not deployed" };
     if (params.pool.lpTokenId === "PENDING") return { error: "LP token not created" };
-
-    const {
-      TransferTransaction,
-      AccountId,
-      TokenId,
-      TransactionId,
-      Long,
-    } = await import("@hashgraph/sdk");
-
-    // ATOMIC-10: Long.fromString() — see buildSwapTransaction comment
-    const toLong = (v: bigint) => Long.fromString(v.toString());
 
     const userAccount = AccountId.fromString(params.userAccountId);
     const poolAccount = AccountId.fromString(params.pool.accountId);

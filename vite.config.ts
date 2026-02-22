@@ -132,7 +132,7 @@ export default defineConfig(({ mode }) => ({
     global: 'globalThis',
   },
   optimizeDeps: {
-    include: ['buffer', 'process'],
+    include: ['buffer', 'process', '@hashgraph/sdk'],
     esbuildOptions: {
       // Define global for esbuild pre-bundling
       define: {
@@ -171,8 +171,11 @@ export default defineConfig(({ mode }) => ({
           // React core
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router/')) return 'vendor-react';
 
-          // NOTE: @hashgraph/sdk, @walletconnect/sign-client, and lightweight-charts
-          // are already dynamically imported via `await import(...)` in the
+          // [C96] Hedera SDK — static import via hedera-sdk.ts, chunked separately
+          if (id.includes('/@hashgraph/') || id.includes('/@hiero-ledger/') || id.includes('/long/')) return 'vendor-hedera';
+
+          // NOTE: @walletconnect/sign-client and lightweight-charts
+          // are dynamically imported via `await import(...)` in the
           // source code, so Rollup automatically code-splits them into
           // separate async chunks. No need to list them here.
         },

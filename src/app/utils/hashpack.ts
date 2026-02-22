@@ -20,6 +20,7 @@
 
 import "./polyfills";
 
+import { AccountId } from "./hedera-sdk";
 import type { HederaNetwork } from "./hedera";
 import { fetchAccountInfo } from "./hedera";
 import { log } from "./logger";
@@ -558,13 +559,12 @@ export async function executeHederaTransaction(
     // Each variant gets signed and may be submitted, costing ~0.5 HBAR per
     // attempt. With 3 nodes default, a reverted contract call costs 3×.
     try {
-      const sdk = await import("@hashgraph/sdk");
       if (typeof sdkTransaction.setNodeAccountIds === "function") {
-        sdkTransaction.setNodeAccountIds([new sdk.AccountId(3)]);
+        sdkTransaction.setNodeAccountIds([new AccountId(3)]);
       }
     } catch { /* non-blocking — proceed with default nodes */ }
 
-    // Serialize the SDK transaction — the wallet handles signing + execution
+    // Serialize the SDK transaction
     const txBytes: Uint8Array = sdkTransaction.toBytes();
     log.info("HashPack", `Sending ${txBytes.length}B transaction via WC (single-node)`);
     const result = await signAndExecuteTransaction(_activeWcTopic, _activeNetwork, accountId, txBytes);
@@ -678,9 +678,8 @@ export async function executeHederaTransactionFast(
   try {
     // Single node to prevent fee multiplication
     try {
-      const sdk = await import("@hashgraph/sdk");
       if (typeof sdkTransaction.setNodeAccountIds === "function") {
-        sdkTransaction.setNodeAccountIds([new sdk.AccountId(3)]);
+        sdkTransaction.setNodeAccountIds([new AccountId(3)]);
       }
     } catch { /* non-blocking */ }
 

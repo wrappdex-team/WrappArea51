@@ -193,22 +193,54 @@ export async function proposeSession(network: HederaNetwork): Promise<WCConnectR
   // if the relay dropped while the tab was backgrounded. [C15-01]
   await _ensureRelayConnected(client);
 
-  const { uri, approval } = await client.connect({
-    optionalNamespaces: {
-      hedera: {
-        methods: [...HEDERA_METHODS],
-        chains: [chainId],
-        events: [...HEDERA_EVENTS],
-      },
-    },
-  });
+  // [C96] Retry with force-reset on relay failures.
+  // proposeSession doesn't go through _safeRequest, so it needs its own retry.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { uri, approval } = await client.connect({
+        optionalNamespaces: {
+          hedera: {
+            methods: [...HEDERA_METHODS],
+            chains: [chainId],
+            events: [...HEDERA_EVENTS],
+          },
+        },
+      });
 
-  if (!uri) {
-    throw new Error("Failed to generate WalletConnect pairing URI. The relay may be unreachable.");
+      if (!uri) {
+        throw new Error("Failed to generate WalletConnect pairing URI. The relay may be unreachable.");
+      }
+
+      // CRITICAL: approval is a FUNCTION () => Promise<Session>, not a Promise.
+      return { uri, approval: approval() };
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (attempt === 0 && (msg.includes("send was called before connect") || msg.includes("Missing or invalid"))) {
+        console.warn("[WC] proposeSession failed with relay error — force-resetting SignClient and retrying...");
+        await forceResetSignClient();
+        // Re-init and retry — getSignClient() will create a fresh instance
+        const freshClient = await getSignClient();
+        await _ensureRelayConnected(freshClient, 12000);
+        // Loop continues with attempt=1 using freshClient, but we need the
+        // client variable updated. Since we're in a closure, just recurse once:
+        const { uri, approval } = await freshClient.connect({
+          optionalNamespaces: {
+            hedera: {
+              methods: [...HEDERA_METHODS],
+              chains: [chainId],
+              events: [...HEDERA_EVENTS],
+            },
+          },
+        });
+        if (!uri) throw new Error("Failed to generate WalletConnect pairing URI after force-reset.");
+        return { uri, approval: approval() };
+      }
+      throw err;
+    }
   }
 
-  // CRITICAL: approval is a FUNCTION () => Promise<Session>, not a Promise.
-  return { uri, approval: approval() };
+  // Unreachable, but TypeScript needs it
+  throw new Error("proposeSession: exhausted retries");
 }
 
 /**
@@ -408,7 +440,26 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       if (msg.includes("send was called before connect") || msg.includes("Missing or invalid topic")) {
         console.warn("[WC] Relay not ready — reconnecting and retrying once...");
         await _ensureRelayConnected(client, 8000);
-        return await doRequest();
+        try {
+          return await doRequest();
+        } catch (retryErr: any) {
+          const retryMsg = retryErr?.message || "";
+          // [C97] If retry still fails with relay error, force-reset and try one last time
+          if (retryMsg.includes("send was called before connect") || retryMsg.includes("Missing or invalid")) {
+            console.warn("[WC] Retry still failed — force-resetting SignClient for last attempt...");
+            await forceResetSignClient();
+            const freshClient = await getSignClient();
+            await _ensureRelayConnected(freshClient, 12000);
+            // Rebuild request with fresh client
+            return await Promise.race([
+              freshClient.request(params),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("WalletConnect request timed out after force-reset.")), WC_REQUEST_TIMEOUT_MS)
+              ),
+            ]);
+          }
+          throw retryErr;
+        }
       }
       throw firstErr;
     }
@@ -792,59 +843,96 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
     if (!relayer) { console.warn("[WC] No relayer — skipping wait"); return; }
     if (relayer.connected) return;
 
-    // Actively trigger reconnection — without this, the relay stays in
-    // CLOSED state and .connected never becomes true.
     console.log("[WC] Relay disconnected — triggering reconnection...");
-    try {
-      // restartTransport() tears down the WebSocket and opens a new one.
-      // Some WC SDK versions expose transportOpen() instead.
-      if (typeof relayer.restartTransport === "function") {
-        await Promise.race([
-          relayer.restartTransport(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport timeout")), 5000)),
-        ]).catch((e: any) => console.warn("[WC] restartTransport error (will poll):", e?.message));
-      } else if (typeof relayer.transportOpen === "function") {
-        await Promise.race([
-          relayer.transportOpen(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("transportOpen timeout")), 5000)),
-        ]).catch((e: any) => console.warn("[WC] transportOpen error (will poll):", e?.message));
-      } else if (relayer.provider && typeof relayer.provider.connect === "function") {
-        await Promise.race([
-          relayer.provider.connect(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), 5000)),
-        ]).catch((e: any) => console.warn("[WC] provider.connect error (will poll):", e?.message));
-      }
-    } catch { /* transport methods may throw — fall through to polling */ }
 
-    // If reconnection resolved synchronously, we're done
-    if (relayer.connected) {
-      console.log("[WC] Relay reconnected immediately");
-      return;
+    // [C96] Two-phase reconnection strategy:
+    //   Phase 1: Try restartTransport / transportOpen / provider.connect
+    //   Phase 2: If still disconnected, hard disconnect→connect cycle on the provider
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (relayer.connected) { console.log("[WC] Relay connected (attempt", attempt, ")"); return; }
+
+      try {
+        if (attempt === 0) {
+          // Phase 1: Normal reconnection via restartTransport
+          if (typeof relayer.restartTransport === "function") {
+            await Promise.race([
+              relayer.restartTransport(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport timeout")), 5000)),
+            ]).catch((e: any) => console.warn("[WC] restartTransport error:", e?.message));
+          } else if (typeof relayer.transportOpen === "function") {
+            await Promise.race([
+              relayer.transportOpen(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("transportOpen timeout")), 5000)),
+            ]).catch((e: any) => console.warn("[WC] transportOpen error:", e?.message));
+          } else if (relayer.provider && typeof relayer.provider.connect === "function") {
+            await Promise.race([
+              relayer.provider.connect(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), 5000)),
+            ]).catch((e: any) => console.warn("[WC] provider.connect error:", e?.message));
+          }
+        } else {
+          // Phase 2: Hard disconnect→connect cycle on the WebSocket provider
+          console.log("[WC] Phase 2: hard provider disconnect→connect cycle...");
+          const provider = relayer.provider;
+          if (provider) {
+            // Force-close the existing WebSocket
+            if (typeof provider.disconnect === "function") {
+              try { await Promise.race([provider.disconnect(), new Promise(r => setTimeout(r, 2000))]); } catch { /* */ }
+            }
+            // Brief pause to allow the WebSocket to fully close
+            await new Promise(r => setTimeout(r, 500));
+            // Open a fresh WebSocket connection
+            if (typeof provider.connect === "function") {
+              await Promise.race([
+                provider.connect(),
+                new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase2 timeout")), 5000)),
+              ]).catch((e: any) => console.warn("[WC] Phase 2 provider.connect error:", e?.message));
+            }
+          } else if (typeof relayer.restartTransport === "function") {
+            // Fallback: restartTransport again as second attempt
+            await Promise.race([
+              relayer.restartTransport(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase2 timeout")), 5000)),
+            ]).catch((e: any) => console.warn("[WC] Phase 2 restartTransport error:", e?.message));
+          }
+        }
+      } catch { /* transport methods may throw — try next phase */ }
+
+      // Check if connected immediately
+      if (relayer.connected) {
+        console.log(`[WC] Relay reconnected after phase ${attempt + 1}`);
+        return;
+      }
+
+      // Poll for connection with half the remaining timeout per attempt
+      const pollTimeout = Math.floor(timeoutMs * 0.5);
+      const connected = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const done = (success: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          clearInterval(pollInterval);
+          try { relayer.off("relayer_connect", onConnect); } catch { /* */ }
+          resolve(success);
+        };
+        const onConnect = () => done(true);
+        try { relayer.on("relayer_connect", onConnect); } catch { /* */ }
+        const pollInterval = setInterval(() => { if (relayer.connected) done(true); }, 100);
+        const timer = setTimeout(() => done(false), pollTimeout);
+      });
+
+      if (connected) {
+        console.log(`[WC] Relay connected after phase ${attempt + 1} polling`);
+        return;
+      }
+
+      console.warn(`[WC] Phase ${attempt + 1} reconnection timed out`);
     }
 
-    // Poll + listen for the relay_connect event
-    return new Promise<void>((resolve) => {
-      let settled = false;
-      const done = (success: boolean) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        clearInterval(poll);
-        try { relayer.off("relayer_connect", onConnect); } catch { /* */ }
-        if (success) {
-          console.log("[WC] Relay connected");
-        } else {
-          console.warn("[WC] Relay reconnection timed out after", timeoutMs, "ms");
-        }
-        // Resolve regardless — the caller will get "send before connect"
-        // if relay is still down, and can handle it via retry.
-        resolve();
-      };
-      const onConnect = () => done(true);
-      try { relayer.on("relayer_connect", onConnect); } catch { /* */ }
-      const poll = setInterval(() => { if (relayer.connected) done(true); }, 100);
-      const timer = setTimeout(() => done(false), timeoutMs);
-    });
+    // Both phases failed — resolve anyway, caller will get "send before connect"
+    // and can handle via retry (proposeSession/safeRequest retry logic).
+    console.warn("[WC] All relay reconnection attempts failed after", timeoutMs, "ms");
   } catch {
     console.warn("[WC] Could not ensure relay connection — proceeding");
   }
