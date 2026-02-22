@@ -69,6 +69,21 @@ import { verifyIsContract } from "./verification";
 /** Max allowance for "infinite approval" — Number.MAX_SAFE_INTEGER (2^53-1). */
 const MAX_SAFE_ALLOWANCE = Number.MAX_SAFE_INTEGER; // 9007199254740991
 
+/**
+ * [SEC-14] Minimum consensus wait after fast-path transactions (ms).
+ *
+ * Hedera mainnet consensus: 3-5s. executeHederaTransactionFast() returns
+ * immediately after the wallet signs and submits — it does NOT wait for
+ * a receipt. If we submit a dependent transaction (swap) before the
+ * prerequisite (approve/associate) reaches consensus, the swap sees stale
+ * state and reverts with CONTRACT_REVERT_EXECUTED.
+ *
+ * 3s is the floor: by the time the user processes the wallet popup +
+ * our code resumes + this wait elapses, 5-7s have typically passed
+ * since TX submission — comfortably within consensus finality.
+ */
+const CONSENSUS_WAIT_MS = 3000;
+
 export interface ApproveResult {
   needed: boolean;          // true if approve tx was sent
   skipped: boolean;         // true if existing allowance was sufficient
@@ -160,8 +175,8 @@ async function approveIfNeeded(params: {
 
   // ── Send native HTS approve transaction ──
   // [C81-02] Use fast-path execution — skips Mirror Node receipt polling.
-  // The approval TX doesn't need receipt confirmation; if it fails, the
-  // subsequent swap TX will revert with a clear error. Saves 5-25 seconds.
+  // [SEC-14] A mandatory CONSENSUS_WAIT_MS delay is enforced after success
+  // to prevent the swap TX from seeing stale pre-approval allowance state.
   const { executeHederaTransactionFast } = await import("../hashpack");
 
   const approveTx = new AccountAllowanceApproveTransaction()
@@ -179,6 +194,13 @@ async function approveIfNeeded(params: {
       existingAllowance, approvedAmount: 0,
     };
   }
+
+  // ── [SEC-14] Mandatory consensus wait ──────────────────────────────
+  // Fast-path approval skips receipt polling. Without this wait, the
+  // subsequent swap TX may hit the consensus node before the approval
+  // is finalized, seeing stale allowance → CONTRACT_REVERT_EXECUTED.
+  console.log(`[SEC-14] Waiting ${CONSENSUS_WAIT_MS}ms for approval consensus finality...`);
+  await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
 
   // ── [C100-S7] Post-approval verification ──
   // Re-query the Mirror Node to confirm the allowance was set correctly.
@@ -352,8 +374,19 @@ async function executeSaucerSwapV2Direct(
         minOutput = Math.max(1, Math.floor(lastDitch * (1 - safeSlippage / 100)));
         console.warn(`[HBAR.h] V2: All strategies failed but inline price estimate rescued quote: minOutput=${minOutput} (${safeSlippage}% slippage)`);
       } else {
-        minOutput = 1;
-        console.warn("[HBAR.h] V2: All quote strategies failed including inline rescue — using minOutput=1 (no slippage protection)");
+        // [SEC-14] HARD ABORT: minOutput=1 is a zero-slippage-protection vulnerability.
+        // A sandwich attacker could manipulate the pool price between the user's TX
+        // submission and execution, extracting up to ~100% of the swap value.
+        // Never execute a swap without a validated minimum output.
+        console.error("[SEC-14] V2 Direct: All quote strategies failed — ABORTING swap (minOutput=1 is unsafe)");
+        return {
+          success: false,
+          error: `Cannot determine minimum output for ${inputToken.symbol} → ${outputToken.symbol}. ` +
+            `All quote strategies (V2 QuoterV2, server proxy, API, price estimation) failed. ` +
+            `Executing without slippage protection would expose you to sandwich attacks. ` +
+            `Try again in a few seconds, or reduce the swap amount.`,
+          executionVenue: "saucerswap-v2",
+        };
       }
     }
 
@@ -432,6 +465,9 @@ async function executeSaucerSwapV2Direct(
             };
           }
           console.log(`[HBAR.h] V2: Successfully associated ${assocSymbol}`);
+          // [SEC-14] Consensus wait after fast-path association
+          console.log(`[SEC-14] Waiting ${CONSENSUS_WAIT_MS}ms for association consensus...`);
+          await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
         } catch (assocErr: any) {
           const aMsg = (assocErr?.message || "").toLowerCase();
           const aCancel = aMsg.includes("user_reject") || aMsg.includes("cancelled by user") || aMsg.includes("canceled by user") || aMsg.includes("user denied") || aMsg.includes("user rejected");
@@ -1128,9 +1164,20 @@ async function executeSaucerSwapV2MultiHop(
     const effectiveSlippage = isOnChainQuote
       ? Math.max(slippagePct, 2)  // on-chain quote: respect user setting, 2% floor
       : Math.max(slippagePct, 5); // price estimate: 5% minimum
-    const minOutput = estimatedOutput > 0
-      ? Math.max(1, Math.floor(estimatedOutput * (1 - effectiveSlippage / 100)))
-      : 1;
+
+    // [SEC-14] HARD ABORT when no quote available — minOutput=1 is unsafe
+    if (estimatedOutput <= 0) {
+      console.error("[SEC-14] V2 Multi-hop: All quote strategies failed — ABORTING swap (minOutput=1 is unsafe)");
+      return {
+        success: false,
+        error: `Cannot determine minimum output for ${inputToken.symbol} → ${outputToken.symbol} multi-hop. ` +
+          `All quote strategies (V2 QuoterV2, price estimation) failed. ` +
+          `Executing without slippage protection would expose you to sandwich attacks. ` +
+          `Try again in a few seconds, or reduce the swap amount.`,
+        executionVenue: "saucerswap-v2",
+      };
+    }
+    const minOutput = Math.max(1, Math.floor(estimatedOutput * (1 - effectiveSlippage / 100)));
     console.log(`[HBAR.h] V2 Multi-hop: minOutput=${minOutput}, slippage=${effectiveSlippage}%, quoteSrc=${isOnChainQuote ? "QuoterV2" : "price-estimate"}`);
 
     const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 min
@@ -1198,6 +1245,9 @@ async function executeSaucerSwapV2MultiHop(
               userCancelled: assocResult.userCancelled,
             };
           }
+          // [SEC-14] Consensus wait after fast-path association
+          console.log(`[SEC-14] Waiting ${CONSENSUS_WAIT_MS}ms for V2 multi-hop association consensus...`);
+          await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
         } catch (assocErr: any) {
           return {
             success: false,
@@ -2040,8 +2090,18 @@ async function executeSaucerSwapDirect(
         minOutput = Math.max(1, Math.floor(lastDitch * (1 - safeSlippage / 100)));
         console.warn(`[HBAR.h] All strategies failed but inline price estimate rescued quote: minOutput=${minOutput} (${safeSlippage}% slippage)`);
       } else {
-        minOutput = 1;
-        console.warn("[HBAR.h] All quote strategies failed including inline rescue — using minOutput=1 (no slippage protection)");
+        // [SEC-14] HARD ABORT: minOutput=1 is a zero-slippage-protection vulnerability.
+        // A sandwich attacker could manipulate the pool price between the user's TX
+        // submission and execution, extracting up to ~100% of the swap value.
+        console.error("[SEC-14] V1 Direct: All quote strategies failed — ABORTING swap (minOutput=1 is unsafe)");
+        return {
+          success: false,
+          error: `Cannot determine minimum output for ${inputToken.symbol} → ${outputToken.symbol}. ` +
+            `All quote strategies (server proxy, router, API, price estimation) failed. ` +
+            `Executing without slippage protection would expose you to sandwich attacks. ` +
+            `Try again in a few seconds, or reduce the swap amount.`,
+          executionVenue: "saucerswap-v1",
+        };
       }
     }
 
@@ -2129,6 +2189,9 @@ async function executeSaucerSwapDirect(
             };
           }
           console.log(`[HBAR.h] SAFETY NET: Successfully associated ${outputToken.symbol}`);
+          // [SEC-14] Consensus wait after fast-path association
+          console.log(`[SEC-14] Waiting ${CONSENSUS_WAIT_MS}ms for V1 output association consensus...`);
+          await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
         } catch (assocErr: any) {
           const aMsg = (assocErr?.message || "").toLowerCase();
           const aCancel = aMsg.includes("user_reject") || aMsg.includes("cancelled by user") || aMsg.includes("canceled by user") || aMsg.includes("user denied") || aMsg.includes("user rejected");
@@ -2172,6 +2235,10 @@ async function executeSaucerSwapDirect(
             const midAssocResult = await midExecFast(accountId, midAssocTx);
             if (!midAssocResult.success) {
               console.warn(`[HBAR.h] [C77-03] Intermediate ${midSymbol} association failed: ${midAssocResult.error} — swap may revert`);
+            } else {
+              // [SEC-14] Consensus wait after fast-path intermediate association
+              console.log(`[SEC-14] Waiting ${CONSENSUS_WAIT_MS}ms for intermediate ${midSymbol} association consensus...`);
+              await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
             }
           } catch {
             console.warn(`[HBAR.h] [C77-03] Could not auto-associate intermediate ${midSymbol} — swap may revert`);

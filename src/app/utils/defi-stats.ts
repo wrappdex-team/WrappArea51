@@ -14,7 +14,6 @@
  */
 
 import { log } from "./logger";
-import { SAUCERSWAP_PARTNER_ID } from "./saucerswap";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -143,20 +142,37 @@ function extractPoolArray(data: any): any[] {
 }
 
 // ── Direct SaucerSwap Fetch Helper (browser-side fallback) ────────
+// [C108] API key removed from client-side. This fallback path uses
+// the server proxy (which attaches the key), with a direct
+// unauthenticated fallback if the proxy is unreachable.
+
+const SS_PROXY_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/ss-proxy`;
 
 async function ssFetch(path: string): Promise<any | null> {
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (SAUCERSWAP_PARTNER_ID) {
-    headers["x-api-key"] = SAUCERSWAP_PARTNER_ID;
+  // Strategy 1: Server proxy (has API key)
+  try {
+    const proxyUrl = `${SS_PROXY_URL}?path=${encodeURIComponent(path)}`;
+    const res = await fetch(proxyUrl, {
+      headers: {
+        Authorization: `Bearer ${publicAnonKey}`,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (res.ok) return await res.json();
+    log.warn("DeFiStats", `SaucerSwap ${path} proxy → HTTP ${res.status}`);
+  } catch (err: any) {
+    log.warn("DeFiStats", `SaucerSwap ${path} proxy → ${err?.message || err}`);
   }
 
+  // Strategy 2: Direct SaucerSwap (no API key — public rate limits)
   try {
     const res = await fetch(SAUCERSWAP_API + path, {
-      headers,
+      headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
-      log.warn("DeFiStats", `SaucerSwap ${path} → HTTP ${res.status}`);
+      log.warn("DeFiStats", `SaucerSwap ${path} direct → HTTP ${res.status}`);
       return null;
     }
     return await res.json();

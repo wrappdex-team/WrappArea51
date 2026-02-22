@@ -126,13 +126,11 @@ export function LandingFooter() {
         </div>
 
         <div className="pt-16" style={{ borderTop: "1px solid #e2e8f0" }}>
-          <div className="flex flex-col md:flex-row justify-between items-start gap-12 text-[10px] text-slate-400 font-medium uppercase tracking-[0.2em]">
-            <div className="max-w-5xl">
-              <p className="mb-8 font-black text-black text-xs">
-                &copy; 2026 Wrappdex. Leading International Institutional Infrastructure.
-              </p>
-            </div>
-            <div className="flex gap-8 whitespace-nowrap pt-12 md:pt-16">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-[10px] text-slate-400 font-medium uppercase tracking-[0.2em]">
+            <p className="font-black text-black text-xs">
+              &copy; 2026 Wrappdex
+            </p>
+            <div className="flex gap-8 whitespace-nowrap">
               <Link to="/privacy" className="hover:text-black transition-colors">
                 Privacy Policy
               </Link>

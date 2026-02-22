@@ -39,7 +39,7 @@ import type {
   PoolMetrics,
 } from "./atomic-swap-types";
 import { log } from "./logger";
-import { SAUCERSWAP_PARTNER_ID } from "./saucerswap";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 import {
   TransferTransaction, AccountId, TokenId, TransactionId, Long,
 } from "./hedera-sdk";
@@ -93,7 +93,7 @@ function maxSwapFraction(tvlUsd: number): number {
 /** Minimum pool TVL for routing eligibility — excludes dust pools */
 const MIN_ROUTING_TVL_USD = 100;
 
-// ── Default slippage (bps) ──────────────────────────────────────────
+// ── Default slippage (bps) ──────────────────────────────────��───────
 
 export const DEFAULT_SLIPPAGE_BPS = 50; // 0.5%
 export const MAX_SLIPPAGE_BPS = 500; // 5%
@@ -616,19 +616,31 @@ export async function fetchOraclePrices(): Promise<Record<string, number>> {
   prices["0.0.1055459"] = 1.0;  // USDCh
   prices["0.0.1055472"] = 1.0;  // USDT (HashPort — primary SaucerSwap USDT) [C36-04]
 
-  // Try SaucerSwap API
+  // Try SaucerSwap API — [C108] routed through server proxy (API key server-side)
+  const SS_PROXY_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/ss-proxy`;
   const variants = ["/tokens", "/v1/tokens", "/v2/tokens"];
   for (const path of variants) {
     try {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 8_000);
-      const res = await fetch(`https://api.saucerswap.finance${path}`, {
-        headers: {
-          Accept: "application/json",
-          ...(SAUCERSWAP_PARTNER_ID ? { "x-api-key": SAUCERSWAP_PARTNER_ID } : {}),
-        },
-        signal: ctrl.signal,
-      });
+      // Try server proxy first (has API key)
+      let res: Response | null = null;
+      try {
+        const proxyUrl = `${SS_PROXY_URL}?path=${encodeURIComponent(path)}`;
+        res = await fetch(proxyUrl, {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            Accept: "application/json",
+          },
+          signal: ctrl.signal,
+        });
+      } catch {
+        // Proxy failed — try direct (no API key)
+        res = await fetch(`https://api.saucerswap.finance${path}`, {
+          headers: { Accept: "application/json" },
+          signal: ctrl.signal,
+        });
+      }
       clearTimeout(timeout);
 
       if (!res.ok) continue;

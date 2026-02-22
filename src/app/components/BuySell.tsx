@@ -31,7 +31,6 @@ import { formatHbar } from "../utils/hedera";
 import { WalletConnectModal } from "./WalletConnectModal";
 import {
   executeSaucerSwap,
-  SAUCERSWAP_PARTNER_ID,
   type SwapResult,
 } from "../utils/saucerswap";
 import { signTransaction as hashPackSign } from "../utils/hashpack";
@@ -55,10 +54,10 @@ const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
 // │                                                                    │
 // │  TO GO LIVE: set BUYSELL_SWAP_LOCKED = false                       │
 // │                                                                    │
-// │  SaucerSwap Partner ID: CONFIGURED in /src/app/utils/saucerswap.ts │
-// │  Auto-attaches to all API calls via x-api-key header for better    │
-// │  rate limits and revenue sharing.                                  │
-// │  Current status: ${SAUCERSWAP_PARTNER_ID ? "CONFIGURED" : "MISSING — CHECK saucerswap.ts"}
+// │  SaucerSwap Partner ID: MOVED SERVER-SIDE [C108]                   │
+// │  API key now lives in SAUCERSWAP_API_KEY Supabase secret and is   │
+// │  attached by the /ss-proxy endpoint. No longer client-exposed.    │
+// │  Current status: SERVER-SIDE ONLY
 // └─────────────────────────────────────────────────────────────────────┘
 const BUYSELL_SWAP_LOCKED = true;
 const BUYSELL_ALLOWED_ACCOUNT = "0.0.518487";

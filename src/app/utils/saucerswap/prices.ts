@@ -13,25 +13,33 @@
 import { log } from "../logger";
 import type { AllowedToken } from "./tokens";
 import { TOKEN_BY_HTS_ID, HBARH_TOKEN_ID, resolveTokenByHtsId } from "./tokens";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // ── Shared Constants ────────────────────────────────────────────────
 
 export const SAUCERSWAP_API = "https://api.saucerswap.finance";
 
+// ── Server Proxy Base URL ───────────────────────────────────────────
+// [C108] All SaucerSwap API requests are now routed through the server
+// proxy to keep the partner API key server-side. The proxy attaches
+// SAUCERSWAP_API_KEY and provides caching + circuit breaking.
+const SS_PROXY_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/ss-proxy`;
+
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE #12 -- SAUCERSWAP PARTNER / API KEY                │
+// │  [C108] SAUCERSWAP PARTNER API KEY — MOVED SERVER-SIDE             │
 // │                                                                    │
-// │  SaucerSwap partner API key for WRAPpDEX -- CONFIGURED.             │
-// │  Auto-attached to all SaucerSwap API requests via `x-api-key`      │
-// │  header for better rate limits, revenue sharing, and priority      │
-// │  access to new API endpoints.                                      │
+// │  The partner API key is now stored exclusively as the              │
+// │  SAUCERSWAP_API_KEY Supabase Edge Function secret and attached    │
+// │  by the /ss-proxy endpoint. This prevents client-side abuse of    │
+// │  rate limits.                                                      │
 // │                                                                    │
-// │  The key is safe to include client-side -- SaucerSwap's public      │
-// │  API keys identify the dApp, they are NOT secret keys.             │
+// │  SAUCERSWAP_PARTNER_ID is kept as an empty string for backward    │
+// │  compatibility — any code checking `if (SAUCERSWAP_PARTNER_ID)`   │
+// │  will safely skip the (now-unnecessary) header attachment.         │
 // │                                                                    │
-// │  Status: CONFIGURED                                                │
+// │  Status: SERVER-SIDE ONLY                                          │
 // └─────────────────────────────────────────────────────────────────────┘
-export const SAUCERSWAP_PARTNER_ID: string = "875e1017-87b8-4b12-8301-6aa1f1aa073b";
+export const SAUCERSWAP_PARTNER_ID: string = "";
 
 // ── Shared Helpers ──────────────────────────────────────────────────
 
@@ -61,31 +69,56 @@ export async function saucerFetch(
         "/v1" + path,     // V1 prefix   (e.g. /v1/tokens)
         "/v2" + path,     // V2 prefix   (e.g. /v2/tokens)
       ];
-  const headers: Record<string, string> = { Accept: "application/json" };
-  // Attach partner key if configured (SENIOR DEV NOTE #12)
-  if (SAUCERSWAP_PARTNER_ID) {
-    headers["x-api-key"] = SAUCERSWAP_PARTNER_ID;
-  }
 
+  // [C108] Route through server proxy — API key is attached server-side.
+  // Try proxy first, fall back to direct SaucerSwap API if proxy is unreachable.
   for (const variant of variants) {
+    // Strategy 1: Server proxy (preferred — has API key)
     try {
-      const res = await fetch(SAUCERSWAP_API + variant, {
-        headers,
+      const proxyUrl = `${SS_PROXY_URL}?path=${encodeURIComponent(variant)}`;
+      const res = await fetch(proxyUrl, {
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          Accept: "application/json",
+        },
         signal: makeAbort(timeoutMs),
       });
       if (res.ok) {
         if (_apiDiagLogged.has(path)) {
-          log.info("SaucerSwap", `${variant} recovered`);
+          log.info("SaucerSwap", `${variant} recovered (via proxy)`);
         }
         return res;
       }
-      // Log first failure per path, then stay quiet
+      // 400/403 from proxy = path not allowed, don't try direct
+      if (res.status === 400 || res.status === 403) continue;
       if (!_apiDiagLogged.has(path)) {
-        log.info("SaucerSwap", `${variant} -> HTTP ${res.status}, trying next variant...`);
+        log.info("SaucerSwap", `${variant} proxy -> HTTP ${res.status}, trying next...`);
+      }
+    } catch {
+      // Proxy unreachable — try direct as fallback (without API key)
+      if (!_apiDiagLogged.has(path)) {
+        log.info("SaucerSwap", `${variant} proxy -> network error, trying direct...`);
+      }
+    }
+
+    // Strategy 2: Direct SaucerSwap API fallback (no API key — public rate limits)
+    try {
+      const res = await fetch(SAUCERSWAP_API + variant, {
+        headers: { Accept: "application/json" },
+        signal: makeAbort(timeoutMs),
+      });
+      if (res.ok) {
+        if (_apiDiagLogged.has(path)) {
+          log.info("SaucerSwap", `${variant} recovered (direct, no API key)`);
+        }
+        return res;
+      }
+      if (!_apiDiagLogged.has(path)) {
+        log.info("SaucerSwap", `${variant} direct -> HTTP ${res.status}, trying next variant...`);
       }
     } catch {
       if (!_apiDiagLogged.has(path)) {
-        log.info("SaucerSwap", `${variant} -> network error, trying next variant...`);
+        log.info("SaucerSwap", `${variant} direct -> network error, trying next variant...`);
       }
     }
   }

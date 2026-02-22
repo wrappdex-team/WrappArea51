@@ -19,10 +19,10 @@
 //   API key: SAUCERSWAP_API_KEY env variable — CONFIGURED.
 //            Provides higher rate limits and partner attribution.
 //
-//   SENIOR DEV NOTE: Same API key as the client-side SAUCERSWAP_PARTNER_ID
-//   in saucerswap.ts. Both locations are now configured:
-//     - Supabase secret: SAUCERSWAP_API_KEY  ✓
-//     - Client constant: SAUCERSWAP_PARTNER_ID in src/app/utils/saucerswap.ts  ✓
+//   [C108] API key is now SERVER-SIDE ONLY. The client-side
+//   SAUCERSWAP_PARTNER_ID constant has been removed. All client
+//   SaucerSwap API calls route through /ss-proxy which attaches
+//   the key from the SAUCERSWAP_API_KEY Supabase secret.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
