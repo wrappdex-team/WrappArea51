@@ -331,7 +331,7 @@ function PendingContent({
 
       {/* [C85] Open Wallet + Cancel buttons */}
       <div className="flex items-center justify-center gap-2">
-        {elapsed >= 5 && (
+        {elapsed >= 2 && (
           <motion.button
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}

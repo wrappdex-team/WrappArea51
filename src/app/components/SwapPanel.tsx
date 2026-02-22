@@ -223,8 +223,11 @@ export function SwapPanel() {
     return inputBalance < amt;
   }, [isWalletConnected, inputAmount, inputBalance, inputToken.isNative]);
 
+  // [C93] Block swap when quote output is 0 — prevents CONTRACT_REVERT_EXECUTED
+  // from attempting swaps where the on-chain quote failed and minOutput would be 1.
+  const hasValidOutput = isWrapUnwrap || (outputAmount && parseFloat(outputAmount) > 0);
   const canSwap = isWalletConnected && inputAmount && parseFloat(inputAmount) > 0 &&
-    (isWrapUnwrap || route) && swapStatus === "idle" && !insufficientBalance;
+    (isWrapUnwrap || route) && swapStatus === "idle" && !insufficientBalance && hasValidOutput;
 
   // ── Fetch prices ──
   const fetchPrices = useCallback(async () => {
@@ -756,6 +759,7 @@ export function SwapPanel() {
               hasRoute={!!route}
               routeSearching={routeSearching}
               insufficientBalance={insufficientBalance}
+              hasValidOutput={!!hasValidOutput}
               swapStep={swapStep}
               swapError={swapError}
               lastTxId={lastTxId}

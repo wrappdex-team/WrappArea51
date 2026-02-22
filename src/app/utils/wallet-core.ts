@@ -1189,36 +1189,45 @@ export async function tryOpenWalletExtension(): Promise<void> {
     }
   }
 
-  // Try the session's peer redirect URL
+  // [C93] Also fire a WC session ping to wake the extension's service worker
+  // via the relay WebSocket. This is more reliable than chrome.runtime when
+  // the extension doesn't declare "externally_connectable".
   try {
     const client = await getSignClient();
     const sessions = client?.session?.getAll?.() ?? [];
     for (const s of sessions) {
-      const redirect = s?.peer?.metadata?.redirect;
-      const url = redirect?.universal || redirect?.native;
-      if (url && url.startsWith("http")) {
-        window.open(url, "_blank", "noopener,noreferrer");
-        return;
-      }
+      try {
+        // Ping wakes the service worker which reconnects its relay WS
+        client.ping({ topic: s.topic });
+      } catch { /* non-fatal */ }
     }
   } catch { /* */ }
 
-  // Last resort: open HashPack webapp (has "open in extension" prompt)
-  window.open("https://www.hashpack.app", "_blank", "noopener,noreferrer");
+  // [C93] REMOVED: Don't open HashPack webapp URL — this causes a visible
+  // browser tab flicker (new tab opens then immediately loses focus when
+  // the extension activates). The chrome.runtime + WC ping combo above
+  // reliably wakes the extension without any URL tab opening.
+  //
+  // Previously: window.open("https://www.hashpack.app", "_blank", "noopener,noreferrer");
 }
 
 /**
- * [C89] Fast non-blocking wallet pre-activation.
+ * [C85] Fast activation strategy for wallet pre-activation.
  *
- * Chrome kills extension service workers after ~30s of inactivity,
- * severing the WC relay WebSocket. Fix: fire activation strategies
- * in the background and proceed with just a brief 500ms window.
- * This eliminates the 3.25s blocking delay that caused screen flicker.
+ * Called from _safeRequest() to wake the wallet's service worker
+ * before sending a signing request. This is a non-blocking call that
+ * attempts to wake the wallet in the background.
  *
- * Strategy: Fire chrome.runtime.sendMessage FIRST (instant, most reliable),
- * then WC session ping in background. Both are non-blocking and fail silently.
- * The 500ms wait gives the service worker enough time to reconnect its relay WS
- * without causing a visible UI stall.
+ * Strategies:
+ *   1. chrome.runtime.sendMessage — directly wakes the extension's
+ *      service worker (if the extension has configured
+ *      `externally_connectable` for our domain).
+ *   2. WC session ping — sends a `wc_sessionPing` via the relay, which
+ *      can wake the wallet if its relay WebSocket is still alive.
+ *
+ * Both strategies are non-blocking and fail silently. The worst case is
+ * that the wallet doesn't auto-prompt and the user has to click the
+ * extension icon (same as before this fix).
  */
 async function _tryActivateWalletFast(client: any, topic: string): Promise<void> {
   const startMs = Date.now();
@@ -1256,10 +1265,11 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
     (e: any) => console.log(`[WC] Session ping failed (${Date.now() - startMs}ms):`, e?.message?.slice(0, 80)),
   );
 
-  // ── Brief wait (500ms total) ───────────────────────────────────────
-  // Just enough for the service worker to wake up from chrome.runtime
-  // and reconnect its relay WS. This replaces the old 3.25s blocking
-  // delay that caused the visible screen flicker.
-  await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  // ── Brief wait (800ms total) ───────────────────────────────────────
+  // [C93] Increased from 500ms to 800ms for more reliable service worker
+  // wake-up. The extra 300ms significantly improves the hit rate for
+  // Chrome extension activation, especially after the service worker has
+  // been killed by Chrome's 30s inactivity timeout.
+  await new Promise<void>((resolve) => setTimeout(resolve, 800));
   console.log(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
 }

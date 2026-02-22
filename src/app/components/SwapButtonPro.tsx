@@ -36,6 +36,8 @@ interface SwapButtonProProps {
   hasRoute: boolean;
   routeSearching: boolean;
   insufficientBalance: boolean;
+  // [C93] Quote validation
+  hasValidOutput: boolean;
   // Swap step tracking
   swapStep: { step: number; total: number; description: string } | null;
   // Error
@@ -62,6 +64,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   hasRoute,
   routeSearching,
   insufficientBalance,
+  hasValidOutput,
   swapStep,
   swapError,
   lastTxId,
@@ -259,6 +262,23 @@ export const SwapButtonPro = memo(function SwapButtonPro({
             <div className="flex items-center justify-center gap-2">
               <AlertCircle className="w-4 h-4" />
               Insufficient {inputToken.symbol} Balance
+            </div>
+          </motion.button>
+        ) : !hasValidOutput && hasRoute ? (
+          <motion.button
+            key="noquote"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            disabled
+            className={`w-full py-4 rounded-2xl font-bold cursor-not-allowed ${
+              isDark
+                ? "bg-amber-900/20 text-amber-400 border border-amber-500/15"
+                : "bg-amber-50 text-amber-600 border border-amber-200"
+            }`}
+          >
+            <div className="flex items-center justify-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              No Quote — Try Different Pair
             </div>
           </motion.button>
         ) : (

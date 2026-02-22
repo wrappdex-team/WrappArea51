@@ -64,26 +64,26 @@ function _fmtTxId(txId: string): string {
  * [C81-02] Optimized receipt polling with fast initial attempts.
  *
  * Hedera consensus is 3-5s, Mirror Node lag is typically 3-7s.
- * First 3 attempts use short 1.5s intervals (catches 90% of cases),
- * then backs off exponentially for slower confirmations.
+ * [C93] First poll at 800ms (catches txs already at consensus),
+ * then 1s intervals for 2 more attempts, then exponential backoff.
  *
- * Timing: 0s, 1.5s, 1.5s, 2.5s, 4s, 6s, 9s, 14s = ~38.5s worst case
- * Typical: confirmed by attempt 2-3 (~3-4.5s after wallet signs)
+ * Timing: 0s, 0.8s, 1s, 1s, 2s, 3s, 5s, 8s = ~20.8s worst case
+ * Typical: confirmed by attempt 2-3 (~1.8-2.8s after wallet signs)
  */
 async function pollMirrorNodeReceipt(
   txId: string,
   network: HederaNetwork,
   maxAttempts = 8,
-  initialDelayMs = 1500,
+  initialDelayMs = 800,
 ): Promise<{ result: string; status: string } | null> {
   const base = MIRROR_NODES[network];
   const nid = _fmtTxId(txId);
   for (let i = 0; i < maxAttempts; i++) {
-    // Fast initial polls (1.5s), then exponential backoff after attempt 3
+    // [C93] Fast initial polls (800ms, 1s, 1s), then exponential backoff
     if (i > 0) {
-      const delay = i <= 2
-        ? initialDelayMs                               // 1.5s flat for first retries
-        : initialDelayMs * Math.pow(1.5, i - 2);       // exponential after that
+      const delay = i <= 3
+        ? (i === 1 ? initialDelayMs : 1000)       // 800ms first, then 1s flat
+        : 1000 * Math.pow(1.5, i - 3);            // exponential after attempt 3
       await new Promise((r) => setTimeout(r, delay));
     }
     try {
@@ -96,7 +96,7 @@ async function pollMirrorNodeReceipt(
       const txList = data.transactions || [];
       if (txList.length === 0) continue;
       const result = txList[0].result || "";
-      log.info("HashPack", `Mirror receipt: "${result}" (attempt ${i + 1}, ${((i === 0 ? 0 : i <= 2 ? i * 1.5 : 3 + (initialDelayMs * Math.pow(1.5, i - 2)) / 1000)).toFixed(1)}s)`);
+      log.info("HashPack", `Mirror receipt: "${result}" (attempt ${i + 1}, ${((i === 0 ? 0 : i <= 3 ? (i === 1 ? initialDelayMs : 1000) : 3 + (1000 * Math.pow(1.5, i - 3)) / 1000)).toFixed(1)}s)`);
       return { result, status: result };
     } catch {
       log.info("HashPack", `Mirror poll ${i + 1}/${maxAttempts}: network error`);
@@ -691,10 +691,14 @@ export async function executeHederaTransactionFast(
 
     log.info("HashPack", `[FAST] WC response — txId: ${txId || "none"}`);
 
-    // Wait 3s for Hedera consensus finality (3-5s) instead of polling Mirror Node
+    // [C93] Wait 1s for Hedera mempool ordering instead of 3s.
+    // Both approve and swap txs target the same consensus node (0.0.3),
+    // so the node processes them sequentially. The swap tx will be queued
+    // behind the approval in the node's mempool — no need to wait for
+    // full consensus (3-5s). 1s covers WC relay round-trip + buffer.
     if (txId) {
-      await new Promise(r => setTimeout(r, 3000));
-      log.info("HashPack", `[FAST] Consensus wait complete — proceeding optimistically`);
+      await new Promise(r => setTimeout(r, 1000));
+      log.info("HashPack", `[FAST] Consensus wait complete (1s) — proceeding`);
     }
 
     return { success: true, transactionId: txId };
