@@ -36,7 +36,7 @@ import {
 import { ssProxy, resolveContractEvmAddress } from "./pools";
 import { buildSwapPath } from "./routing";
 
-// ════════════════════════════════════════════���═══════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // ── [C51] Quote Confidence Levels ────────────────────────────────────
 // high   = on-chain router/quoter (V1 getAmountsOut or V2 QuoterV2)
 // medium = SaucerSwap REST API quote
@@ -428,12 +428,18 @@ export async function fetchSaucerSwapQuote(
     if (proxyData && proxyData.amountOut > 0) {
       const sourceMap: Record<string, RawQuote["source"]> = {
         "v1-router": "router",
+        "v1-multihop-whbar": "router",
+        "v2-quoter": "router",
         "v2-quoter-single": "router",
         "v2-quoter-multihop": "router",
+        "v2-multihop": "router",
+        "api": "api",
         "saucerswap-api": "api",
         "price-estimate": "price-estimate",
       };
-      const mappedSource = sourceMap[proxyData.source] || "api";
+      // Any source starting with "v1-via-" or "v2-via-" is a multi-hop route
+      const mappedSource = sourceMap[proxyData.source]
+        || (proxyData.source.startsWith("v1-via-") || proxyData.source.startsWith("v2-via-") ? "router" : "api");
       console.log(
         `[HBAR.h] [C47] Server quote: amountOut=${proxyData.amountOut},` +
         ` source=${proxyData.source} (${proxyData.confidence})`

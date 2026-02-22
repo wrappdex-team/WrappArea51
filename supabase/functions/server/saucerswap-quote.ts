@@ -87,6 +87,39 @@ const GAS_HEX = "0x16e360";
 const QUOTE_OVERALL_TIMEOUT_MS = 15_000;
 
 /**
+ * V2 fee tiers in hundredths of a bip — ALL known SaucerSwap V2 tiers.
+ * Ordered by most common first for early success in Promise.any races.
+ */
+const V2_FEE_TIERS = [3000, 1500, 10000, 500, 100] as const;
+
+// ═════════════════════════════════════════════════════════════════════
+// PARALLEL RPC + MIRROR RACE  [C92]
+// ═════════════════════════════════════════════════════════════════════
+// Runs BOTH JSON-RPC (HashIO) and Mirror Node contract call simultaneously.
+// Returns the first non-empty hex result. Cuts worst-case latency in half
+// compared to sequential fallback.
+
+async function raceRpcAndMirror(
+  toEvm: string, calldata: string, network: string, gasLimit: number = 1_500_000,
+): Promise<string | null> {
+  const validate = (r: any): r is string =>
+    r != null && typeof r === "string" && r !== "0x" && r.length > 2;
+
+  const rpcP = ssFetchJsonRpc(
+    "eth_call", [{ to: toEvm, data: calldata, gas: GAS_HEX }, "latest"], network,
+  ).then(r => { if (validate(r)) return r as string; throw new Error("rpc-empty"); });
+
+  const mirrorP = ssMirrorContractCall(toEvm, calldata, network, gasLimit)
+    .then(r => { if (validate(r)) return r as string; throw new Error("mirror-empty"); });
+
+  try {
+    return await Promise.any([rpcP, mirrorP]);
+  } catch {
+    return null; // Both failed or returned empty
+  }
+}
+
+/**
  * Fallback token prices in USD.
  * [C33-01] Updated to current market values.
  * Used when SaucerSwap /tokens API is unavailable.
@@ -302,7 +335,7 @@ async function ensureTokenPrices(): Promise<Map<string, number>> {
 // QUOTE STRATEGIES  [C46]
 // ═════════════════════════════════════════════════════════════════════
 
-/** Strategy 1: V1 Router getAmountsOut() */
+/** Strategy 1: V1 Router getAmountsOut() — [C92] parallel RPC + Mirror race */
 async function strategyV1Router(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
   inputHtsId: string, outputHtsId: string, network: string,
@@ -311,22 +344,12 @@ async function strategyV1Router(
   const routerEvm = await resolveContract(routerId, network);
   const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, tokenOutEvm]);
 
-  // Strategy A: JSON-RPC
-  const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: routerEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
-  if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length > 2) {
-    const out = decodeAmountsOut(rpcResult);
+  // [C92] Race RPC + Mirror in parallel — whichever succeeds first wins
+  const result = await raceRpcAndMirror(routerEvm, calldata, network);
+  if (result) {
+    const out = decodeAmountsOut(result);
     if (out !== null && out > 0n) {
-      console.log(`[SS-Quote] V1 router (RPC): amountOut=${out}`);
-      return { amountOut: out.toString(), source: "v1-router", confidence: "high", priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v1" };
-    }
-  }
-
-  // Strategy B: Mirror Node
-  const mnResult = await ssMirrorContractCall(routerEvm, calldata, network, 1_500_000);
-  if (mnResult && mnResult !== "0x" && mnResult.length > 2) {
-    const out = decodeAmountsOut(mnResult);
-    if (out !== null && out > 0n) {
-      console.log(`[SS-Quote] V1 router (Mirror): amountOut=${out}`);
+      console.log(`[SS-Quote] V1 router (race): amountOut=${out}`);
       return { amountOut: out.toString(), source: "v1-router", confidence: "high", priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v1" };
     }
   }
@@ -336,7 +359,8 @@ async function strategyV1Router(
 
 /** [C90] Strategy 1b: V1 Router multi-hop via WHBAR.
  * getAmountsOut with 3-token path: tokenIn → WHBAR → tokenOut.
- * Catches exotic pairs that have V1 AMM liquidity through WHBAR hub. */
+ * Catches exotic pairs that have V1 AMM liquidity through WHBAR hub.
+ * [C92] Uses parallel RPC + Mirror race. */
 async function strategyV1RouterMultiHop(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
   inputHtsId: string, outputHtsId: string, network: string,
@@ -350,11 +374,12 @@ async function strategyV1RouterMultiHop(
   const routerEvm = await resolveContract(routerId, network);
   const calldata = encodeGetAmountsOut(amountIn, [tokenInEvm, whbarEvm, tokenOutEvm]);
 
-  const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: routerEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
-  if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length > 2) {
-    const out = decodeAmountsOut(rpcResult);
+  // [C92] Race RPC + Mirror in parallel
+  const result = await raceRpcAndMirror(routerEvm, calldata, network);
+  if (result) {
+    const out = decodeAmountsOut(result);
     if (out !== null && out > 0n) {
-      console.log(`[SS-Quote] V1 multi-hop via WHBAR (RPC): amountOut=${out}`);
+      console.log(`[SS-Quote] V1 multi-hop via WHBAR (race): amountOut=${out}`);
       return {
         amountOut: out.toString(), source: "v1-multihop-whbar", confidence: "high",
         priceImpact: 0, route: [inputHtsId, WHBAR_HTS_ID, outputHtsId], poolVersion: "v1",
@@ -364,38 +389,56 @@ async function strategyV1RouterMultiHop(
   return null;
 }
 
-/** Strategy 2: V2 QuoterV2 quoteExactInputSingle() */
+/** Strategy 2: V2 QuoterV2 quoteExactInputSingle() — [C92] ALL fee tiers + parallel race.
+ * This is the #1 fix for missing quotes: instead of trying ONE fee tier,
+ * we probe ALL 5 SaucerSwap V2 tiers in parallel and pick the best output.
+ * Each tier races RPC + Mirror simultaneously. */
 async function strategyV2Quoter(
   amountIn: bigint, tokenInEvm: string, tokenOutEvm: string,
-  fee: number, inputHtsId: string, outputHtsId: string, network: string,
+  _fee: number, inputHtsId: string, outputHtsId: string, network: string,
 ): Promise<QuoteResult | null> {
   const quoterId = V2_QUOTER_IDS[network] || V2_QUOTER_IDS.mainnet;
   const quoterEvm = await resolveContract(quoterId, network);
-  const calldata = encodeQuoteExactInputSingle(tokenInEvm, tokenOutEvm, amountIn, fee);
 
-  // Strategy A: JSON-RPC
-  const rpcResult = await ssFetchJsonRpc("eth_call", [{ to: quoterEvm, data: calldata, gas: GAS_HEX }, "latest"], network);
-  if (rpcResult && typeof rpcResult === "string" && rpcResult !== "0x" && rpcResult.length >= 66) {
-    const amountOutHex = rpcResult.slice(2, 66);
-    const out = BigInt("0x" + amountOutHex);
-    if (out > 0n) {
-      console.log(`[SS-Quote] V2 quoter (RPC): amountOut=${out} fee=${fee}`);
-      return { amountOut: out.toString(), source: "v2-quoter", confidence: "high", priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v2", feeTier: fee };
+  // [C92] Try ALL V2 fee tiers in parallel — pick the one with highest output.
+  // Previously only tried the detected fee (or default 3000), missing pools
+  // at other tiers entirely. This is the root cause of many "no quote" failures.
+  const feeProbes = V2_FEE_TIERS.map(async (fee): Promise<QuoteResult | null> => {
+    const calldata = encodeQuoteExactInputSingle(tokenInEvm, tokenOutEvm, amountIn, fee);
+    const result = await raceRpcAndMirror(quoterEvm, calldata, network);
+    if (result && result.length >= 66) {
+      const cleanHex = result.startsWith("0x") ? result.slice(2) : result;
+      const out = BigInt("0x" + cleanHex.slice(0, 64));
+      if (out > 0n) {
+        return {
+          amountOut: out.toString(), source: "v2-quoter", confidence: "high",
+          priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v2", feeTier: fee,
+        };
+      }
+    }
+    return null;
+  });
+
+  // Wait for all tiers to complete (failed tiers return null quickly on revert)
+  const results = await Promise.allSettled(feeProbes);
+
+  // Pick the result with the highest output amount
+  let best: QuoteResult | null = null;
+  let bestOut = 0n;
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) {
+      const out = BigInt(r.value.amountOut);
+      if (out > bestOut) {
+        best = r.value;
+        bestOut = out;
+      }
     }
   }
 
-  // Strategy B: Mirror Node
-  const mnResult = await ssMirrorContractCall(quoterEvm, calldata, network, 1_500_000);
-  if (mnResult && mnResult !== "0x" && mnResult.length >= 66) {
-    const amountOutHex = mnResult.slice(2, 66);
-    const out = BigInt("0x" + amountOutHex);
-    if (out > 0n) {
-      console.log(`[SS-Quote] V2 quoter (Mirror): amountOut=${out} fee=${fee}`);
-      return { amountOut: out.toString(), source: "v2-quoter", confidence: "high", priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v2", feeTier: fee };
-    }
+  if (best) {
+    console.log(`[SS-Quote] V2 quoter (all-tier race): amountOut=${best.amountOut} fee=${best.feeTier}`);
   }
-
-  return null;
+  return best;
 }
 
 /** Strategy 3: V2 QuoterV2 quoteExactInput() multi-hop through WHBAR. */
@@ -721,16 +764,18 @@ export async function ssQuote(params: {
     strategyV1Router(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network),
     // [C90] V1 multi-hop via WHBAR — catches pairs where V1 has both legs but no direct pair
     strategyV1RouterMultiHop(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network),
-    poolInfo?.version === "v2" || !poolInfo
-      ? strategyV2Quoter(amountInBigInt, tokenInEvm, tokenOutEvm, fee, inputHtsId, outputHtsId, network)
-      : Promise.resolve(null),
+    // [C92] ALWAYS run V2 quoter across ALL fee tiers — no pool version gate.
+    // Previously gated by `poolInfo?.version === "v2" || !poolInfo` which skipped
+    // V2 when pool was detected as V1. But pairs can have BOTH V1 and V2 pools.
+    strategyV2Quoter(amountInBigInt, tokenInEvm, tokenOutEvm, fee, inputHtsId, outputHtsId, network),
     strategyV2MultiHop(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network),
     strategyApiQuote(amountIn, inputToken === "HBAR" ? WHBAR_HTS_ID : inputToken, outputToken === "HBAR" ? WHBAR_HTS_ID : outputToken),
     strategyPriceEstimate(amountInBigInt, inputHtsId, outputHtsId, inputDecimals, outputDecimals),
   ]);
 
   // [C52] Run multi-route probing in parallel with main strategies
-  const multiRoutePromise = needsMultiRoute
+  // [C92] Also probe intermediaries when pool IS detected — catches better multi-hop routes
+  const multiRoutePromise = (inputHtsId !== outputHtsId)
     ? probeAllIntermediaries(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network, inputDecimals, outputDecimals)
     : Promise.resolve([] as QuoteResult[]);
 
@@ -760,11 +805,20 @@ export async function ssQuote(params: {
 
   if (allQuotes.length === 0) return { best: null, allQuotes: [], scoredRoutes: [], poolInfo };
 
-  // Rank by confidence, then by highest amountOut
+  // [C92] Rank by HIGHEST OUTPUT among high-confidence quotes first,
+  // then by confidence for lower tiers. This ensures the user always gets
+  // the best output amount, not just the first high-confidence result.
   allQuotes.sort((a, b) => {
-    const confDiff = (CONFIDENCE_RANK[b.confidence] || 0) - (CONFIDENCE_RANK[a.confidence] || 0);
-    if (confDiff !== 0) return confDiff;
-    return Number(BigInt(b.amountOut) - BigInt(a.amountOut) > 0n ? 1 : -1);
+    const aConf = CONFIDENCE_RANK[a.confidence] || 0;
+    const bConf = CONFIDENCE_RANK[b.confidence] || 0;
+    // Both high confidence → pick highest output
+    if (aConf === 3 && bConf === 3) {
+      return BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : -1;
+    }
+    // Different confidence → prefer higher confidence
+    if (aConf !== bConf) return bConf - aConf;
+    // Same non-high confidence → pick highest output
+    return BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : -1;
   });
 
   const best = allQuotes[0];
