@@ -334,14 +334,18 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     } catch { /* session lookup failed — proceed without redirect */ }
   }
 
-  // ── [C85] Pre-request wallet activation ─────────────────────────────
+  // ── [C89] Non-blocking wallet pre-activation ───────────────────────
   // Chrome kills extension service workers after ~30s of inactivity,
-  // severing the WC relay WebSocket. The signing request gets queued at
-  // the relay but never delivered until the user manually opens the
-  // extension. Fix: ping the WC session to wake the wallet's service
-  // worker, then send a chrome.runtime.sendMessage as a fallback.
+  // severing the WC relay WebSocket. Fix: fire activation strategies
+  // in the background and proceed with just a brief 500ms window.
+  // This eliminates the 3.25s blocking delay that caused screen flicker.
+  //
+  // Strategy: Fire chrome.runtime.sendMessage FIRST (instant, most reliable),
+  // then WC session ping in background. Both are non-blocking and fail silently.
+  // The 500ms wait gives the service worker enough time to reconnect its relay WS
+  // without causing a visible UI stall.
   if (params.topic && !isMobile) {
-    await _tryActivateWallet(client, params.topic);
+    await _tryActivateWalletFast(client, params.topic);
   }
 
   if (isIframe || isMobile) {
@@ -1201,4 +1205,61 @@ export async function tryOpenWalletExtension(): Promise<void> {
 
   // Last resort: open HashPack webapp (has "open in extension" prompt)
   window.open("https://www.hashpack.app", "_blank", "noopener,noreferrer");
+}
+
+/**
+ * [C89] Fast non-blocking wallet pre-activation.
+ *
+ * Chrome kills extension service workers after ~30s of inactivity,
+ * severing the WC relay WebSocket. Fix: fire activation strategies
+ * in the background and proceed with just a brief 500ms window.
+ * This eliminates the 3.25s blocking delay that caused screen flicker.
+ *
+ * Strategy: Fire chrome.runtime.sendMessage FIRST (instant, most reliable),
+ * then WC session ping in background. Both are non-blocking and fail silently.
+ * The 500ms wait gives the service worker enough time to reconnect its relay WS
+ * without causing a visible UI stall.
+ */
+async function _tryActivateWalletFast(client: any, topic: string): Promise<void> {
+  const startMs = Date.now();
+
+  // ── Strategy 1 (fire-and-forget): chrome.runtime.sendMessage ───────
+  // This is the most reliable for browser extensions. It directly triggers
+  // Chrome to start the service worker even if the relay WS is dead.
+  const chromeApi = (globalThis as any).chrome;
+  if (chromeApi?.runtime?.sendMessage) {
+    for (const extId of KNOWN_WALLET_EXTENSION_IDS) {
+      try {
+        chromeApi.runtime.sendMessage(extId, {
+          type: "wc_activate",
+          topic,
+          origin: window.location.origin,
+        }, () => {
+          const _lastError = chromeApi.runtime.lastError;
+          if (_lastError) {
+            console.log(`[WC] Extension ${extId.slice(0, 8)}… not externally connectable`);
+          } else {
+            console.log(`[WC] Extension ${extId.slice(0, 8)}… activated via chrome.runtime`);
+          }
+        });
+      } catch {
+        // chrome.runtime may throw in sandboxed iframes
+      }
+    }
+  }
+
+  // ── Strategy 2 (background): WC session ping ──────────────────────
+  // Fire-and-forget — don't await. The ping wakes the wallet if its
+  // relay WS is still alive, but we don't block on it completing.
+  client.ping({ topic }).then(
+    () => console.log(`[WC] Session ping OK (${Date.now() - startMs}ms)`),
+    (e: any) => console.log(`[WC] Session ping failed (${Date.now() - startMs}ms):`, e?.message?.slice(0, 80)),
+  );
+
+  // ── Brief wait (500ms total) ───────────────────────────────────────
+  // Just enough for the service worker to wake up from chrome.runtime
+  // and reconnect its relay WS. This replaces the old 3.25s blocking
+  // delay that caused the visible screen flicker.
+  await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  console.log(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
 }

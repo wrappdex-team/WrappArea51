@@ -226,6 +226,7 @@ function SigningOverlay({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+      style={{ willChange: "opacity" }}
     >
       <motion.div
         initial={{ scale: 0.92, opacity: 0, y: 16 }}
@@ -233,6 +234,7 @@ function SigningOverlay({
         exit={{ scale: 0.92, opacity: 0, y: 16 }}
         transition={{ duration: 0.3, ease: [0.34, 1.56, 0.64, 1] }}
         className="w-full max-w-sm rounded-2xl bg-[#0c0c14]/95 border border-white/[0.08] shadow-2xl shadow-black/60 overflow-hidden"
+        style={{ willChange: "transform, opacity" }}
       >
         {state.status === "pending" && (
           <PendingContent state={state} onCancel={onCancel} />
