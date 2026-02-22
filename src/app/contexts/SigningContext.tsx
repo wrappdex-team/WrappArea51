@@ -35,7 +35,9 @@ import {
   X,
   Wallet,
   ShieldCheck,
+  ExternalLink,
 } from "lucide-react";
+import { tryOpenWalletExtension } from "../utils/hashpack";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -325,13 +327,26 @@ function PendingContent({
         ))}
       </div>
 
-      {/* Cancel */}
-      <button
-        onClick={onCancel}
-        className="px-5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] text-white/50 hover:text-white/70 text-sm transition-all duration-200"
-      >
-        Cancel
-      </button>
+      {/* [C85] Open Wallet + Cancel buttons */}
+      <div className="flex items-center justify-center gap-2">
+        {elapsed >= 5 && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={() => tryOpenWalletExtension()}
+            className="px-5 py-2.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm flex items-center gap-2 transition-all duration-200"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Open HashPack
+          </motion.button>
+        )}
+        <button
+          onClick={onCancel}
+          className="px-5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] text-white/50 hover:text-white/70 text-sm transition-all duration-200"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -412,6 +427,19 @@ function ErrorContent({
           >
             <Wallet className="w-3.5 h-3.5" />
             Reconnect Wallet
+          </button>
+        )}
+        {isSessionDead && (
+          <button
+            onClick={() => {
+              onDismiss();
+              // Try to open HashPack extension
+              tryOpenWalletExtension();
+            }}
+            className="px-5 py-2.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm flex items-center gap-2 transition-all duration-200"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Open HashPack
           </button>
         )}
       </div>

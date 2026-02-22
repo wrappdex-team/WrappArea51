@@ -42,6 +42,7 @@ import {
   prewarmRelay,
   startRelayKeepalive,
   stopRelayKeepalive,
+  tryOpenWalletExtension,
 } from "./wallet-core";
 
 // ── Mirror Node Endpoints ───────────────────────────────────────
@@ -769,4 +770,4 @@ export function getCurrentHashConnect(): { topic: string | null; network: Hedera
   return { topic: _activeWcTopic, network: _activeNetwork };
 }
 
-export { isWalletConnectConfigured, getWalletConnectProjectId, openWCModal, closeWCModal, subscribeWCModal, prewarmRelay, startRelayKeepalive, stopRelayKeepalive };
+export { isWalletConnectConfigured, getWalletConnectProjectId, openWCModal, closeWCModal, subscribeWCModal, prewarmRelay, startRelayKeepalive, stopRelayKeepalive, tryOpenWalletExtension };

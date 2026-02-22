@@ -334,6 +334,16 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     } catch { /* session lookup failed — proceed without redirect */ }
   }
 
+  // ── [C85] Pre-request wallet activation ─────────────────────────────
+  // Chrome kills extension service workers after ~30s of inactivity,
+  // severing the WC relay WebSocket. The signing request gets queued at
+  // the relay but never delivered until the user manually opens the
+  // extension. Fix: ping the WC session to wake the wallet's service
+  // worker, then send a chrome.runtime.sendMessage as a fallback.
+  if (params.topic && !isMobile) {
+    await _tryActivateWallet(client, params.topic);
+  }
+
   if (isIframe || isMobile) {
     let redirectFired = false;
     window.open = function (url?: any, target?: any, features?: any): WindowProxy | null {
@@ -1061,4 +1071,134 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     console.warn("[WC] Protobuf decode error:", e?.message);
   }
   return null;
+}
+
+// ── Known Hedera Wallet Extension IDs (Chrome Web Store) ──────────────
+const KNOWN_WALLET_EXTENSION_IDS = [
+  "gjagmgiddbbciopjhllkdnddhcglnemk", // HashPack
+  "nihmfbcfaoaoplfjlbmpbgddhfkceogn", // Blade (Cypher D)
+];
+
+/**
+ * [C85] Try to activate the wallet's browser extension service worker.
+ *
+ * Chrome Manifest V3 kills extension service workers after ~30s of
+ * inactivity, severing the WC relay WebSocket. The signing request gets
+ * queued at the relay but never delivered until the user manually opens
+ * the extension.
+ *
+ * Multi-strategy activation:
+ *   1. WC session ping — sends a `wc_sessionPing` via the relay, which
+ *      can wake the wallet if its relay WebSocket is still alive.
+ *   2. chrome.runtime.sendMessage — directly wakes the extension's
+ *      service worker (if the extension has configured
+ *      `externally_connectable` for our domain).
+ *   3. Pairing topic ping — pings the underlying pairing connection
+ *      which may have a separate keep-alive.
+ *
+ * All strategies are non-blocking and fail silently. The worst case is
+ * that the wallet doesn't auto-prompt and the user has to click the
+ * extension icon (same as before this fix).
+ */
+async function _tryActivateWallet(client: any, topic: string): Promise<void> {
+  const startMs = Date.now();
+
+  // ── Strategy 2 (fire-and-forget): chrome.runtime.sendMessage ───────
+  // Run this FIRST because it's non-blocking and the most reliable for
+  // browser extensions. It directly triggers Chrome to start the service
+  // worker even if the WC relay WebSocket is completely dead.
+  const chromeApi = (globalThis as any).chrome;
+  if (chromeApi?.runtime?.sendMessage) {
+    for (const extId of KNOWN_WALLET_EXTENSION_IDS) {
+      try {
+        chromeApi.runtime.sendMessage(extId, {
+          type: "wc_activate",
+          topic,
+          origin: window.location.origin,
+        }, () => {
+          const _lastError = chromeApi.runtime.lastError;
+          if (_lastError) {
+            console.log(`[WC] Extension ${extId.slice(0, 8)}… not externally connectable`);
+          } else {
+            console.log(`[WC] Extension ${extId.slice(0, 8)}… activated via chrome.runtime`);
+          }
+        });
+      } catch {
+        // chrome.runtime may throw in sandboxed iframes
+      }
+    }
+  }
+
+  // ── Strategies 1 + 3 (parallel): WC session ping + pairing ping ────
+  // Run both simultaneously with a shared 3s timeout. The session ping
+  // wakes the wallet if its relay WS is still alive; the pairing ping
+  // is a secondary channel that may survive longer.
+  const sessionPing = client.ping({ topic }).then(
+    () => console.log(`[WC] Session ping OK (${Date.now() - startMs}ms)`),
+    (e: any) => console.log(`[WC] Session ping failed (${Date.now() - startMs}ms):`, e?.message?.slice(0, 80)),
+  );
+
+  let pairingPing: Promise<void> = Promise.resolve();
+  try {
+    const session = client.session?.get?.(topic);
+    if (session?.pairingTopic && client.core?.pairing?.ping) {
+      pairingPing = client.core.pairing.ping({ topic: session.pairingTopic }).then(
+        () => console.log("[WC] Pairing ping OK"),
+        () => { /* non-critical */ },
+      );
+    }
+  } catch { /* */ }
+
+  // Wait for both pings with a 3s ceiling
+  await Promise.race([
+    Promise.allSettled([sessionPing, pairingPing]),
+    new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+  ]);
+
+  // Brief grace period for the service worker to reconnect to the relay
+  // after being woken by chrome.runtime.sendMessage (strategy 2).
+  await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  console.log(`[WC] Wallet activation complete (${Date.now() - startMs}ms total)`);
+}
+
+/**
+ * [C85] Public helper: attempt to bring the connected wallet to foreground.
+ *
+ * Called from the signing overlay's "Open Wallet" button to give users
+ * a manual way to activate HashPack if the automatic mechanisms fail.
+ *
+ * Tries:
+ *   1. chrome.runtime.sendMessage to known wallet extensions
+ *   2. Opening the wallet's redirect URL from the session peer metadata
+ *   3. Opening a generic HashPack URL as last resort
+ */
+export async function tryOpenWalletExtension(): Promise<void> {
+  // Try chrome.runtime first
+  const chromeApi = (globalThis as any).chrome;
+  if (chromeApi?.runtime?.sendMessage) {
+    for (const extId of KNOWN_WALLET_EXTENSION_IDS) {
+      try {
+        chromeApi.runtime.sendMessage(extId, { type: "wc_focus" }, () => {
+          chromeApi.runtime.lastError; // suppress console error
+        });
+      } catch { /* */ }
+    }
+  }
+
+  // Try the session's peer redirect URL
+  try {
+    const client = await getSignClient();
+    const sessions = client?.session?.getAll?.() ?? [];
+    for (const s of sessions) {
+      const redirect = s?.peer?.metadata?.redirect;
+      const url = redirect?.universal || redirect?.native;
+      if (url && url.startsWith("http")) {
+        window.open(url, "_blank", "noopener,noreferrer");
+        return;
+      }
+    }
+  } catch { /* */ }
+
+  // Last resort: open HashPack webapp (has "open in extension" prompt)
+  window.open("https://www.hashpack.app", "_blank", "noopener,noreferrer");
 }
