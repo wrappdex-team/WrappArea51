@@ -155,9 +155,7 @@ async function approveIfNeeded(params: {
 
   window.dispatchEvent(new CustomEvent("swap-step", { detail: {
     step: stepNumber, total: totalSteps,
-    description: topUp
-      ? `Top up ${tokenSymbol} allowance`
-      : `Approve ${tokenSymbol} spending${infiniteApproval ? " (infinite)" : ""}`,
+    description: `Approving ${tokenSymbol}...`,
   }}));
 
   // ── Send native HTS approve transaction ──
@@ -565,7 +563,7 @@ async function executeSaucerSwapV2Direct(
       // [C27-04] Emit step event — single step for HBAR→Token (no approve needed)
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: 1, total: 1,
-        description: `Swap HBAR → ${outputToken.symbol} via V2 Router`,
+        description: `Swapping HBAR → ${outputToken.symbol}`,
       }}));
 
       const functionData = encodeExactInputSingle(
@@ -704,7 +702,7 @@ async function executeSaucerSwapV2Direct(
         console.log(`[HBAR.h] V2 Step ${v2SwapStep}: multicall(exactInputSingle + unwrapWETH9) — Token→HBAR [C34-01/C100-S9]`);
         window.dispatchEvent(new CustomEvent("swap-step", { detail: {
           step: v2SwapStep, total: v2TotalSteps,
-          description: `Swap ${inputToken.symbol} → HBAR via V2 Router (atomic)`,
+          description: `Swapping ${inputToken.symbol} → HBAR`,
         }}));
 
         // Sub-call 1: exactInputSingle — swap Token→WHBAR, recipient = ROUTER
@@ -788,7 +786,7 @@ async function executeSaucerSwapV2Direct(
       // [C27-04][C53] Emit step event — step count adjusts based on approve skip
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: v2SwapStep, total: v2TotalSteps,
-        description: `Swap ${inputToken.symbol} → ${outputToken.symbol} via V2 Router`,
+        description: `Swapping ${inputToken.symbol} → ${outputToken.symbol}`,
       }}));
       const functionData = encodeExactInputSingle(
         tokenInEvm, tokenOutEvm, fee,
@@ -1330,7 +1328,7 @@ async function executeSaucerSwapV2MultiHop(
         console.log(`[HBAR.h] V2 Multi-hop Step ${mhSwapStep}: multicall(exactInput + unwrapWETH9) — Token→HBAR [C34-01/C100-S9]`);
         window.dispatchEvent(new CustomEvent("swap-step", { detail: {
           step: mhSwapStep, total: mhTotalSteps,
-          description: `Swap ${inputToken.symbol} → HBAR via V2 Router (multi-hop, atomic)`,
+          description: `Swapping ${inputToken.symbol} → HBAR`,
         }}));
 
         const unwrapCalldata = encodeUnwrapWHBAR(0n, recipientEvmAddress);
@@ -1369,7 +1367,7 @@ async function executeSaucerSwapV2MultiHop(
       // [C27-04][C53] Emit step event — step count adjusts based on approve skip
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: mhSwapStep, total: mhTotalSteps,
-        description: `Swap ${inputToken.symbol} → ${outputToken.symbol} via V2 Router (multi-hop)`,
+        description: `Swapping ${inputToken.symbol} → ${outputToken.symbol}`,
       }}));
       const swapTx = new ContractExecuteTransaction()
         .setContractId(ContractId.fromString(v2RouterId))
@@ -1610,7 +1608,7 @@ async function executeSaucerSwapDirect(
         // Notify UI about the V2→V1 fallback
         window.dispatchEvent(new CustomEvent("swap-step", { detail: {
           step: 0, total: 2,
-          description: `V2 multicall reverted — retrying with V1 Router...`,
+          description: `Retrying swap — trying alternate route...`,
         }}));
 
         // Reset to V1
@@ -1658,7 +1656,7 @@ async function executeSaucerSwapDirect(
           // Notify UI about the V2→V1 fallback
           window.dispatchEvent(new CustomEvent("swap-step", { detail: {
             step: 0, total: 2,
-            description: `V2 multi-hop reverted — retrying with V1 Router...`,
+            description: `Retrying swap — trying alternate route...`,
           }}));
 
           // Reset to V1
@@ -1737,7 +1735,7 @@ async function executeSaucerSwapDirect(
         // Notify UI about the V2→V1 fallback
         window.dispatchEvent(new CustomEvent("swap-step", { detail: {
           step: 0, total: 2,
-          description: `V2 route reverted — retrying with V1 Router...`,
+          description: `Retrying swap — trying alternate route...`,
         }}));
 
         // Reset to V1 — V1 path rebuild block below will validate canonical
@@ -2278,6 +2276,12 @@ async function executeSaucerSwapDirect(
       // The router internally wraps HBAR → WHBAR and swaps through the pool.
       console.log("[HBAR.h] Native HBAR input — using swapExactETHForTokens");
 
+      // [C108-S13] Emit swap-step for V1 HBAR→Token (single step, no approve needed)
+      window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+        step: 1, total: 1,
+        description: `Swapping HBAR → ${outputToken.symbol}`,
+      }}));
+
       const functionData = encodeSaucerSwapETHForTokens(
         BigInt(minOutput),
         pathAddresses,
@@ -2353,6 +2357,11 @@ async function executeSaucerSwapDirect(
 
       // Swap step: swapExactTokensForETH
       console.log(`[HBAR.h] Step ${v1SwapStep1}: swapExactTokensForETH`);
+      // [C108-S13] Emit swap-step for V1 Token→HBAR swap
+      window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+        step: v1SwapStep1, total: v1TotalSteps1,
+        description: `Swapping ${inputToken.symbol} → HBAR`,
+      }}));
       const functionData = encodeSaucerSwapTokensForETH(
         BigInt(rawInput),
         BigInt(minOutput),
@@ -2421,6 +2430,11 @@ async function executeSaucerSwapDirect(
 
       // Swap step: swapExactTokensForTokens
       console.log(`[HBAR.h] Step ${v1SwapStep2}: swapExactTokensForTokens`);
+      // [C108-S13] Emit swap-step for V1 Token→Token swap
+      window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+        step: v1SwapStep2, total: v1TotalSteps2,
+        description: `Swapping ${inputToken.symbol} → ${outputToken.symbol}`,
+      }}));
       // [C95] Log the ACTUAL path being sent to V1 router — critical for debugging
       console.log(`[HBAR.h] [C95] V1 Token→Token execution path (${pathAddresses.length} tokens):`);
       pathAddresses.forEach((addr, idx) => {

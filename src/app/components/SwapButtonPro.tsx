@@ -7,11 +7,13 @@
  * Features:
  * - Gradient shimmer on hover
  * - Processing pulse animation with step description
+ * - [C108-S13] "Open Wallet" button appears after 3s if no wallet response
+ * - [C108-S13] Cleaner step descriptions: "Step 1 of 2: Approving SAUCE..."
  * - Success ripple effect
  * - Smooth state transitions
  */
 
-import { memo } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Loader2,
@@ -21,8 +23,12 @@ import {
   ArrowRight,
   ExternalLink,
   Zap,
+  ExternalLink as OpenIcon,
 } from "lucide-react";
 import type { AllowedToken } from "../utils/saucerswap";
+
+/** [C108-S13] How long to wait before showing "Open Wallet" button (ms) */
+const WALLET_OPEN_DELAY_MS = 3000;
 
 interface SwapButtonProProps {
   status: "idle" | "processing" | "success" | "error";
@@ -50,9 +56,25 @@ interface SwapButtonProProps {
   onReset: () => void;
   /** [C81-01] Called on pointerEnter to pre-warm WC relay before click */
   onHover?: () => void;
+  /** [C108-S13] Called to attempt opening the wallet app/extension */
+  onOpenWallet?: () => void;
   isDark: boolean;
   /** [C100-S11] Pre-flight approval status: true=needs approve popup, false=1-click swap, null=unknown */
   approvalNeeded?: boolean | null;
+}
+
+/**
+ * [C108-S13] Clean up internal technical descriptions to user-friendly text.
+ * Strip "via V2 Router", "via V1 Router", "(atomic)", "(multi-hop)", etc.
+ */
+function humanizeDescription(desc: string): string {
+  return desc
+    .replace(/\s*via V[12] Router/gi, "")
+    .replace(/\s*\(atomic\)/gi, "")
+    .replace(/\s*\(multi-hop,?\s*atomic\)/gi, "")
+    .replace(/\s*\(multi-hop\)/gi, "")
+    .replace(/\s*\(infinite\)/gi, "")
+    .trim();
 }
 
 export const SwapButtonPro = memo(function SwapButtonPro({
@@ -74,9 +96,47 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   onSwap,
   onReset,
   onHover,
+  onOpenWallet,
   isDark,
   approvalNeeded,
 }: SwapButtonProProps) {
+  // ── [C108-S13] Wallet open timer ──
+  // After 3s of processing with no wallet response, show "Open Wallet" button.
+  const [showOpenWallet, setShowOpenWallet] = useState(false);
+  const walletTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStepRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (status === "processing") {
+      // Reset timer whenever a NEW step arrives (wallet responded to previous step)
+      const currentStep = swapStep?.step ?? null;
+      if (currentStep !== lastStepRef.current) {
+        lastStepRef.current = currentStep;
+        setShowOpenWallet(false);
+        if (walletTimerRef.current) clearTimeout(walletTimerRef.current);
+        walletTimerRef.current = setTimeout(() => {
+          setShowOpenWallet(true);
+        }, WALLET_OPEN_DELAY_MS);
+      }
+    } else {
+      // Not processing — clear everything
+      setShowOpenWallet(false);
+      lastStepRef.current = null;
+      if (walletTimerRef.current) {
+        clearTimeout(walletTimerRef.current);
+        walletTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (walletTimerRef.current) clearTimeout(walletTimerRef.current);
+    };
+  }, [status, swapStep?.step]);
+
+  // ── [C108-S13] Build human-friendly step label ──
+  const stepLabel = swapStep
+    ? `Step ${swapStep.step} of ${swapStep.total}: ${humanizeDescription(swapStep.description)}`
+    : "Preparing transaction...";
+
   return (
     <div className="mt-5 space-y-2">
       <AnimatePresence mode="wait">
@@ -98,23 +158,15 @@ export const SwapButtonPro = memo(function SwapButtonPro({
               {/* Shimmer */}
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-[shimmer_2s_infinite]" />
               
-              <div className="relative flex flex-col items-center gap-1">
+              <div className="relative flex flex-col items-center gap-1.5">
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>
-                    {swapStep
-                      ? `Step ${swapStep.step}/${swapStep.total}: Sign in wallet...`
-                      : "Awaiting wallet signature..."}
-                  </span>
+                  <span className="text-sm">{stepLabel}</span>
                 </div>
-                {swapStep && (
-                  <span className="text-xs text-amber-200/80 font-normal">
-                    {swapStep.description}
-                  </span>
-                )}
+
                 {/* Step progress dots */}
                 {swapStep && swapStep.total > 1 && (
-                  <div className="flex items-center gap-1.5 mt-1">
+                  <div className="flex items-center gap-1.5">
                     {Array.from({ length: swapStep.total }).map((_, i) => (
                       <div
                         key={i}
@@ -129,8 +181,34 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                     ))}
                   </div>
                 )}
+
+                {/* [C108-S13] "Waiting for wallet..." + sub-hint */}
+                <span className="text-xs text-amber-200/70 font-normal">
+                  Sign in your HashPack wallet to continue
+                </span>
               </div>
             </button>
+
+            {/* [C108-S13] "Open Wallet" button — appears after 3s delay */}
+            <AnimatePresence>
+              {showOpenWallet && onOpenWallet && (
+                <motion.button
+                  initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                  animate={{ opacity: 1, height: "auto", marginTop: 8 }}
+                  exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                  onClick={onOpenWallet}
+                  className={`w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
+                    isDark
+                      ? "bg-white/10 hover:bg-white/15 text-amber-300 border border-amber-500/20"
+                      : "bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300"
+                  }`}
+                >
+                  <Wallet className="w-4 h-4" />
+                  Open Wallet
+                  <OpenIcon className="w-3.5 h-3.5 opacity-60" />
+                </motion.button>
+              )}
+            </AnimatePresence>
           </motion.div>
         ) : status === "success" ? (
           <motion.div
@@ -204,8 +282,10 @@ export const SwapButtonPro = memo(function SwapButtonPro({
             )}
             <button
               onClick={onReset}
-              className={`w-full mt-2 py-2 rounded-xl text-xs font-medium transition-colors ${
-                isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              className={`w-full mt-2 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
+                isDark
+                  ? "bg-white/10 hover:bg-white/15 text-white border border-white/10"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200"
               }`}
             >
               Try Again

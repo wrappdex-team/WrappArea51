@@ -52,7 +52,7 @@ import {
   type SwapOptions,
   type SwapPrerequisites,
 } from "../utils/saucerswap";
-import { prewarmRelay, startRelayKeepalive } from "../utils/hashpack";
+import { prewarmRelay, startRelayKeepalive, tryOpenWalletExtension } from "../utils/hashpack";
 import {
   SwapHistoryPanel,
   loadSwapHistory,
@@ -128,6 +128,10 @@ export function SwapPanel() {
     window.addEventListener("swap-step", handler);
     return () => window.removeEventListener("swap-step", handler);
   }, []);
+
+  // ── Derived: wrap/unwrap detection (must precede useEffects that reference it) ──
+  const isWrapUnwrap = isHbarWhbarPair(inputToken.symbol, outputToken.symbol);
+  const isWrapping = isWrapUnwrap && inputToken.symbol === "HBAR";
 
   // ── [C100-S11] Pre-flight swap prerequisites ──
   // Runs in parallel with quote fetching to probe allowance + association
@@ -238,9 +242,6 @@ export function SwapPanel() {
     return () => { cancelled = true; clearInterval(iv); };
   }, []);
   const effectiveSlippage = customSlippage ? parseFloat(customSlippage) || 0.5 : slippage;
-  const isWrapUnwrap = isHbarWhbarPair(inputToken.symbol, outputToken.symbol);
-  const isWrapping = isWrapUnwrap && inputToken.symbol === "HBAR";
-
   const inputPrice = livePrices[inputToken.symbol] || (inputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
   const outputPrice = livePrices[outputToken.symbol] || (outputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
   const inputUsd = inputAmount ? parseFloat(inputAmount) * inputPrice : 0;
@@ -484,6 +485,12 @@ export function SwapPanel() {
     // The pre-flight checks (balance, pool detection, quote) take 5-15s;
     // by the time the wallet signing request fires, the relay will be warm.
     prewarmRelay();
+
+    // [C108-S13] Auto-open wallet at swap start — helps HashPack extension
+    // activate its service worker so the signing popup appears automatically.
+    // Non-blocking fire-and-forget; if it fails, the "Open Wallet" timer
+    // in SwapButtonPro will show a manual button after 3 seconds.
+    tryOpenWalletExtension().catch(() => {});
 
     try {
       let result: SwapResult;
@@ -804,6 +811,7 @@ export function SwapPanel() {
               onSwap={handleSwap}
               onReset={handleResetSwap}
               onHover={prewarmRelay}
+              onOpenWallet={tryOpenWalletExtension}
               isDark={isDark}
               approvalNeeded={swapPrereqs?.approvalNeeded ?? null}
             />
