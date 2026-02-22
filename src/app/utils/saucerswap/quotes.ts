@@ -423,7 +423,7 @@ export async function fetchSaucerSwapQuote(
       inputDecimals,
       outputDecimals,
       network,
-    }, 18000); // 18s covers server's 15s hard timeout + network
+    }, 12000); // [PERF-01] 12s (reduced from 18s) — fail faster, fall through to browser strategies
 
     if (proxyData && proxyData.amountOut > 0) {
       const sourceMap: Record<string, RawQuote["source"]> = {

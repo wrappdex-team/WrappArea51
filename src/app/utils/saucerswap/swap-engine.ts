@@ -58,31 +58,35 @@ import { verifyIsContract } from "./verification";
 // for the existing HTS token allowance. If allowance >= swap amount,
 // the approve step is SKIPPED entirely → user sees only 1 popup (swap).
 //
-// "Infinite approval" mode sets allowance to MAX_SAFE_ALLOWANCE
-// (2^53 - 1 ≈ 9 quadrillion smallest units) so subsequent swaps of
-// the same token→router pair never need re-approval.
-//
-// SENIOR DEV NOTE: Hedera HTS allowances are int64 on-chain, but the
-// SDK's approveTokenAllowance() takes a JS number. We use
-// Number.MAX_SAFE_INTEGER (2^53-1) which fits comfortably in int64.
+// [STEP-15] "Infinite approval" mode was REMOVED because it caused
+// AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY on tokens whose max supply < 2^53-1.
+// All approvals now use the exact swap amount. The user always sees the
+// correct amount in their wallet popup, matching the quote exactly.
 
-/** Max allowance for "infinite approval" — Number.MAX_SAFE_INTEGER (2^53-1). */
-const MAX_SAFE_ALLOWANCE = Number.MAX_SAFE_INTEGER; // 9007199254740991
+// [STEP-15] Infinite approval REMOVED — always approve exact swap amount.
+// MAX_SAFE_ALLOWANCE caused AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY on tokens whose
+// max supply < 2^53-1. Exact-amount approval is safer and matches the quote.
 
 /**
- * [SEC-14] Minimum consensus wait after fast-path transactions (ms).
+ * [SEC-14 → PERF-01] Post-approval/association delay (ms).
  *
- * Hedera mainnet consensus: 3-5s. executeHederaTransactionFast() returns
- * immediately after the wallet signs and submits — it does NOT wait for
- * a receipt. If we submit a dependent transaction (swap) before the
- * prerequisite (approve/associate) reaches consensus, the swap sees stale
- * state and reverts with CONTRACT_REVERT_EXECUTED.
+ * Set to 0: the WalletConnect round-trip (wallet signs → submits to
+ * consensus node → returns txId) already takes 2-5s, by which time
+ * the transaction has typically reached consensus. Both prerequisite
+ * (approve/associate) and dependent (swap) transactions target the
+ * same consensus node (0.0.3), ensuring the node processes them
+ * sequentially in its mempool.
  *
- * 3s is the floor: by the time the user processes the wallet popup +
- * our code resumes + this wait elapses, 5-7s have typically passed
- * since TX submission — comfortably within consensus finality.
+ * This matches SaucerSwap.finance's own behavior — no artificial waits
+ * between approval and swap popups. If an edge-case race condition
+ * causes the swap to see stale state, it reverts with a clear
+ * CONTRACT_REVERT_EXECUTED error and the user can retry.
+ *
+ * Previous value was 3000ms which, combined with the 1s internal
+ * wait in executeHederaTransactionFast + post-approval verification,
+ * added ~6.5s of unnecessary delay between wallet popups.
  */
-const CONSENSUS_WAIT_MS = 3000;
+const CONSENSUS_WAIT_MS = 0;
 
 export interface ApproveResult {
   needed: boolean;          // true if approve tx was sent
@@ -99,8 +103,10 @@ export interface ApproveResult {
  * [C53] Check allowance and approve token spending if needed.
  *
  * - If existing allowance >= rawInput → skip (0 popups for this step)
- * - If infiniteApproval → approve MAX_SAFE_ALLOWANCE
- * - Otherwise → approve exact rawInput
+ * - Otherwise → approve exact rawInput (matches the swap quote)
+ *
+ * [STEP-15] Infinite approval removed — always approves exact amount to
+ * prevent AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY errors on low-supply tokens.
  *
  * Dispatches swap-step events for UI feedback.
  */
@@ -109,7 +115,6 @@ async function approveIfNeeded(params: {
   ownerAccountId: string;
   spenderAccountId: string;  // Router HTS ID (e.g. "0.0.3045981" for V1, "0.0.3949434" for V2)
   rawInput: number;
-  infiniteApproval: boolean;
   network: HederaNetwork;
   tokenSymbol: string;
   stepNumber: number;
@@ -119,7 +124,7 @@ async function approveIfNeeded(params: {
 }): Promise<ApproveResult> {
   const {
     tokenHtsId, ownerAccountId, spenderAccountId,
-    rawInput, infiniteApproval, network, tokenSymbol,
+    rawInput, network, tokenSymbol,
     stepNumber, totalSteps, routerVersion,
   } = params;
 
@@ -160,12 +165,15 @@ async function approveIfNeeded(params: {
   }
 
   // ── Approval needed — determine amount ──
-  const approveAmount = infiniteApproval ? MAX_SAFE_ALLOWANCE : rawInput;
+  // [STEP-15] Always approve exact rawInput — no infinite approvals.
+  // This prevents AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY on low-supply tokens
+  // and ensures wallet popup shows the exact amount the user expects.
+  const approveAmount = rawInput;
   const topUp = existingAllowance > 0;
 
   console.log(
     `[C53] ${topUp ? "Top-up" : "New"} approval: ${tokenSymbol} → ${spenderAccountId}, ` +
-    `existing=${existingAllowance}, needed=${rawInput}, approving=${infiniteApproval ? "INFINITE" : approveAmount}`,
+    `existing=${existingAllowance}, needed=${rawInput}, approving=${approveAmount} (exact)`,
   );
 
   window.dispatchEvent(new CustomEvent("swap-step", { detail: {
@@ -195,39 +203,18 @@ async function approveIfNeeded(params: {
     };
   }
 
-  // ── [SEC-14] Mandatory consensus wait ──────────────────────────────
-  // Fast-path approval skips receipt polling. Without this wait, the
-  // subsequent swap TX may hit the consensus node before the approval
-  // is finalized, seeing stale allowance → CONTRACT_REVERT_EXECUTED.
-  console.log(`[SEC-14] Waiting ${CONSENSUS_WAIT_MS}ms for approval consensus finality...`);
-  await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
-
-  // ── [C100-S7] Post-approval verification ──
-  // Re-query the Mirror Node to confirm the allowance was set correctly.
-  // Non-blocking: if verification fails, proceed anyway (the swap TX will
-  // revert with a clear error if the allowance is actually missing).
-  // Mirror Node may have a brief propagation delay — retry once after 1s.
-  if (routerVersion) {
-    try {
-      let verifiedAllowance = await fetchTokenAllowance(
-        ownerAccountId, tokenHtsId, spenderAccountId, network,
-      );
-      if (verifiedAllowance < rawInput) {
-        // Mirror Node may lag — retry once after a short delay
-        await new Promise(r => setTimeout(r, 1200));
-        verifiedAllowance = await fetchTokenAllowance(
-          ownerAccountId, tokenHtsId, spenderAccountId, network,
-        );
-      }
-      if (verifiedAllowance >= rawInput) {
-        console.log(`[C100-S7] ✓ Post-approval verified: ${tokenSymbol} allowance ${verifiedAllowance} >= ${rawInput} for ${routerVersion.toUpperCase()} Router ${spenderAccountId}`);
-      } else {
-        console.warn(`[C100-S7] ⚠ Post-approval check: ${tokenSymbol} allowance ${verifiedAllowance} < ${rawInput} for ${spenderAccountId} — Mirror Node may be lagging, proceeding anyway`);
-      }
-    } catch (verifyErr: any) {
-      console.log(`[C100-S7] Post-approval verification skipped: ${verifyErr?.message || verifyErr}`);
-    }
+  // ── [PERF-01] No artificial wait ──────────────────────────────────
+  // WalletConnect round-trip (sign → submit → return) already takes 2-5s,
+  // providing sufficient time for Hedera consensus. Both transactions
+  // target the same node (0.0.3) ensuring sequential mempool processing.
+  // Post-approval Mirror Node verification was also removed — it added
+  // 1-2.5s of delay with no benefit (if approval failed, the swap
+  // reverts with a clear CONTRACT_REVERT_EXECUTED error).
+  if (CONSENSUS_WAIT_MS > 0) {
+    console.log(`[PERF-01] Waiting ${CONSENSUS_WAIT_MS}ms for approval consensus...`);
+    await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
   }
+  console.log(`[PERF-01] ✓ Approval submitted — proceeding to swap (no artificial wait)`);
 
   return {
     needed: true, skipped: false, success: true,
@@ -487,9 +474,10 @@ async function executeSaucerSwapV2Direct(
     // ── Gas sufficiency check ──
     // Hedera gas fees are sub-cent for typical swaps. Reserve 1 HBAR total
     // to cover gas + network fees — good for dozens of transactions.
-    // SWAP_GAS / APPROVE_GAS are gas LIMITS for the EVM call, NOT the HBAR cost.
+    // SWAP_GAS is the gas LIMIT for the EVM call, NOT the HBAR cost.
+    // NOTE: APPROVE_GAS was removed — approveIfNeeded() uses native HTS
+    // AccountAllowanceApproveTransaction which doesn't need an EVM gas limit.
     const SWAP_GAS = 1_500_000;
-    const APPROVE_GAS = 800_000;
     const gasReserveNeeded = 1; // 1 HBAR covers gas + network fees with plenty of margin
 
     if (isInputNative) {
@@ -543,7 +531,7 @@ async function executeSaucerSwapV2Direct(
       const dryRes = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: makeAbort(15000),
+        signal: makeAbort(8000), // [PERF-01] 8s (from 15s) — dry run is non-blocking, fail fast
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "eth_call",
@@ -673,7 +661,6 @@ async function executeSaucerSwapV2Direct(
       // Even though V2 pools may use alias (ERC20Wrapper) addresses in the
       // packed path, the SwapRouter's transferFrom ultimately resolves to
       // the canonical token's allowance table.
-      const infiniteApproval = !!(options?.infiniteApproval);
       const canonicalTokenId = inputToken.htsId;
       if (inputToken.saucerswapAliasId && inputToken.saucerswapAliasId !== canonicalTokenId) {
         console.log(`[C100-S7] V2 Direct: canonical=${canonicalTokenId}, alias=${inputToken.saucerswapAliasId} — approving CANONICAL for V2 Router`);
@@ -683,7 +670,6 @@ async function executeSaucerSwapV2Direct(
         ownerAccountId: accountId,
         spenderAccountId: v2RouterId,
         rawInput,
-        infiniteApproval,
         network,
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
@@ -1260,7 +1246,6 @@ async function executeSaucerSwapV2MultiHop(
     }
 
     const SWAP_GAS = 2_000_000; // Higher gas for multi-hop (more contract calls)
-    const APPROVE_GAS = 800_000;
 
     // [C26-02] Token → HBAR multi-hop: per SaucerSwap V2 docs, uses multicall
     // approach: exactInput(recipient=ROUTER) + unwrapWETH9(user).
@@ -1331,7 +1316,6 @@ async function executeSaucerSwapV2MultiHop(
       //   • Spender: V2 Router (0.0.3949434) — NOT V1 Router
       // The HTS precompile checks allowances by canonical ID, even though
       // the V2 packed path encodes alias (ERC20Wrapper) addresses.
-      const mhInfiniteApproval = !!(options?.infiniteApproval);
       const mhCanonicalTokenId = inputToken.htsId;
       if (inputToken.saucerswapAliasId && inputToken.saucerswapAliasId !== mhCanonicalTokenId) {
         console.log(`[C100-S7] V2 Multi-hop: canonical=${mhCanonicalTokenId}, alias=${inputToken.saucerswapAliasId} — approving CANONICAL for V2 Router`);
@@ -1341,7 +1325,6 @@ async function executeSaucerSwapV2MultiHop(
         ownerAccountId: accountId,
         spenderAccountId: v2RouterId,
         rawInput,
-        infiniteApproval: mhInfiniteApproval,
         network,
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
@@ -2250,10 +2233,6 @@ async function executeSaucerSwapDirect(
     // Gas limits for EVM calls — these are gas LIMITS passed to setGas(),
     // NOT the HBAR cost. Hedera gas fees are sub-cent for typical swaps.
     const SWAP_GAS = 1_500_000;
-    // [C36-01] APPROVE_GAS no longer needed — V1 Token→HBAR and V1 Token→Token
-    // both use native HTS AccountAllowanceApproveTransaction (no EVM gas required).
-    // Retained as dead code; safe to remove in a future cleanup pass.
-    const APPROVE_GAS = 800_000; // eslint-disable-line @typescript-eslint/no-unused-vars
 
     // ══════════════════════════════════════════════════════════════════
     // ── GAS SUFFICIENCY CHECK ──
@@ -2356,15 +2335,19 @@ async function executeSaucerSwapDirect(
         BigInt(deadline)
       );
 
-      const hbarAmount = rawInput / Math.pow(10, 8); // Convert tinybars to HBAR
+      // [PERF-01] Use Hbar.fromTinybars for exact precision — matches V2 path.
+      // Previous `rawInput / Math.pow(10, 8)` then `new Hbar(float)` caused
+      // floating-point rounding on large tinybar amounts (e.g., 123456789 tinybar
+      // → 1.23456789 HBAR → Hbar constructor may truncate fractional digits).
+      const hbarAmount = Hbar.fromTinybars(rawInput);
 
       const swapTx = new ContractExecuteTransaction()
         .setContractId(ContractId.fromString(v1Router))
         .setGas(SWAP_GAS)
         .setFunctionParameters(functionData)
-        .setPayableAmount(new Hbar(hbarAmount));
+        .setPayableAmount(hbarAmount);
 
-      console.log("[HBAR.h] Submitting swapExactETHForTokens — HBAR:", hbarAmount);
+      console.log("[HBAR.h] Submitting swapExactETHForTokens — HBAR:", hbarAmount, `(${rawInput} tinybar)`);
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] Swap result:", JSON.stringify(swapResult));
 
@@ -2401,7 +2384,6 @@ async function executeSaucerSwapDirect(
         ownerAccountId: accountId,
         spenderAccountId: v1Router,
         rawInput,
-        infiniteApproval: !!(options?.infiniteApproval),
         network,
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
@@ -2474,7 +2456,6 @@ async function executeSaucerSwapDirect(
         ownerAccountId: accountId,
         spenderAccountId: v1Router,
         rawInput,
-        infiniteApproval: !!(options?.infiniteApproval),
         network,
         tokenSymbol: inputToken.symbol,
         stepNumber: 1,
@@ -2586,8 +2567,7 @@ async function executeSaucerSwapDirect(
  */
 /** [C53] Swap options — controls approval behavior and balance validation. */
 export interface SwapOptions {
-  /** If true, approve MAX_SAFE_INTEGER allowance instead of exact amount. */
-  infiniteApproval?: boolean;
+  // [STEP-15] infiniteApproval removed — always approves exact swap amount.
   /**
    * [C100-S11] Account's max_automatic_token_associations from Mirror Node.
    * -1 = unlimited, 0 = none, positive = that many slots.

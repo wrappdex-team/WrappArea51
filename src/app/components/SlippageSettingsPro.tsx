@@ -1,12 +1,14 @@
 /**
- * SlippageSettingsPro — Premium slippage + approval settings drawer.
+ * SlippageSettingsPro — Premium slippage settings drawer.
  *
  * Features:
  * - Pill buttons for common slippage values
  * - Custom slippage input with validation
- * - Infinite approval toggle with security explanation
  * - Smooth expand/collapse animation
  * - Visual highlight for active selection
+ *
+ * [STEP-15] Infinite approval toggle removed — all approvals now use
+ * exact swap amounts to prevent AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY errors.
  */
 
 import { memo } from "react";
@@ -14,7 +16,6 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Settings2,
   ChevronDown,
-  Infinity as InfinityIcon,
   Shield,
   AlertTriangle,
 } from "lucide-react";
@@ -30,9 +31,6 @@ interface SlippageSettingsProProps {
   onToggle: () => void;
   onSetSlippage: (val: number) => void;
   onSetCustomSlippage: (val: string) => void;
-  // Infinite approval
-  infiniteApproval: boolean;
-  onToggleInfiniteApproval: () => void;
   isDark: boolean;
 }
 
@@ -44,8 +42,6 @@ export const SlippageSettingsPro = memo(function SlippageSettingsPro({
   onToggle,
   onSetSlippage,
   onSetCustomSlippage,
-  infiniteApproval,
-  onToggleInfiniteApproval,
   isDark,
 }: SlippageSettingsProProps) {
   const isCustom = !!customSlippage;
@@ -142,51 +138,18 @@ export const SlippageSettingsPro = memo(function SlippageSettingsPro({
                 </div>
               </div>
 
-              {/* Infinite approval */}
+              {/* Exact approval info note */}
               <div className={`pt-3 border-t ${isDark ? "border-white/[0.04]" : "border-gray-200/60"}`}>
-                <div className="flex items-center justify-between">
-                  <Tip
-                    content={
-                      infiniteApproval
-                        ? "Approves unlimited spending for this token+router pair. Fewer popups but less granular control."
-                        : "Approves only the exact swap amount each time. More secure but requires approval for every swap."
-                    }
-                    side="top"
-                  >
-                    <div className="flex items-center gap-2 cursor-help">
-                      {infiniteApproval ? (
-                        <InfinityIcon className={`w-4 h-4 ${isDark ? "text-purple-400" : "text-purple-600"}`} />
-                      ) : (
-                        <Shield className={`w-4 h-4 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
-                      )}
-                      <div>
-                        <span className={`text-xs font-semibold ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                          Infinite Approval
-                        </span>
-                        <p className={`text-[10px] leading-tight mt-0.5 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                          {infiniteApproval ? "Fewer wallet popups" : "Approve exact amounts"}
-                        </p>
-                      </div>
-                    </div>
-                  </Tip>
-
-                  <button
-                    onClick={onToggleInfiniteApproval}
-                    aria-pressed={infiniteApproval}
-                    aria-label="Toggle infinite approval"
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
-                      infiniteApproval
-                        ? "bg-gradient-to-r from-purple-600 to-pink-600"
-                        : isDark ? "bg-slate-700" : "bg-gray-300"
-                    }`}
-                  >
-                    <motion.span
-                      layout
-                      className="inline-block h-4 w-4 rounded-full bg-white shadow-sm"
-                      animate={{ x: infiniteApproval ? 22 : 4 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
-                  </button>
+                <div className="flex items-center gap-2">
+                  <Shield className={`w-4 h-4 flex-shrink-0 ${isDark ? "text-emerald-400" : "text-emerald-600"}`} />
+                  <div>
+                    <span className={`text-xs font-semibold ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                      Exact Amount Approval
+                    </span>
+                    <p className={`text-[10px] leading-tight mt-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                      Token approvals match your swap amount exactly for maximum security
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

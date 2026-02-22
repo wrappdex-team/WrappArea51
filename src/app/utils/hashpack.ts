@@ -690,15 +690,13 @@ export async function executeHederaTransactionFast(
 
     log.info("HashPack", `[FAST] WC response — txId: ${txId || "none"}`);
 
-    // [C93] Wait 1s for Hedera mempool ordering instead of 3s.
-    // Both approve and swap txs target the same consensus node (0.0.3),
-    // so the node processes them sequentially. The swap tx will be queued
-    // behind the approval in the node's mempool — no need to wait for
-    // full consensus (3-5s). 1s covers WC relay round-trip + buffer.
-    if (txId) {
-      await new Promise(r => setTimeout(r, 1000));
-      log.info("HashPack", `[FAST] Consensus wait complete (1s) — proceeding`);
-    }
+    // [PERF-01] No artificial wait — WalletConnect round-trip already takes
+    // 2-5s (wallet signs → submits to consensus node → returns). Both
+    // prerequisite (approve/associate) and dependent (swap) transactions
+    // target the same node (0.0.3), so the node processes them sequentially.
+    // This matches SaucerSwap.finance's behavior — zero delay between popups.
+    // Previous 1s wait was redundant with the 3s CONSENSUS_WAIT_MS in
+    // swap-engine.ts and added unnecessary UX friction.
 
     return { success: true, transactionId: txId };
   } catch (err: any) {

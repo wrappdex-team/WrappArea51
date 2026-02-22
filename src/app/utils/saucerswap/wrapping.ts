@@ -204,12 +204,11 @@ async function _unwrapViaHelper(
   }
   console.log("[WHBAR] Approval submitted:", approveResult.transactionId);
 
-  // ── [SEC-14] Consensus wait ─────────────────────────────────────────
-  // Fast-path approval skips receipt polling. Without this wait, the
-  // subsequent contract call may see stale allowance → revert.
-  // 3s floor matches swap-engine.ts CONSENSUS_WAIT_MS.
-  console.log("[WHBAR] [SEC-14] Waiting 3s for approval consensus finality...");
-  await new Promise(r => setTimeout(r, 3000));
+  // ── [PERF-01] No artificial wait ─────────────────────────────────────
+  // WalletConnect round-trip already provides 2-5s for Hedera consensus.
+  // Both transactions target the same node, ensuring sequential processing.
+  // Matches swap-engine.ts CONSENSUS_WAIT_MS = 0 and SaucerSwap.finance.
+  console.log("[WHBAR] [PERF-01] ✓ Approval submitted — proceeding to unwrap (no artificial wait)");
 
   // ── Step 2: Call WhbarHelper.unwrapWhbar(uint256 wad) ──────────────
   console.log(`[WHBAR] Step 2/2: WhbarHelper.unwrapWhbar(${rawAmount}) on ${helperContractId}`);

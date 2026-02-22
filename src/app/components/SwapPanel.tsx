@@ -177,24 +177,8 @@ export function SwapPanel() {
     isWrapUnwrap: boolean;
   } | null>(null);
 
-  // ── [C53] Infinite approval preference (persisted in localStorage) ──
-  // [C78-01] Default to TRUE — matches SaucerSwap behavior. After the first
-  // approval per token+router pair, all subsequent swaps are single-signing.
-  // Users can still toggle OFF in Slippage Settings for granular control.
-  const [infiniteApproval, setInfiniteApproval] = useState(() => {
-    try {
-      const stored = localStorage.getItem("wrappdex_infinite_approval");
-      // Default to true if never set (null); respect explicit "false"
-      return stored === null ? true : stored === "true";
-    } catch { return true; }
-  });
-  const toggleInfiniteApproval = useCallback(() => {
-    setInfiniteApproval(prev => {
-      const next = !prev;
-      try { localStorage.setItem("wrappdex_infinite_approval", String(next)); } catch { /* noop */ }
-      return next;
-    });
-  }, []);
+  // [STEP-15] Infinite approval REMOVED — always approves exact swap amount.
+  // This prevents AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY errors on low-supply tokens.
 
   // ── UI state ──
   const [slippage, setSlippage] = useState(0.5);
@@ -515,8 +499,8 @@ export function SwapPanel() {
       } else {
         // [C53] Pass infinite approval preference — skips approve popup if allowance sufficient
         // [C100-S11] Pass maxAutoAssociations — skips association popups if account has auto-association
+        // [STEP-15] infiniteApproval removed — always exact-amount approval
         const swapOpts: SwapOptions = {
-          infiniteApproval,
           maxAutoAssociations: hederaAccount?.maxAutoAssociations,
         };
         result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork, swapOpts);
@@ -597,7 +581,7 @@ export function SwapPanel() {
       setSwapError(err?.message || "Unknown error");
       toast.error(err?.message || "Swap failed");
     }
-  }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances, infiniteApproval, hederaAccount?.maxAutoAssociations]);
+  }, [canSwap, hashPackSession?.accountId, isWrapUnwrap, isWrapping, inputToken, outputToken, inputAmount, outputAmount, effectiveSlippage, hederaNetwork, quote, inputUsd, outputUsd, hederaAccount, fetchBalances, hederaAccount?.maxAutoAssociations]);
 
   // ── [C28-04] Auto-close success/error states after 5 seconds ──
   // Prevents stale status from blocking the UI. The user can still
@@ -757,7 +741,7 @@ export function SwapPanel() {
               <SwapRouteViz route={route} isDark={isDark} />
             )}
 
-            {/* Quote Details */}
+            {/* Quote Details + Settings (unified) */}
             {quote && inputAmount && parseFloat(inputAmount) > 0 && (
               <QuoteDetailsPro
                 quote={quote}
@@ -774,22 +758,25 @@ export function SwapPanel() {
                 scoredRoutes={scoredRoutes}
                 showRouteComparison={showRouteComparison}
                 onToggleRouteComparison={() => setShowRouteComparison(prev => !prev)}
+                slippage={slippage}
+                customSlippage={customSlippage}
+                onSetCustomSlippage={setCustomSlippage}
               />
             )}
 
-            {/* Slippage Settings */}
-            <SlippageSettingsPro
-              slippage={slippage}
-              customSlippage={customSlippage}
-              effectiveSlippage={effectiveSlippage}
-              showSlippage={showSlippage}
-              onToggle={() => setShowSlippage(!showSlippage)}
-              onSetSlippage={setSlippage}
-              onSetCustomSlippage={setCustomSlippage}
-              infiniteApproval={infiniteApproval}
-              onToggleInfiniteApproval={toggleInfiniteApproval}
-              isDark={isDark}
-            />
+            {/* Slippage Settings — standalone fallback when no quote active */}
+            {!(quote && inputAmount && parseFloat(inputAmount) > 0) && (
+              <SlippageSettingsPro
+                slippage={slippage}
+                customSlippage={customSlippage}
+                effectiveSlippage={effectiveSlippage}
+                showSlippage={showSlippage}
+                onToggle={() => setShowSlippage(!showSlippage)}
+                onSetSlippage={setSlippage}
+                onSetCustomSlippage={setCustomSlippage}
+                isDark={isDark}
+              />
+            )}
 
             {/* Swap Button */}
             <SwapButtonPro
