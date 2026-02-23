@@ -93,6 +93,67 @@ import { verifyIsContract } from "./verification";
 const CONSENSUS_WAIT_MS = 0;
 
 // ══════════════════════════════════════════════════════════════════════
+// ── [V2-SKIP] V2 EXECUTION FAILURE CACHE ────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// When V2 execution REVERTS on-chain and V1 fallback succeeds, the
+// token pair is cached here so future swaps skip V2 entirely.
+// This eliminates the "double popup" problem where V2 fails → V1 works
+// but the user had to approve 2 extra wallet popups for nothing.
+//
+// Cache is in-memory with localStorage persistence. TTL = 24h.
+// Pairs are keyed as "htsIdA:htsIdB" (sorted, so A→B == B→A).
+
+const V2_FAILURE_CACHE_KEY = "wrappdex_v2_failure_cache";
+const V2_FAILURE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+const _v2FailureCache: Map<string, number> = new Map();
+
+function _v2PairKey(tokenA: string, tokenB: string): string {
+  return [tokenA, tokenB].sort().join(":");
+}
+
+function _loadV2FailureCache(): void {
+  try {
+    const raw = localStorage.getItem(V2_FAILURE_CACHE_KEY);
+    if (!raw) return;
+    const entries: [string, number][] = JSON.parse(raw);
+    const now = Date.now();
+    for (const [key, ts] of entries) {
+      if (now - ts < V2_FAILURE_TTL_MS) _v2FailureCache.set(key, ts);
+    }
+  } catch { /* corrupt data — start fresh */ }
+}
+
+function _saveV2FailureCache(): void {
+  try {
+    localStorage.setItem(V2_FAILURE_CACHE_KEY, JSON.stringify([..._v2FailureCache.entries()]));
+  } catch { /* storage full — non-critical */ }
+}
+
+function markV2Failed(tokenAHtsId: string, tokenBHtsId: string): void {
+  const key = _v2PairKey(tokenAHtsId, tokenBHtsId);
+  _v2FailureCache.set(key, Date.now());
+  _saveV2FailureCache();
+  console.log(`[V2-SKIP] Cached V2 failure for ${key} — future swaps will use V1 directly`);
+}
+
+function isV2FailureCached(tokenAHtsId: string, tokenBHtsId: string): boolean {
+  const key = _v2PairKey(tokenAHtsId, tokenBHtsId);
+  const ts = _v2FailureCache.get(key);
+  if (!ts) return false;
+  if (Date.now() - ts > V2_FAILURE_TTL_MS) {
+    _v2FailureCache.delete(key);
+    _saveV2FailureCache();
+    return false;
+  }
+  return true;
+}
+
+// Load cache on module init
+_loadV2FailureCache();
+
+// ══════════════════════════════════════════════════════════════════════
 // ── [V2-WHBAR-FIX] WHBAR ADDRESS CORRECTION FOR V2 POOLS ───────────
 // ══════════════════════════════════════════════════════════════════════
 //
@@ -1809,8 +1870,21 @@ async function executeSaucerSwapDirect(
     let _v2TokenHbarError: string | undefined;
 
     if (isOutputNative && !isInputNative) {
+      // [V2-SKIP] Check failure cache for Token→HBAR
+      const v2CacheHitTH = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+      if (v2CacheHitTH && poolVersionInfo?.version === "v2") {
+        console.log(`[V2-SKIP] Token→HBAR: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+        multiHopRoute = null;
+        const v1BypassPath = buildSwapPath(
+          isInputNative ? whbar : inputToken,
+          isOutputNative ? whbar : outputToken,
+        );
+        pathAddresses = v1BypassPath.map(t => htsIdToEvmAddress(t.htsId));
+      }
+
       // ── V2 Direct Token→HBAR (single-hop) ──
-      if (poolVersionInfo?.version === "v2" && !multiHopRoute) {
+      if (poolVersionInfo?.version === "v2" && !multiHopRoute && !v2CacheHitTH) {
         console.log(`[HBAR.h] [C100-S9] Token→HBAR: trying V2 direct first ` +
           `(multicall pattern, fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"})`);
         console.log(`[C100-S9] WHBAR compatibility: contract=0.0.1456985, token=0.0.1456986, ` +
@@ -1839,6 +1913,8 @@ async function executeSaucerSwapDirect(
         _v2TokenHbarError = v2DirectResult.error;
         console.log(`[HBAR.h] [C100-S9] V2 direct Token→HBAR REVERTED: ${_v2TokenHbarError}`);
         console.log(`[HBAR.h] [C100-S9] Falling back to V1 swapExactTokensForETH...`);
+        // [V2-SKIP] Cache this failure
+        markV2Failed(inputToken.htsId, outputToken.htsId);
         {
           const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
           console.log(`[C100-S9] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
@@ -1858,15 +1934,27 @@ async function executeSaucerSwapDirect(
       if (multiHopRoute) {
         const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
 
+        // [V2-SKIP] Force V1 for multi-hop Token→HBAR (same rationale as Token→Token)
         if (allHopsV2) {
-          console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: trying V2 first ` +
-            `(${multiHopRoute.hops.length} hops, all V2, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
+          console.log(`[V2-SKIP] Token→HBAR multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+          const v1ThPath = buildSwapPath(
+            isInputNative ? whbar : inputToken,
+            isOutputNative ? whbar : outputToken,
+          );
+          pathAddresses = v1ThPath.map(t => htsIdToEvmAddress(t.htsId));
+        }
+
+        // V2 multi-hop Token→HBAR disabled — retained for future re-enablement
+        if (false as boolean) {
+          console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: trying V2 first`);
           console.log(`[C100-S9] WHBAR compatibility: multicall(exactInput→ROUTER + unwrapWETH9→user) ` +
             `contract=0.0.1456985, token=0.0.1456986`);
 
           const v2MhResult = await executeSaucerSwapV2MultiHop(
             inputToken, outputToken, inputAmount, slippagePct,
-            accountId, network, multiHopRoute,
+            accountId, network, multiHopRoute!,
             isInputNative, isOutputNative, whbar,
             rawInput, recipientEvmAddress, options
           );
@@ -1887,6 +1975,8 @@ async function executeSaucerSwapDirect(
           _v2TokenHbarError = v2MhResult.error;
           console.log(`[HBAR.h] [C100-S9] V2 multi-hop Token→HBAR REVERTED: ${_v2TokenHbarError}`);
           console.log(`[HBAR.h] [C100-S9] Falling back to V1 routing...`);
+          // [V2-SKIP] Cache this failure
+          markV2Failed(inputToken.htsId, outputToken.htsId);
           {
             const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
             console.log(`[C100-S9] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
@@ -1908,8 +1998,10 @@ async function executeSaucerSwapDirect(
           );
           pathAddresses = v1FallbackPathTH.map(t => htsIdToEvmAddress(t.htsId));
           console.log(`[V2-FALLBACK-FIX] Token→HBAR: rebuilt V1 pathAddresses: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
-        } else {
-          // Mixed V2+V1 or all-V1 hops — go straight to V1
+        }
+
+        // Mixed V2+V1 or all-V1 hops — go straight to V1
+        if (!allHopsV2) {
           console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: mixed/V1 hops — using V1 directly`);
           poolVersionInfo = { version: "v1", poolAddress: undefined };
           multiHopRoute = null;
@@ -1918,38 +2010,53 @@ async function executeSaucerSwapDirect(
     }
 
     // ┌─────────────────────────────────────────────────────────────────────┐
-    // │  [C100 Step 5] TOKEN→TOKEN MULTI-HOP: SMART V2-FIRST ROUTING      │
+    // │  [V2-SKIP] TOKEN→TOKEN MULTI-HOP: V1-FIRST POLICY                 │
     // │                                                                     │
-    // │  Replaces the C95 blanket V1 force. Instead of forcing ALL         │
-    // │  Token→Token multi-hop to V1, tries V2 first (better pricing,     │
-    // │  concentrated liquidity) and falls back to V1 only if V2 reverts.  │
+    // │  V2 multi-hop consistently reverts on Hedera mainnet due to HTS    │
+    // │  precompile edge cases (QuoterV2 succeeds but execution reverts).  │
+    // │  This caused double wallet popups (V2 fail → V1 succeed).          │
     // │                                                                     │
-    // │  Why V2 can now work (it couldn't in C95):                         │
-    // │    • Step 4: Dynamic alias discovery resolves V2 ERC20Wrapper IDs  │
-    // │    • Step 6: Alias EVM addresses in V2 packed paths (upcoming)     │
-    // │    • QuoterV2 succeeding is necessary but not sufficient — the     │
-    // │      real swap can still revert due to HTS precompile edge cases.  │
-    // │      Fallback to V1 handles those cases automatically.             │
-    // │                                                                     │
-    // │  Fallback logic:                                                    │
-    // │    1. If all hops are V2 → attempt V2 execution                    │
-    // │    2. If V2 succeeds → return (best case)                          │
-    // │    3. If user cancels → return (respect user intent)               │
-    // │    4. If V2 reverts → fall through to V1 execution (safety net)    │
-    // │    5. If V1 also fails → return combined error (V2 + V1 details)   │
+    // │  Policy: ALL multi-hop swaps route to V1 directly.                 │
+    // │  V2 is reserved for single-hop direct pools only.                  │
+    // │  Dead code for V2 multi-hop retained for future re-enablement.     │
     // └─────────────────────────────────────────────────────────────────────┘
     let _v2MultiHopError: string | undefined;
 
     if (!isInputNative && !isOutputNative && multiHopRoute) {
       const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
 
+      // ┌─────────────────────────────────────────────────────────────────────┐
+      // │  [V2-SKIP] MULTI-HOP V1-FIRST POLICY                                │
+      // │                                                                       │
+      // │  V2 multi-hop (token→WHBAR→token) consistently reverts on Hedera     │
+      // │  mainnet due to HTS precompile edge cases, despite QuoterV2          │
+      // │  returning valid quotes. This caused the "double popup" problem:     │
+      // │  V2 approval+swap (fails) → V1 approval+swap (succeeds) = 4 popups. │
+      // │                                                                       │
+      // │  Fix: Route ALL multi-hop swaps to V1 directly. V1's AMM routing    │
+      // │  (swapExactTokensForTokens) is proven reliable on mainnet. V2 is    │
+      // │  reserved for DIRECT single-hop pools where it actually works.       │
+      // └─────────────────────────────────────────────────────────────────────┘
       if (allHopsV2) {
-        console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: trying V2 first ` +
-          `(${multiHopRoute.hops.length} hops, all V2, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
+        console.log(`[V2-SKIP] Token→Token multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet (HTS precompile edge cases)`);
+        console.log(`[V2-SKIP] (Was: ${multiHopRoute.hops.length} V2 hops, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+        multiHopRoute = null;
+        const v1DirectPath = buildSwapPath(
+          isInputNative ? whbar : inputToken,
+          isOutputNative ? whbar : outputToken,
+        );
+        pathAddresses = v1DirectPath.map(t => htsIdToEvmAddress(t.htsId));
+      }
+
+      // V2 multi-hop is now disabled — this block never fires.
+      // Retained for future re-enablement when Hedera fixes HTS precompile issues.
+      if (false as boolean) {
+        console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: trying V2 first`);
 
         const v2Result = await executeSaucerSwapV2MultiHop(
           inputToken, outputToken, inputAmount, slippagePct,
-          accountId, network, multiHopRoute,
+          accountId, network, multiHopRoute!,
           isInputNative, isOutputNative, whbar,
           rawInput, recipientEvmAddress, options
         );
@@ -1970,9 +2077,12 @@ async function executeSaucerSwapDirect(
         _v2MultiHopError = v2Result.error;
         console.log(`[HBAR.h] [C100-S5] V2 multi-hop REVERTED: ${_v2MultiHopError}`);
         console.log(`[HBAR.h] [C100-S5] Falling back to V1 routing...`);
-        // [C100-S7] Router transition: V2 approval (0.0.3949434) was granted
-        // but the V2 swap reverted. V1 fallback requires a NEW approval
-        // targeting the V1 Router — the V2 allowance does NOT transfer.
+
+        // [V2-SKIP] Cache this failure so future swaps skip V2 entirely
+        markV2Failed(inputToken.htsId, outputToken.htsId);
+
+        // [C100-S7] Router transition: V2 approval was granted but the V2 swap
+        // reverted. V1 fallback requires a NEW approval targeting the V1 Router.
         {
           const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
           console.log(`[C100-S7] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
@@ -1985,21 +2095,19 @@ async function executeSaucerSwapDirect(
         }}));
 
         // Reset to V1 — rebuild pathAddresses using canonical token addresses.
-        // [V2-FALLBACK-FIX] V2 graph routes may contain alias or WHBAR-contract
-        // EVM addresses that V1 Factory doesn't recognize. Rebuild from the
-        // logical tokens (input → whbar → output) using canonical htsIds.
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
-        // Rebuild canonical V1 path from the logical swap path
         const v1FallbackPath = buildSwapPath(
           isInputNative ? whbar : inputToken,
           isOutputNative ? whbar : outputToken,
         );
         pathAddresses = v1FallbackPath.map(t => htsIdToEvmAddress(t.htsId));
         console.log(`[V2-FALLBACK-FIX] Rebuilt V1 pathAddresses: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
-      } else {
-        // Mixed V2+V1 or all-V1 hops — V2 exactInput requires ALL-V2 pools,
-        // so we go straight to V1 (no V2 attempt for mixed routes).
+      }
+
+      // Mixed V2+V1 or all-V1 hops — V2 exactInput requires ALL-V2 pools,
+      // so we go straight to V1 (no V2 attempt for mixed routes).
+      if (!allHopsV2) {
         console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: mixed/V1 hops — using V1 directly`);
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
@@ -2017,6 +2125,17 @@ async function executeSaucerSwapDirect(
     // [SWAP-FIX-1] Added V1 fallback for ALL V2 single-hop swaps.
     // Previously, HBAR→Token V2 failures had NO fallback — the error
     // went straight to the user. Now: try V2 → if revert → try V1.
+    // [V2-SKIP] Check failure cache for single-hop V2
+    if (poolVersionInfo?.version === "v2" && !multiHopRoute && isV2FailureCached(inputToken.htsId, outputToken.htsId)) {
+      console.log(`[V2-SKIP] V2 single-hop: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
+      poolVersionInfo = { version: "v1", poolAddress: undefined };
+      const v1BypassSingle = buildSwapPath(
+        isInputNative ? whbar : inputToken,
+        isOutputNative ? whbar : outputToken,
+      );
+      pathAddresses = v1BypassSingle.map(t => htsIdToEvmAddress(t.htsId));
+    }
+
     if (poolVersionInfo?.version === "v2" && !multiHopRoute) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (single-hop) ═══ fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"}`);
       const v2SingleResult = await executeSaucerSwapV2Direct(
@@ -2039,6 +2158,8 @@ async function executeSaucerSwapDirect(
       _v2SingleHopError = v2SingleResult.error;
       console.log(`[HBAR.h] [SWAP-FIX-1] V2 single-hop REVERTED: ${_v2SingleHopError}`);
       console.log(`[HBAR.h] [SWAP-FIX-1] Falling back to V1 routing...`);
+      // [V2-SKIP] Cache this failure
+      markV2Failed(inputToken.htsId, outputToken.htsId);
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: 0, total: 2,
         description: `Retrying swap — trying alternate route...`,
@@ -2062,11 +2183,24 @@ async function executeSaucerSwapDirect(
     // [C77-01] FIX: Changed from .some(v2) to .every(v2). V2 exactInput
     // can ONLY traverse V2 concentrated-liquidity pools. If even one hop
     // is V1 AMM, the V2 router fails to find a pool and reverts.
+    // [V2-SKIP] Force V1 for HBAR→Token multi-hop (same rationale as Token→Token)
     if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
-      console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute.hops.length} hops, ALL V2) ═══`);
+      console.log(`[V2-SKIP] HBAR→Token multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet`);
+      poolVersionInfo = { version: "v1", poolAddress: undefined };
+      multiHopRoute = null;
+      const v1MhGenPath = buildSwapPath(
+        isInputNative ? whbar : inputToken,
+        isOutputNative ? whbar : outputToken,
+      );
+      pathAddresses = v1MhGenPath.map(t => htsIdToEvmAddress(t.htsId));
+    }
+
+    // V2 multi-hop HBAR→Token disabled — retained for future re-enablement
+    if (false && multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
+      console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute!.hops.length} hops, ALL V2) ═══`);
       const v2MhGenResult = await executeSaucerSwapV2MultiHop(
         inputToken, outputToken, inputAmount, slippagePct,
-        accountId, network, multiHopRoute,
+        accountId, network, multiHopRoute!,
         isInputNative, isOutputNative, whbar,
         rawInput, recipientEvmAddress, options
       );
@@ -3133,6 +3267,8 @@ export async function executeSaucerSwap(
 ): Promise<SwapResult> {
   const inputToken = resolveToken(inputSymbol);
   const outputToken = resolveToken(outputSymbol);
+
+  console.log(`[V2-SKIP-POLICY] Multi-hop→V1 forced | Single-hop→V2 with cache | ${inputSymbol}→${outputSymbol} ${inputAmount}`);
 
   if (!inputToken || !outputToken) {
     return {
