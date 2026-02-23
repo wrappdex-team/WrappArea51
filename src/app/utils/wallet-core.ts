@@ -477,22 +477,20 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   // See doRequest() below for the new mobile redirect logic.
 
   if (isIframe || isMobile) {
-    let redirectFired = false; // [MOB-FIX-v2] starts false — redirect fires AFTER relay request
     window.open = function (url?: any, target?: any, features?: any): WindowProxy | null {
       const urlStr = String(url || "");
 
       // ── Mobile: suppress WC pairing URI deep links ──────────────
       // The WC SDK fires window.open("wc:<pairingTopic>@2?...") which
       // the mobile OS misinterprets as a NEW pairing request. Suppress
-      // it — the pre-activation redirect already brought the wallet to
-      // foreground, and the relay delivers the actual signing request.
+      // it — the doRequest() redirect (fired after relay publish) handles
+      // bringing the wallet to foreground. The WC SDK's deep link is broken
+      // on mobile (opens "Pair with dApp" instead of the signing prompt).
       if (isMobile && (urlStr.startsWith("wc:") || urlStr.includes("wc%3A") || urlStr.includes("/wc?uri=wc"))) {
-        console.log("[WC] [MOB-FIX] Suppressed WC pairing deep-link:", urlStr.slice(0, 120));
-        // If pre-activation didn't fire (edge case), try the redirect now
-        if (!redirectFired) {
-          redirectFired = true;
-          fireMobileRedirect();
-        }
+        console.log("[WC] [MOB-FIX-v2] Suppressed WC pairing deep-link:", urlStr.slice(0, 120));
+        // [MOB-FIX-v2] Do NOT fire redirect from interceptor — doRequest()
+        // handles the redirect AFTER confirming the relay publish succeeded.
+        // Firing here could redirect before the message is sent.
         return null;
       }
 
@@ -552,18 +550,57 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       // Old flow (BROKEN): redirect → sleep(1200) → request
       //   → Browser tab backgrounds, sleep freezes, request never sends.
       //
-      // New flow (FIXED):  request → brief yield → redirect
-      //   → Relay message is in-flight, wallet opens and receives it.
+      // New flow (FIXED):  request → verify publish → redirect
+      //   → Relay message is confirmed sent, wallet opens and receives it.
+      //
+      // CRITICAL GUARD: Only fire redirect if the publish didn't fail.
+      // If client.request() rejects early (dead relay WS, bad topic, etc.),
+      // redirecting would background the tab and freeze the retry logic.
+
+      // Log relay state for mobile debugging
+      if (isMobile) {
+        try {
+          const relayer = client.core?.relayer;
+          const provider = relayer?.provider;
+          const ws = provider?.connection?.socket ?? provider?.socket;
+          console.log("[WC] [MOB-FIX-v2] Pre-request relay state:",
+            "relayer.connected=", relayer?.connected,
+            "ws.readyState=", ws?.readyState,
+            "ws.bufferedAmount=", ws?.bufferedAmount);
+        } catch { /* diagnostic only */ }
+      }
+
+      // Track whether the request failed BEFORE the redirect timer fires.
+      // client.request() is async: it encrypts, then calls ws.send(), then
+      // returns a Promise that resolves when the wallet RESPONDS. An early
+      // rejection means the publish itself failed (dead WS, bad topic, etc.).
+      let publishFailed = false;
+      let publishFailReason = "";
       const requestPromise = client.request(params);
 
+      // Attach a catch handler to detect early failures WITHOUT consuming
+      // the rejection (the outer Promise.race still sees it).
+      requestPromise.catch((err: any) => {
+        publishFailed = true;
+        publishFailReason = err?.message || "unknown";
+      });
+
       if (isMobile && walletRedirect) {
-        // Brief yield to ensure the relay WebSocket has flushed the message.
-        // 200ms is more than enough — ws.send() buffers instantly and the
-        // relay server acknowledges within ~50ms even on slow networks.
+        // Wait 600ms — more than enough for the internal async chain:
+        //   crypto.encode (~5ms) → relayer.publish → ws.send (~1ms)
+        // If publishFailed is true by then, the relay message was NOT sent
+        // and we must NOT redirect (it would background the tab and freeze
+        // the retry logic). Let the retry reconnect the relay and call
+        // doRequest() again — that call will get its own redirect timer.
         setTimeout(() => {
+          if (publishFailed) {
+            console.warn("[WC] [MOB-FIX-v2] Request FAILED before redirect timer — NOT opening wallet.",
+              "Reason:", publishFailReason, "— retry logic will handle reconnection.");
+            return;
+          }
           console.log("[WC] [MOB-FIX-v2] Request dispatched to relay — now opening wallet app...");
           fireMobileRedirect();
-        }, 200);
+        }, 600);
       }
 
       return await Promise.race([requestPromise, timeoutPromise]);
@@ -588,8 +625,20 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             const freshClient = await getSignClient();
             await _ensureRelayConnected(freshClient, 12000);
             // Rebuild request with fresh client
+            const freshRequestPromise = freshClient.request(params);
+            // [MOB-FIX-v2] Fire mobile redirect for the force-reset path too
+            if (isMobile && walletRedirect) {
+              let freshFailed = false;
+              freshRequestPromise.catch(() => { freshFailed = true; });
+              setTimeout(() => {
+                if (!freshFailed) {
+                  console.log("[WC] [MOB-FIX-v2] Force-reset request dispatched — opening wallet...");
+                  fireMobileRedirect();
+                }
+              }, 600);
+            }
             return await Promise.race([
-              freshClient.request(params),
+              freshRequestPromise,
               new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error("WalletConnect request timed out after force-reset.")), WC_REQUEST_TIMEOUT_MS)
               ),
