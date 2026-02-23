@@ -418,7 +418,9 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
    * [MOB-FIX] Fire mobile redirect to bring wallet app to foreground.
    *
    * Uses `window.location.href` for ALL redirect types on mobile:
-   * - Native schemes (hashpack://) → OS intercepts, opens app, page stays
+   * - Native schemes (hashpack://, blade://, etc.), window.location.href
+   *   triggers the OS deep link handler. The browser page is NOT navigated
+   *   away — the OS intercepts the custom scheme before navigation occurs.
    * - Universal links (https://...) → OS intercepts IF app is installed
    *   and the domain has .well-known/apple-app-site-association configured
    *
@@ -466,23 +468,16 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     await _tryActivateWalletFast(client, params.topic);
   }
 
-  // ── [MOB-FIX] Mobile pre-activation: bring wallet to foreground ────
-  // On mobile, fire the native deep link BEFORE sending the WC request.
-  // This gives the wallet app time to become active and reconnect its
-  // relay WebSocket so it can receive the signing request promptly.
-  // Without this, the relay message arrives while the wallet is in
-  // background and the user never sees the approval prompt.
-  if (isMobile && params.topic) {
-    console.log("[WC] [MOB-FIX] Mobile pre-activation: opening wallet before signing request...");
-    fireMobileRedirect();
-    // Brief pause to let the OS process the deep link and bring the wallet
-    // to foreground. The WC relay WebSocket in the wallet app needs a moment
-    // to reconnect after being backgrounded by the OS.
-    await new Promise<void>((resolve) => setTimeout(resolve, 1200));
-  }
+  // ── [MOB-FIX-v2] Mobile redirect is now fired AFTER client.request() ──
+  // The old pre-activation fired fireMobileRedirect() BEFORE the WC relay
+  // request, which caused a deadlock: opening the wallet backgrounded the
+  // browser tab, freezing setTimeout/JS execution, so client.request()
+  // never fired → the user waited in the wallet for a prompt that was
+  // never sent. Fix: send the relay request first, THEN redirect.
+  // See doRequest() below for the new mobile redirect logic.
 
   if (isIframe || isMobile) {
-    let redirectFired = isMobile; // [MOB-FIX] pre-activation already fired on mobile
+    let redirectFired = false; // [MOB-FIX-v2] starts false — redirect fires AFTER relay request
     window.open = function (url?: any, target?: any, features?: any): WindowProxy | null {
       const urlStr = String(url || "");
 
@@ -512,6 +507,28 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     } as typeof window.open;
   }
 
+  // ── [MOB-FIX-v2] visibilitychange handler ──────────────────────────
+  // When the user returns from the wallet app, the browser tab resumes
+  // but the relay WebSocket is likely dead (mobile OS killed it while
+  // backgrounded). This handler reconnects the relay so the signed
+  // response can be delivered from the relay server's message queue.
+  let _visCleanup: (() => void) | null = null;
+  if (isMobile) {
+    const onVis = async () => {
+      if (document.visibilityState === "visible") {
+        console.log("[WC] [MOB-FIX-v2] Tab resumed from background — re-ensuring relay connection...");
+        try {
+          await _ensureRelayConnected(client, 8000);
+          console.log("[WC] [MOB-FIX-v2] Relay reconnected after tab resume");
+        } catch (e: any) {
+          console.warn("[WC] [MOB-FIX-v2] Relay reconnect on resume failed:", e?.message);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    _visCleanup = () => document.removeEventListener("visibilitychange", onVis);
+  }
+
   try {
     // ── Relay readiness + retry for "send was called before connect" ──
     // Even after _ensureRelayConnected, the WebSocket may still be in a
@@ -526,7 +543,30 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           "Check your wallet for any pending approval prompts, then try again."
         )), WC_REQUEST_TIMEOUT_MS)
       );
-      return await Promise.race([client.request(params), timeoutPromise]);
+
+      // ── [MOB-FIX-v2] Send request FIRST, then redirect ──────────────
+      // Start the WC relay request (sends the message to the relay server).
+      // The relay queues it for the wallet. THEN open the wallet app so it
+      // connects to the relay and picks up the queued signing request.
+      //
+      // Old flow (BROKEN): redirect → sleep(1200) → request
+      //   → Browser tab backgrounds, sleep freezes, request never sends.
+      //
+      // New flow (FIXED):  request → brief yield → redirect
+      //   → Relay message is in-flight, wallet opens and receives it.
+      const requestPromise = client.request(params);
+
+      if (isMobile && walletRedirect) {
+        // Brief yield to ensure the relay WebSocket has flushed the message.
+        // 200ms is more than enough — ws.send() buffers instantly and the
+        // relay server acknowledges within ~50ms even on slow networks.
+        setTimeout(() => {
+          console.log("[WC] [MOB-FIX-v2] Request dispatched to relay — now opening wallet app...");
+          fireMobileRedirect();
+        }, 200);
+      }
+
+      return await Promise.race([requestPromise, timeoutPromise]);
     };
 
     try {
@@ -562,6 +602,8 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     }
   } finally {
     if (isIframe || isMobile) window.open = origOpen;
+    // [MOB-FIX-v2] Clean up visibilitychange listener
+    if (typeof _visCleanup === "function") _visCleanup();
   }
 }
 
