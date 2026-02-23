@@ -1869,6 +1869,13 @@ async function executeSaucerSwapDirect(
     // └─────────────────────────────────────────────────────────────────────┘
     let _v2TokenHbarError: string | undefined;
 
+    // [V1-QUOTE-FIX] Track when multi-hop is forced to V1 — the quote must also
+    // use V1 getAmountsOut (not V2 QuoterV2) to match the execution path.
+    // Without this, the server proxy may return a V2 quote (higher output due to
+    // concentrated liquidity), causing INSUFFICIENT_OUTPUT_AMOUNT when V1 AMM
+    // delivers less than the V2-based minOutput.
+    let _forceV1MultiHop = false;
+
     if (isOutputNative && !isInputNative) {
       // [V2-SKIP] Check failure cache for Token→HBAR
       const v2CacheHitTH = isV2FailureCached(inputToken.htsId, outputToken.htsId);
@@ -1939,6 +1946,7 @@ async function executeSaucerSwapDirect(
           console.log(`[V2-SKIP] Token→HBAR multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet`);
           poolVersionInfo = { version: "v1", poolAddress: undefined };
           multiHopRoute = null;
+          _forceV1MultiHop = true;
           const v1ThPath = buildSwapPath(
             isInputNative ? whbar : inputToken,
             isOutputNative ? whbar : outputToken,
@@ -2005,6 +2013,7 @@ async function executeSaucerSwapDirect(
           console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: mixed/V1 hops — using V1 directly`);
           poolVersionInfo = { version: "v1", poolAddress: undefined };
           multiHopRoute = null;
+          _forceV1MultiHop = true;
         }
       }
     }
@@ -2042,6 +2051,7 @@ async function executeSaucerSwapDirect(
         console.log(`[V2-SKIP] (Was: ${multiHopRoute.hops.length} V2 hops, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
+        _forceV1MultiHop = true;
         const v1DirectPath = buildSwapPath(
           isInputNative ? whbar : inputToken,
           isOutputNative ? whbar : outputToken,
@@ -2111,6 +2121,7 @@ async function executeSaucerSwapDirect(
         console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: mixed/V1 hops — using V1 directly`);
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
+        _forceV1MultiHop = true;
       }
     }
 
@@ -2188,6 +2199,7 @@ async function executeSaucerSwapDirect(
       console.log(`[V2-SKIP] HBAR→Token multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet`);
       poolVersionInfo = { version: "v1", poolAddress: undefined };
       multiHopRoute = null;
+      _forceV1MultiHop = true;
       const v1MhGenPath = buildSwapPath(
         isInputNative ? whbar : inputToken,
         isOutputNative ? whbar : outputToken,
@@ -2238,6 +2250,7 @@ async function executeSaucerSwapDirect(
     // routes most Token→Token swaps — through V1 path arrays.
     if (multiHopRoute && !multiHopRoute.hops.every(h => h.version === "v2")) {
       poolVersionInfo = { version: "v1", poolAddress: undefined };
+      _forceV1MultiHop = true;
       console.log(`[HBAR.h] [C77-01] Multi-hop route has mixed or V1-only hops — using V1 path array routing`);
       // pathAddresses was already set to multiHopRoute.tokens at line 1314
     }
@@ -2525,10 +2538,11 @@ async function executeSaucerSwapDirect(
     // └─────────────────────────────────────────────────────────────────────┘
     {
       const isV2Fallback = !!(_v2TokenHbarError || _v2MultiHopError || _v2SingleHopError);
-      // [SWAP-FIX-5] Always validate V1 paths: for V2 fallbacks AND for
-      // any 2-element path (prevents sending doomed V1 transactions).
-      // Previously skipped HBAR→Token validation (isInputNative was excluded).
-      const shouldValidateV1 = isV2Fallback || pathAddresses.length === 2;
+      // [SWAP-FIX-5] Always validate V1 paths: for V2 fallbacks, 2-element
+      // paths, AND forced V1 multi-hop (prevents sending doomed transactions).
+      // [V1-QUOTE-FIX] Extended to include _forceV1MultiHop — validates that
+      // V1 pools exist for ALL hops before attempting execution.
+      const shouldValidateV1 = isV2Fallback || pathAddresses.length === 2 || _forceV1MultiHop;
 
       if (shouldValidateV1) {
         const v1GuardRouter = useFotRouter ? getRouterWithFee(network) : getSaucerSwapRouter(network, "v1");
@@ -2547,6 +2561,19 @@ async function executeSaucerSwapDirect(
                   `but the V2 swap reverted: ${(v2Error || "unknown").slice(0, 150)}. ` +
                   `No V1 AMM pool exists as fallback. ` +
                   `Try again with higher slippage (5-10%), or swap ${inputToken.symbol} → WHBAR → ${isOutputNative ? "HBAR" : outputToken.symbol} as two separate swaps.`,
+                executionVenue: "saucerswap-v1",
+              };
+            }
+            // [V1-QUOTE-FIX] Abort cleanly for forced V1 multi-hop when no V1 pair exists.
+            // Don't fall through to the 2-element canonical retry (makes no sense for multi-hop).
+            if (_forceV1MultiHop && pathAddresses.length > 2) {
+              console.error(`[V1-GUARD] V1 multi-hop path has no V1 pair for all hops: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+              return {
+                success: false,
+                error: `${inputToken.symbol} → ${outputToken.symbol} multi-hop requires V1 AMM pools for each hop, ` +
+                  `but at least one hop has no V1 pool (V1 getAmountsOut returned ${v1GuardQuote}). ` +
+                  `This pair may only be available via V2 concentrated liquidity. ` +
+                  `Try swapping ${inputToken.symbol} → HBAR first, then HBAR → ${outputToken.symbol} as two separate swaps.`,
                 executionVenue: "saucerswap-v1",
               };
             }
@@ -2583,6 +2610,16 @@ async function executeSaucerSwapDirect(
               executionVenue: "saucerswap-v1",
             };
           }
+          // [V1-QUOTE-FIX] For forced V1 multi-hop, validation failure means abort
+          if (_forceV1MultiHop && pathAddresses.length > 2) {
+            console.error(`[V1-GUARD] V1 multi-hop validation failed: ${v1GuardErr?.message}`);
+            return {
+              success: false,
+              error: `${inputToken.symbol} → ${outputToken.symbol} multi-hop V1 path validation failed: ${v1GuardErr?.message?.slice(0, 100) || "unknown"}. ` +
+                `Try swapping ${inputToken.symbol} → HBAR first, then HBAR → ${outputToken.symbol} as two separate swaps.`,
+              executionVenue: "saucerswap-v1",
+            };
+          }
           console.warn(`[V1-GUARD] V1 validation error (non-blocking): ${v1GuardErr?.message}`);
         }
       }
@@ -2598,13 +2635,49 @@ async function executeSaucerSwapDirect(
     // [FOT] Quote uses standard router (getAmountsOut) even for FOT swaps — the
     // quote reflects pre-fee output. Fee deduction is handled in minOutput calculation.
     const quoteRouter = useFotRouter ? getSaucerSwapRouter(network, "v1") : v1Router;
-    const quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
+    let quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
       pathAddresses,
       routerHtsId: quoteRouter,
       network,
       inputToken: isInputNative ? whbar : inputToken,
       outputToken: isOutputNative ? whbar : outputToken,
     });
+
+    // ── [V1-QUOTE-FIX] V1 cross-check for forced multi-hop ──
+    // When V2-SKIP forces multi-hop to V1, the server proxy may return a V2
+    // quote (higher output from concentrated liquidity). Using this as
+    // minOutput causes INSUFFICIENT_OUTPUT_AMOUNT when V1 AMM delivers less.
+    // Fix: always cross-check with V1 getAmountsOut and use the LOWER value.
+    if (_forceV1MultiHop && pathAddresses.length > 2 && quote && quote.amountOut > 0) {
+      try {
+        const v1CrossQuote = await fetchRouterQuote(
+          BigInt(rawInput), pathAddresses, quoteRouter, network
+        );
+        if (v1CrossQuote && v1CrossQuote > 0n) {
+          const v1Amount = Number(v1CrossQuote);
+          if (quote.amountOut > v1Amount) {
+            const pctDiff = ((quote.amountOut - v1Amount) / quote.amountOut * 100).toFixed(1);
+            console.log(`[V1-QUOTE-FIX] Server quote ${quote.amountOut} (${quote.poolVersion}) > V1 getAmountsOut ${v1Amount} (diff: ${pctDiff}%) — using V1 amount`);
+            quote = {
+              amountOut: v1Amount,
+              priceImpact: quote.priceImpact,
+              route: pathAddresses.map(a => evmAddressToHtsId(a)),
+              source: "router" as const,
+              confidence: "high" as const,
+              poolVersion: "v1" as const,
+            };
+          } else {
+            console.log(`[V1-QUOTE-FIX] V1 getAmountsOut ${v1Amount} >= server quote ${quote.amountOut} — keeping server quote`);
+          }
+        } else {
+          // V1 getAmountsOut returned 0 or null — V1 multi-hop path may not have liquidity
+          // Widen slippage as a safety net rather than aborting
+          console.warn(`[V1-QUOTE-FIX] V1 getAmountsOut failed/zero for multi-hop path — V1 pools may be thin. Widening slippage safety margin.`);
+        }
+      } catch (v1CrossErr: any) {
+        console.warn(`[V1-QUOTE-FIX] V1 cross-check error (non-blocking): ${v1CrossErr?.message}`);
+      }
+    }
 
     // ── minOutput calculation ──
     // When quote is available: use it with slippage tolerance.
@@ -2615,9 +2688,21 @@ async function executeSaucerSwapDirect(
     let minOutput: number;
     if (quote && quote.amountOut > 0) {
       // For price estimates, use wider slippage (prices may be stale)
-      const effectiveSlippage = quote.source === "price-estimate"
+      let effectiveSlippage = quote.source === "price-estimate"
         ? Math.max(slippagePct, 5)
         : slippagePct;
+      // [V1-QUOTE-FIX] V1 multi-hop AMM pools compound price impact across hops.
+      // Each hop has constant-product (x*y=k) slippage, and the second hop operates
+      // on the already-slipped output of the first. Enforce a higher floor for
+      // multi-hop V1 to prevent INSUFFICIENT_OUTPUT_AMOUNT from compounded impact.
+      if (_forceV1MultiHop && pathAddresses.length > 2) {
+        const hops = pathAddresses.length - 1;
+        const multiHopFloor = Math.max(3, hops * 2); // 4% for 2-hop, 6% for 3-hop
+        if (effectiveSlippage < multiHopFloor) {
+          console.log(`[V1-QUOTE-FIX] Multi-hop V1 slippage floor: ${effectiveSlippage}% → ${multiHopFloor}% (${hops} hops)`);
+          effectiveSlippage = multiHopFloor;
+        }
+      }
       // [FOT] Deduct fee percentage from expected output, then apply slippage
       const feeAdjustedOutput = useFotRouter && fotFeePercent > 0
         ? quote.amountOut * (1 - fotFeePercent / 100)
@@ -2704,8 +2789,8 @@ async function executeSaucerSwapDirect(
     console.log("[HBAR.h] Path:", pathAddresses.join(" → "));
     console.log("[HBAR.h] Recipient EVM:", recipientEvmAddress);
     console.log("[HBAR.h] Router:", v1Router, `(EVM: ${routerEvmAddress}, verified: ${routerContractInfo.contractId})`);
-    console.log("[HBAR.h] MinOutput:", minOutput, `(quote: ${quote?.amountOut ?? "none"})`);
-    console.log("[HBAR.h] Slippage:", slippagePct, "% | Deadline:", deadline);
+    console.log("[HBAR.h] MinOutput:", minOutput, `(quote: ${quote?.amountOut ?? "none"}, source: ${quote?.source ?? "none"}, pool: ${quote?.poolVersion ?? "unknown"})`);
+    console.log("[HBAR.h] Slippage:", slippagePct, `% | Deadline: ${deadline} | ForceV1Multi: ${_forceV1MultiHop}`);
     console.log("[HBAR.h] Mode:", isInputNative ? "HBAR→Token" : isOutputNative ? "Token→HBAR" : "Token→Token");
     console.log("[HBAR.h] ═══════════════════════════════════════════");
 
