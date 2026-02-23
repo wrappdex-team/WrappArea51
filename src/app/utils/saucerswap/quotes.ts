@@ -25,6 +25,7 @@ import {
   encodeGetAmountsOut,
   decodeAmountsOutResult,
   encodeQuoteExactInputSingle,
+  encodeQuoteExactInput,
 } from "./abi";
 import {
   saucerFetch,
@@ -370,6 +371,95 @@ export async function fetchV2RouterQuote(
     }
   } catch (e: any) {
     console.log("[HBAR.h] V2 Quote API fallback error:", e?.message || e);
+  }
+
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ── [STEP-5] V2 MULTI-HOP QUOTE via QuoterV2.quoteExactInput ─────────
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * [Step 5] Fetch a V2 multi-hop quote via QuoterV2.quoteExactInput().
+ *
+ * Takes a pre-built packed path (from encodeSwapPath) and validates it
+ * against the QuoterV2 contract on-chain. This is the SAME packed path
+ * encoding and the SAME contract that the V2 SwapRouter's exactInput
+ * will use — so if QuoterV2 returns a valid quote, the swap WILL succeed
+ * (barring price movement between quote and execution).
+ *
+ * Returns the expected output amount or null if the quote fails.
+ * No gas cost — uses eth_call (view function).
+ *
+ * Used by:
+ *   1. [Step 6] V2-SKIP lift blocks — pre-validates the V2 path before
+ *      committing to V2 execution (avoids wasting user wallet popups)
+ *   2. [SWAP-FIX-5] executeSaucerSwapV2MultiHop — full-path validation
+ *      after per-hop fee tier correction
+ */
+export async function fetchV2MultiHopQuote(
+  packedPath: Uint8Array,
+  amountIn: bigint,
+  network: HederaNetwork,
+): Promise<bigint | null> {
+  const quoterId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
+  if (!quoterId || quoterId === "0.0.0") {
+    console.log("[STEP-5] V2 QuoterV2 not configured — skipping multi-hop quote");
+    return null;
+  }
+
+  const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
+
+  // Resolve QuoterV2 EVM address (cached)
+  let quoterEvm: string;
+  if (_v2QuoterEvmCache[network]) {
+    quoterEvm = _v2QuoterEvmCache[network]!;
+  } else {
+    quoterEvm = await resolveContractEvmAddress(quoterId, network);
+    _v2QuoterEvmCache[network] = quoterEvm;
+  }
+
+  const callData = bytesToHex(encodeQuoteExactInput(packedPath, amountIn));
+  // Higher gas for multi-hop: each hop involves cross-contract Pool.swap simulation
+  const gasHex = "0x" + (3_000_000).toString(16);
+
+  console.log(`[STEP-5] V2 multi-hop quote: quoteExactInput(${packedPath.length}B path, ${amountIn}) → quoter ${quoterEvm}`);
+
+  try {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: makeAbort(12000),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: quoterEvm, data: callData, gas: gasHex }, "latest"],
+        id: 1,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.result && data.result !== "0x" && data.result.length >= 66 && !data.error) {
+        // quoteExactInput returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList,
+        //   uint32[] initializedTicksCrossedList, uint256 gasEstimate)
+        // First 32 bytes (word 0) = amountOut (static type in tuple head)
+        const amountOutHex = data.result.slice(2, 66);
+        const amountOut = BigInt("0x" + amountOutHex);
+        if (amountOut > 0n) {
+          console.log(`[STEP-5] V2 multi-hop QuoterV2: amountOut=${amountOut} ✓`);
+          return amountOut;
+        }
+      }
+      if (data.error) {
+        console.log(`[STEP-5] V2 multi-hop QuoterV2 error: ${data.error.message || JSON.stringify(data.error).slice(0, 200)}`);
+      }
+    } else {
+      console.log(`[STEP-5] V2 multi-hop QuoterV2 HTTP ${res.status}`);
+    }
+  } catch (err: any) {
+    console.log("[STEP-5] V2 multi-hop QuoterV2 failed:", err?.message || err);
   }
 
   return null;

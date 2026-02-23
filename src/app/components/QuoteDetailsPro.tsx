@@ -58,6 +58,13 @@ interface QuoteDetailsProProps {
   };
   // [Step 16] Quote freshness — true when TTL expired and prices are refreshing
   quoteStale?: boolean;
+  // [V1-DEGRADE] Route degradation info — shown when V2 multi-hop is forced to V1
+  routeDegradation?: {
+    v2Amount: number;
+    v1Amount: number;
+    outputSymbol: string;
+    outputDecimals: number;
+  } | null;
 }
 
 export const QuoteDetailsPro = memo(function QuoteDetailsPro({
@@ -80,6 +87,7 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
   onSetCustomSlippage,
   feeOnTransfer,
   quoteStale,
+  routeDegradation,
 }: QuoteDetailsProProps) {
   // ── Collapsed by default ──
   const [isExpanded, setIsExpanded] = useState(false);
@@ -177,6 +185,17 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
               Fee
             </span>
           )}
+          {/* [V1-DEGRADE] Route degradation badge (compact, always visible) */}
+          {routeDegradation && (
+            <Tip content={`V1 routing: ~${routeDegradation.v1Amount >= 1 ? routeDegradation.v1Amount.toFixed(4) : routeDegradation.v1Amount.toFixed(6)} ${routeDegradation.outputSymbol} (V2 would give ~${routeDegradation.v2Amount >= 1 ? routeDegradation.v2Amount.toFixed(4) : routeDegradation.v2Amount.toFixed(6)})`} side="top">
+              <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border ${
+                isDark ? "bg-blue-500/10 border-blue-500/20 text-blue-400" : "bg-blue-50 border-blue-200 text-blue-600"
+              }`}>
+                <Info className="w-2.5 h-2.5" />
+                V1
+              </span>
+            </Tip>
+          )}
           {/* [Step 16] Stale quote badge — shows when TTL expired, refreshing */}
           {quoteStale && (
             <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border ${
@@ -225,6 +244,39 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
                   <div>
                     <span className="font-semibold">Transfer Fee Token</span>
                     <span className="opacity-80"> — This token has a ~{feeOnTransfer.totalFeePercent.toFixed(1)}% custom fee on transfers. Slippage is adjusted automatically to prevent failed swaps. {feeOnTransfer.summary}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* [V1-DEGRADE] Route degradation warning banner */}
+              {routeDegradation && (
+                <div className={`mt-2.5 flex items-start gap-2 px-3 py-2.5 rounded-lg text-xs ${
+                  isDark
+                    ? "bg-blue-500/10 border border-blue-500/20 text-blue-300"
+                    : "bg-blue-50 border border-blue-200 text-blue-700"
+                }`}>
+                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold">V1 Routing</span>
+                    <span className="opacity-80">
+                      {" "}— This multi-hop route uses V1 AMM pools.
+                      V2 concentrated liquidity would give{" "}
+                      <span className="font-semibold">
+                        ~{routeDegradation.v2Amount >= 1
+                          ? routeDegradation.v2Amount.toFixed(4)
+                          : routeDegradation.v2Amount.toFixed(8)}{" "}
+                        {routeDegradation.outputSymbol}
+                      </span>
+                      {" "}but V1 delivers{" "}
+                      <span className="font-semibold">
+                        ~{routeDegradation.v1Amount >= 1
+                          ? routeDegradation.v1Amount.toFixed(4)
+                          : routeDegradation.v1Amount.toFixed(8)}{" "}
+                        {routeDegradation.outputSymbol}
+                      </span>
+                      {" "}({((1 - routeDegradation.v1Amount / routeDegradation.v2Amount) * 100).toFixed(0)}% less).
+                      Output shown reflects V1 rate.
+                    </span>
                   </div>
                 </div>
               )}

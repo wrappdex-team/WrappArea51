@@ -46,6 +46,30 @@
  *     + inner path offset 0xa0 (5 struct fields × 32)
  *   - V2 packed path: 20-byte addresses + 3-byte fees (uint24 big-endian)
  *   - V2 multicall: array offset 0x20 + per-element offsets + length-prefixed data
+ *
+ * ════════════════════════════════════════════════════════════════════════
+ * [AUDIT] V2 MULTI-HOP ENCODING — Step 4 audit 2026-02-23
+ *
+ * (a) WHBAR address:    ✅ ensureWhbarContractForV2() converts HTS token
+ *     0.0.1456986 → contract 0.0.1456985 for all V2 path tokens. V2 pools
+ *     and SwapRouter WETH9 reference the contract, not the HTS token.
+ *
+ * (b) Fee tier encoding: ✅ 3 bytes big-endian uint24. 3000=0.30%,
+ *     1500=0.15% (SaucerSwap custom), 500=0.05%, 10000=1.0%, 100=0.01%.
+ *     SaucerSwap supports non-standard 1500 (0.15%) tier.
+ *
+ * (c) Address padding:  ✅ encodeSwapPath uses 20-byte addresses (packed),
+ *     not 32-byte ABI-padded. Matches Uniswap V3 packed path format.
+ *
+ * (d) exactInput layout: ✅ C77-06 outer offset 0x20 present and correct.
+ *     Inner path offset 0xa0 (5 fields × 32). Path right-padded to 32B.
+ *
+ * (e) Root cause of V2 multi-hop reverts: NOT in abi.ts encoding (all
+ *     correct). Bug was in swap-engine.ts — per-hop fee tier validation
+ *     was MISSING. Pool graph may report wrong fee tiers (API field
+ *     missing → default 3000, or wrong tier for multi-pool pairs).
+ *     Fixed in [SWAP-FIX-5]: per-hop QuoterV2 probing + full-path
+ *     validation before execution.
  * ════════════════════════════════════════════════════════════════════════
  */
 
@@ -410,6 +434,11 @@ export function encodeExactInputSingle(
  *   = 20 + 3 + 20 + 3 + 20 = 66 bytes
  *
  * [C9-05] Multi-hop support for best-available-route execution.
+ *
+ * [AUDIT-S4] Verified: 20-byte addresses (not 32-byte ABI-padded).
+ * Fee bytes are uint24 big-endian (3 bytes). Fee placed between token[i]
+ * and token[i+1], not after the last token. Total path length for N
+ * tokens = N*20 + (N-1)*3 bytes. Correct per Uniswap V3 spec.
  */
 export function encodeSwapPath(hops: { tokenEvm: string; fee: number }[]): Uint8Array {
   if (hops.length < 2) throw new Error("Swap path must have at least 2 tokens");

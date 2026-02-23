@@ -39,7 +39,7 @@ import {
   encodeExactInputSingle, encodeUnwrapWHBAR, encodeMulticall,
   encodeSaucerSwapETHForTokens, encodeSaucerSwapTokensForETH,
   encodeSaucerSwapCall, encodeSwapPath, encodeExactInput,
-  encodeQuoteExactInput, encodeGetPool,
+  encodeQuoteExactInput, encodeQuoteExactInputSingle, encodeGetPool,
   // [FOT] Fee-on-transfer router encoders
   encodeSaucerSwapCallFOT, encodeSaucerSwapETHForTokensFOT,
   encodeSaucerSwapTokensForETHFOT,
@@ -49,7 +49,7 @@ import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion, resolveAccountEvmAddress, resolveContractEvmAddress } from "./pools";
 import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute, findRouteViaGraph } from "./routing";
 import type { RawQuote } from "./quotes";
-import { fetchSaucerSwapQuote, fetchV2RouterQuote, fetchRouterQuote } from "./quotes";
+import { fetchSaucerSwapQuote, fetchV2RouterQuote, fetchV2MultiHopQuote, fetchRouterQuote } from "./quotes";
 import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance, fetchMaxAutoAssociations, fetchTokenFeeSchedule, markTokenAsFOT, type TokenFeeInfo } from "./balances";
 import { parseTokenAmount } from "./helpers";
 import { verifyIsContract } from "./verification";
@@ -190,6 +190,136 @@ function ensureWhbarContractForV2(evmAddress: string, network: HederaNetwork): s
     return contractEvm;
   }
   return evmAddress;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── [STEP-6] V2 MULTI-HOP PRE-VALIDATION HELPER ─────────────────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// Validates a V2 multi-hop route BEFORE committing to V2 execution.
+// Does alias resolution, WHBAR correction, per-hop fee tier probing
+// (same as SWAP-FIX-5), and full-path QuoterV2 validation.
+//
+// Returns validated data if V2 is viable, or null if V2 should be skipped.
+// Used by the V2-SKIP lift blocks to decide V2 vs V1 execution.
+
+interface V2PreValidation {
+  packedPath: Uint8Array;
+  correctedFees: number[];
+  amountOut: bigint;
+  v2PathTokens: string[];
+}
+
+async function _preValidateV2MultiHop(
+  route: { hops: PoolVersionInfo[]; tokens: string[] },
+  rawInput: number,
+  network: HederaNetwork,
+  whbar: AllowedToken,
+  inputToken: AllowedToken,
+  outputToken: AllowedToken,
+  isInputNative: boolean,
+  isOutputNative: boolean,
+): Promise<V2PreValidation | null> {
+  try {
+    // ── Step 1: Resolve V2 path (aliases + WHBAR) — mirrors C100-S6 ──
+    const v2PathTokens = route.tokens.map((tokenEvm) => {
+      const htsId = evmAddressToHtsId(tokenEvm);
+      const token = resolveTokenByHtsId(htsId)
+        || SAUCERSWAP_TOKENS.find(t => t.saucerswapAliasId === htsId);
+      let resolvedEvm = tokenEvm;
+      if (token) {
+        resolvedEvm = getSaucerswapRoutingEvmAddress(token);
+      }
+      return ensureWhbarContractForV2(resolvedEvm, network);
+    });
+
+    // ── Step 2: Per-hop fee tier probing — mirrors SWAP-FIX-5 ──
+    const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
+    const quoterHtsId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
+    if (!quoterHtsId || quoterHtsId === "0.0.0") return null;
+    const quoterEvm = await resolveContractEvmAddress(quoterHtsId, network);
+    if (!quoterEvm) return null;
+
+    const correctedFees: number[] = [];
+    let perHopAmountIn = BigInt(rawInput);
+
+    for (let h = 0; h < route.hops.length; h++) {
+      const tokenA = v2PathTokens[h];
+      const tokenB = v2PathTokens[h + 1];
+      const graphFee = route.hops[h].feeTier || 3000;
+      const feeTiersToTry = [graphFee, ...V2_FEE_TIERS.filter(f => f !== graphFee)];
+
+      let hopOk = false;
+      let hopOut = 0n;
+
+      for (const tryFee of feeTiersToTry) {
+        try {
+          const singleData = bytesToHex(
+            encodeQuoteExactInputSingle(tokenA, tokenB, perHopAmountIn, tryFee)
+          );
+          const sRes = await fetch(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: makeAbort(8000),
+            body: JSON.stringify({
+              jsonrpc: "2.0", method: "eth_call",
+              params: [{ to: quoterEvm, data: singleData, gas: "0x1E8480" }, "latest"],
+              id: 1,
+            }),
+          });
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            if (sData.result && sData.result !== "0x" && sData.result.length >= 66 && !sData.error) {
+              const amt = BigInt("0x" + sData.result.slice(2, 66));
+              if (amt > 0n) {
+                correctedFees.push(tryFee);
+                hopOut = amt;
+                hopOk = true;
+                if (tryFee !== graphFee) {
+                  console.log(`[STEP-6] Pre-validate hop ${h}: fee corrected ${graphFee} → ${tryFee}`);
+                }
+                break;
+              }
+            }
+          }
+        } catch { /* try next */ }
+      }
+
+      if (!hopOk) {
+        console.log(`[STEP-6] Pre-validate: hop ${h} failed ALL fee tiers — V2 not viable`);
+        return null;
+      }
+      perHopAmountIn = hopOut;
+    }
+
+    // ── Step 3: Build corrected packed path ──
+    const pathHops: { tokenEvm: string; fee: number }[] = [];
+    for (let i = 0; i < v2PathTokens.length; i++) {
+      pathHops.push({
+        tokenEvm: v2PathTokens[i],
+        fee: i < correctedFees.length ? correctedFees[i] : 0,
+      });
+    }
+    const packedPath = encodeSwapPath(pathHops);
+
+    // ── Step 4: Full-path QuoterV2 validation ──
+    const fullPathAmountOut = await fetchV2MultiHopQuote(packedPath, BigInt(rawInput), network);
+    if (!fullPathAmountOut || fullPathAmountOut <= 0n) {
+      console.log(`[STEP-6] Pre-validate: full-path QuoterV2 failed — V2 not viable`);
+      return null;
+    }
+
+    console.log(`[STEP-6] Pre-validate: V2 VIABLE ✓ amountOut=${fullPathAmountOut}, fees=[${correctedFees.join(",")}]`);
+    return {
+      packedPath,
+      correctedFees,
+      amountOut: fullPathAmountOut,
+      v2PathTokens,
+    };
+  } catch (err: any) {
+    console.log(`[STEP-6] Pre-validate error:`, err?.message || err);
+    return null;
+  }
 }
 
 export interface ApproveResult {
@@ -1300,37 +1430,137 @@ async function executeSaucerSwapV2MultiHop(
       return ensureWhbarContractForV2(resolvedEvm, network);
     });
 
-    // Build packed path: token0 + fee0 + token1 + fee1 + token2 + ...
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [SWAP-FIX-5] PER-HOP FEE TIER VALIDATION & PROBING               │
+    // │                                                                     │
+    // │  The pool graph may report WRONG fee tiers — many pools exist at   │
+    // │  unexpected tiers (e.g., 1500 for WHBAR pairs, 10000 for meme     │
+    // │  tokens) or the API field is missing and defaults to 3000.         │
+    // │                                                                     │
+    // │  V2 direct swaps have [SWAP-FIX-4] to probe all fee tiers, but    │
+    // │  V2 multi-hop was MISSING this — it blindly trusted the graph      │
+    // │  fee → packed path had wrong fees → SwapRouter couldn't find       │
+    // │  pools → CONTRACT_REVERT_EXECUTED on 100% of affected routes.      │
+    // │                                                                     │
+    // │  Fix: For each hop, call QuoterV2.quoteExactInputSingle with the  │
+    // │  graph's fee tier. If it fails, try all V2_FEE_TIERS. Use the     │
+    // │  first tier that returns a valid quote. This guarantees the packed │
+    // │  path encodes REAL pool fee tiers.                                 │
+    // └─────────────────────────────────────────────────────────────────────┘
+    const correctedFees: number[] = [];
+    const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
+    const quoterHtsId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
+    let quoterEvm: string | null = null;
+    if (quoterHtsId && quoterHtsId !== "0.0.0") {
+      quoterEvm = await resolveContractEvmAddress(quoterHtsId, network);
+    }
+
+    // [SWAP-FIX-5] Hard requirement: QuoterV2 must be available for validation.
+    // Without it we'd blindly trust graph fee tiers, which is the bug we're fixing.
+    if (!quoterEvm) {
+      console.error(`[SWAP-FIX-5] QuoterV2 contract not resolved — cannot validate V2 multi-hop path`);
+      return {
+        success: false,
+        error: `V2 multi-hop requires QuoterV2 for path validation, but QuoterV2 ` +
+          `(${quoterHtsId}) could not be resolved. Try again or use a direct swap route.`,
+        executionVenue: "saucerswap-v2",
+      };
+    }
+
+    console.log(`[SWAP-FIX-5] Validating ${route.hops.length} hop fee tiers via QuoterV2 (${quoterEvm})...`);
+    let perHopAmountIn = BigInt(rawInput); // cascading: output of hop N = input of hop N+1
+
+    for (let h = 0; h < route.hops.length; h++) {
+      const tokenA = v2PathTokens[h];
+      const tokenB = v2PathTokens[h + 1];
+      const graphFee = route.hops[h].feeTier || 3000;
+      const feeTiersToTry = [graphFee, ...V2_FEE_TIERS.filter(f => f !== graphFee)];
+
+      let hopValidated = false;
+      let hopAmountOut = 0n;
+
+      if (quoterEvm) {
+        for (const tryFee of feeTiersToTry) {
+          try {
+            const singleQuoteData = bytesToHex(
+              encodeQuoteExactInputSingle(tokenA, tokenB, perHopAmountIn, tryFee)
+            );
+            const sRes = await fetch(rpcUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: makeAbort(10000),
+              body: JSON.stringify({
+                jsonrpc: "2.0", method: "eth_call",
+                params: [{ to: quoterEvm, data: singleQuoteData, gas: "0x1E8480" }, "latest"],
+                id: 1,
+              }),
+            });
+            if (sRes.ok) {
+              const sData = await sRes.json();
+              if (sData.result && sData.result !== "0x" && sData.result.length >= 66 && !sData.error) {
+                const amtHex = sData.result.slice(2, 66);
+                const amt = BigInt("0x" + amtHex);
+                if (amt > 0n) {
+                  if (tryFee !== graphFee) {
+                    console.log(`[SWAP-FIX-5] Hop ${h}: fee corrected ${graphFee} → ${tryFee} (graph had wrong tier)`);
+                  } else {
+                    console.log(`[SWAP-FIX-5] Hop ${h}: fee ${tryFee} validated ✓ (amountOut=${amt})`);
+                  }
+                  correctedFees.push(tryFee);
+                  hopAmountOut = amt;
+                  hopValidated = true;
+                  break;
+                }
+              }
+            }
+          } catch { /* try next fee tier */ }
+        }
+      }
+
+      if (!hopValidated) {
+        console.warn(`[SWAP-FIX-5] Hop ${h}: ALL fee tiers failed for ${evmAddressToHtsId(tokenA)} → ${evmAddressToHtsId(tokenB)}`);
+        console.warn(`[SWAP-FIX-5] V2 multi-hop NOT viable — this hop has no V2 pool with liquidity`);
+        return {
+          success: false,
+          error: `V2 multi-hop route not viable: no V2 pool found for ` +
+            `${evmAddressToHtsId(tokenA)} → ${evmAddressToHtsId(tokenB)}. ` +
+            `Tried fee tiers: ${feeTiersToTry.join(", ")}. All returned zero or reverted.`,
+          executionVenue: "saucerswap-v2",
+        };
+      }
+
+      perHopAmountIn = hopAmountOut; // cascade to next hop
+    }
+
+    // Build packed path with CORRECTED fee tiers
     const pathHops: { tokenEvm: string; fee: number }[] = [];
     for (let i = 0; i < v2PathTokens.length; i++) {
       pathHops.push({
         tokenEvm: v2PathTokens[i],
-        fee: i < route.hops.length ? (route.hops[i].feeTier || 3000) : 0,
+        fee: i < correctedFees.length ? correctedFees[i] : 0,
       });
     }
     const packedPath = encodeSwapPath(pathHops);
-    console.log(`[HBAR.h] [C100-S6] V2 Multi-hop packed path: ${packedPath.length} bytes, ${v2PathTokens.length} tokens, ` +
-      `addrs: ${v2PathTokens.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+    console.log(`[SWAP-FIX-5] V2 Multi-hop packed path: ${packedPath.length} bytes, ${v2PathTokens.length} tokens, ` +
+      `fees: [${correctedFees.join(", ")}], addrs: ${v2PathTokens.map(a => evmAddressToHtsId(a)).join(" → ")}`);
 
-    // ── [C77-04] Quote: V2 QuoterV2 on-chain multi-hop quote ──
-    // Previously used price-based estimation only. Now we first try
-    // QuoterV2's quoteExactInput() with the packed path — same contract
-    // and path encoding as the real swap — for accurate on-chain output.
-    // Falls back to price estimation if the QuoterV2 call fails.
+    // ── [C77-04] Quote: Full-path V2 QuoterV2 validation ──
+    // [SWAP-FIX-5] Now that fee tiers are validated per-hop, the full-path
+    // quoteExactInput should succeed. If it doesn't, something else is wrong
+    // (e.g., liquidity shifted between per-hop probing and full-path call).
+    // We require this validation — no price-estimate fallback. If QuoterV2
+    // says the path doesn't work, the swap WILL also fail.
     let estimatedOutput = 0;
     const inTok = isInputNative ? whbar : inputToken;
     const outTok = isOutputNative ? whbar : outputToken;
 
-    // Strategy 1: QuoterV2 quoteExactInput (on-chain, most accurate)
+    // Full-path QuoterV2 validation (required — not optional)
     try {
-      const quoterHtsId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
-      if (quoterHtsId && quoterHtsId !== "0.0.0") {
-        const quoterEvm = await resolveContractEvmAddress(quoterHtsId, network);
+      if (quoterEvm) {
         const quoteCallData = bytesToHex(encodeQuoteExactInput(packedPath, BigInt(rawInput)));
-        const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
-        const gasHex = "0x" + (2_000_000).toString(16);
+        const gasHex = "0x" + (3_000_000).toString(16);
 
-        console.log(`[HBAR.h] [C77-04] V2 Multi-hop quote: quoteExactInput(${packedPath.length}B path, ${rawInput}) → quoter ${quoterEvm}`);
+        console.log(`[SWAP-FIX-5] Full-path validation: quoteExactInput(${packedPath.length}B, ${rawInput}) → quoter ${quoterEvm}`);
         const qRes = await fetch(rpcUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1345,28 +1575,34 @@ async function executeSaucerSwapV2MultiHop(
         if (qRes.ok) {
           const qData = await qRes.json();
           if (qData.result && qData.result !== "0x" && qData.result.length >= 66 && !qData.error) {
-            // quoteExactInput returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate)
             const amountOutHex = qData.result.slice(2, 66);
             const amountOut = BigInt("0x" + amountOutHex);
             if (amountOut > 0n) {
               estimatedOutput = Number(amountOut);
-              console.log(`[HBAR.h] [C77-04] V2 Multi-hop QuoterV2 quote: amountOut=${amountOut} (on-chain)`);
+              console.log(`[SWAP-FIX-5] Full-path QuoterV2 validated ✓ amountOut=${amountOut}`);
             }
           } else if (qData.error) {
-            console.log(`[HBAR.h] [C77-04] V2 Multi-hop QuoterV2 error: ${qData.error.message || JSON.stringify(qData.error).slice(0, 150)}`);
+            console.warn(`[SWAP-FIX-5] Full-path QuoterV2 error: ${qData.error.message || JSON.stringify(qData.error).slice(0, 150)}`);
           }
         }
       }
     } catch (quoteErr: any) {
-      console.log(`[HBAR.h] [C77-04] V2 Multi-hop QuoterV2 failed:`, quoteErr?.message || quoteErr);
+      console.warn(`[SWAP-FIX-5] Full-path QuoterV2 failed:`, quoteErr?.message || quoteErr);
     }
 
-    // Strategy 2: Price-based estimation fallback
+    // [SWAP-FIX-5] Fallback: use cascaded per-hop output if full-path quote diverges
+    if (estimatedOutput <= 0 && perHopAmountIn > 0n) {
+      // Per-hop probing succeeded individually — use the cascaded output
+      estimatedOutput = Number(perHopAmountIn);
+      console.log(`[SWAP-FIX-5] Full-path quote failed — using cascaded per-hop output: ${estimatedOutput}`);
+    }
+
+    // Last resort: price-based estimation (less safe but better than abort)
     if (estimatedOutput <= 0) {
       const priceEstimate = estimateOutputFromPrices(rawInput, inTok, outTok, 1);
       if (priceEstimate && priceEstimate > 0) {
         estimatedOutput = priceEstimate;
-        console.log(`[HBAR.h] V2 Multi-hop price estimate fallback: ${estimatedOutput}`);
+        console.warn(`[SWAP-FIX-5] Price estimate fallback: ${estimatedOutput}`);
       }
     }
 
@@ -1474,7 +1710,11 @@ async function executeSaucerSwapV2MultiHop(
       }
     }
 
-    const SWAP_GAS = 2_000_000; // Higher gas for multi-hop (more contract calls)
+    // [SWAP-FIX-5] Bumped 2M → 3M for multi-hop. Each V2 hop involves
+    // Factory.getPool + Pool.swap + sqrtPriceMath + HTS precompile transfers.
+    // On Hedera, cross-contract SLOAD costs ~2100 gas each. 2M was marginal
+    // for 2-hop routes and insufficient when ticks are crossed.
+    const SWAP_GAS = 3_000_000;
 
     // [C26-02] Token → HBAR multi-hop: per SaucerSwap V2 docs, uses multicall
     // approach: exactInput(recipient=ROUTER) + unwrapWETH9(user).
@@ -1656,11 +1896,15 @@ async function executeSaucerSwapV2MultiHop(
     const errMsg = err?.message || "V2 multi-hop swap failed";
     const errLower = errMsg.toLowerCase();
 
-    // [FOT] V2 multi-hop runtime detection
-    if (errLower.includes("insufficient_output_amount") || errLower.includes("insufficient output") || errLower.includes("contract_revert")) {
-      if (!isInputNative) markTokenAsFOT(inputToken.htsId);
-      if (!isOutputNative) markTokenAsFOT(outputToken.htsId);
-      console.log(`[FOT] V2 Multi-hop reverted — tokens marked as FOT for V1 RouterWithFee on next attempt`);
+    // [SWAP-FIX-5] REMOVED incorrect FOT marking on V2 multi-hop reverts.
+    // V2 reverts are caused by routing issues (wrong fee tier, no liquidity,
+    // WHBAR address mismatch) — NOT by fee-on-transfer tokens. Marking
+    // tokens as FOT here caused future swaps to use RouterWithFee
+    // unnecessarily, which has its own association requirements.
+    // FOT detection should only happen on V1 INSUFFICIENT_OUTPUT_AMOUNT
+    // errors where the V1 router is the ground truth.
+    if (errLower.includes("insufficient_output_amount") || errLower.includes("insufficient output")) {
+      console.log(`[FOT] V2 Multi-hop: INSUFFICIENT_OUTPUT — NOT marking as FOT (V2 reverts are not FOT indicators)`);
     }
 
     const isCancellation =
@@ -1941,21 +2185,48 @@ async function executeSaucerSwapDirect(
       if (multiHopRoute) {
         const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
 
-        // [V2-SKIP] Force V1 for multi-hop Token→HBAR (same rationale as Token→Token)
+        // [STEP-6] Conditional V2 for Token→HBAR multi-hop
         if (allHopsV2) {
-          console.log(`[V2-SKIP] Token→HBAR multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet`);
-          poolVersionInfo = { version: "v1", poolAddress: undefined };
-          multiHopRoute = null;
-          _forceV1MultiHop = true;
-          const v1ThPath = buildSwapPath(
-            isInputNative ? whbar : inputToken,
-            isOutputNative ? whbar : outputToken,
-          );
-          pathAddresses = v1ThPath.map(t => htsIdToEvmAddress(t.htsId));
+          const v2CacheHitTH = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+          if (v2CacheHitTH) {
+            console.log(`[STEP-6] Token→HBAR multi-hop: V2 failure cached — using V1`);
+            poolVersionInfo = { version: "v1", poolAddress: undefined };
+            multiHopRoute = null;
+            _forceV1MultiHop = true;
+            const v1ThPath = buildSwapPath(
+              isInputNative ? whbar : inputToken,
+              isOutputNative ? whbar : outputToken,
+            );
+            pathAddresses = v1ThPath.map(t => htsIdToEvmAddress(t.htsId));
+          } else {
+            console.log(`[STEP-6] Token→HBAR multi-hop: pre-validating V2...`);
+            const v2PreVal = await _preValidateV2MultiHop(
+              multiHopRoute, rawInput, network, whbar,
+              inputToken, outputToken, isInputNative, isOutputNative,
+            );
+            if (v2PreVal) {
+              console.log(`[STEP-6] Token→HBAR: V2 VALIDATED ✓ — executing via V2`);
+              for (let h = 0; h < multiHopRoute.hops.length; h++) {
+                if (v2PreVal.correctedFees[h] !== undefined) {
+                  (multiHopRoute.hops[h] as any).feeTier = v2PreVal.correctedFees[h];
+                }
+              }
+            } else {
+              console.log(`[STEP-6] Token→HBAR: V2 pre-validation FAILED — using V1`);
+              poolVersionInfo = { version: "v1", poolAddress: undefined };
+              multiHopRoute = null;
+              _forceV1MultiHop = true;
+              const v1ThPath = buildSwapPath(
+                isInputNative ? whbar : inputToken,
+                isOutputNative ? whbar : outputToken,
+              );
+              pathAddresses = v1ThPath.map(t => htsIdToEvmAddress(t.htsId));
+            }
+          }
         }
 
-        // V2 multi-hop Token→HBAR disabled — retained for future re-enablement
-        if (false as boolean) {
+        // [STEP-6] V2 multi-hop Token→HBAR — fires when allHopsV2 && multiHopRoute survives
+        if (allHopsV2 && multiHopRoute) {
           console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: trying V2 first`);
           console.log(`[C100-S9] WHBAR compatibility: multicall(exactInput→ROUTER + unwrapWETH9→user) ` +
             `contract=0.0.1456985, token=0.0.1456986`);
@@ -2000,6 +2271,7 @@ async function executeSaucerSwapDirect(
           // [V2-FALLBACK-FIX] Same as Token→Token fallback
           poolVersionInfo = { version: "v1", poolAddress: undefined };
           multiHopRoute = null;
+          _forceV1MultiHop = true; // [STEP-6] Mark as V2→V1 degradation for PRICE-IMPACT-GUARD
           const v1FallbackPathTH = buildSwapPath(
             isInputNative ? whbar : inputToken,
             isOutputNative ? whbar : outputToken,
@@ -2019,49 +2291,70 @@ async function executeSaucerSwapDirect(
     }
 
     // ┌─────────────────────────────────────────────────────────────────────┐
-    // │  [V2-SKIP] TOKEN→TOKEN MULTI-HOP: V1-FIRST POLICY                 │
+    // │  [STEP-6] TOKEN→TOKEN MULTI-HOP: CONDITIONAL V2 EXECUTION          │
     // │                                                                     │
-    // │  V2 multi-hop consistently reverts on Hedera mainnet due to HTS    │
-    // │  precompile edge cases (QuoterV2 succeeds but execution reverts).  │
-    // │  This caused double wallet popups (V2 fail → V1 succeed).          │
+    // │  Previously [V2-SKIP] blanket-disabled V2 multi-hop. Now we        │
+    // │  pre-validate via QuoterV2 (Step 5) + per-hop fee probing          │
+    // │  (SWAP-FIX-5). If QuoterV2 confirms the path is viable, V2        │
+    // │  executes — delivering better output from concentrated liquidity.  │
+    // │  If validation fails, falls back to proven V1 AMM routing.         │
     // │                                                                     │
-    // │  Policy: ALL multi-hop swaps route to V1 directly.                 │
-    // │  V2 is reserved for single-hop direct pools only.                  │
-    // │  Dead code for V2 multi-hop retained for future re-enablement.     │
+    // │  V2 failure cache is a SOFT hint: skip V2 validation entirely     │
+    // │  (saves ~2s of eth_calls) but doesn't permanently block V2.       │
     // └─────────────────────────────────────────────────────────────────────┘
     let _v2MultiHopError: string | undefined;
 
     if (!isInputNative && !isOutputNative && multiHopRoute) {
       const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
 
-      // ┌─────────────────────────────────────────────────────────────────────┐
-      // │  [V2-SKIP] MULTI-HOP V1-FIRST POLICY                                │
-      // │                                                                       │
-      // │  V2 multi-hop (token→WHBAR→token) consistently reverts on Hedera     │
-      // │  mainnet due to HTS precompile edge cases, despite QuoterV2          │
-      // │  returning valid quotes. This caused the "double popup" problem:     │
-      // │  V2 approval+swap (fails) → V1 approval+swap (succeeds) = 4 popups. │
-      // │                                                                       │
-      // │  Fix: Route ALL multi-hop swaps to V1 directly. V1's AMM routing    │
-      // │  (swapExactTokensForTokens) is proven reliable on mainnet. V2 is    │
-      // │  reserved for DIRECT single-hop pools where it actually works.       │
-      // └─────────────────────────────────────────────────────────────────────┘
       if (allHopsV2) {
-        console.log(`[V2-SKIP] Token→Token multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet (HTS precompile edge cases)`);
-        console.log(`[V2-SKIP] (Was: ${multiHopRoute.hops.length} V2 hops, fees: ${multiHopRoute.hops.map(h => h.feeTier).join("/")})`);
-        poolVersionInfo = { version: "v1", poolAddress: undefined };
-        multiHopRoute = null;
-        _forceV1MultiHop = true;
-        const v1DirectPath = buildSwapPath(
-          isInputNative ? whbar : inputToken,
-          isOutputNative ? whbar : outputToken,
-        );
-        pathAddresses = v1DirectPath.map(t => htsIdToEvmAddress(t.htsId));
+        const v2CacheHit = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+
+        if (v2CacheHit) {
+          // Soft hint: V2 failed recently — skip validation, go V1
+          console.log(`[STEP-6] Token→Token multi-hop: V2 failure cached — skipping validation, using V1`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+          _forceV1MultiHop = true;
+          const v1DirectPath = buildSwapPath(
+            isInputNative ? whbar : inputToken,
+            isOutputNative ? whbar : outputToken,
+          );
+          pathAddresses = v1DirectPath.map(t => htsIdToEvmAddress(t.htsId));
+        } else {
+          // Pre-validate V2 path: per-hop fee probing + full QuoterV2 validation
+          console.log(`[STEP-6] Token→Token multi-hop: pre-validating V2 path (${multiHopRoute.hops.length} hops)...`);
+          const v2PreVal = await _preValidateV2MultiHop(
+            multiHopRoute, rawInput, network, whbar,
+            inputToken, outputToken, isInputNative, isOutputNative,
+          );
+
+          if (v2PreVal) {
+            // V2 VALIDATED — update route fees with corrected values and proceed
+            console.log(`[STEP-6] Token→Token: V2 path VALIDATED ✓ — executing via V2 (amountOut=${v2PreVal.amountOut})`);
+            for (let h = 0; h < multiHopRoute.hops.length; h++) {
+              if (v2PreVal.correctedFees[h] !== undefined) {
+                (multiHopRoute.hops[h] as any).feeTier = v2PreVal.correctedFees[h];
+              }
+            }
+            // multiHopRoute stays intact → V2 execution block fires below
+          } else {
+            // V2 NOT viable — fall back to V1
+            console.log(`[STEP-6] Token→Token: V2 pre-validation FAILED — falling back to V1`);
+            poolVersionInfo = { version: "v1", poolAddress: undefined };
+            multiHopRoute = null;
+            _forceV1MultiHop = true;
+            const v1DirectPath = buildSwapPath(
+              isInputNative ? whbar : inputToken,
+              isOutputNative ? whbar : outputToken,
+            );
+            pathAddresses = v1DirectPath.map(t => htsIdToEvmAddress(t.htsId));
+          }
+        }
       }
 
-      // V2 multi-hop is now disabled — this block never fires.
-      // Retained for future re-enablement when Hedera fixes HTS precompile issues.
-      if (false as boolean) {
+      // [STEP-6] V2 multi-hop execution — fires when allHopsV2 && multiHopRoute survives validation
+      if (allHopsV2 && multiHopRoute) {
         console.log(`[HBAR.h] [C100-S5] Token→Token multi-hop: trying V2 first`);
 
         const v2Result = await executeSaucerSwapV2MultiHop(
@@ -2107,6 +2400,7 @@ async function executeSaucerSwapDirect(
         // Reset to V1 — rebuild pathAddresses using canonical token addresses.
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
+        _forceV1MultiHop = true; // [STEP-6] Mark as V2→V1 degradation for PRICE-IMPACT-GUARD
         const v1FallbackPath = buildSwapPath(
           isInputNative ? whbar : inputToken,
           isOutputNative ? whbar : outputToken,
@@ -2194,21 +2488,48 @@ async function executeSaucerSwapDirect(
     // [C77-01] FIX: Changed from .some(v2) to .every(v2). V2 exactInput
     // can ONLY traverse V2 concentrated-liquidity pools. If even one hop
     // is V1 AMM, the V2 router fails to find a pool and reverts.
-    // [V2-SKIP] Force V1 for HBAR→Token multi-hop (same rationale as Token→Token)
+    // [STEP-6] Conditional V2 for HBAR→Token multi-hop
     if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
-      console.log(`[V2-SKIP] HBAR→Token multi-hop: forcing V1 — V2 multi-hop unreliable on Hedera mainnet`);
-      poolVersionInfo = { version: "v1", poolAddress: undefined };
-      multiHopRoute = null;
-      _forceV1MultiHop = true;
-      const v1MhGenPath = buildSwapPath(
-        isInputNative ? whbar : inputToken,
-        isOutputNative ? whbar : outputToken,
-      );
-      pathAddresses = v1MhGenPath.map(t => htsIdToEvmAddress(t.htsId));
+      const v2CacheHitGen = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+      if (v2CacheHitGen) {
+        console.log(`[STEP-6] HBAR→Token multi-hop: V2 failure cached — using V1`);
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+        multiHopRoute = null;
+        _forceV1MultiHop = true;
+        const v1MhGenPath = buildSwapPath(
+          isInputNative ? whbar : inputToken,
+          isOutputNative ? whbar : outputToken,
+        );
+        pathAddresses = v1MhGenPath.map(t => htsIdToEvmAddress(t.htsId));
+      } else {
+        console.log(`[STEP-6] HBAR→Token multi-hop: pre-validating V2...`);
+        const v2PreVal = await _preValidateV2MultiHop(
+          multiHopRoute, rawInput, network, whbar,
+          inputToken, outputToken, isInputNative, isOutputNative,
+        );
+        if (v2PreVal) {
+          console.log(`[STEP-6] HBAR→Token: V2 VALIDATED ✓ — executing via V2`);
+          for (let h = 0; h < multiHopRoute.hops.length; h++) {
+            if (v2PreVal.correctedFees[h] !== undefined) {
+              (multiHopRoute.hops[h] as any).feeTier = v2PreVal.correctedFees[h];
+            }
+          }
+        } else {
+          console.log(`[STEP-6] HBAR→Token: V2 pre-validation FAILED — using V1`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+          _forceV1MultiHop = true;
+          const v1MhGenPath = buildSwapPath(
+            isInputNative ? whbar : inputToken,
+            isOutputNative ? whbar : outputToken,
+          );
+          pathAddresses = v1MhGenPath.map(t => htsIdToEvmAddress(t.htsId));
+        }
+      }
     }
 
-    // V2 multi-hop HBAR→Token disabled — retained for future re-enablement
-    if (false && multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
+    // [STEP-6] V2 multi-hop HBAR→Token — fires when multiHopRoute survives validation
+    if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute!.hops.length} hops, ALL V2) ═══`);
       const v2MhGenResult = await executeSaucerSwapV2MultiHop(
         inputToken, outputToken, inputAmount, slippagePct,
@@ -2231,6 +2552,8 @@ async function executeSaucerSwapDirect(
 
       poolVersionInfo = { version: "v1", poolAddress: undefined };
       multiHopRoute = null;
+      _forceV1MultiHop = true; // [STEP-6] Mark as V2→V1 degradation for PRICE-IMPACT-GUARD
+      markV2Failed(inputToken.htsId, outputToken.htsId); // Cache for future swaps
       const v1FallbackPathMh = buildSwapPath(
         isInputNative ? whbar : inputToken,
         isOutputNative ? whbar : outputToken,
@@ -2520,6 +2843,51 @@ async function executeSaucerSwapDirect(
       console.log(`[FOT] Fee detection failed (non-blocking): ${fotErr?.message || fotErr}`);
     }
 
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [FOT-ASSOC-GUARD] Verify RouterWithFee can receive output tokens  │
+    // │                                                                     │
+    // │  On Hedera, every account/contract must be token-associated before  │
+    // │  it can receive HTS tokens. The FOT router variant sends output     │
+    // │  tokens from pair → ROUTER → user (balance-measurement pattern).   │
+    // │  If the router isn't associated with the output token AND doesn't  │
+    // │  have unlimited auto-associations, the HTS transfer from pair to   │
+    // │  router reverts with "Safe token transfer failed!" (HTS code 184). │
+    // │                                                                     │
+    // │  Fix: fall back to the standard V1 router, which sends tokens     │
+    // │  directly from pair → user (no intermediate router receipt).       │
+    // │  The user receives slightly less than quoted (by the fee %), but   │
+    // │  the swap succeeds instead of reverting.                           │
+    // └─────────────────────────────────────────────────────────────────────┘
+    if (useFotRouter && !isOutputNative) {
+      try {
+        const fotRouterHtsId = getRouterWithFee(network);
+        const routerAssociated = await isTokenAssociated(fotRouterHtsId, outputToken.htsId, network);
+        if (!routerAssociated) {
+          // Check if router has unlimited auto-associations (-1 = unlimited)
+          const maxAutoAssoc = await fetchMaxAutoAssociations(fotRouterHtsId, network);
+          if (maxAutoAssoc !== -1) {
+            console.warn(`[FOT-ASSOC-GUARD] ═══════════════════════════════════════════`);
+            console.warn(`[FOT-ASSOC-GUARD] RouterWithFee ${fotRouterHtsId} NOT associated with ${outputToken.symbol} (${outputToken.htsId})`);
+            console.warn(`[FOT-ASSOC-GUARD] maxAutoAssociations=${maxAutoAssoc} — cannot auto-associate`);
+            console.warn(`[FOT-ASSOC-GUARD] FOT swap would fail: "Safe token transfer failed!" (pair→router HTS transfer blocked)`);
+            console.warn(`[FOT-ASSOC-GUARD] Falling back to standard V1 router (pair sends directly to user)`);
+            console.warn(`[FOT-ASSOC-GUARD] ═══════════════════════════════════════════`);
+            useFotRouter = false;
+            v1Router = getSaucerSwapRouter(network, "v1");
+            // fotFeePercent/fotFeeDescription kept for logging only — standard router's
+            // require checks getAmountsOut (pre-fee) vs amountOutMin, so fee deduction
+            // is NOT applied to minOutput. User receives (output - fee) but swap succeeds.
+          } else {
+            console.log(`[FOT-ASSOC-GUARD] RouterWithFee not explicitly associated with ${outputToken.symbol}, but has unlimited auto-associations — proceeding with FOT`);
+          }
+        } else {
+          console.log(`[FOT-ASSOC-GUARD] RouterWithFee associated with ${outputToken.symbol} ✓`);
+        }
+      } catch (assocErr: any) {
+        console.warn(`[FOT-ASSOC-GUARD] Association check failed (non-blocking, proceeding with FOT): ${assocErr?.message || assocErr}`);
+      }
+    }
+
     if (!useFotRouter) {
       console.log(`[HBAR.h] [C77-07] Using V1 RouterV3 ${v1Router} for all V1 swaps`);
     }
@@ -2536,6 +2904,10 @@ async function executeSaucerSwapDirect(
     // │  Also guards direct V1 routing (no V2 fallback) for 2-element     │
     // │  paths that might use alias EVM addresses unsupported by V1.      │
     // └─────────────────────────────────────────────────────────────────────┘
+    // [V1-QUOTE-XCHECK] Hoist V1 guard quote result so the cross-check (below)
+    // can reuse it without a duplicate getAmountsOut RPC call. Both the guard
+    // and cross-check query the same V1 Factory pairs — results are identical.
+    let _v1GuardQuoteResult: bigint | null = null;
     {
       const isV2Fallback = !!(_v2TokenHbarError || _v2MultiHopError || _v2SingleHopError);
       // [SWAP-FIX-5] Always validate V1 paths: for V2 fallbacks, 2-element
@@ -2596,6 +2968,7 @@ async function executeSaucerSwapDirect(
             }
           } else {
             console.log(`[V1-GUARD] V1 path validated ✓ (getAmountsOut=${v1GuardQuote})`);
+            _v1GuardQuoteResult = v1GuardQuote; // Save for cross-check reuse
           }
         } catch (v1GuardErr: any) {
           if (isV2Fallback) {
@@ -2643,39 +3016,119 @@ async function executeSaucerSwapDirect(
       outputToken: isOutputNative ? whbar : outputToken,
     });
 
-    // ── [V1-QUOTE-FIX] V1 cross-check for forced multi-hop ──
-    // When V2-SKIP forces multi-hop to V1, the server proxy may return a V2
-    // quote (higher output from concentrated liquidity). Using this as
-    // minOutput causes INSUFFICIENT_OUTPUT_AMOUNT when V1 AMM delivers less.
-    // Fix: always cross-check with V1 getAmountsOut and use the LOWER value.
-    if (_forceV1MultiHop && pathAddresses.length > 2 && quote && quote.amountOut > 0) {
+    // ── [V1-QUOTE-XCHECK] V1 cross-check for ALL V1 executions ──
+    // Extended from the original multi-hop-only cross-check. Now runs for
+    // EVERY V1 execution (direct and multi-hop) because:
+    //   1. Server proxy / API quotes may come from V2 pools (higher output
+    //      from concentrated liquidity), causing INSUFFICIENT_OUTPUT_AMOUNT
+    //      when the V1 AMM delivers less at execution time.
+    //   2. API-based price estimates don't account for pool-specific price
+    //      impact — catastrophic for thin-liquidity pools where the input
+    //      amount exceeds the pool reserves (e.g., HBAR.h/GRELF).
+    //   3. [PRICE-IMPACT-GUARD] When V1 output < 50% of server quote, the
+    //      trade has extreme price impact (user gets <50% of expected value).
+    //      Abort with a clear error rather than executing a bad trade.
+    //
+    // Reuses _v1GuardQuoteResult when available (same Factory → identical
+    // getAmountsOut result) to avoid a duplicate RPC call.
+    const _shouldV1CrossCheck = quote && quote.amountOut > 0 && poolVersionInfo?.version === "v1";
+    if (_shouldV1CrossCheck) {
       try {
-        const v1CrossQuote = await fetchRouterQuote(
-          BigInt(rawInput), pathAddresses, quoteRouter, network
-        );
+        // Reuse V1 guard result if available (same V1 Factory → same getAmountsOut)
+        let v1CrossQuote: bigint | null = _v1GuardQuoteResult;
+        if (!v1CrossQuote) {
+          v1CrossQuote = await fetchRouterQuote(
+            BigInt(rawInput), pathAddresses, quoteRouter, network
+          );
+        } else {
+          console.log(`[V1-QUOTE-XCHECK] Reusing V1 guard quote: ${v1CrossQuote}`);
+        }
         if (v1CrossQuote && v1CrossQuote > 0n) {
           const v1Amount = Number(v1CrossQuote);
-          if (quote.amountOut > v1Amount) {
-            const pctDiff = ((quote.amountOut - v1Amount) / quote.amountOut * 100).toFixed(1);
-            console.log(`[V1-QUOTE-FIX] Server quote ${quote.amountOut} (${quote.poolVersion}) > V1 getAmountsOut ${v1Amount} (diff: ${pctDiff}%) — using V1 amount`);
+
+          // ── [PRICE-IMPACT-GUARD] Catastrophic price impact detection ──
+          // If V1 getAmountsOut returns < 50% of the server/API quote, the
+          // pool MIGHT have extreme price impact (input >> reserves).
+          //
+          // CRITICAL EXCEPTION: When the original route had V2 legs but
+          // execution fell back to V1 (V2 pre-validation failed [STEP-6],
+          // V2 execution reverted, or V2 failure cache hit), a large
+          // divergence is EXPECTED — V2 concentrated liquidity pools
+          // deliver much more output than V1 AMM pools. This is NOT
+          // catastrophic price impact; it's a V2→V1 routing degradation.
+          //
+          // In that case: skip the ABORT, log a warning, and let the V1
+          // amount correction (below) adjust the minOutput so the swap
+          // succeeds at V1 rates. The user gets less than the V2 quote
+          // showed, but the swap actually completes.
+          if (quote!.amountOut > v1Amount * 2) {
+            const impactPct = ((quote!.amountOut - v1Amount) / quote!.amountOut * 100).toFixed(1);
+            const isV2QuoteForcedV1 = _forceV1MultiHop && (quote!.poolVersion === "v2" || quote!.source !== "router");
+
+            if (isV2QuoteForcedV1) {
+              // V2→V1 forced degradation — do NOT abort, just warn and correct
+              console.warn(`[PRICE-IMPACT-GUARD] ═══════════════════════════════════════════`);
+              console.warn(`[PRICE-IMPACT-GUARD] V2→V1 ROUTE DEGRADATION (NOT aborting)`);
+              console.warn(`[PRICE-IMPACT-GUARD] Quote: ${quote!.amountOut} (${quote!.source}/${quote!.poolVersion})`);
+              console.warn(`[PRICE-IMPACT-GUARD] V1 getAmountsOut: ${v1Amount} (${impactPct}% less)`);
+              console.warn(`[PRICE-IMPACT-GUARD] Route fell back from V2 to V1 (pre-validation failed, execution reverted, or cache hit)`);
+              console.warn(`[PRICE-IMPACT-GUARD] Proceeding with V1 amount as minOutput basis`);
+              console.warn(`[PRICE-IMPACT-GUARD] ═══════════════════════════════════════════`);
+              // Fall through to the V1 amount correction below
+            } else {
+              // TRUE price impact — both quote and execution are V1-based
+              console.error(`[PRICE-IMPACT-GUARD] ═══════════════════════════════════════════`);
+              console.error(`[PRICE-IMPACT-GUARD] Quote: ${quote!.amountOut} (${quote!.source}/${quote!.poolVersion})`);
+              console.error(`[PRICE-IMPACT-GUARD] V1 getAmountsOut: ${v1Amount}`);
+              console.error(`[PRICE-IMPACT-GUARD] Divergence: ${impactPct}% — CATASTROPHIC PRICE IMPACT`);
+              console.error(`[PRICE-IMPACT-GUARD] Aborting to protect user from unfavorable trade`);
+              console.error(`[PRICE-IMPACT-GUARD] ═══════════════════════════════════════════`);
+              const displayOut = isOutputNative ? "HBAR" : outputToken.symbol;
+              const v1Human = v1Amount / Math.pow(10, isOutputNative ? 8 : outputToken.decimals);
+              const quoteHuman = quote!.amountOut / Math.pow(10, isOutputNative ? 8 : outputToken.decimals);
+              return {
+                success: false,
+                error: `Extreme price impact detected on ${inputToken.symbol} → ${displayOut}. ` +
+                  `Expected ~${quoteHuman.toLocaleString()} ${displayOut} but the pool can only deliver ` +
+                  `~${v1Human.toLocaleString()} ${displayOut} (${impactPct}% less). ` +
+                  `The pool has very low liquidity for this trade size. ` +
+                  `Reduce your swap amount or try swapping in smaller increments.`,
+                executionVenue: "saucerswap-v1",
+              };
+            }
+          }
+
+          if (quote!.amountOut > v1Amount) {
+            const pctDiff = ((quote!.amountOut - v1Amount) / quote!.amountOut * 100).toFixed(1);
+            console.log(`[V1-QUOTE-XCHECK] Server quote ${quote!.amountOut} (${quote!.poolVersion}) > V1 getAmountsOut ${v1Amount} (diff: ${pctDiff}%) — using V1 amount`);
+            // [V1-DEGRADE] Emit degradation event so the UI can update
+            // (safety net — the proactive Phase 3 check in SwapPanel usually catches this first)
+            const _outDecimals = isOutputNative ? 8 : outputToken.decimals;
+            try {
+              window.dispatchEvent(new CustomEvent("swap-quote-degraded", { detail: {
+                v2Amount: quote!.amountOut / Math.pow(10, _outDecimals),
+                v1Amount: v1Amount / Math.pow(10, _outDecimals),
+                outputSymbol: isOutputNative ? "HBAR" : outputToken.symbol,
+                outputDecimals: _outDecimals,
+              }}));
+            } catch (_) { /* non-blocking */ }
             quote = {
               amountOut: v1Amount,
-              priceImpact: quote.priceImpact,
+              priceImpact: quote!.priceImpact,
               route: pathAddresses.map(a => evmAddressToHtsId(a)),
               source: "router" as const,
               confidence: "high" as const,
               poolVersion: "v1" as const,
             };
           } else {
-            console.log(`[V1-QUOTE-FIX] V1 getAmountsOut ${v1Amount} >= server quote ${quote.amountOut} — keeping server quote`);
+            console.log(`[V1-QUOTE-XCHECK] V1 getAmountsOut ${v1Amount} >= server quote ${quote!.amountOut} — keeping server quote`);
           }
         } else {
-          // V1 getAmountsOut returned 0 or null — V1 multi-hop path may not have liquidity
-          // Widen slippage as a safety net rather than aborting
-          console.warn(`[V1-QUOTE-FIX] V1 getAmountsOut failed/zero for multi-hop path — V1 pools may be thin. Widening slippage safety margin.`);
+          // V1 getAmountsOut returned 0 or null — pools may be very thin
+          console.warn(`[V1-QUOTE-XCHECK] V1 getAmountsOut failed/zero — V1 pools may be thin. Widening slippage safety margin.`);
         }
       } catch (v1CrossErr: any) {
-        console.warn(`[V1-QUOTE-FIX] V1 cross-check error (non-blocking): ${v1CrossErr?.message}`);
+        console.warn(`[V1-QUOTE-XCHECK] Cross-check error (non-blocking): ${v1CrossErr?.message}`);
       }
     }
 

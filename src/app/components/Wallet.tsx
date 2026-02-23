@@ -315,7 +315,7 @@ export function Wallet() {
   const [recentTxns, setRecentTxns] = useState<HederaTransaction[]>([]);
   const [loadingTxns, setLoadingTxns] = useState(false);
   const [tokenFilter, setTokenFilter] = useState("");
-  const [showAllTokens, setShowAllTokens] = useState(false);
+  const [showDust, setShowDust] = useState(false);
   const [showAllTxns, setShowAllTxns] = useState(false);
   const [erc20Balances, setErc20Balances] = useState<ERC20Balance[]>([]);
   const [loadingErc20, setLoadingErc20] = useState(false);
@@ -674,21 +674,30 @@ export function Wallet() {
     return list;
   }, [hederaAccount, hbarPrice, hbarhPrice, hbarhDirect, lpTokenPrice, lpDirect, allTokenPrices]);
 
-  const primaryHoldings = useMemo(() => holdings.filter((h) => h.isPrimary), [holdings]);
-  const hiddenHoldings = useMemo(() => {
-    const others = holdings.filter((h) => !h.isPrimary);
-    if (!tokenFilter.trim()) return others;
+  // Split holdings at $1.00 threshold — significant tokens show in main list & donut,
+  // dust tokens collapse into a togglable drawer to keep the UI clean.
+  const DUST_THRESHOLD_USD = 1.0;
+  const significantHoldings = useMemo(
+    () => holdings.filter((h) => h.value >= DUST_THRESHOLD_USD),
+    [holdings]
+  );
+  const dustHoldings = useMemo(() => {
+    const dust = holdings.filter((h) => h.value < DUST_THRESHOLD_USD);
+    if (!tokenFilter.trim()) return dust;
     const q = tokenFilter.toLowerCase();
-    return others.filter((h) =>
+    return dust.filter((h) =>
       h.symbol.toLowerCase().includes(q) || h.name.toLowerCase().includes(q) || (h.tokenId?.includes(q))
     );
   }, [holdings, tokenFilter]);
+  const dustTotalUsd = useMemo(
+    () => dustHoldings.reduce((s, h) => s + h.value, 0),
+    [dustHoldings]
+  );
 
   // Hedera donut data — top 8 by value + "Other" bucket for readability
+  // Only includes significant holdings (>= $1.00) for a clean donut
   const hederaDonutData = useMemo(() => {
-    // Only include tokens with a real USD value — avoids phantom slivers
-    // for LP or other tokens that have a balance but no oracle price yet
-    const pricedItems = holdings
+    const pricedItems = significantHoldings
       .filter((h) => h.value > 0)
       .sort((a, b) => b.value - a.value);
 
@@ -716,8 +725,17 @@ export function Wallet() {
       });
     }
 
+    // Add dust bucket if dust exists (so donut accounts for all value)
+    if (dustTotalUsd > 0) {
+      result.push({
+        name: `Dust (${holdings.filter(h => h.value < DUST_THRESHOLD_USD && h.value > 0).length})`,
+        value: dustTotalUsd,
+        color: isDark ? "#334155" : "#cbd5e1",
+      });
+    }
+
     return result;
-  }, [holdings, isVip, isDark]);
+  }, [significantHoldings, holdings, dustTotalUsd, isVip, isDark]);
 
   // EVM donut data
   const STABLECOINS = useMemo(() => new Set(["USDC", "USDT", "DAI"]), []);
@@ -1113,9 +1131,9 @@ export function Wallet() {
                   </div>
                 </div>
 
-                {/* Token list (VIP-enhanced) */}
+                {/* Token list — significant holdings (>= $1.00 USD) */}
                 <div className="space-y-1.5">
-                  {primaryHoldings.map((h) => {
+                  {significantHoldings.map((h) => {
                     const logo = getTokenLogo(h.symbol, h.tokenId, isDark, partnerLogos.hbarDark, partnerLogos.hbarLight, allTokenPrices);
                     const pctOfPortfolio = hederaTotalUsd > 0 && h.value > 0 ? ((h.value / hederaTotalUsd) * 100) : 0;
                     return (
@@ -1136,8 +1154,8 @@ export function Wallet() {
                             ) : (
                               <div className={`w-8 h-8 bg-gradient-to-br rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isVip ? "from-emerald-500/20 to-teal-500/20" : "from-cyan-500/20 to-blue-500/20"}`}>{h.symbol.slice(0, 2)}</div>
                             )}
-                            {/* VIP: emerald ring on primary tokens */}
-                            {isVip && h.isPrimary && isDark && (
+                            {/* VIP: emerald ring on significant tokens */}
+                            {isVip && isDark && (
                               <motion.div
                                 className="absolute -inset-0.5 rounded-full border border-emerald-500/20 pointer-events-none"
                                 animate={{ borderColor: ["rgba(16,185,129,0.15)", "rgba(16,185,129,0.35)", "rgba(16,185,129,0.15)"] }}
@@ -1184,36 +1202,70 @@ export function Wallet() {
                   })}
                 </div>
 
-                {/* Other tokens expandable */}
-                {hiddenHoldings.length > 0 && (
-                  <div className="mt-2">
-                    <button onClick={() => setShowAllTokens(!showAllTokens)} className={`w-full py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors ${isDark ? "text-slate-500 hover:text-slate-400 hover:bg-white/[0.03]" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"}`}>
-                      {showAllTokens ? <>Hide {hiddenHoldings.length} tokens <ChevronUp className="w-3 h-3" /></> : <>{hiddenHoldings.length} more tokens <ChevronDown className="w-3 h-3" /></>}
+                {/* Dust drawer — tokens below $1.00 USD */}
+                {dustHoldings.length > 0 && (
+                  <div className={`mt-3 rounded-xl overflow-hidden border ${isDark ? "border-white/[0.04]" : "border-gray-100"}`}>
+                    <button
+                      onClick={() => { setShowDust(!showDust); setTokenFilter(""); }}
+                      className={`w-full px-3.5 py-2.5 flex items-center justify-between text-xs transition-colors ${isDark
+                        ? "bg-slate-800/30 hover:bg-slate-800/50 text-slate-400"
+                        : "bg-gray-50/80 hover:bg-gray-100 text-gray-500"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-1.5 h-1.5 rounded-full ${isDark ? "bg-slate-600" : "bg-gray-300"}`} />
+                        <span className="font-semibold">
+                          Dust{" "}
+                          <span className={`font-normal ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                            ({dustHoldings.length} token{dustHoldings.length !== 1 ? "s" : ""} under $1.00)
+                          </span>
+                        </span>
+                        {dustTotalUsd > 0 && (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${isDark ? "bg-slate-700/60 text-slate-400" : "bg-gray-200/80 text-gray-500"}`}>
+                            {formatUsd(dustTotalUsd)}
+                          </span>
+                        )}
+                      </div>
+                      {showDust
+                        ? <ChevronUp className="w-3.5 h-3.5" />
+                        : <ChevronDown className="w-3.5 h-3.5" />
+                      }
                     </button>
-                    {showAllTokens && (
-                      <div className="mt-1.5 space-y-1">
-                        {hiddenHoldings.length > 5 && (
-                          <div className="relative mb-2">
-                            <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 ${isDark ? "text-slate-600" : "text-gray-400"}`} />
-                            <input type="text" value={tokenFilter} onChange={(e) => setTokenFilter(e.target.value)} placeholder="Filter..." className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-xs outline-none ${isDark ? "bg-black/20 border border-cyan-500/10 placeholder:text-slate-700" : "bg-gray-50 border border-gray-200 placeholder:text-gray-400"}`} />
+                    {showDust && (
+                      <div className={`px-2 pb-2 pt-1 space-y-0.5 ${isDark ? "bg-slate-800/15" : "bg-gray-50/50"}`}>
+                        {dustHoldings.length > 8 && (
+                          <div className="relative mb-1.5 px-1">
+                            <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-3 h-3 ${isDark ? "text-slate-600" : "text-gray-400"}`} />
+                            <input
+                              type="text"
+                              value={tokenFilter}
+                              onChange={(e) => setTokenFilter(e.target.value)}
+                              placeholder="Filter dust..."
+                              className={`w-full pl-7 pr-3 py-1.5 rounded-lg text-xs outline-none ${isDark ? "bg-black/20 border border-cyan-500/10 placeholder:text-slate-700" : "bg-white border border-gray-200 placeholder:text-gray-400"}`}
+                            />
                           </div>
                         )}
-                        {hiddenHoldings.map((h) => {
+                        {dustHoldings.map((h) => {
                           const logo = getTokenLogo(h.symbol, h.tokenId, isDark, partnerLogos.hbarDark, partnerLogos.hbarLight, allTokenPrices);
                           return (
-                            <div key={h.tokenId || h.symbol} className={`flex items-center justify-between p-2 rounded-lg ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-50"}`}>
+                            <div
+                              key={h.tokenId || h.symbol}
+                              className={`flex items-center justify-between p-2 rounded-lg ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-100/60"}`}
+                            >
                               <div className="flex items-center gap-2 min-w-0">
                                 {logo ? (
-                                  <img src={logo} alt={h.symbol} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
+                                  <img src={logo} alt={h.symbol} className="w-6 h-6 rounded-full flex-shrink-0 object-cover opacity-60" />
                                 ) : (
-                                  <div className="w-6 h-6 bg-gradient-to-br from-cyan-500/15 to-blue-500/15 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">{h.symbol.slice(0, 2)}</div>
+                                  <div className={`w-6 h-6 bg-gradient-to-br rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 opacity-60 ${isDark ? "from-slate-600/30 to-slate-700/30" : "from-gray-200 to-gray-300"}`}>
+                                    {h.symbol.slice(0, 2)}
+                                  </div>
                                 )}
                                 <div className="min-w-0">
-                                  <span className="font-bold text-xs">{h.symbol}</span>
+                                  <span className={`font-semibold text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{h.symbol}</span>
                                   {h.tokenId && (
                                     <div className="flex items-center gap-1">
-                                      <span className={`text-[10px] font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>{h.tokenId}</span>
-                                      <a href={`https://hashscan.io/${hederaAccount?.network || "mainnet"}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className={`${isVip ? "text-emerald-400 hover:text-emerald-300" : "text-cyan-400 hover:text-cyan-300"}`}>
+                                      <span className={`text-[10px] font-mono ${isDark ? "text-slate-700" : "text-gray-300"}`}>{h.tokenId}</span>
+                                      <a href={`https://hashscan.io/${hederaAccount?.network || "mainnet"}/token/${h.tokenId}`} target="_blank" rel="noopener noreferrer" className={`${isDark ? "text-slate-600 hover:text-slate-500" : "text-gray-300 hover:text-gray-400"}`}>
                                         <ExternalLink className="w-2.5 h-2.5" />
                                       </a>
                                     </div>
@@ -1221,9 +1273,9 @@ export function Wallet() {
                                 </div>
                               </div>
                               <div className="text-right flex-shrink-0 ml-2">
-                                <div className="font-bold text-xs">{formatBal(h.balance)}</div>
+                                <div className={`font-bold text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{formatBal(h.balance)}</div>
                                 {h.value > 0 && (
-                                  <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(h.value)}</div>
+                                  <div className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>{formatUsd(h.value)}</div>
                                 )}
                               </div>
                             </div>
@@ -1247,10 +1299,10 @@ export function Wallet() {
                   <div className={`font-bold text-lg bg-gradient-to-r bg-clip-text text-transparent ${isVip ? "from-emerald-400 to-teal-400" : "from-cyan-400 to-blue-400"}`}>
                     {formatUsd(hederaTotalUsd)}
                   </div>
-                  {/* VIP: priced vs unpriced count */}
+                  {/* VIP: significant vs dust count */}
                   {isVip && (
                     <div className="text-[10px] text-emerald-400/40 mt-0.5">
-                      {holdings.filter(h => h.value > 0).length} priced · {holdings.filter(h => h.value <= 0).length} unpriced
+                      {significantHoldings.length} assets{dustHoldings.length > 0 ? ` · ${dustHoldings.length} dust` : ""}
                     </div>
                   )}
                 </div>

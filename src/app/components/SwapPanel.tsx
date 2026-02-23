@@ -44,6 +44,14 @@ import {
   getTokenBalance,
   fetchLiveTokenPrices,
   fetchAndApplyTokenIcons,
+  fetchRouterQuote,
+  fetchV2MultiHopQuote,
+  encodeSwapPath,
+  getSaucerSwapRouter,
+  getSaucerswapRoutingId,
+  getWhbarToken,
+  htsIdToEvmAddress,
+  SAUCERSWAP_WHBAR_CONTRACT,
   type AllowedToken,
   type SwapQuote,
   type ScoredRouteInfo,
@@ -129,6 +137,33 @@ export function SwapPanel() {
     window.addEventListener("swap-step", handler);
     return () => window.removeEventListener("swap-step", handler);
   }, []);
+
+  // ── [V1-DEGRADE] Route degradation state ──
+  // When a multi-hop route has V2 legs but execution is forced to V1
+  // by [V2-SKIP], the V2 quote overestimates the actual V1 output.
+  // This state holds both amounts so the UI can warn the user BEFORE
+  // they confirm: "V1 routing: ~1.89 GRELF (V2 would give ~4.75)"
+  const [routeDegradation, setRouteDegradation] = useState<{
+    v2Amount: number;
+    v1Amount: number;
+    outputSymbol: string;
+    outputDecimals: number;
+  } | null>(null);
+
+  // Listen for execution-time degradation events (safety net)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) setRouteDegradation(detail);
+    };
+    window.addEventListener("swap-quote-degraded", handler);
+    return () => window.removeEventListener("swap-quote-degraded", handler);
+  }, []);
+
+  // Clear degradation when tokens/amount change
+  useEffect(() => {
+    setRouteDegradation(null);
+  }, [inputToken.symbol, outputToken.symbol, inputAmount]);
 
   // ── Derived: wrap/unwrap detection (must precede useEffects that reference it) ──
   const isWrapUnwrap = isHbarWhbarPair(inputToken.symbol, outputToken.symbol);
@@ -434,6 +469,107 @@ export function SwapPanel() {
       abortCtrl.abort();
     };
   }, [inputAmount, inputToken, outputToken, effectiveSlippage, hederaNetwork, isWrapUnwrap, inputPrice, outputPrice]);
+
+  // ── [STEP-5/6] Phase 3: V2 pre-validation + V1 cross-check for multi-hop ──
+  // When the route is multi-hop with V2 legs:
+  //   1. Try V2 QuoterV2 validation — if it succeeds, V2 will execute and the
+  //      server quote is accurate → no degradation warning needed.
+  //   2. If V2 validation fails, V1 will execute — cross-check with V1
+  //      getAmountsOut and correct the displayed output if divergent.
+  useEffect(() => {
+    if (isWrapUnwrap || !quote || !route) return;
+    const isMultiHop = route.pools.length > 1;
+    if (!isMultiHop) { setRouteDegradation(null); return; }
+    const hasV2Leg = route.pools.some(p => p.source === "v2");
+    if (!hasV2Leg) { setRouteDegradation(null); return; }
+
+    const amt = parseFloat(inputAmount);
+    if (!amt || amt <= 0) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const whbar = getWhbarToken();
+        const pathTokens = route.path.map(t => t.isNative ? whbar : t);
+        const pathEvm = pathTokens.map(t => htsIdToEvmAddress(t.htsId));
+        const inDecimals = inputToken.isNative ? 8 : inputToken.decimals;
+        const rawInput = BigInt(Math.round(amt * Math.pow(10, inDecimals)));
+        const outDecimals = outputToken.isNative ? 8 : outputToken.decimals;
+
+        // ── [STEP-5] V2 QuoterV2 pre-validation (all-V2 multi-hop only) ──
+        const allV2 = route.pools.every(p => p.source === "v2");
+        if (allV2) {
+          try {
+            // Build V2 packed path: resolve aliases + WHBAR contract fix
+            const whbarTokenEvm = htsIdToEvmAddress("0.0.1456986").toLowerCase();
+            const whbarContractEvm = htsIdToEvmAddress(
+              SAUCERSWAP_WHBAR_CONTRACT[hederaNetwork] || SAUCERSWAP_WHBAR_CONTRACT.mainnet
+            );
+            const v2PathEvm = route.path.map(t => {
+              if (t.isNative) return whbarContractEvm;
+              const routingId = getSaucerswapRoutingId(t);
+              const evm = htsIdToEvmAddress(routingId);
+              return evm.toLowerCase() === whbarTokenEvm ? whbarContractEvm : evm;
+            });
+
+            // Convert pool fees to V2 fee tiers (pool.fee is %, fee tier is hundredths of bip)
+            const pathHops = v2PathEvm.map((addr, i) => ({
+              tokenEvm: addr,
+              fee: i < route.pools.length ? (Math.round(route.pools[i].fee * 10000) || 3000) : 0,
+            }));
+            const packedPath = encodeSwapPath(pathHops);
+
+            const v2QuoteOut = await fetchV2MultiHopQuote(packedPath, rawInput, hederaNetwork);
+            if (cancelled) return;
+
+            if (v2QuoteOut && v2QuoteOut > 0n) {
+              // V2 validated ✓ — execution will use V2, server quote is accurate
+              const v2Human = Number(v2QuoteOut) / Math.pow(10, outDecimals);
+              console.log(`[STEP-5] V2 multi-hop validated in UI: ${v2Human.toFixed(6)} ${outputToken.symbol}`);
+              setRouteDegradation(null);
+              // If QuoterV2 amount diverges significantly from server quote, use QuoterV2
+              // (on-chain source of truth, more accurate than server estimate)
+              if (Math.abs(v2Human - quote.outputAmount) / Math.max(quote.outputAmount, 0.0001) > 0.05) {
+                console.log(`[STEP-5] Correcting output: server=${quote.outputAmount.toFixed(6)} → QuoterV2=${v2Human.toFixed(6)}`);
+                setOutputAmount(v2Human >= 1 ? v2Human.toFixed(4) : v2Human.toFixed(8));
+              }
+              return; // V2 viable — skip V1 cross-check
+            }
+          } catch (v2Err: any) {
+            console.log("[STEP-5] V2 UI validation failed (non-blocking):", v2Err?.message);
+          }
+        }
+        if (cancelled) return;
+
+        // ── V1 cross-check (V2 validation failed or mixed legs) ──
+        const v1Router = getSaucerSwapRouter(hederaNetwork, "v1");
+        const v1Quote = await fetchRouterQuote(rawInput, pathEvm, v1Router, hederaNetwork);
+        if (cancelled) return;
+
+        if (v1Quote && v1Quote > 0n) {
+          const v1Human = Number(v1Quote) / Math.pow(10, outDecimals);
+          const serverHuman = quote.outputAmount;
+
+          if (serverHuman > v1Human * 1.1) {
+            console.log(`[V1-DEGRADE] V2 quote ${serverHuman.toFixed(6)} > V1 ${v1Human.toFixed(6)} — correcting output`);
+            setRouteDegradation({
+              v2Amount: serverHuman,
+              v1Amount: v1Human,
+              outputSymbol: outputToken.symbol,
+              outputDecimals: outDecimals,
+            });
+            setOutputAmount(v1Human >= 1 ? v1Human.toFixed(4) : v1Human.toFixed(8));
+          } else {
+            setRouteDegradation(null);
+          }
+        }
+      } catch (err: any) {
+        console.warn("[V1-DEGRADE] Phase 3 cross-check failed (non-blocking):", err?.message);
+      }
+    }, 900);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [quote, route, inputAmount, inputToken, outputToken, hederaNetwork, isWrapUnwrap]);
 
   // [C51] Auto-widen slippage for low confidence quotes
   const autoSlippageWarning = useMemo(() => {
@@ -814,6 +950,7 @@ export function SwapPanel() {
                   summary: swapPrereqs.feeOnTransfer.summary,
                 } : undefined}
                 quoteStale={quoteStale}
+                routeDegradation={routeDegradation}
               />
             )}
 
