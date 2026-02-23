@@ -26,6 +26,7 @@ import { registerSaucerswapPoolRoutes } from "./saucerswap-pools.ts";
 import { registerSaucerswapEngineRoutes } from "./saucerswap-engine.ts";
 import { registerSaucerswapQuoteRoutes } from "./saucerswap-quote.ts";
 import { registerSaucerswapProxyRoutes } from "./saucerswap-proxy.ts";
+import { registerIconProxyRoutes } from "./icon-proxy.ts";
 
 const app = new Hono();
 
@@ -92,5 +93,6 @@ registerSaucerswapPoolRoutes(app);
 registerSaucerswapEngineRoutes(app);
 registerSaucerswapQuoteRoutes(app);
 registerSaucerswapProxyRoutes(app);
+registerIconProxyRoutes(app);
 
 Deno.serve(app.fetch);

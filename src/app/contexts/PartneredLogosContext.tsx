@@ -1,26 +1,41 @@
 /**
  * PartneredLogosContext
  *
- * Fetches partner/wallet logos from the "Partnered logos" Supabase Storage
- * bucket via the /partnered-logos server endpoint. Matches filenames to
- * known partner keys and distributes resolved URLs app-wide.
+ * Provides partner/wallet logos app-wide. Three-tier resolution:
  *
- * Filename matching rules (case-insensitive):
- *   - Contains "metamask"              -> metamask
- *   - Contains "hashpack"              -> hashpack
- *   - Contains "dynamic"               -> dynamic
- *   - Contains "hashport"              -> hashport
- *   - Contains "hbar" + "dark"         -> hbarDark
- *   - Contains "hbar" + "light"        -> hbarLight
- *   - Contains "hbar" (no dark/light)  -> hbarDark + hbarLight (both)
+ *   1. BUCKET_LOGOS (direct public URLs from "Partnered logos" bucket)
+ *      → instant, no server call, works on all deployments
  *
- * Falls back to the static brand.ts values until the fetch resolves.
+ *   2. Server /partnered-logos endpoint (enrichment — only used to
+ *      detect NEW files uploaded after this code was deployed)
+ *
+ *   3. brand.ts data-URI SVGs (emergency fallback — zero network)
+ *
+ * The bucket is PUBLIC, so public URLs are stable and permanent.
+ * The server endpoint is a nice-to-have, not a dependency.
+ *
+ * Bucket files (known):
+ *   - altlantis_logo.png       → (landing page only)
+ *   - bonzo_logo.png           → (landing page only)
+ *   - dynamiclogin_logo.png    → dynamic
+ *   - habr.h.light_logo.png    → hbarLight (legacy "habr" spelling)
+ *   - hashpack_logo.png        → hashpack
+ *   - hashport_logo.png        → hashport
+ *   - hbar.h.dark_logo.png     → hbarDark (renamed from habr)
+ *   - hsuite_logo.png          → (landing page only)
+ *   - impartglobal_logo.png    → (landing page only)
+ *   - ivyfi_logo.png           → (landing page only)
+ *   - metamask_logo.png        → metamask
+ *   - saucerswap_logo.png      → (landing page only)
+ *   - squid_logo.png           → (landing page only)
+ *   - stargate_logo.png        → (landing page only)
  */
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { log } from "../utils/logger";
 import {
+  BUCKET_LOGOS,
   HASHPACK_LOGO,
   METAMASK_LOGO,
   DYNAMIC_LOGO,
@@ -41,7 +56,20 @@ export interface PartneredLogos {
   loaded: boolean;
 }
 
+// Defaults use the BUCKET public URLs (instant, no server call needed).
+// Data-URI SVGs from brand.ts are the emergency fallback only.
 const DEFAULTS: PartneredLogos = {
+  metamask: BUCKET_LOGOS.metamask,
+  hashpack: BUCKET_LOGOS.hashpack,
+  dynamic: BUCKET_LOGOS.dynamic,
+  hashport: BUCKET_LOGOS.hashport,
+  hbarDark: BUCKET_LOGOS.hbarDark,
+  hbarLight: BUCKET_LOGOS.hbarLight,
+  loaded: false,
+};
+
+// Emergency fallback (data URIs — if bucket URLs somehow fail)
+const SVG_FALLBACKS: PartneredLogos = {
   metamask: METAMASK_LOGO,
   hashpack: HASHPACK_LOGO,
   dynamic: DYNAMIC_LOGO,
@@ -76,7 +104,11 @@ function matchLogos(files: BucketFile[]): PartneredLogos {
   const unmatched: string[] = [];
 
   for (const file of images) {
-    const n = file.name.toLowerCase().replace(/[\s_-]+/g, "");
+    // Normalize: lowercase, strip whitespace/underscores/hyphens AND dots
+    // e.g. "hbar.h.dark_logo.png" → strip ext → "hbar.h.dark_logo" → normalize → "hbarhdarklogo"
+    // Also handles legacy "habr.h.light_logo.png" → "habrhlightlogo"
+    const nameNoExt = file.name.replace(/\.(png|jpg|jpeg|webp|svg|avif|gif)$/i, "");
+    const n = nameNoExt.toLowerCase().replace(/[\s_\-.]+/g, "");
     let key: string | null = null;
 
     if (n.includes("metamask") || n.includes("metam") || n.includes("fox")) {
@@ -91,8 +123,9 @@ function matchLogos(files: BucketFile[]): PartneredLogos {
     } else if (n.includes("hashport")) {
       result.hashport = file.publicUrl;
       key = "hashport";
-    } else if (n.includes("hbar")) {
+    } else if (n.includes("hbar") || n.includes("habr")) {
       // HBAR.ħ token icon — check for dark/light variants
+      // Bucket uses "habr.h" (legacy naming) — match both "hbar" and "habr"
       if (n.includes("dark")) {
         result.hbarDark = file.publicUrl;
         key = "hbarDark";
@@ -125,6 +158,8 @@ function matchLogos(files: BucketFile[]): PartneredLogos {
 
 function preloadImage(src: string): Promise<boolean> {
   return new Promise((resolve) => {
+    // Don't preload data URIs — they're always available
+    if (src.startsWith("data:")) { resolve(true); return; }
     const img = new Image();
     img.onload = () => resolve(true);
     img.onerror = () => resolve(false);
@@ -133,6 +168,8 @@ function preloadImage(src: string): Promise<boolean> {
 }
 
 async function fetchPartneredLogos(): Promise<PartneredLogos> {
+  // Start with bucket public URLs as baseline (already in DEFAULTS)
+  // The server call enriches/overrides if there are new files.
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -146,24 +183,23 @@ async function fetchPartneredLogos(): Promise<PartneredLogos> {
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       log.warn("PartneredLogos", `Server returned ${res.status}: ${body}`);
-      return { ...DEFAULTS };
+      // Server failed — but bucket URLs in DEFAULTS are already good!
+      return { ...DEFAULTS, loaded: true };
     }
 
     const data = await res.json();
     const logos: BucketFile[] = data.logos ?? [];
 
-    // Log full server diagnostic data
     log.debug(
       "PartneredLogos",
       `Server response — urlType=${data.urlType}, isPublic=${data.isPublic}, files=${logos.length}`,
       logos.map((f: BucketFile) => f.name),
     );
     if (data.hint) log.debug("PartneredLogos", `Hint: ${data.hint}`);
-    if (data.availableBuckets) log.debug("PartneredLogos", "Available buckets", data.availableBuckets);
 
     if (logos.length === 0) {
-      log.info("PartneredLogos", "No logos returned from server — using defaults");
-      return { ...DEFAULTS };
+      log.info("PartneredLogos", "No logos returned from server — using bucket defaults");
+      return { ...DEFAULTS, loaded: true };
     }
 
     const matched = matchLogos(logos);
@@ -171,15 +207,15 @@ async function fetchPartneredLogos(): Promise<PartneredLogos> {
     // Log final resolved URLs (truncated for readability)
     const truncUrl = (u: string) => u.length > 80 ? `...${u.slice(-60)}` : u;
     log.debug("PartneredLogos", "Final resolved", {
-      metamask: matched.metamask === DEFAULTS.metamask ? "DEFAULT" : truncUrl(matched.metamask),
-      hashpack: matched.hashpack === DEFAULTS.hashpack ? "DEFAULT" : truncUrl(matched.hashpack),
-      dynamic: matched.dynamic === DEFAULTS.dynamic ? "DEFAULT" : truncUrl(matched.dynamic),
-      hashport: matched.hashport === DEFAULTS.hashport ? "DEFAULT" : truncUrl(matched.hashport),
-      hbarDark: matched.hbarDark === DEFAULTS.hbarDark ? "DEFAULT" : truncUrl(matched.hbarDark),
-      hbarLight: matched.hbarLight === DEFAULTS.hbarLight ? "DEFAULT" : truncUrl(matched.hbarLight),
+      metamask: truncUrl(matched.metamask),
+      hashpack: truncUrl(matched.hashpack),
+      dynamic: truncUrl(matched.dynamic),
+      hashport: truncUrl(matched.hashport),
+      hbarDark: truncUrl(matched.hbarDark),
+      hbarLight: truncUrl(matched.hbarLight),
     });
 
-    // Preload all resolved images (log failures)
+    // Preload all resolved images (log failures but don't block)
     const urls = new Set([
       matched.metamask,
       matched.hashpack,
@@ -195,6 +231,16 @@ async function fetchPartneredLogos(): Promise<PartneredLogos> {
     const failed = preloadResults.filter((r) => !r.ok);
     if (failed.length > 0) {
       log.warn("PartneredLogos", `Preload failed for: ${failed.map((r) => r.src).join(", ")}`);
+      // Replace failed URLs with SVG fallbacks
+      for (const key of Object.keys(matched) as (keyof PartneredLogos)[]) {
+        if (key === "loaded") continue;
+        const url = matched[key] as string;
+        const didFail = !await preloadImage(url);
+        if (didFail && SVG_FALLBACKS[key]) {
+          log.debug("PartneredLogos", `Replacing failed ${key} with SVG fallback`);
+          (matched as any)[key] = SVG_FALLBACKS[key];
+        }
+      }
     } else {
       log.debug("PartneredLogos", "All partner logos preloaded successfully");
     }
@@ -202,7 +248,8 @@ async function fetchPartneredLogos(): Promise<PartneredLogos> {
     return matched;
   } catch (err) {
     log.warn("PartneredLogos", `Fetch failed: ${err instanceof Error ? err.message : String(err)}`);
-    return { ...DEFAULTS };
+    // Server is down — bucket URLs in DEFAULTS still work
+    return { ...DEFAULTS, loaded: true };
   }
 }
 

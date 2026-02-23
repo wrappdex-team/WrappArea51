@@ -8,7 +8,15 @@
  *   [3] SaucerSwap CDN by symbol:  /images/tokens/{symbol_lower}.png
  *   [4] SaucerSwap CDN by HTS ID:  /images/tokens/{htsId}.png
  *   [5] SaucerSwap CDN by HTS ID:  /images/tokens/{htsId}.svg
+ *   [6] Icon proxy fallback (primary src routed through our server)
+ *   [7] Icon proxy fallback (registry URL routed through our server)
  *   [∞] Letter avatar (deterministic color)
+ *
+ * On Vercel deployments, external CDN URLs (s2.coinmarketcap.com,
+ * saucerswap.finance) often fail due to referrer/hotlink protection.
+ * The icon proxy fallbacks route these URLs through our own server,
+ * bypassing CDN restrictions. The proxy is only tried AFTER direct
+ * URLs fail — zero server load when CDNs work (localhost, Figma Make).
  *
  * Duplicates are stripped so the chain never re-tries a URL that
  * already failed. The icon registry is a global Map populated once
@@ -18,6 +26,27 @@
  * [C79-01] Production icon system — replaces single-source + letter fallback.
  */
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
+import { projectId } from "/utils/supabase/info";
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── ICON PROXY URL BUILDER ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+
+const ICON_PROXY_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/icon-proxy`;
+
+/**
+ * Wrap an external image URL through our server-side icon proxy.
+ * Only proxies https:// URLs — data URIs and relative paths pass through.
+ * Returns undefined if the URL shouldn't be proxied.
+ */
+function proxyUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  // Don't proxy data URIs, blob URLs, or relative paths
+  if (!url.startsWith("https://")) return undefined;
+  // Don't proxy URLs that are already on our domain
+  if (url.includes(projectId)) return undefined;
+  return `${ICON_PROXY_BASE}?url=${encodeURIComponent(url)}`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // ── ICON REGISTRY ───────────────────────────────────────────────────
@@ -78,6 +107,9 @@ const SS_CDN = "https://www.saucerswap.finance";
 /**
  * Build a deduplicated array of URLs to try, in priority order.
  * No URL appears twice — if src === registryUrl, it's only tried once.
+ *
+ * Strategy: Try direct CDN URLs first (fast, free). If all direct
+ * URLs fail, fall back to our icon proxy (slower, uses server resources).
  */
 function buildUrlChain(src: string, symbol: string, htsId?: string): string[] {
   const seen = new Set<string>();
@@ -90,11 +122,13 @@ function buildUrlChain(src: string, symbol: string, htsId?: string): string[] {
     }
   };
 
+  // ── Phase 1: Direct CDN URLs (zero server load) ──
   // 1. Primary src
   add(src);
 
   // 2. Icon registry (populated from SaucerSwap API via server proxy)
-  if (htsId) add(_iconRegistry.get(htsId));
+  const registryUrl = htsId ? _iconRegistry.get(htsId) : undefined;
+  if (registryUrl) add(registryUrl);
 
   // 3. SaucerSwap CDN by symbol (svg then png)
   if (symbol) {
@@ -107,6 +141,16 @@ function buildUrlChain(src: string, symbol: string, htsId?: string): string[] {
   if (htsId && htsId !== "native") {
     add(`${SS_CDN}/images/tokens/${htsId}.png`);
     add(`${SS_CDN}/images/tokens/${htsId}.svg`);
+  }
+
+  // ── Phase 2: Icon proxy fallbacks (server-routed, bypasses CDN blocks) ──
+  // Only reached if ALL direct CDN URLs above fail (e.g., Vercel deploy
+  // where s2.coinmarketcap.com and saucerswap.finance block our referrer).
+  add(proxyUrl(src));
+  if (registryUrl) add(proxyUrl(registryUrl));
+  // Proxy a SaucerSwap CDN variant by symbol
+  if (symbol) {
+    add(proxyUrl(`${SS_CDN}/images/tokens/${symbol.toLowerCase()}.svg`));
   }
 
   return chain;

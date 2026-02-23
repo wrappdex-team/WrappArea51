@@ -9,6 +9,32 @@
 // ── Supabase Storage base URL for the SWAP LOGOS bucket ──────────────
 const LOGO_BUCKET = "https://ehmlclowiedoqncymegi.supabase.co/storage/v1/object/public/SWAP%20LOGOS";
 
+// ── Supabase Storage: "Partnered logos" PUBLIC bucket ────────────────
+// Direct public URLs for all partner/wallet logos. These are the canonical
+// source of truth — no server roundtrip or filename matching required.
+// Bucket URL: https://supabase.com/dashboard/project/ehmlclowiedoqncymegi/storage/files/buckets/Partnered%20logos
+const PARTNER_BUCKET = "https://ehmlclowiedoqncymegi.supabase.co/storage/v1/object/public/Partnered%20logos";
+
+export const BUCKET_LOGOS = {
+  // ── Partners ──
+  altlantis:    `${PARTNER_BUCKET}/altlantis_logo.png`,
+  bonzo:        `${PARTNER_BUCKET}/bonzo_logo.png`,
+  hsuite:       `${PARTNER_BUCKET}/hsuite_logo.png`,
+  hashport:     `${PARTNER_BUCKET}/hashport_logo.png`,
+  ivyfi:        `${PARTNER_BUCKET}/ivyfi_logo.png`,
+  impartglobal: `${PARTNER_BUCKET}/impartglobal_logo.png`,
+  saucerswap:   `${PARTNER_BUCKET}/saucerswap_logo.png`,
+  squid:        `${PARTNER_BUCKET}/squid_logo.png`,
+  stargate:     `${PARTNER_BUCKET}/stargate_logo.png`,
+  // ── Wallets ──
+  dynamic:      `${PARTNER_BUCKET}/dynamiclogin_logo.png`,
+  hashpack:     `${PARTNER_BUCKET}/hashpack_logo.png`,
+  metamask:     `${PARTNER_BUCKET}/metamask_logo.png`,
+  // ── HBAR.ħ Protocol (dark renamed → hbar.h, light still habr.h legacy) ──
+  hbarDark:     `${PARTNER_BUCKET}/hbar.h.dark_logo.png`,
+  hbarLight:    `${PARTNER_BUCKET}/habr.h.light_logo.png`,
+} as const;
+
 // ── Production logo imports (data URIs for universal compatibility) ──
 // These are the official partner logos provided for rollout.
 // HBAR.ħ Protocol — legally distinct from Hedera's HBAR. Two variants:

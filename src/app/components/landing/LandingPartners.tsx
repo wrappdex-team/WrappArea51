@@ -1,54 +1,147 @@
 import { useState, useEffect, useCallback } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { BUCKET_LOGOS } from "../../assets/brand";
 
 const BLUE = "#1D63ED";
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
+const ICON_PROXY = `${API}/icon-proxy`;
 
-/* ── Static partner data with fallback external URLs ── */
+/** Wrap an external URL through our icon proxy (bypasses CDN hotlink blocks on Vercel). */
+function proxy(url: string): string {
+  return `${ICON_PROXY}?url=${encodeURIComponent(url)}`;
+}
+
+/* ── Static partner data ─────────────────────────────────────────────
+ *
+ * Each partner has:
+ *   - bucketLogo:   Direct public URL from "Partnered logos" Supabase bucket
+ *                   (works everywhere — our own infra, no hotlink blocks)
+ *   - fallbackLogo: External GitHub avatar / data-URI SVG as emergency backup
+ *
+ * Resolution order per logo:
+ *   1. Server-fetched bucket URL (if /partnered-logos returns match)
+ *   2. Hardcoded bucket public URL (BUCKET_LOGOS.*)
+ *   3. External fallback (GitHub avatar etc.)
+ *   4. Proxied external fallback (via /icon-proxy)
+ *   5. Letter initial (CSS-only, zero dependencies)
+ */
 const partners = [
-  { name: "HashPack", url: "https://www.hashpack.app/", fallbackLogo: "https://avatars.githubusercontent.com/u/87255978?v=4&s=200" },
-  { name: "AltLantis", url: "https://altlantis.io/", fallbackLogo: "https://altlantis.io/img/logo.svg" },
-  { name: "HSuite", url: "https://hsuite.network/", fallbackLogo: "https://www.google.com/s2/favicons?domain=hsuite.network&sz=128" },
-  { name: "Hashport", url: "https://www.hashport.network/", fallbackLogo: "https://www.google.com/s2/favicons?domain=hashport.network&sz=128" },
-  { name: "IvyFi", url: "https://www.ivyfi.io/", fallbackLogo: "https://avatars.githubusercontent.com/u/192332449?v=4&s=200" },
-  { name: "Impart Global", url: "https://www.impart.global/", fallbackLogo: "https://www.google.com/s2/favicons?domain=impart.global&sz=128" },
-  { name: "SaucerSwap", url: "https://www.saucerswap.finance/", fallbackLogo: "https://avatars.githubusercontent.com/u/112772558?v=4&s=200" },
-  { name: "Bonzo Finance", url: "https://bonzo.finance/", fallbackLogo: "https://avatars.githubusercontent.com/u/158205956?v=4&s=200" },
-  { name: "Squid Router", url: "https://www.squidrouter.com/", fallbackLogo: "https://avatars.githubusercontent.com/u/89154910?v=4&s=200" },
-  { name: "Stargate", url: "https://stargate.finance/", fallbackLogo: "https://avatars.githubusercontent.com/u/101737707?v=4&s=200" },
+  {
+    name: "HashPack",
+    url: "https://www.hashpack.app/",
+    bucketLogo: BUCKET_LOGOS.hashpack,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/87255978?v=4&s=200",
+  },
+  {
+    name: "AltLantis",
+    url: "https://altlantis.io/",
+    bucketLogo: BUCKET_LOGOS.altlantis,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/149635268?v=4&s=200",
+  },
+  {
+    name: "HSuite",
+    url: "https://hsuite.network/",
+    bucketLogo: BUCKET_LOGOS.hsuite,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/114540559?v=4&s=200",
+  },
+  {
+    name: "Hashport",
+    url: "https://www.hashport.network/",
+    bucketLogo: BUCKET_LOGOS.hashport,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/97393726?v=4&s=200",
+  },
+  {
+    name: "IvyFi",
+    url: "https://www.ivyfi.io/",
+    bucketLogo: BUCKET_LOGOS.ivyfi,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/192332449?v=4&s=200",
+  },
+  {
+    name: "Impart Global",
+    url: "https://www.impart.global/",
+    bucketLogo: BUCKET_LOGOS.impartglobal,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/148897649?v=4&s=200",
+  },
+  {
+    name: "SaucerSwap",
+    url: "https://www.saucerswap.finance/",
+    bucketLogo: BUCKET_LOGOS.saucerswap,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/112772558?v=4&s=200",
+  },
+  {
+    name: "Bonzo Finance",
+    url: "https://bonzo.finance/",
+    bucketLogo: BUCKET_LOGOS.bonzo,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/158205956?v=4&s=200",
+  },
+  {
+    name: "Squid Router",
+    url: "https://www.squidrouter.com/",
+    bucketLogo: BUCKET_LOGOS.squid,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/89154910?v=4&s=200",
+  },
+  {
+    name: "Stargate",
+    url: "https://stargate.finance/",
+    bucketLogo: BUCKET_LOGOS.stargate,
+    fallbackLogo: "https://avatars.githubusercontent.com/u/101737707?v=4&s=200",
+  },
 ];
 
 /**
- * Logo component with three-tier fallback:
- *   1. Supabase bucket signed URL (if available from /partnered-logos)
- *   2. Hardcoded external fallback URL
- *   3. Styled initial letter (zero external dependencies)
+ * Logo component with five-tier fallback:
+ *   1. Server-fetched bucket URL (freshest — picks up new uploads)
+ *   2. Hardcoded bucket public URL (stable, no server call)
+ *   3. External fallback URL (GitHub avatar etc.)
+ *   4. Proxied external fallback (bypasses CDN blocks)
+ *   5. Styled initial letter (CSS-only, zero external dependencies)
  */
 function PartnerLogo({
   name,
-  bucketUrl,
+  serverBucketUrl,
+  hardcodedBucketUrl,
   fallbackUrl,
 }: {
   name: string;
-  bucketUrl?: string;
+  serverBucketUrl?: string;
+  hardcodedBucketUrl?: string;
   fallbackUrl: string;
 }) {
-  const [src, setSrc] = useState(bucketUrl || fallbackUrl);
+  // Build URL list — deduplicated, ordered by preference
+  const urls = [
+    serverBucketUrl,
+    hardcodedBucketUrl,
+    fallbackUrl,
+    // Don't proxy data URIs or bucket URLs (they're already on our infra)
+    fallbackUrl.startsWith("data:") || fallbackUrl.includes("supabase.co")
+      ? undefined
+      : proxy(fallbackUrl),
+  ].filter((u): u is string => !!u);
+
+  // Deduplicate
+  const uniqueUrls = [...new Set(urls)];
+
+  const [urlIdx, setUrlIdx] = useState(0);
   const [failed, setFailed] = useState(false);
 
+  // Reset when server bucket URL arrives
   useEffect(() => {
-    if (bucketUrl) setSrc(bucketUrl);
-  }, [bucketUrl]);
+    if (serverBucketUrl) {
+      setUrlIdx(0);
+      setFailed(false);
+    }
+  }, [serverBucketUrl]);
 
   const handleError = useCallback(() => {
-    if (src === bucketUrl && fallbackUrl) {
-      // Bucket URL failed → try external fallback
-      setSrc(fallbackUrl);
-    } else {
-      // All image sources failed → show styled initial
-      setFailed(true);
-    }
-  }, [src, bucketUrl, fallbackUrl]);
+    setUrlIdx((prev) => {
+      const next = prev + 1;
+      if (next >= uniqueUrls.length) {
+        setFailed(true);
+        return prev;
+      }
+      return next;
+    });
+  }, [uniqueUrls.length]);
 
   if (failed) {
     return (
@@ -59,10 +152,7 @@ function PartnerLogo({
           border: `1px solid ${BLUE}12`,
         }}
       >
-        <span
-          className="text-xl font-black"
-          style={{ color: BLUE }}
-        >
+        <span className="text-xl font-black" style={{ color: BLUE }}>
           {name.charAt(0)}
         </span>
       </div>
@@ -71,7 +161,7 @@ function PartnerLogo({
 
   return (
     <img
-      src={src}
+      src={uniqueUrls[urlIdx]}
       alt={name}
       className="w-14 h-14 object-contain mb-6 opacity-30 group-hover:opacity-100 transition-all duration-500 relative z-10 scale-95 group-hover:scale-110"
       onError={handleError}
@@ -81,9 +171,10 @@ function PartnerLogo({
 }
 
 export function LandingPartners() {
-  const [bucketLogos, setBucketLogos] = useState<Record<string, string>>({});
+  const [serverLogos, setServerLogos] = useState<Record<string, string>>({});
 
-  /* Try to fetch logos from Supabase "Partnered logos" bucket via server endpoint */
+  /* Fetch logos from server endpoint — enriches hardcoded bucket URLs
+     with any new files uploaded after deployment. */
   useEffect(() => {
     fetch(`${API}/partnered-logos`, {
       headers: { Authorization: `Bearer ${publicAnonKey}` },
@@ -93,30 +184,29 @@ export function LandingPartners() {
         if (!data?.logos?.length) return;
         const map: Record<string, string> = {};
         for (const logo of data.logos) {
-          // Match bucket filename to partner name (case-insensitive, strip extension)
+          // Strip extension, strip _logo suffix, strip dots/underscores/hyphens
           const baseName = (logo.name || "")
             .replace(/\.(png|jpg|jpeg|webp|svg|avif|gif)$/i, "")
+            .replace(/_?logo$/i, "")
             .toLowerCase()
+            .replace(/[\s_\-.]+/g, "")
             .trim();
           const url = logo.publicUrl || logo.url;
           if (baseName && url) map[baseName] = url;
         }
-        setBucketLogos(map);
+        setServerLogos(map);
       })
       .catch(() => {
-        /* Silent — fallback to external URLs */
+        /* Silent — hardcoded bucket URLs are already loaded */
       });
   }, []);
 
-  /** Resolve bucket logo by trying common filename variants */
-  const getBucketUrl = (name: string): string | undefined => {
-    const key = name.toLowerCase().replace(/\s+/g, "");
-    // Try: "hashpack", "hash-pack", "hash_pack", exact name
+  /** Resolve server-fetched bucket logo by trying common filename variants */
+  const getServerUrl = (name: string): string | undefined => {
+    const key = name.toLowerCase().replace(/[\s_\-.]+/g, "");
     return (
-      bucketLogos[key] ||
-      bucketLogos[name.toLowerCase().replace(/\s+/g, "-")] ||
-      bucketLogos[name.toLowerCase().replace(/\s+/g, "_")] ||
-      bucketLogos[name.toLowerCase()] ||
+      serverLogos[key] ||
+      serverLogos[name.toLowerCase().replace(/\s+/g, "")] ||
       undefined
     );
   };
@@ -140,9 +230,9 @@ export function LandingPartners() {
           className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px bg-slate-100 overflow-hidden"
           style={{ border: "1px solid #f1f5f9", boxShadow: "0 16px 48px -12px rgba(0,0,0,0.06)" }}
         >
-          {partners.map((partner, i) => (
+          {partners.map((partner) => (
             <a
-              key={i}
+              key={partner.name}
               href={partner.url}
               target="_blank"
               rel="noopener noreferrer"
@@ -154,7 +244,8 @@ export function LandingPartners() {
               />
               <PartnerLogo
                 name={partner.name}
-                bucketUrl={getBucketUrl(partner.name)}
+                serverBucketUrl={getServerUrl(partner.name)}
+                hardcodedBucketUrl={partner.bucketLogo}
                 fallbackUrl={partner.fallbackLogo}
               />
               <span className="text-[8px] sm:text-[9px] font-black text-slate-400 group-hover:text-black uppercase tracking-[0.25em] whitespace-nowrap transition-colors relative z-10">
