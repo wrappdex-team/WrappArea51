@@ -52,6 +52,7 @@ import {
   type SwapOptions,
   type SwapPrerequisites,
 } from "../utils/saucerswap";
+import { classifySwapError } from "../utils/saucerswap/diagnostics";
 import { prewarmRelay, startRelayKeepalive, tryOpenWalletExtension } from "../utils/hashpack";
 import {
   SwapHistoryPanel,
@@ -192,16 +193,68 @@ export function SwapPanel() {
   const [swapHistory, setSwapHistory] = useState<SwapHistoryEntry[]>([]);
   useEffect(() => { setSwapHistory(loadSwapHistory()); }, []);
 
-  // ── Quote refresh countdown ──
-  const [quoteCountdown, setQuoteCountdown] = useState(QUOTE_REFRESH_INTERVAL);
+  // ── Fetch prices (hoisted before countdown for dependency) ──
+  const fetchPrices = useCallback(async () => {
+    setPriceLoading(true);
+    try {
+      const prices = await fetchLiveTokenPrices();
+      setLivePrices(prices);
+    } catch { /* fallback to ctx price */ }
+    setPriceLoading(false);
+  }, []);
+
   useEffect(() => {
-    // Reset countdown when prices refresh
+    fetchPrices();
+    // [C36-04] Fetch official token icons from SaucerSwap API on mount
+    fetchAndApplyTokenIcons();
+  }, [fetchPrices]);
+
+  // [C81-01] Start relay keepalive when wallet is connected.
+  // Keeps WC WebSocket alive so wallet auto-pops on signing requests.
+  useEffect(() => {
+    if (isWalletConnected) {
+      startRelayKeepalive();
+      prewarmRelay();
+    }
+  }, [isWalletConnected]);
+
+  // Pull-to-refresh support — re-fetch swap prices on mobile swipe-down
+  useEffect(() => {
+    const handlePullRefresh = () => { fetchPrices(); };
+    window.addEventListener("wrappdex:pull-refresh", handlePullRefresh);
+    return () => window.removeEventListener("wrappdex:pull-refresh", handlePullRefresh);
+  }, [fetchPrices]);
+
+  // ── Quote refresh countdown + freshness TTL [Step 16] ──
+  // When countdown reaches 0, auto-refresh both prices AND server quote.
+  // This ensures users don't swap on stale quotes — critical for volatile pairs.
+  const [quoteCountdown, setQuoteCountdown] = useState(QUOTE_REFRESH_INTERVAL);
+  const [quoteStale, setQuoteStale] = useState(false);
+  const quoteRefreshInFlightRef = useRef(false);
+
+  useEffect(() => {
+    // Reset countdown + mark fresh when prices actually refresh
     setQuoteCountdown(QUOTE_REFRESH_INTERVAL);
+    setQuoteStale(false);
+  }, [livePrices]);
+
+  useEffect(() => {
     const iv = setInterval(() => {
-      setQuoteCountdown(prev => (prev <= 1 ? QUOTE_REFRESH_INTERVAL : prev - 1));
+      setQuoteCountdown(prev => {
+        if (prev <= 1) {
+          // [Step 16] TTL expired — mark stale and trigger refresh
+          setQuoteStale(true);
+          if (!quoteRefreshInFlightRef.current) {
+            quoteRefreshInFlightRef.current = true;
+            fetchPrices().finally(() => { quoteRefreshInFlightRef.current = false; });
+          }
+          return QUOTE_REFRESH_INTERVAL;
+        }
+        return prev - 1;
+      });
     }, 1000);
     return () => clearInterval(iv);
-  }, [livePrices]);
+  }, [fetchPrices]);
 
   // ── Live pool data ──
   // [C22-01] Fetches live pool data from SaucerSwap via backend proxy.
@@ -246,41 +299,6 @@ export function SwapPanel() {
   const hasValidOutput = isWrapUnwrap || (outputAmount && parseFloat(outputAmount) > 0);
   const canSwap = isWalletConnected && inputAmount && parseFloat(inputAmount) > 0 &&
     (isWrapUnwrap || route) && swapStatus === "idle" && !insufficientBalance && hasValidOutput;
-
-  // ── Fetch prices ──
-  const fetchPrices = useCallback(async () => {
-    setPriceLoading(true);
-    try {
-      const prices = await fetchLiveTokenPrices();
-      setLivePrices(prices);
-    } catch { /* fallback to ctx price */ }
-    setPriceLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchPrices();
-    // [C36-04] Fetch official token icons from SaucerSwap API on mount
-    fetchAndApplyTokenIcons();
-    const iv = setInterval(fetchPrices, 30000);
-    return () => clearInterval(iv);
-  }, [fetchPrices]);
-
-  // [C81-01] Start relay keepalive when wallet is connected.
-  // Keeps WC WebSocket alive so wallet auto-pops on signing requests.
-  useEffect(() => {
-    if (isWalletConnected) {
-      startRelayKeepalive();
-      // Also do an immediate prewarm in case relay dropped
-      prewarmRelay();
-    }
-  }, [isWalletConnected]);
-
-  // Pull-to-refresh support — re-fetch swap prices on mobile swipe-down
-  useEffect(() => {
-    const handlePullRefresh = () => { fetchPrices(); };
-    window.addEventListener("wrappdex:pull-refresh", handlePullRefresh);
-    return () => window.removeEventListener("wrappdex:pull-refresh", handlePullRefresh);
-  }, [fetchPrices]);
 
   // ── Fetch balances ──
   const fetchBalances = useCallback(async () => {
@@ -556,8 +574,35 @@ export function SwapPanel() {
         toast.info("Transaction cancelled");
       } else {
         setSwapStatus("error");
-        setSwapError(result.error || "Swap failed");
-        toast.error(result.error || "Swap failed");
+        // [FOT] Enhance error message for fee-on-transfer token failures
+        // [V1-DRYRUN-FIX] Don't trigger FOT marking for dry-run errors —
+        // those are simulation artifacts, not fee-on-transfer indicators.
+        // [DIAG-02] Use error classifier for user-friendly messages.
+        const rawError = result.error || "Swap failed";
+        const isDryRunError = rawError.toLowerCase().includes("pre-swap simulation") || rawError.toLowerCase().includes("dry run");
+        const isFotError = !isDryRunError && (
+          rawError.toLowerCase().includes("insufficient_output_amount") ||
+          rawError.toLowerCase().includes("insufficient output")
+        );
+
+        // [DIAG-02] Classify error for user-friendly display
+        const classified = classifySwapError(rawError, {
+          inputSymbol: inputToken.symbol,
+          outputSymbol: outputToken.symbol,
+          venue: result.executionVenue,
+          slippagePct: effectiveSlippage,
+          isV2Fallback: rawError.toLowerCase().includes("v2") && rawError.toLowerCase().includes("v1"),
+        });
+        console.log(`[DIAG-02] Error classified: category=${classified.category}, suggestion=${classified.suggestion}`);
+
+        const displayError = isFotError
+          ? `${classified.userMessage}\n\nThis token may have a custom transfer fee. The swap has been marked for automatic fee-tolerant routing — please try again.`
+          : `${classified.userMessage}${classified.category !== "unknown" ? `\n\n💡 ${classified.suggestion}` : ""}`;
+        setSwapError(displayError);
+        toast.error(isFotError
+          ? "Token has a transfer fee — retry will use fee-tolerant router automatically"
+          : classified.category !== "unknown" ? classified.userMessage : rawError
+        );
 
         // Save failed swap to history
         const entry: SwapHistoryEntry = {
@@ -605,7 +650,7 @@ export function SwapPanel() {
       const timer = setTimeout(() => {
         setSwapStatus("idle");
         setSwapError(null);
-      }, 5000);
+      }, 12000); // [DIAG-02] Extended from 5s — error messages now include actionable suggestions
       return () => clearTimeout(timer);
     }
   }, [swapStatus]);
@@ -653,7 +698,9 @@ export function SwapPanel() {
 
   const handleResetSwap = useCallback(() => {
     setSwapStatus("idle");
-    setInputAmount("");
+    // [STEP-11] Preserve input amount on error reset — user just wants to retry,
+    // not re-enter the amount. The quote will auto-refresh from the debounced
+    // effect since inputAmount is still set.
     setOutputAmount("");
     setQuote(null);
     setScoredRoutes([]);
@@ -761,6 +808,12 @@ export function SwapPanel() {
                 slippage={slippage}
                 customSlippage={customSlippage}
                 onSetCustomSlippage={setCustomSlippage}
+                feeOnTransfer={swapPrereqs?.feeOnTransfer ? {
+                  detected: swapPrereqs.feeOnTransfer.detected,
+                  totalFeePercent: swapPrereqs.feeOnTransfer.totalFeePercent,
+                  summary: swapPrereqs.feeOnTransfer.summary,
+                } : undefined}
+                quoteStale={quoteStale}
               />
             )}
 

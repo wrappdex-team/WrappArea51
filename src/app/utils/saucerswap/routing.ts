@@ -29,6 +29,8 @@ import {
 } from "./tokens";
 import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion } from "./pools";
+// SAUCERSWAP_WHBAR_CONTRACT is no longer used here — V2 WHBAR correction
+// is applied at V2 execution time in swap-engine.ts (ensureWhbarContractForV2)
 
 // ═════════════════════════════════════════════════════════════════════
 // ── [C82] API-BASED POOL GRAPH ROUTING ──────────────────────────────
@@ -128,6 +130,37 @@ async function buildPoolGraph(network: HederaNetwork): Promise<PoolGraph> {
     log.warn("PoolGraph", `V1 pool fetch failed: ${e?.message}`);
   }
 
+  // ── [SWAP-FIX-2] WHBAR ID normalization ──────────────────────────────
+  // V2 pools may register WHBAR under its CONTRACT ID (0.0.1456985)
+  // while our token registry uses the TOKEN ID (0.0.1456986). These
+  // differ by exactly 1 and represent the same asset. Mirror all edges
+  // from one to the other so BFS finds V2 pools regardless of which
+  // WHBAR ID the lookup starts from.
+  const WHBAR_TOKEN = "0.0.1456986";
+  const WHBAR_CONTRACT = "0.0.1456985";
+  const whbarIds = [WHBAR_TOKEN, WHBAR_CONTRACT];
+  for (const srcId of whbarIds) {
+    const dstId = srcId === WHBAR_TOKEN ? WHBAR_CONTRACT : WHBAR_TOKEN;
+    const srcEdges = graph.get(srcId);
+    if (srcEdges && srcEdges.length > 0) {
+      if (!graph.has(dstId)) graph.set(dstId, []);
+      const dstEdges = graph.get(dstId)!;
+      const existingPairs = new Set(dstEdges.map(e => `${e.otherToken}:${e.version}:${e.fee}`));
+      let mirrored = 0;
+      for (const edge of srcEdges) {
+        const key = `${edge.otherToken}:${edge.version}:${edge.fee}`;
+        if (!existingPairs.has(key)) {
+          dstEdges.push({ ...edge });
+          existingPairs.add(key);
+          mirrored++;
+        }
+      }
+      if (mirrored > 0) {
+        log.info("PoolGraph", `[SWAP-FIX-2] Mirrored ${mirrored} edges from WHBAR ${srcId} → ${dstId}`);
+      }
+    }
+  }
+
   _poolGraph = graph;
   _poolGraphTs = Date.now();
   return graph;
@@ -147,6 +180,11 @@ function resolveGraphKey(htsId: string, graph: PoolGraph): string {
   if (token?.saucerswapAliasId && graph.has(token.saucerswapAliasId)) {
     return token.saucerswapAliasId;
   }
+  // [SWAP-FIX-2] Also handle WHBAR contract ↔ token ID mapping.
+  // V2 pools may register under 0.0.1456985 (contract) while routing
+  // uses 0.0.1456986 (token), or vice versa.
+  if (htsId === "0.0.1456986" && graph.has("0.0.1456985")) return "0.0.1456985";
+  if (htsId === "0.0.1456985" && graph.has("0.0.1456986")) return "0.0.1456986";
   return htsId;
 }
 
@@ -204,6 +242,10 @@ function getAllEdges(htsId: string, graph: PoolGraph): PoolEdge[] {
     if (aliasId !== htsId) addEdges(aliasId);
   }
 
+  // 3. [SWAP-FIX-2] WHBAR contract ↔ token ID cross-reference
+  if (htsId === "0.0.1456986") addEdges("0.0.1456985");
+  if (htsId === "0.0.1456985") addEdges("0.0.1456986");
+
   return edges;
 }
 
@@ -229,6 +271,10 @@ function getAllGraphKeys(htsId: string, graph: PoolGraph): Set<string> {
     keys.add(directToken.saucerswapAliasId);
   }
 
+  // [SWAP-FIX-2] WHBAR contract ↔ token ID
+  if (htsId === "0.0.1456986" && graph.has("0.0.1456985")) keys.add("0.0.1456985");
+  if (htsId === "0.0.1456985" && graph.has("0.0.1456986")) keys.add("0.0.1456986");
+
   return keys;
 }
 
@@ -249,6 +295,14 @@ function resolveEvmForVersion(graphKey: string, version: "v1" | "v2"): string {
   if (token) {
     if (version === "v2") {
       // V2: use alias EVM address (ERC20Wrapper that V2 pools are paired with)
+      // NOTE: WHBAR CONTRACT correction (0.0.1456986→0.0.1456985) is intentionally
+      // NOT applied here. The V2 WHBAR fix is applied at the point of V2 execution
+      // in swap-engine.ts (ensureWhbarContractForV2). Applying it here would
+      // contaminate pathAddresses that flow to V1 fallback code — V1 Factory
+      // pairs use the WHBAR TOKEN (0.0.1456986), not the CONTRACT (0.0.1456985).
+      // The V2 execution paths (executeSaucerSwapV2Direct line 351-356 and
+      // executeSaucerSwapV2MultiHop line 1153) both call ensureWhbarContractForV2()
+      // on every token address before encoding the V2 calldata.
       return htsIdToEvmAddress(getSaucerswapRoutingId(token));
     } else {
       // V1: use canonical EVM address (original bridge token)
@@ -382,7 +436,7 @@ export async function findRouteViaGraph(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ── SWAP PATH BUILDING ────────────────────────────────────────────────
+// ── SWAP PATH BUILDING ───────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 
 /**
@@ -411,7 +465,7 @@ export function buildSwapPath(input: AllowedToken, output: AllowedToken): Allowe
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// ── INTERMEDIARY TOKEN SELECTION ──────────────────────────────────────
+// ── INTERMEDIARY TOKEN SELECTION ─────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 
 /**

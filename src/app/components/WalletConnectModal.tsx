@@ -26,6 +26,80 @@ import {
 import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
+import { getSignClient } from "../utils/wallet-core";
+import { QRCodeSVG } from "qrcode.react";
+
+// ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ──────────────
+// Fire getSignClient() the moment the modal opens, so by the time the user
+// clicks "HashPack" the WC SDK is already initialized and relay is connected.
+// ── [WALLET-SURGERY Step 3] Detect HashPack extension ──────────────
+const HASHPACK_EXTENSION_ID = "gjagmgiddbbciopjhllkdnddhcglnemk";
+
+/** Detect if HashPack browser extension is installed via chrome.runtime */
+function detectHashPackExtension(): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const chromeApi = (globalThis as any).chrome;
+      if (!chromeApi?.runtime?.sendMessage) {
+        resolve(false);
+        return;
+      }
+      // Send a "ping" — if the extension responds (or doesn't throw), it's installed
+      const timer = setTimeout(() => resolve(false), 800);
+      chromeApi.runtime.sendMessage(
+        HASHPACK_EXTENSION_ID,
+        { type: "ping" },
+        (response: any) => {
+          clearTimeout(timer);
+          // chrome.runtime.lastError is set if the extension doesn't exist
+          const err = chromeApi.runtime.lastError;
+          if (err) {
+            // Extension NOT installed or not externally_connectable
+            // But if the error is "Could not establish connection" that means
+            // the extension IS installed but doesn't handle external messages.
+            // Chrome reports different errors:
+            // - "Could not establish connection" = extension exists but no handler
+            // - "Cannot find extension" / similar = extension not installed
+            const errMsg = (err.message || "").toLowerCase();
+            resolve(errMsg.includes("could not establish connection") || errMsg.includes("receiving end"));
+          } else {
+            // Got a response — extension is definitely installed
+            resolve(true);
+          }
+        }
+      );
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/** Send WC pairing URI directly to the HashPack extension */
+function sendUriToHashPackExtension(uri: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const chromeApi = (globalThis as any).chrome;
+      if (!chromeApi?.runtime?.sendMessage) {
+        resolve(false);
+        return;
+      }
+      const timer = setTimeout(() => resolve(false), 2000);
+      chromeApi.runtime.sendMessage(
+        HASHPACK_EXTENSION_ID,
+        { type: "wc_uri", uri, action: "pair" },
+        () => {
+          clearTimeout(timer);
+          const err = chromeApi.runtime.lastError;
+          // Even if we get an error, the extension may still process the pairing
+          // via the WC relay (the URI was generated and the relay delivers it)
+          resolve(!err);
+        }
+      );
+    } catch {
+      resolve(false);
+    }
+  });
+}
 
 /**
  * Dynamic SDK hook results forwarded from DynamicHooksBridge.
@@ -237,6 +311,20 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // checked after the async call returns.
   const mmConnectIdRef = useRef(0);
 
+  // ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ──────────────
+  // Fire getSignClient() the moment the modal opens, so by the time the user
+  // clicks "HashPack" the WC SDK is already initialized and relay is connected.
+  // ── [WALLET-SURGERY Step 3] Detect HashPack extension ──────────────
+  const [hashPackDetected, setHashPackDetected] = useState<boolean | null>(null);
+  useEffect(() => {
+    // Pre-warm WC SignClient in background (non-blocking)
+    getSignClient().catch(() => { /* non-critical */ });
+    // Detect HashPack extension
+    if (!isMobileBrowser()) {
+      detectHashPackExtension().then(setHashPackDetected);
+    }
+  }, []);
+
   // ── Dynamic Connect ──────────────────────────────────────────────
   //
   // Opens the Dynamic Labs auth modal (email, social, 300+ wallets).
@@ -262,57 +350,52 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
 
   // ── WalletConnect Connect ────────────────────────────────────
   //
+  // [WALLET-SURGERY] Simplified flow — let the standard WC modal open.
+  // The WC modal is the proven delivery mechanism for the pairing URI
+  // to reach HashPack (extension or mobile). Pre-warming the SignClient
+  // at page load (Step 1) already eliminates the 1-3s init wait.
+  //
   // Flow:
-  //   1. User clicks "HashPack" (or Hedera Wallet) → we show spinner
-  //   2. connectHashPack() inits SignClient → proposes session → gets URI
-  //   3. The official WalletConnect modal opens on top with QR + wallet list
-  //   4. User picks their wallet (HashPack, Blade, etc.) and approves
-  //   5. Session established → we show success screen
-  //   6. If user closes WC modal → treated as cancellation
+  //   1. User clicks "HashPack" → we close our modal, connectHashPack runs
+  //   2. WC modal opens instantly (SignClient pre-warmed) showing QR + wallets
+  //   3. HashPack extension auto-detects OR user scans QR with HashPack mobile
+  //   4. User approves → session established → success screen
 
   const handleWCConnect = useCallback(async (wallet: WalletOption) => {
     setSelectedWallet(wallet);
-    setStep("wc-connecting");
     setWcError(null);
     setLocalSession(null);
     setPairingUri(null);
-    setConnectionState("Initializing WalletConnect...");
+    setConnectionState("Connecting...");
 
-    // connectHashPack opens the WC modal automatically.
-    // Our modal stays on "wc-connecting" to show status behind the WC modal.
-    const resultPromise = connectHashPack(
+    // Close our modal — the WC modal will open on top and handle the flow.
+    // This avoids z-index conflicts between our ModalShell and the WC modal.
+    onClose();
+
+    // Let the standard WC modal handle URI delivery to HashPack.
+    // No skipWCModal, no hideWCModal — the WC modal is what works.
+    const result = await connectHashPack(
       "mainnet",
-      // onPairingString: still receives the URI for reference
       (uri: string) => {
         setPairingUri(uri);
-        // Do NOT switch to wc-qr — the WC modal handles QR display
       },
-      // onConnectionState: fires with status updates
       (state: string) => {
         setConnectionState(state);
       },
+      // No options — let the WC modal open normally
     );
 
-    const result = await resultPromise;
-
+    // WC modal is now closed (session approved, rejected, or timed out).
+    // If success, the WalletContext already updated — nothing more to do.
+    // If error, we can't re-open our modal easily, but WalletContext holds
+    // the error state which the UI reads from hederaConnectionError.
     if (result.success && result.session) {
-      setLocalSession(result.session);
-      setStep("wc-success");
       playConnectionSuccess();
-    } else if (result.error) {
-      // "Connection was cancelled" means user closed the WC modal — go back to list
-      if (result.error.includes("cancelled") || result.error.includes("aborted")) {
-        setStep("list");
-      } else {
-        setWcError(result.error);
-        // Stay on wc-connecting to show error
-      }
-    } else {
-      setStep("list");
     }
-  }, [connectHashPack]);
+    // Errors are surfaced via WalletContext.hederaConnectionError
+  }, [connectHashPack, onClose]);
 
-  // ── MetaMask Connect ─────────────────────────────────────────────
+  // ── MetaMask Connect ────────���────────────────────────────────────
 
   const handleMetaMaskConnect = async () => {
     const connectId = ++mmConnectIdRef.current;
@@ -353,7 +436,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     ? <DynamicHooksBridge onUpdateRef={dynamicUpdateRef} />
     : null;
 
-  // ═══════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // METAMASK CONNECTING
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-connect") {
@@ -456,17 +539,18 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   }
 
   // ═════════════════════════════════════════════════════════════
-  // WC CONNECTING (Initial spinner before QR is ready)
+  // WC CONNECTING — [WALLET-SURGERY Step 6] Streamlined UI
   // ═════════════════════════════════════════════════════════════
   if (step === "wc-connecting") {
     const hasError = wcError || (!isConnectingHedera && hederaConnectionError);
     const errorMsg = wcError || hederaConnectionError;
+    const showQR = pairingUri && !hashPackDetected && !isMobileBrowser();
 
     return (
       <>{dynamicBridge}
       <ModalShell>
         <div className="p-6">
-          <div className="flex items-center gap-3 mb-8">
+          <div className="flex items-center gap-3 mb-6">
             <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
@@ -475,41 +559,102 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
             )}
             <span className="text-white/90">{selectedWallet?.name || "Connecting"}</span>
           </div>
-          <div className="text-center py-10">
-            {hasError ? (
-              <>
-                <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
-                  <AlertCircle className="w-8 h-8 text-red-400" />
-                </div>
-                <p className="text-white/90 mb-2">Connection Failed</p>
-                <p className="text-white/30 text-sm mb-6 max-w-xs mx-auto">{errorMsg}</p>
-                <div className="flex gap-2 justify-center flex-wrap">
-                  <button
-                    onClick={() => selectedWallet && handleWCConnect(selectedWallet)}
-                    className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
-                  >
-                    Try Again
-                  </button>
-                  <button
-                    onClick={handleClearAndRetry}
-                    className="px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-sm flex items-center gap-2 transition-colors"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" /> Reset
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center mx-auto mb-5">
-                  <Loader2 className="w-8 h-8 text-purple-400 animate-spin" />
-                </div>
-                <p className="text-white/90 mb-1">{connectionState}</p>
-                <p className="text-white/30 text-sm">
-                  Preparing secure connection...
-                </p>
-              </>
-            )}
-          </div>
+
+          {hasError ? (
+            /* ── Error State ── */
+            <div className="text-center py-8">
+              <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
+                <AlertCircle className="w-8 h-8 text-red-400" />
+              </div>
+              <p className="text-white/90 mb-2">Connection Failed</p>
+              <p className="text-white/30 text-sm mb-6 max-w-xs mx-auto">{errorMsg}</p>
+              <div className="flex gap-2 justify-center flex-wrap">
+                <button
+                  onClick={() => selectedWallet && handleWCConnect(selectedWallet)}
+                  className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
+                >
+                  Try Again
+                </button>
+                <button
+                  onClick={handleClearAndRetry}
+                  className="px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-sm flex items-center gap-2 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Reset
+                </button>
+              </div>
+            </div>
+          ) : showQR ? (
+            /* ── QR Code for non-extension users ── */
+            <div className="text-center py-4">
+              <div className="bg-white rounded-2xl p-4 w-56 h-56 mx-auto mb-5 flex items-center justify-center">
+                <QRCodeSVG
+                  value={pairingUri}
+                  size={208}
+                  level="M"
+                  bgColor="#ffffff"
+                  fgColor="#0c0c14"
+                />
+              </div>
+              <p className="text-white/90 text-sm mb-1">Scan with HashPack</p>
+              <p className="text-white/30 text-xs mb-4">
+                Open HashPack on your phone and scan this QR code
+              </p>
+              <div className="flex items-center justify-center gap-3 mb-3">
+                <a
+                  href="https://www.hashpack.app/download"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-purple-400 text-xs hover:text-purple-300 flex items-center gap-1 transition-colors"
+                >
+                  Get HashPack <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <button
+                onClick={() => setStep("list")}
+                className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            /* ── Extension detected or mobile — waiting for approval ── */
+            <div className="text-center py-10">
+              <motion.div
+                className="w-20 h-20 rounded-2xl bg-purple-500/10 flex items-center justify-center mx-auto mb-6 relative overflow-hidden"
+                initial={{ scale: 0.9 }}
+                animate={{ scale: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                {selectedWallet && (
+                  <img
+                    src={selectedWallet.id === "hashpack" ? partnerLogos.hashpack : selectedWallet.logo}
+                    alt=""
+                    className="w-12 h-12 rounded-xl object-cover"
+                  />
+                )}
+                {/* Pulsing ring to indicate waiting */}
+                <motion.div
+                  className="absolute inset-0 rounded-2xl border-2 border-purple-500/30"
+                  animate={{ scale: [1, 1.15, 1], opacity: [0.3, 0, 0.3] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                />
+              </motion.div>
+              <p className="text-white/90 text-base mb-1">{connectionState}</p>
+              <p className="text-white/30 text-sm mb-6">
+                {hashPackDetected
+                  ? "Check your HashPack extension"
+                  : isMobileBrowser()
+                    ? "Approve the connection in HashPack"
+                    : "Waiting for wallet response..."}
+              </p>
+              <button
+                onClick={() => setStep("list")}
+                className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       </ModalShell>
       </>
@@ -551,7 +696,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           <div className="flex-1 h-px bg-white/[0.06]" />
         </div>
 
-        {/* HashPack (via WalletConnect v2 SignClient — QR in our UI) */}
+        {/* HashPack — with extension detection badge */}
         {WALLET_OPTIONS.filter((w) => w.isWC).map((wallet) => (
           <button
             key={wallet.id}
@@ -565,8 +710,15 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-sm text-white/90">{wallet.name}</span>
                 <Badge color={wallet.badgeColor}>{wallet.badge}</Badge>
+                {wallet.id === "hashpack" && hashPackDetected && (
+                  <Badge color="emerald">Detected</Badge>
+                )}
               </div>
-              <p className="text-xs text-white/30">{wallet.description}</p>
+              <p className="text-xs text-white/30">
+                {wallet.id === "hashpack" && hashPackDetected
+                  ? "Extension detected — 1-click connect"
+                  : wallet.description}
+              </p>
             </div>
             <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-purple-500/10 transition-colors">
               <Shield className="w-4 h-4 text-white/15 group-hover:text-purple-400 transition-colors" />

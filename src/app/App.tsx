@@ -17,6 +17,16 @@ import { preloadCriticalRoutes } from "./utils/preload";
 import { log } from "./utils/logger";
 import { TermsGate } from "./components/TermsGate";
 
+// [WALLET-SURGERY Step 1] Pre-warm the WalletConnect SignClient at page load.
+// This eliminates the 3-4s "Initializing WalletConnect..." spinner when the user
+// clicks "Connect HashPack". The WC SDK is dynamically imported and the relay
+// WebSocket is connected in the background — by the time the user interacts,
+// the client is already initialized and the relay is warm.
+import { getSignClient } from "./utils/wallet-core";
+const _wcPrewarm = getSignClient().catch(() => {
+  // Non-critical — if it fails here, connectHashPack will retry on demand
+});
+
 /**
  * LazyDynamicBridge — only loads the Dynamic ↔ WalletContext bridge
  * when the Dynamic SDK has been successfully initialized.

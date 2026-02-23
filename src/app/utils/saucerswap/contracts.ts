@@ -189,8 +189,9 @@ export function getWhbarHelper(network: HederaNetwork): string {
   return SAUCERSWAP_WHBAR_HELPER[network] || SAUCERSWAP_WHBAR_HELPER.mainnet;
 }
 
-// V1 RouterWithFee -- for fee-on-transfer tokens (not yet used in routing,
-// but defined for future support when FOT tokens are added to the registry)
+// V1 RouterWithFee -- handles fee-on-transfer (FOT) tokens with custom HTS fee
+// schedules. Used automatically when fetchTokenFeeSchedule() detects custom fees.
+// Implements swapExact*SupportingFeeOnTransferTokens selectors (0x5c11d795 etc.)
 export function getRouterWithFee(network: HederaNetwork): string {
   return SAUCERSWAP_V1_ROUTER_WITH_FEE[network] || SAUCERSWAP_V1_ROUTER_WITH_FEE.mainnet;
 }

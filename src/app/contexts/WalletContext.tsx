@@ -64,6 +64,7 @@ interface WalletContextType {
     network: HederaNetwork,
     onPairingString?: (uri: string) => void,
     onConnectionState?: (state: string) => void,
+    options?: { skipWCModal?: boolean },
   ) => Promise<HashPackConnectionResult>;
   connectHashPackMirror: (accountId: string, network: HederaNetwork) => Promise<boolean>;
   disconnectHashPack: () => void;
@@ -426,11 +427,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       network: HederaNetwork,
       onPairingString?: (uri: string) => void,
       onConnectionState?: (state: string) => void,
+      options?: { skipWCModal?: boolean },
     ): Promise<HashPackConnectionResult> => {
       setIsConnectingHedera(true);
       setHederaConnectionError(null);
 
-      const result = await connectViaHashConnect(network, onPairingString, onConnectionState);
+      const result = await connectViaHashConnect(network, onPairingString, onConnectionState, options);
 
       if (result.success && result.session) {
         setHashPackSession(result.session);

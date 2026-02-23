@@ -203,3 +203,165 @@ export async function fetchMaxAutoAssociations(
     return 0;
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// ── [FOT] TOKEN CUSTOM FEE SCHEDULE DETECTION ──────────────────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// Hedera HTS tokens can have custom fee schedules (fractional fees,
+// fixed fees, royalty fees) that deduct tokens on every transfer.
+// These tokens cause INSUFFICIENT_OUTPUT_AMOUNT on standard UniswapV2
+// swap functions because the router's internal accounting doesn't
+// match the actual amount received (some tokens were deducted as fees).
+//
+// Detection queries the Mirror Node `/api/v1/tokens/{id}` endpoint
+// and inspects the `custom_fees` field. Results are cached (5 min TTL)
+// to avoid redundant API calls during rapid quote refreshes.
+//
+// Production DEXes (Uniswap, PancakeSwap, SaucerSwap) solve this with
+// dedicated `...SupportingFeeOnTransferTokens` router functions that
+// check actual balance changes instead of expected amounts.
+
+export interface TokenFeeInfo {
+  /** True if token has any custom fee that affects transfer amounts */
+  hasFee: boolean;
+  /** Combined fee percentage (fractional + royalty). 0 if no fees or fixed-only. */
+  feePercent: number;
+  /** Human-readable fee description for UI display */
+  feeDescription: string;
+  /** Whether there are fixed fees (not expressible as %) */
+  hasFixedFee: boolean;
+}
+
+const feeScheduleCache = new Map<string, TokenFeeInfo & { timestamp: number }>();
+const FEE_CACHE_TTL = 300_000; // 5 min
+
+/** Runtime fallback cache: tokens that caused INSUFFICIENT_OUTPUT_AMOUNT */
+const fotFallbackCache = new Set<string>();
+
+/**
+ * Mark a token as fee-on-transfer based on runtime behavior (swap revert).
+ * This is the fallback for tokens where Mirror Node doesn't report custom fees
+ * but the swap still fails with INSUFFICIENT_OUTPUT_AMOUNT.
+ */
+export function markTokenAsFOT(tokenId: string): void {
+  fotFallbackCache.add(tokenId);
+  console.log(`[FOT] Runtime fallback: ${tokenId} marked as fee-on-transfer`);
+}
+
+/**
+ * Check if a token was previously marked as FOT via runtime fallback.
+ */
+export function isRuntimeFOT(tokenId: string): boolean {
+  return fotFallbackCache.has(tokenId);
+}
+
+/**
+ * [FOT] Fetch token custom fee schedule from Mirror Node.
+ *
+ * Returns fee info including whether the token has transfer fees,
+ * the approximate fee percentage, and a human-readable description.
+ * Results are cached for 5 minutes.
+ *
+ * Also checks the runtime fallback cache for tokens that triggered
+ * INSUFFICIENT_OUTPUT_AMOUNT in previous swap attempts.
+ */
+export async function fetchTokenFeeSchedule(
+  tokenId: string,
+  network: HederaNetwork = "mainnet",
+): Promise<TokenFeeInfo> {
+  // Native HBAR has no custom fees
+  if (tokenId === "0.0.0" || !tokenId) {
+    return { hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false };
+  }
+
+  // Runtime fallback cache (from previous INSUFFICIENT_OUTPUT_AMOUNT errors)
+  if (fotFallbackCache.has(tokenId)) {
+    return {
+      hasFee: true,
+      feePercent: 2, // Conservative estimate
+      feeDescription: "Transfer fee detected (runtime)",
+      hasFixedFee: false,
+    };
+  }
+
+  // Check TTL cache
+  const cached = feeScheduleCache.get(tokenId);
+  if (cached && Date.now() - cached.timestamp < FEE_CACHE_TTL) {
+    return { hasFee: cached.hasFee, feePercent: cached.feePercent, feeDescription: cached.feeDescription, hasFixedFee: cached.hasFixedFee };
+  }
+
+  try {
+    const base = MIRROR_NODES[network] || MIRROR_NODES.mainnet;
+    const res = await fetch(
+      `${base}/api/v1/tokens/${tokenId}`,
+      { signal: makeAbort(5000) },
+    );
+
+    if (!res.ok) {
+      return { hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false };
+    }
+
+    const data = await res.json();
+    let totalFeePercent = 0;
+    let hasFee = false;
+    let hasFixedFee = false;
+    const feeDescParts: string[] = [];
+
+    if (data.custom_fees) {
+      // ── Fractional fees: percentage of transfer amount ──
+      if (data.custom_fees.fractional_fees?.length > 0) {
+        for (const ff of data.custom_fees.fractional_fees) {
+          if (ff.amount?.numerator && ff.amount?.denominator && ff.amount.denominator > 0) {
+            const pct = (ff.amount.numerator / ff.amount.denominator) * 100;
+            totalFeePercent += pct;
+            hasFee = true;
+            feeDescParts.push(`${pct.toFixed(2)}% fractional fee`);
+          }
+        }
+      }
+
+      // ── Fixed fees denominated in the same token ──
+      if (data.custom_fees.fixed_fees?.length > 0) {
+        for (const fixedFee of data.custom_fees.fixed_fees) {
+          if (fixedFee.denominating_token_id === tokenId || !fixedFee.denominating_token_id) {
+            hasFee = true;
+            hasFixedFee = true;
+            feeDescParts.push(`Fixed fee: ${fixedFee.amount || "?"} units`);
+          }
+        }
+      }
+
+      // ── Royalty fees ──
+      if (data.custom_fees.royalty_fees?.length > 0) {
+        for (const rf of data.custom_fees.royalty_fees) {
+          if (rf.amount?.numerator && rf.amount?.denominator && rf.amount.denominator > 0) {
+            const pct = (rf.amount.numerator / rf.amount.denominator) * 100;
+            totalFeePercent += pct;
+            hasFee = true;
+            feeDescParts.push(`${pct.toFixed(2)}% royalty fee`);
+          }
+        }
+      }
+    }
+
+    const result: TokenFeeInfo = {
+      hasFee,
+      feePercent: totalFeePercent,
+      feeDescription: feeDescParts.join("; ") || "",
+      hasFixedFee,
+    };
+
+    // Cache the result
+    feeScheduleCache.set(tokenId, { ...result, timestamp: Date.now() });
+
+    if (hasFee) {
+      console.log(`[FOT] Token ${tokenId} has custom fees: ${result.feeDescription} (total ~${totalFeePercent.toFixed(2)}%)`);
+    }
+
+    return result;
+  } catch (err: any) {
+    console.log(`[FOT] Fee schedule check failed for ${tokenId}: ${err?.message || err}`);
+    return { hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false };
+  }
+}

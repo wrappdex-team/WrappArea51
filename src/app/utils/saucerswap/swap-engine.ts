@@ -29,8 +29,9 @@ import {
 } from "./tokens";
 import {
   SAUCERSWAP_V1_ROUTER_CANDIDATES, SAUCERSWAP_V2_ROUTER,
-  SAUCERSWAP_V2_QUOTER,
-  getSaucerSwapRouter,
+  SAUCERSWAP_V2_QUOTER, SAUCERSWAP_V2_FACTORY, SAUCERSWAP_WHBAR_CONTRACT,
+  V2_FEE_TIERS,
+  getSaucerSwapRouter, getRouterWithFee,
   MIRROR_NODES, JSON_RPC_RELAY,
 } from "./contracts";
 import {
@@ -38,7 +39,10 @@ import {
   encodeExactInputSingle, encodeUnwrapWHBAR, encodeMulticall,
   encodeSaucerSwapETHForTokens, encodeSaucerSwapTokensForETH,
   encodeSaucerSwapCall, encodeSwapPath, encodeExactInput,
-  encodeQuoteExactInput,
+  encodeQuoteExactInput, encodeGetPool,
+  // [FOT] Fee-on-transfer router encoders
+  encodeSaucerSwapCallFOT, encodeSaucerSwapETHForTokensFOT,
+  encodeSaucerSwapTokensForETHFOT,
 } from "./abi";
 import { makeAbort, estimateOutputFromPrices } from "./prices";
 import type { PoolVersionInfo } from "./pools";
@@ -46,7 +50,7 @@ import { detectPoolVersion, resolveAccountEvmAddress, resolveContractEvmAddress 
 import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute, findRouteViaGraph } from "./routing";
 import type { RawQuote } from "./quotes";
 import { fetchSaucerSwapQuote, fetchV2RouterQuote, fetchRouterQuote } from "./quotes";
-import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance, fetchMaxAutoAssociations } from "./balances";
+import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance, fetchMaxAutoAssociations, fetchTokenFeeSchedule, markTokenAsFOT, type TokenFeeInfo } from "./balances";
 import { parseTokenAmount } from "./helpers";
 import { verifyIsContract } from "./verification";
 
@@ -87,6 +91,45 @@ import { verifyIsContract } from "./verification";
  * added ~6.5s of unnecessary delay between wallet popups.
  */
 const CONSENSUS_WAIT_MS = 0;
+
+// ══════════════════════════════════════════════════════════════════════
+// ── [V2-WHBAR-FIX] WHBAR ADDRESS CORRECTION FOR V2 POOLS ───────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// SaucerSwap V2 (UniswapV3 fork) pools pair tokens with the WHBAR
+// CONTRACT (0.0.1456985) — not the WHBAR HTS TOKEN (0.0.1456986).
+//
+// The V2 SwapRouter's WETH9 state variable points to the WHBAR contract.
+// Pools were created with this contract address. The EVM addresses differ
+// by exactly 1 (0x...163b59 vs 0x...163b5a).
+//
+// If the wrong WHBAR address is used in exactInputSingle/exactInput,
+// the Router's Factory.getPool() lookup returns address(0) → revert.
+//
+// V1 routing is NOT affected — V1 getAmountsOut/swapExact* use a
+// separate code path with its own WHBAR address handling.
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * [V2-WHBAR-FIX] Ensure WHBAR EVM address uses the CONTRACT for V2 operations.
+ *
+ * Checks if the given EVM address is the WHBAR HTS token (0.0.1456986) and
+ * replaces it with the WHBAR contract (0.0.1456985) which is what V2 pools
+ * and the V2 SwapRouter WETH9 actually reference.
+ *
+ * Non-WHBAR addresses pass through unchanged.
+ */
+function ensureWhbarContractForV2(evmAddress: string, network: HederaNetwork): string {
+  // WHBAR HTS token long-zero address (what our token registry uses)
+  const whbarTokenEvm = htsIdToEvmAddress("0.0.1456986").toLowerCase();
+  if (evmAddress.toLowerCase() === whbarTokenEvm) {
+    const contractId = SAUCERSWAP_WHBAR_CONTRACT[network] || SAUCERSWAP_WHBAR_CONTRACT.mainnet;
+    const contractEvm = htsIdToEvmAddress(contractId);
+    console.log(`[V2-WHBAR-FIX] Correcting WHBAR address for V2: ${evmAddress} (token 0.0.1456986) → ${contractEvm} (contract ${contractId})`);
+    return contractEvm;
+  }
+  return evmAddress;
+}
 
 export interface ApproveResult {
   needed: boolean;          // true if approve tx was sent
@@ -142,7 +185,7 @@ async function approveIfNeeded(params: {
     if (routerVersion === "v2" && spenderAccountId !== expectedV2) {
       console.error(`[C100-S7] CRITICAL: V2 swap targeting wrong router! Expected ${expectedV2}, got ${spenderAccountId}`);
     }
-    console.log(`[C100-S7] Approval target: ${tokenSymbol} (${tokenHtsId}) → ${routerVersion.toUpperCase()} Router ${spenderAccountId}`);
+    console.log(`[C100-S7] Approval target: ${tokenSymbol} (${tokenHtsId}) �� ${routerVersion.toUpperCase()} Router ${spenderAccountId}`);
   }
 
   // ── Check existing allowance via Mirror Node ──
@@ -299,11 +342,19 @@ async function executeSaucerSwapV2Direct(
 
   try {
     const v2RouterId = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
-    const fee = poolInfo.feeTier || 3000;
+    let fee = poolInfo.feeTier || 3000;
 
     // Token EVM addresses for the V2 pool (use SaucerSwap alias for bridge tokens)
-    const tokenInEvm = getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken);
-    const tokenOutEvm = getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken);
+    // [V2-WHBAR-FIX] V2 pools pair with WHBAR CONTRACT (0.0.1456985), not TOKEN (0.0.1456986).
+    // The V2 SwapRouter's WETH9 and all V2 pool Factory registrations use the contract address.
+    // Without this fix, exactInputSingle passes the wrong WHBAR address → Factory.getPool
+    // returns address(0) → CONTRACT_REVERT_EXECUTED on every V2 swap involving HBAR/WHBAR.
+    const tokenInEvm = ensureWhbarContractForV2(
+      getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken), network
+    );
+    const tokenOutEvm = ensureWhbarContractForV2(
+      getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken), network
+    );
 
     // ── V2 Quote: try V2 QuoterV2 first, then fall back to price estimation ──
     // V1 getAmountsOut does NOT work for V2-only pools, so we use the V2 QuoterV2
@@ -312,21 +363,40 @@ async function executeSaucerSwapV2Direct(
     let quote: RawQuote | null = null;
 
     // Strategy 1: V2 QuoterV2 contract (most accurate for V2 pools)
-    try {
-      const v2QuoteAmount = await fetchV2RouterQuote(
-        tokenInEvm, tokenOutEvm, BigInt(rawInput), fee, network
-      );
-      if (v2QuoteAmount !== null && v2QuoteAmount > 0n) {
-        quote = {
-          amountOut: Number(v2QuoteAmount),
-          priceImpact: 0, // Actual impact baked into on-chain result
-          route: [inputToken.htsId, outputToken.htsId],
-          source: "router",
-        };
-        console.log(`[HBAR.h] V2 Quote via QuoterV2: amountOut=${v2QuoteAmount}`);
+    // [SWAP-FIX-4] Try the detected fee tier first, then try other common
+    // tiers if it fails. Many pools exist at unexpected fee tiers (e.g.,
+    // 1500 for WHBAR pairs) and the pool graph may return the wrong one.
+    {
+      const feeTiersToTry = [fee, ...V2_FEE_TIERS.filter(f => f !== fee)];
+      for (const tryFee of feeTiersToTry) {
+        if (quote) break; // stop once we have a quote
+        try {
+          const v2QuoteAmount = await fetchV2RouterQuote(
+            tokenInEvm, tokenOutEvm, BigInt(rawInput), tryFee, network
+          );
+          if (v2QuoteAmount !== null && v2QuoteAmount > 0n) {
+            if (tryFee !== fee) {
+              console.log(`[SWAP-FIX-4] V2 Quote succeeded at fee=${tryFee} (original fee=${fee} failed) — updating fee tier`);
+              fee = tryFee;
+              (poolInfo as any).feeTier = tryFee;
+            }
+            quote = {
+              amountOut: Number(v2QuoteAmount),
+              priceImpact: 0, // Actual impact baked into on-chain result
+              route: [inputToken.htsId, outputToken.htsId],
+              source: "router",
+              confidence: "high",
+              poolVersion: "v2",
+              feeTier: tryFee,
+            };
+            console.log(`[HBAR.h] V2 Quote via QuoterV2: amountOut=${v2QuoteAmount} (fee=${tryFee})`);
+          }
+        } catch (err: any) {
+          if (tryFee === fee) {
+            console.log("[HBAR.h] V2 QuoterV2 quote failed:", err?.message || err);
+          }
+        }
       }
-    } catch (err: any) {
-      console.log("[HBAR.h] V2 QuoterV2 quote failed:", err?.message || err);
     }
 
     // Strategy 2: Server proxy / price-based estimation fallback
@@ -346,11 +416,18 @@ async function executeSaucerSwapV2Direct(
     // ── minOutput calculation ──
     let minOutput: number;
     if (quote && quote.amountOut > 0) {
+      // [SLIPPAGE-FIX] V2 concentrated liquidity pools can have significant
+      // price movement between the QuoterV2 quote (eth_call at "latest") and
+      // actual execution (consensus 3-5s later). Without a minimum floor,
+      // 0.5% slippage causes frequent INSUFFICIENT_OUTPUT_AMOUNT reverts.
+      // SaucerSwap.finance defaults to 0.5% but their frontend re-quotes
+      // right before execution; our architecture has a longer gap.
+      // Floor: 1% for on-chain QuoterV2 quotes, 5% for price estimates.
       const effectiveSlippage = quote.source === "price-estimate"
         ? Math.max(slippagePct, 5) // wider slippage for estimated quotes
-        : slippagePct;
+        : Math.max(slippagePct, 1); // [SLIPPAGE-FIX] 1% floor for V2 on-chain quotes
       minOutput = Math.max(1, Math.floor(quote.amountOut * (1 - effectiveSlippage / 100)));
-      console.log(`[HBAR.h] V2 Quote: source=${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${effectiveSlippage}% slippage)`);
+      console.log(`[HBAR.h] V2 Quote: source=${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${effectiveSlippage}% slippage, requested=${slippagePct}%)`);
     } else {
       // Last-ditch inline estimate before surrendering to minOutput=1
       const inTok = isInputNative ? whbar : inputToken;
@@ -389,6 +466,65 @@ async function executeSaucerSwapV2Direct(
       };
     }
     const routerEvmAddress = routerContractInfo.evmAddress || await resolveContractEvmAddress(v2RouterId, network);
+
+    // ── [SWAP-FIX-3] Pre-validate V2 pool existence ──
+    // Call V2 Factory.getPool(tokenIn, tokenOut, fee) via eth_call to
+    // confirm the pool exists BEFORE sending a real transaction.
+    // If the pool doesn't exist for the detected fee tier, try other
+    // common tiers. This prevents wasted gas on doomed transactions.
+    try {
+      const v2FactoryId = SAUCERSWAP_V2_FACTORY[network] || SAUCERSWAP_V2_FACTORY.mainnet;
+      const factoryEvm = await resolveContractEvmAddress(v2FactoryId, network);
+      const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
+      const gasHex = "0x" + (500_000).toString(16);
+
+      let poolFound = false;
+      const feesToTry = [fee, ...V2_FEE_TIERS.filter(f => f !== fee)];
+      for (const tryFee of feesToTry) {
+        const gpCallData = bytesToHex(encodeGetPool(tokenInEvm, tokenOutEvm, tryFee));
+        const gpRes = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: makeAbort(6000),
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to: factoryEvm, data: gpCallData, gas: gasHex }, "latest"],
+            id: 1,
+          }),
+        });
+        if (gpRes.ok) {
+          const gpData = await gpRes.json();
+          if (gpData.result && gpData.result !== "0x" && gpData.result.length >= 66) {
+            // getPool returns address — check it's not address(0)
+            const poolAddr = gpData.result.slice(26, 66); // last 20 bytes of 32-byte address
+            if (poolAddr && !/^0+$/.test(poolAddr)) {
+              if (tryFee !== fee) {
+                console.log(`[SWAP-FIX-3] ✓ V2 pool found at fee=${tryFee} (original fee=${fee} had no pool) — correcting`);
+                (poolInfo as any).feeTier = tryFee;
+              } else {
+                console.log(`[SWAP-FIX-3] ✓ V2 pool confirmed at fee=${fee}`);
+              }
+              poolFound = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!poolFound) {
+        console.warn(`[SWAP-FIX-3] No V2 pool found for ${evmAddressToHtsId(tokenInEvm)}/${evmAddressToHtsId(tokenOutEvm)} at any fee tier — V2 swap will likely revert`);
+      }
+      // Re-read the (possibly corrected) fee
+      const correctedFee = poolInfo.feeTier || 3000;
+      if (correctedFee !== fee) {
+        console.log(`[SWAP-FIX-3] Fee corrected: ${fee} → ${correctedFee}`);
+      }
+    } catch (gpErr: any) {
+      console.log(`[SWAP-FIX-3] Pool validation skipped (non-blocking): ${gpErr?.message}`);
+    }
+
+    // Re-read fee after potential correction  
+    fee = poolInfo.feeTier || 3000;
 
     // ── Log V2 swap parameters ──
     console.log("[HBAR.h] ═══════════════════════════════════════════");
@@ -552,12 +688,11 @@ async function executeSaucerSwapV2Direct(
           const revertMsg = dryData.error.message || JSON.stringify(dryData.error).slice(0, 200);
           // Only block on definitive reverts, not on generic RPC issues
           if (revertMsg.includes("REVERT") || revertMsg.includes("revert") || revertMsg.includes("execution reverted")) {
-            console.error(`[HBAR.h] V2 Dry run REVERT: ${revertMsg}`);
-            return {
-              success: false,
-              error: `V2 pre-swap simulation reverted: ${revertMsg}. The swap would fail on-chain.`,
-              executionVenue: "saucerswap-v2",
-            };
+            // [V2-DRYRUN-NONBLOCK] Non-blocking: Hedera eth_call has known HTS simulation limitations
+            // (e.g., "Safe token transfer failed!" for tokens not yet associated).
+            // SaucerSwap's own frontend doesn't do dry runs. Log warning and proceed.
+            console.warn(`[HBAR.h] V2 Dry run REVERT (non-blocking): ${revertMsg}`);
+            console.warn("[HBAR.h] Proceeding despite V2 dry run failure — Hedera eth_call has HTS limitations.");
           }
           console.log(`[HBAR.h] V2 Dry run non-blocking RPC error: ${revertMsg.slice(0, 100)}`);
         } else if (dryData.result && dryData.result !== "0x" && dryData.result.length > 2) {
@@ -610,6 +745,20 @@ async function executeSaucerSwapV2Direct(
         .setFunctionParameters(functionData)
         .setPayableAmount(hbarAmount);
 
+      // [AUDIT] SaucerSwap-parity diagnostic for V2 HBAR→Token
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
+      console.log(`[AUDIT] V2 HBAR→Token EXECUTION PARAMETERS`);
+      console.log(`[AUDIT]   function:     exactInputSingle (0x414bf389)`);
+      console.log(`[AUDIT]   router:       ${v2RouterId}`);
+      console.log(`[AUDIT]   gas:          ${SWAP_GAS}`);
+      console.log(`[AUDIT]   payable:      ${rawInput} tinybar = ${rawInput / 1e8} HBAR`);
+      console.log(`[AUDIT]   tokenIn:      ${tokenInEvm} (${evmAddressToHtsId(tokenInEvm)})`);
+      console.log(`[AUDIT]   tokenOut:     ${tokenOutEvm} (${evmAddressToHtsId(tokenOutEvm)})`);
+      console.log(`[AUDIT]   fee:          ${fee} (${fee / 10000}%)`);
+      console.log(`[AUDIT]   minOutput:    ${minOutput} (raw ${outputToken.decimals}-decimal)`);
+      console.log(`[AUDIT]   recipient:    ${recipientEvmAddress}`);
+      console.log(`[AUDIT]   deadline:     ${deadline}`);
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
       console.log(`[HBAR.h] V2: Submitting exactInputSingle — HBAR: ${hbarAmount} (${rawInput} tinybar), calldata: ${functionData.length}B`);
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] V2: Swap result:", JSON.stringify(swapResult));
@@ -719,6 +868,7 @@ async function executeSaucerSwapV2Direct(
         console.log(`[C100-S9]   ┌ exactInputSingle(${inputToken.symbol}→WHBAR, recipient=ROUTER ${routerEvmAddress})`);
         console.log(`[C100-S9]   └ unwrapWETH9(0, user=${recipientEvmAddress})`);
         console.log(`[C100-S9]   WHBAR: contract=0.0.1456985 (withdraw), token=${whbar.htsId} (ERC-20)`);
+        console.log(`[V2-WHBAR-FIX] tokenOut EVM for V2: ${tokenOutEvm} (should be 0x...163b59 = contract, NOT 0x...163b5a = token)`);
         console.log(`[C100-S9]   tokenOut EVM: ${tokenOutEvm} (should be WHBAR long-zero)`);
 
         console.log(`[HBAR.h] V2 Step ${v2SwapStep}: multicall(exactInputSingle + unwrapWETH9) — Token→HBAR [C34-01/C100-S9]`);
@@ -846,6 +996,14 @@ async function executeSaucerSwapV2Direct(
     console.error("[HBAR.h] V2 swap execution error:", err);
     const errMsg = err?.message || "V2 swap failed";
     const errLower = errMsg.toLowerCase();
+
+    // [FOT] V2 runtime detection — mark tokens for FOT routing on next attempt
+    if (errLower.includes("insufficient_output_amount") || errLower.includes("insufficient output") || errLower.includes("contract_revert")) {
+      if (!isInputNative) markTokenAsFOT(inputToken.htsId);
+      if (!isOutputNative) markTokenAsFOT(outputToken.htsId);
+      console.log(`[FOT] V2 Direct reverted — tokens marked as FOT for V1 RouterWithFee on next attempt`);
+    }
+
     const isCancellation =
       errLower.includes("user_reject") ||
       errLower.includes("cancelled by user") ||
@@ -916,9 +1074,17 @@ async function preSwapDryRun(params: DryRunParams): Promise<DryRunResult> {
 
   const callDataHex = bytesToHex(callData);
   const gasHex = "0x" + (1_500_000).toString(16);
-  const valueHex = "0x" + value.toString(16);
+  // [V1-DRYRUN-FIX] Convert tinybar → weibar for JSON-RPC relay.
+  // Hedera's EVM uses 18-decimal weibar (like ETH wei), but rawInput is
+  // in 8-decimal tinybar. Multiply by 10^10 to bridge the gap.
+  // The V2 dry run already had this fix; V1 was missing it, causing
+  // INSUFFICIENT_OUTPUT_AMOUNT on every HBAR-input V1 dry run because
+  // the pool received ~0 HBAR and produced 0 output.
+  const valueHex = isInputNative
+    ? "0x" + (BigInt(value) * 10000000000n).toString(16)
+    : "0x0";
 
-  console.log(`[HBAR.h] Dry run: ${functionName} → router ${routerEvm}, value=${value}, minOutput=${dryRunMinOutput} (real: ${minOutput}) [C36-05]`);
+  console.log(`[HBAR.h] Dry run: ${functionName} → router ${routerEvm}, value=${value} tinybar (weibar=${isInputNative ? BigInt(value) * 10000000000n : 0n}), minOutput=${dryRunMinOutput} (real: ${minOutput}) [C36-05][V1-DRYRUN-FIX]`);
 
   // ── Strategy A: JSON-RPC relay ──
   try {
@@ -977,7 +1143,8 @@ async function preSwapDryRun(params: DryRunParams): Promise<DryRunResult> {
         to: routerEvm,
         gas: 1_500_000,
         gasPrice: 0,
-        value: value,
+        // [V1-DRYRUN-FIX] Mirror Node contracts/call also uses weibar (EVM convention)
+        value: isInputNative ? Number(BigInt(value) * 10000000000n) : 0,
       }),
     });
 
@@ -1060,15 +1227,16 @@ async function executeSaucerSwapV2MultiHop(
       // Look up via resolveTokenByHtsId (checks static + dynamic registries)
       const token = resolveTokenByHtsId(htsId)
         || SAUCERSWAP_TOKENS.find(t => t.saucerswapAliasId === htsId);
+      let resolvedEvm = tokenEvm;
       if (token) {
         const aliasEvm = getSaucerswapRoutingEvmAddress(token);
         if (aliasEvm.toLowerCase() !== tokenEvm.toLowerCase()) {
           console.log(`[HBAR.h] [C100-S6] V2 path token[${idx}]: ${htsId} → ${evmAddressToHtsId(aliasEvm)} (alias applied)`);
         }
-        return aliasEvm;
+        resolvedEvm = aliasEvm;
       }
-      // Unknown token (API-only or V2-native) — use as-is
-      return tokenEvm;
+      // [V2-WHBAR-FIX] Ensure WHBAR uses CONTRACT address for V2 pool lookups
+      return ensureWhbarContractForV2(resolvedEvm, network);
     });
 
     // Build packed path: token0 + fee0 + token1 + fee1 + token2 + ...
@@ -1426,6 +1594,14 @@ async function executeSaucerSwapV2MultiHop(
     console.error("[HBAR.h] V2 Multi-hop swap error:", err);
     const errMsg = err?.message || "V2 multi-hop swap failed";
     const errLower = errMsg.toLowerCase();
+
+    // [FOT] V2 multi-hop runtime detection
+    if (errLower.includes("insufficient_output_amount") || errLower.includes("insufficient output") || errLower.includes("contract_revert")) {
+      if (!isInputNative) markTokenAsFOT(inputToken.htsId);
+      if (!isOutputNative) markTokenAsFOT(outputToken.htsId);
+      console.log(`[FOT] V2 Multi-hop reverted — tokens marked as FOT for V1 RouterWithFee on next attempt`);
+    }
+
     const isCancellation =
       errLower.includes("user_reject") ||
       errLower.includes("cancelled by user") ||
@@ -1441,7 +1617,7 @@ async function executeSaucerSwapV2MultiHop(
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════
+// ══════════════════���═══════════════════════════════════════════════════
 // ── V1 / UNIFIED DIRECT EXECUTION ──────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 
@@ -1575,6 +1751,36 @@ async function executeSaucerSwapDirect(
     } // end fallback if (!poolVersionInfo && !multiHopRoute)
 
     // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [FOT-EARLY] EARLY FEE-ON-TRANSFER DETECTION — SKIP V2            │
+    // │                                                                     │
+    // │  V2 concentrated liquidity routers lack FOT variants. If either    │
+    // │  token has custom fees, force V1 IMMEDIATELY — before the V2-first │
+    // │  routing blocks try V2 (which would waste gas on a doomed attempt  │
+    // │  and produce an extra wallet popup for the failed V2 approval).    │
+    // │                                                                     │
+    // │  This runs before the full FOT detection at V1 router resolution   │
+    // │  and uses the same cached fetchTokenFeeSchedule (instant hit if    │
+    // │  checkSwapPrerequisites already ran during quote phase).           │
+    // └─────────────────────────────────────────────────────────────────────┘
+    if (poolVersionInfo?.version === "v2" || (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2"))) {
+      try {
+        const [earlyInputFee, earlyOutputFee] = await Promise.all([
+          !isInputNative ? fetchTokenFeeSchedule(inputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
+          !isOutputNative ? fetchTokenFeeSchedule(outputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
+        ]);
+        if (earlyInputFee.hasFee || earlyOutputFee.hasFee) {
+          console.log(`[FOT-EARLY] Fee token detected BEFORE V2 attempt — forcing V1 to avoid wasted gas`);
+          console.log(`[FOT-EARLY]   Input: ${inputToken.symbol} ${earlyInputFee.hasFee ? earlyInputFee.feeDescription : "no fees"}`);
+          console.log(`[FOT-EARLY]   Output: ${outputToken.symbol} ${earlyOutputFee.hasFee ? earlyOutputFee.feeDescription : "no fees"}`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+        }
+      } catch (earlyFotErr: any) {
+        console.log(`[FOT-EARLY] Fee detection failed (non-blocking): ${earlyFotErr?.message}`);
+      }
+    }
+
+    // ┌─────────────────────────────────────────────────────────────────────┐
     // │  [C100 Step 9] TOKEN→HBAR: SMART V2-FIRST ROUTING                 │
     // │                                                                    │
     // │  Replaces C36-02 blanket V1 force. The original C36 revert was    │
@@ -1692,9 +1898,16 @@ async function executeSaucerSwapDirect(
             description: `Retrying swap — trying alternate route...`,
           }}));
 
-          // Reset to V1
+          // Reset to V1 — rebuild pathAddresses with canonical token addresses
+          // [V2-FALLBACK-FIX] Same as Token→Token fallback
           poolVersionInfo = { version: "v1", poolAddress: undefined };
           multiHopRoute = null;
+          const v1FallbackPathTH = buildSwapPath(
+            isInputNative ? whbar : inputToken,
+            isOutputNative ? whbar : outputToken,
+          );
+          pathAddresses = v1FallbackPathTH.map(t => htsIdToEvmAddress(t.htsId));
+          console.log(`[V2-FALLBACK-FIX] Token→HBAR: rebuilt V1 pathAddresses: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
         } else {
           // Mixed V2+V1 or all-V1 hops — go straight to V1
           console.log(`[HBAR.h] [C100-S9] Token→HBAR multi-hop: mixed/V1 hops — using V1 directly`);
@@ -1771,12 +1984,19 @@ async function executeSaucerSwapDirect(
           description: `Retrying swap — trying alternate route...`,
         }}));
 
-        // Reset to V1 — V1 path rebuild block below will validate canonical
-        // addresses with V1 getAmountsOut before executing.
+        // Reset to V1 — rebuild pathAddresses using canonical token addresses.
+        // [V2-FALLBACK-FIX] V2 graph routes may contain alias or WHBAR-contract
+        // EVM addresses that V1 Factory doesn't recognize. Rebuild from the
+        // logical tokens (input → whbar → output) using canonical htsIds.
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
-        // pathAddresses still holds the graph-route tokens — the V1 path
-        // rebuild block (below) will convert them to canonical EVM addresses.
+        // Rebuild canonical V1 path from the logical swap path
+        const v1FallbackPath = buildSwapPath(
+          isInputNative ? whbar : inputToken,
+          isOutputNative ? whbar : outputToken,
+        );
+        pathAddresses = v1FallbackPath.map(t => htsIdToEvmAddress(t.htsId));
+        console.log(`[V2-FALLBACK-FIX] Rebuilt V1 pathAddresses: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
       } else {
         // Mixed V2+V1 or all-V1 hops — V2 exactInput requires ALL-V2 pools,
         // so we go straight to V1 (no V2 attempt for mixed routes).
@@ -1786,19 +2006,52 @@ async function executeSaucerSwapDirect(
       }
     }
 
-    // ── V2 single-hop execution ──
+    let _v2SingleHopError: string | undefined;
+
+    // ── V2 single-hop execution (with V1 fallback) [SWAP-FIX-1] ──
     // [C100-S9] Token→HBAR V2 direct is tried above with V1 fallback.
     // [C100-S5] Token→Token multi-hop tries V2 first (handled above).
     // This gate fires for: HBAR→Token, Token→Token direct, or any V2
     // single-hop that wasn't consumed by the S9/S5 try-first blocks.
+    //
+    // [SWAP-FIX-1] Added V1 fallback for ALL V2 single-hop swaps.
+    // Previously, HBAR→Token V2 failures had NO fallback — the error
+    // went straight to the user. Now: try V2 → if revert → try V1.
     if (poolVersionInfo?.version === "v2" && !multiHopRoute) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (single-hop) ═══ fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"}`);
-      return executeSaucerSwapV2Direct(
+      const v2SingleResult = await executeSaucerSwapV2Direct(
         inputToken, outputToken, inputAmount, slippagePct,
         accountId, network, poolVersionInfo,
         isInputNative, isOutputNative, whbar,
         rawInput, recipientEvmAddress, options
       );
+
+      if (v2SingleResult.success) {
+        console.log(`[HBAR.h] [SWAP-FIX-1] ✓ V2 single-hop SUCCEEDED`);
+        return v2SingleResult;
+      }
+      if (v2SingleResult.userCancelled) {
+        console.log(`[HBAR.h] [SWAP-FIX-1] User cancelled V2 — not retrying`);
+        return v2SingleResult;
+      }
+
+      // V2 failed — fall back to V1
+      _v2SingleHopError = v2SingleResult.error;
+      console.log(`[HBAR.h] [SWAP-FIX-1] V2 single-hop REVERTED: ${_v2SingleHopError}`);
+      console.log(`[HBAR.h] [SWAP-FIX-1] Falling back to V1 routing...`);
+      window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+        step: 0, total: 2,
+        description: `Retrying swap — trying alternate route...`,
+      }}));
+
+      poolVersionInfo = { version: "v1", poolAddress: undefined };
+      const v1FallbackPathSingle = buildSwapPath(
+        isInputNative ? whbar : inputToken,
+        isOutputNative ? whbar : outputToken,
+      );
+      pathAddresses = v1FallbackPathSingle.map(t => htsIdToEvmAddress(t.htsId));
+      console.log(`[SWAP-FIX-1] Rebuilt V1 path: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+      // Fall through to V1 execution below
     }
 
     // ── V2 multi-hop execution ──
@@ -1811,12 +2064,34 @@ async function executeSaucerSwapDirect(
     // is V1 AMM, the V2 router fails to find a pool and reverts.
     if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
       console.log(`[HBAR.h] ═══ ROUTING VIA V2 (multi-hop, ${multiHopRoute.hops.length} hops, ALL V2) ═══`);
-      return executeSaucerSwapV2MultiHop(
+      const v2MhGenResult = await executeSaucerSwapV2MultiHop(
         inputToken, outputToken, inputAmount, slippagePct,
         accountId, network, multiHopRoute,
         isInputNative, isOutputNative, whbar,
         rawInput, recipientEvmAddress, options
       );
+
+      // [SWAP-FIX-1] V1 fallback for V2 multi-hop (same pattern as single-hop)
+      if (v2MhGenResult.success) return v2MhGenResult;
+      if (v2MhGenResult.userCancelled) return v2MhGenResult;
+
+      _v2SingleHopError = v2MhGenResult.error; // reuse tracking var for V1 guard
+      console.log(`[HBAR.h] [SWAP-FIX-1] V2 multi-hop REVERTED: ${v2MhGenResult.error}`);
+      console.log(`[HBAR.h] [SWAP-FIX-1] Falling back to V1 routing...`);
+      window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+        step: 0, total: 2,
+        description: `Retrying swap — trying alternate route...`,
+      }}));
+
+      poolVersionInfo = { version: "v1", poolAddress: undefined };
+      multiHopRoute = null;
+      const v1FallbackPathMh = buildSwapPath(
+        isInputNative ? whbar : inputToken,
+        isOutputNative ? whbar : outputToken,
+      );
+      pathAddresses = v1FallbackPathMh.map(t => htsIdToEvmAddress(t.htsId));
+      console.log(`[SWAP-FIX-1] Rebuilt V1 path: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+      // Fall through to V1 execution below
     }
 
     // ── V1 multi-hop: handled by the V1 execution path below ──
@@ -1857,9 +2132,13 @@ async function executeSaucerSwapDirect(
       const canonicalPath: string[] = [
         htsIdToEvmAddress((isInputNative ? whbar : inputToken).htsId),
       ];
+      // [V2-WHBAR-GUARD] The WHBAR contract ID (0.0.1456985) used by V2 pools
+      // vs the WHBAR token ID (0.0.1456986) used by V1 pools. Both must
+      // resolve to the WHBAR token address for V1 path validation.
+      const whbarContractId = SAUCERSWAP_WHBAR_CONTRACT[network] || SAUCERSWAP_WHBAR_CONTRACT.mainnet;
       for (let i = 1; i < pathAddresses.length - 1; i++) {
         const midHtsId = evmAddressToHtsId(pathAddresses[i]);
-        if (midHtsId === whbar.htsId) {
+        if (midHtsId === whbar.htsId || midHtsId === whbarContractId) {
           canonicalPath.push(whbarEvm);
         } else {
           // Look up token — midHtsId might be a saucerswapAliasId, not canonical
@@ -2033,20 +2312,161 @@ async function executeSaucerSwapDirect(
     //   - swapExactTokensForTokens (Token → Token)
     //   - getAmountsOut (view, for quotes)
     //
-    // RouterWithFee (0.0.6755814) is reserved for future fee-on-transfer
-    // token support — it will NOT be used for standard swap routing.
+    // RouterWithFee (0.0.6755814) handles fee-on-transfer (FOT) tokens.
+    // Standard RouterV3 (0.0.3045981) is used for all non-FOT swaps.
     let v1Router: string = getSaucerSwapRouter(network, "v1");
-    console.log(`[HBAR.h] [C77-07] Using V1 RouterV3 ${v1Router} for all V1 swaps`);
+
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [FOT] FEE-ON-TRANSFER TOKEN DETECTION                             │
+    // │                                                                     │
+    // │  Query Mirror Node for HTS custom fee schedules on both input and  │
+    // │  output tokens. If either has transfer fees (fractional, royalty,   │
+    // │  or fixed fees in same denomination), switch to:                    │
+    // │    1. RouterWithFee (0.0.6755814) — implements the                  │
+    // │       `...SupportingFeeOnTransferTokens` function variants          │
+    // │    2. FOT ABI selectors — check actual balance change, not          │
+    // │       router accounting, so fees don't cause                        │
+    // │       INSUFFICIENT_OUTPUT_AMOUNT reverts                            │
+    // │    3. Fee-adjusted minOutput — slippage applies on top of the       │
+    // │       expected fee deduction, not the raw quote amount              │
+    // │                                                                     │
+    // │  This mirrors PancakeSwap, Uniswap, and SaucerSwap.finance's own   │
+    // │  handling of fee-on-transfer tokens.                                │
+    // └─────────────────────────────────────────────────────────────────────┘
+    let useFotRouter = false;
+    let fotFeePercent = 0;
+    let fotFeeDescription = "";
+
+    try {
+      const [inputFeeInfo, outputFeeInfo] = await Promise.all([
+        !isInputNative ? fetchTokenFeeSchedule(inputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
+        !isOutputNative ? fetchTokenFeeSchedule(outputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
+      ]);
+
+      if (inputFeeInfo.hasFee || outputFeeInfo.hasFee) {
+        useFotRouter = true;
+        fotFeePercent = inputFeeInfo.feePercent + outputFeeInfo.feePercent;
+        fotFeeDescription = [inputFeeInfo.feeDescription, outputFeeInfo.feeDescription].filter(Boolean).join("; ");
+        v1Router = getRouterWithFee(network);
+        console.log(`[FOT] ═══════════════════════════════════════════`);
+        console.log(`[FOT] FEE-ON-TRANSFER TOKEN DETECTED`);
+        console.log(`[FOT]   Input:  ${inputToken.symbol} — ${inputFeeInfo.hasFee ? inputFeeInfo.feeDescription : "no fees"}`);
+        console.log(`[FOT]   Output: ${outputToken.symbol} — ${outputFeeInfo.hasFee ? outputFeeInfo.feeDescription : "no fees"}`);
+        console.log(`[FOT]   Total fee: ~${fotFeePercent.toFixed(2)}%`);
+        console.log(`[FOT]   Router: RouterWithFee ${v1Router}`);
+        console.log(`[FOT]   Using SupportingFeeOnTransferTokens selectors`);
+        console.log(`[FOT] ═══════════════════════════════════════════`);
+
+        // [FOT] Force V1 routing — V2 concentrated liquidity routers
+        // don't have FOT variants. Skip V2 attempts entirely.
+        if (poolVersionInfo?.version === "v2") {
+          console.log(`[FOT] V2 pool detected but token has fees — forcing V1 RouterWithFee (V2 lacks FOT support)`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+        }
+        if (multiHopRoute) {
+          console.log(`[FOT] Multi-hop route detected with fee token — forcing V1 RouterWithFee path`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+        }
+      }
+    } catch (fotErr: any) {
+      console.log(`[FOT] Fee detection failed (non-blocking): ${fotErr?.message || fotErr}`);
+    }
+
+    if (!useFotRouter) {
+      console.log(`[HBAR.h] [C77-07] Using V1 RouterV3 ${v1Router} for all V1 swaps`);
+    }
+
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [V1-GUARD] V1 PATH VALIDATION — PREVENTS DOOMED V1 FALLBACKS     │
+    // │                                                                     │
+    // │  When V2 fails and we fall back to V1, verify that a V1 AMM pair  │
+    // │  actually exists by calling V1 getAmountsOut (view function — no   │
+    // │  gas, no wallet popup). V2-only pairs (e.g., USDT at fee 1500)    │
+    // │  have no V1 Factory pair — the V1 swap would revert with 0 gas    │
+    // │  and waste the user's approval popup + gas fees.                   │
+    // │                                                                     │
+    // │  Also guards direct V1 routing (no V2 fallback) for 2-element     │
+    // │  paths that might use alias EVM addresses unsupported by V1.      │
+    // └─────────────────────────────────────────────────────────────────────┘
+    {
+      const isV2Fallback = !!(_v2TokenHbarError || _v2MultiHopError || _v2SingleHopError);
+      // [SWAP-FIX-5] Always validate V1 paths: for V2 fallbacks AND for
+      // any 2-element path (prevents sending doomed V1 transactions).
+      // Previously skipped HBAR→Token validation (isInputNative was excluded).
+      const shouldValidateV1 = isV2Fallback || pathAddresses.length === 2;
+
+      if (shouldValidateV1) {
+        const v1GuardRouter = useFotRouter ? getRouterWithFee(network) : getSaucerSwapRouter(network, "v1");
+        try {
+          const v1GuardQuote = await fetchRouterQuote(
+            BigInt(rawInput), pathAddresses, v1GuardRouter, network
+          );
+          if (!v1GuardQuote || v1GuardQuote <= 0n) {
+            const v2Error = _v2TokenHbarError || _v2MultiHopError || _v2SingleHopError;
+            if (isV2Fallback) {
+              console.error(`[V1-GUARD] V1 getAmountsOut returned ${v1GuardQuote} — no V1 pair for ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+              console.error(`[V1-GUARD] V2 error was: ${v2Error}`);
+              return {
+                success: false,
+                error: `${inputToken.symbol} → ${isOutputNative ? "HBAR" : outputToken.symbol} is available on V2 (concentrated liquidity) ` +
+                  `but the V2 swap reverted: ${(v2Error || "unknown").slice(0, 150)}. ` +
+                  `No V1 AMM pool exists as fallback. ` +
+                  `Try again with higher slippage (5-10%), or swap ${inputToken.symbol} → WHBAR → ${isOutputNative ? "HBAR" : outputToken.symbol} as two separate swaps.`,
+                executionVenue: "saucerswap-v1",
+              };
+            }
+            // Non-fallback: alias path failed, try canonical HTS ID addresses
+            console.warn(`[V1-GUARD] V1 getAmountsOut failed for direct path — trying canonical addresses`);
+            const canonInEvm = htsIdToEvmAddress(isInputNative ? whbar.htsId : inputToken.htsId);
+            const canonOutEvm = htsIdToEvmAddress(isOutputNative ? whbar.htsId : outputToken.htsId);
+            const canonicalPath = [canonInEvm, canonOutEvm];
+            if (canonicalPath[0].toLowerCase() !== pathAddresses[0].toLowerCase() ||
+                canonicalPath[1].toLowerCase() !== pathAddresses[1].toLowerCase()) {
+              const canonQuote = await fetchRouterQuote(
+                BigInt(rawInput), canonicalPath, v1GuardRouter, network
+              );
+              if (canonQuote && canonQuote > 0n) {
+                console.log(`[V1-GUARD] Canonical path works ✓ (getAmountsOut=${canonQuote}) — switching from alias to canonical`);
+                pathAddresses = canonicalPath;
+              } else {
+                console.warn(`[V1-GUARD] Canonical path also failed (${canonQuote}) — proceeding with original (may revert)`);
+              }
+            }
+          } else {
+            console.log(`[V1-GUARD] V1 path validated ✓ (getAmountsOut=${v1GuardQuote})`);
+          }
+        } catch (v1GuardErr: any) {
+          if (isV2Fallback) {
+            const v2Error = _v2TokenHbarError || _v2MultiHopError || _v2SingleHopError;
+            console.error(`[V1-GUARD] V1 path validation failed: ${v1GuardErr?.message}`);
+            return {
+              success: false,
+              error: `${inputToken.symbol} → ${isOutputNative ? "HBAR" : outputToken.symbol}: V2 swap failed (${(v2Error || "").slice(0, 100)}), ` +
+                `and V1 path validation also failed (${v1GuardErr?.message?.slice(0, 80) || "unknown"}). ` +
+                `This pair may only have a V2 concentrated liquidity pool with no V1 fallback. ` +
+                `Try swapping ${inputToken.symbol} → WHBAR first, then unwrap WHBAR → HBAR.`,
+              executionVenue: "saucerswap-v1",
+            };
+          }
+          console.warn(`[V1-GUARD] V1 validation error (non-blocking): ${v1GuardErr?.message}`);
+        }
+      }
+    }
 
     // For quote fetching, use WHBAR's htsId when input is native HBAR.
     // Use SaucerSwap alias IDs for bridge tokens (their pool IDs differ from canonical bridge IDs).
+    // [FOT] Quotes always use standard RouterV3 — getAmountsOut doesn't account for fees.
     const quoteInputId = isInputNative ? whbar.htsId : getSaucerswapRoutingId(inputToken);
     const quoteOutputId = isOutputNative ? whbar.htsId : getSaucerswapRoutingId(outputToken);
 
     // Multi-strategy quote: router view → API → price estimate → fallback
+    // [FOT] Quote uses standard router (getAmountsOut) even for FOT swaps — the
+    // quote reflects pre-fee output. Fee deduction is handled in minOutput calculation.
+    const quoteRouter = useFotRouter ? getSaucerSwapRouter(network, "v1") : v1Router;
     const quote = await fetchSaucerSwapQuote(quoteInputId, quoteOutputId, rawInput.toString(), {
       pathAddresses,
-      routerHtsId: v1Router,
+      routerHtsId: quoteRouter,
       network,
       inputToken: isInputNative ? whbar : inputToken,
       outputToken: isOutputNative ? whbar : outputToken,
@@ -2055,14 +2475,30 @@ async function executeSaucerSwapDirect(
     // ── minOutput calculation ──
     // When quote is available: use it with slippage tolerance.
     // When all strategies fail: try one more inline price estimate before surrendering.
+    // [FOT] For fee-on-transfer tokens, reduce expected output by the fee percentage
+    // BEFORE applying slippage. This prevents INSUFFICIENT_OUTPUT_AMOUNT when the
+    // FOT router's balance-check sees post-fee amounts.
     let minOutput: number;
     if (quote && quote.amountOut > 0) {
       // For price estimates, use wider slippage (prices may be stale)
       const effectiveSlippage = quote.source === "price-estimate"
         ? Math.max(slippagePct, 5)
         : slippagePct;
-      minOutput = Math.max(1, Math.floor(quote.amountOut * (1 - effectiveSlippage / 100)));
-      console.log(`[HBAR.h] Quote source: ${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${effectiveSlippage}% slippage)`);
+      // [FOT] Deduct fee percentage from expected output, then apply slippage
+      const feeAdjustedOutput = useFotRouter && fotFeePercent > 0
+        ? quote.amountOut * (1 - fotFeePercent / 100)
+        : quote.amountOut;
+      // [FOT] Enforce minimum 2% slippage for fee tokens (fees can be imprecise)
+      const fotAdjustedSlippage = useFotRouter
+        ? Math.max(effectiveSlippage, 2)
+        : effectiveSlippage;
+      minOutput = Math.max(1, Math.floor(feeAdjustedOutput * (1 - fotAdjustedSlippage / 100)));
+      if (useFotRouter) {
+        console.log(`[FOT] minOutput calculation: rawQuote=${quote.amountOut}, ` +
+          `feeDeduction=${fotFeePercent.toFixed(2)}%, feeAdjusted=${Math.floor(feeAdjustedOutput)}, ` +
+          `slippage=${fotAdjustedSlippage}%, minOutput=${minOutput}`);
+      }
+      console.log(`[HBAR.h] Quote source: ${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${fotAdjustedSlippage}% slippage${useFotRouter ? `, ${fotFeePercent.toFixed(1)}% fee deducted` : ""})`);
     } else {
       // Last-ditch inline estimate before surrendering to minOutput=1
       const inTok = isInputNative ? whbar : inputToken;
@@ -2296,16 +2732,18 @@ async function executeSaucerSwapDirect(
       deadline,
       network,
     });
+    // [V1-DRYRUN-NONBLOCK] Dry run is now NON-BLOCKING (warning only).
+    // SaucerSwap's own frontend does NOT do pre-swap simulations.
+    // Hedera's eth_call cannot properly simulate HTS token association,
+    // causing false "Safe token transfer failed!" reverts for tokens the
+    // user hasn't associated yet (association happens IN the real tx).
+    // The actual swap still has slippage protection (minOutput) and
+    // Hedera gas fees are sub-cent, so a failed swap costs almost nothing.
     if (!dryRunResult.ok) {
-      console.error("[HBAR.h] PRE-SWAP DRY RUN FAILED:", dryRunResult.reason);
-      console.error("[HBAR.h] Dry run details:", JSON.stringify(dryRunResult));
-      return {
-        success: false,
-        error: `Pre-swap simulation failed: ${dryRunResult.reason}. The swap would revert on-chain and waste gas fees. Fix the issue and try again.`,
-        executionVenue: "saucerswap-v1",
-      };
-    }
-    if (dryRunResult.simulated) {
+      console.warn("[HBAR.h] PRE-SWAP DRY RUN WARNING (non-blocking):", dryRunResult.reason);
+      console.warn("[HBAR.h] Dry run details:", JSON.stringify(dryRunResult));
+      console.warn("[HBAR.h] Proceeding with real swap despite dry run failure — Hedera eth_call has known HTS simulation limitations.");
+    } else if (dryRunResult.simulated) {
       console.log(`[HBAR.h] Pre-swap dry run PASSED ✓ (${dryRunResult.functionName}, ${dryRunResult.resultHexLength} hex chars, ${dryRunResult.durationMs}ms)`);
     } else {
       console.log(`[HBAR.h] Pre-swap dry run SKIPPED (${dryRunResult.reason}) — proceeding with real swap`);
@@ -2320,20 +2758,29 @@ async function executeSaucerSwapDirect(
       // ═══ HBAR (native) → Token: use swapExactETHForTokens ═══
       // No token approval needed — HBAR is sent as payable amount.
       // The router internally wraps HBAR → WHBAR and swaps through the pool.
-      console.log("[HBAR.h] Native HBAR input — using swapExactETHForTokens");
+      // [FOT] If output token has custom fees, use SupportingFeeOnTransferTokens variant.
+      const fotHbarLabel = useFotRouter ? "swapExactETHForTokensSupportingFeeOnTransferTokens" : "swapExactETHForTokens";
+      console.log(`[HBAR.h] Native HBAR input — using ${fotHbarLabel}${useFotRouter ? ` [FOT: ${fotFeeDescription}]` : ""}`);
 
       // [C108-S13] Emit swap-step for V1 HBAR→Token (single step, no approve needed)
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: 1, total: 1,
-        description: `Swapping HBAR → ${outputToken.symbol}`,
+        description: `Swapping HBAR → ${outputToken.symbol}${useFotRouter ? " (fee token)" : ""}`,
       }}));
 
-      const functionData = encodeSaucerSwapETHForTokens(
-        BigInt(minOutput),
-        pathAddresses,
-        recipientEvmAddress,
-        BigInt(deadline)
-      );
+      const functionData = useFotRouter
+        ? encodeSaucerSwapETHForTokensFOT(
+            BigInt(minOutput),
+            pathAddresses,
+            recipientEvmAddress,
+            BigInt(deadline)
+          )
+        : encodeSaucerSwapETHForTokens(
+            BigInt(minOutput),
+            pathAddresses,
+            recipientEvmAddress,
+            BigInt(deadline)
+          );
 
       // [PERF-01] Use Hbar.fromTinybars for exact precision — matches V2 path.
       // Previous `rawInput / Math.pow(10, 8)` then `new Hbar(float)` caused
@@ -2347,9 +2794,33 @@ async function executeSaucerSwapDirect(
         .setFunctionParameters(functionData)
         .setPayableAmount(hbarAmount);
 
+      // [AUDIT] SaucerSwap-parity diagnostic — compare with SaucerSwap.finance TX calldata
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
+      console.log(`[AUDIT] V1 HBAR→Token EXECUTION PARAMETERS`);
+      console.log(`[AUDIT]   function:     ${fotHbarLabel}`);
+      console.log(`[AUDIT]   selector:     ${useFotRouter ? "0xb6f9de95" : "0x7ff36ab5"}`);
+      console.log(`[AUDIT]   router:       ${v1Router} (ContractId)`);
+      console.log(`[AUDIT]   gas:          ${SWAP_GAS}`);
+      console.log(`[AUDIT]   payable:      ${rawInput} tinybar = ${rawInput / 1e8} HBAR`);
+      console.log(`[AUDIT]   minOutput:    ${minOutput} (raw ${outputToken.decimals}-decimal)`);
+      console.log(`[AUDIT]   path:         [${pathAddresses.map((a) => `${evmAddressToHtsId(a)}(${a.slice(0,10)}…)`).join(", ")}]`);
+      console.log(`[AUDIT]   recipient:    ${recipientEvmAddress}`);
+      console.log(`[AUDIT]   deadline:     ${deadline} (${new Date(deadline * 1000).toISOString()})`);
+      console.log(`[AUDIT]   calldata:     ${bytesToHex(functionData).slice(0, 74)}… (${functionData.length} bytes)`);
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
       console.log("[HBAR.h] Submitting swapExactETHForTokens — HBAR:", hbarAmount, `(${rawInput} tinybar)`);
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] Swap result:", JSON.stringify(swapResult));
+
+      // [FOT] Runtime detection: if swap failed with INSUFFICIENT_OUTPUT_AMOUNT
+      // and we weren't already using the FOT router, mark token for next retry
+      if (!swapResult.success && !useFotRouter) {
+        const swapErr = (swapResult.error || "").toLowerCase();
+        if (swapErr.includes("insufficient_output_amount") || swapErr.includes("insufficient output") || swapErr.includes("contract_revert")) {
+          markTokenAsFOT(outputToken.htsId);
+          console.log(`[FOT] V1 HBAR→Token reverted — ${outputToken.symbol} marked as FOT. Next swap will use RouterWithFee automatically.`);
+        }
+      }
 
       // Build display route with HBAR instead of WHBAR
       const displayRoute = logicalPath.map(t => t.symbol);
@@ -2405,19 +2876,42 @@ async function executeSaucerSwapDirect(
       const v1TotalSteps1 = v1ApproveResult1.skipped ? 1 : 2;
 
       // Swap step: swapExactTokensForETH
-      console.log(`[HBAR.h] Step ${v1SwapStep1}: swapExactTokensForETH`);
+      // [FOT] Use SupportingFeeOnTransferTokens variant when fees detected
+      const fotEthLabel = useFotRouter ? "swapExactTokensForETHSupportingFeeOnTransferTokens" : "swapExactTokensForETH";
+      console.log(`[HBAR.h] Step ${v1SwapStep1}: ${fotEthLabel}${useFotRouter ? ` [FOT: ${fotFeeDescription}]` : ""}`);
       // [C108-S13] Emit swap-step for V1 Token→HBAR swap
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: v1SwapStep1, total: v1TotalSteps1,
-        description: `Swapping ${inputToken.symbol} → HBAR`,
+        description: `Swapping ${inputToken.symbol} → HBAR${useFotRouter ? " (fee token)" : ""}`,
       }}));
-      const functionData = encodeSaucerSwapTokensForETH(
-        BigInt(rawInput),
-        BigInt(minOutput),
-        pathAddresses,
-        recipientEvmAddress,
-        BigInt(deadline)
-      );
+      const functionData = useFotRouter
+        ? encodeSaucerSwapTokensForETHFOT(
+            BigInt(rawInput),
+            BigInt(minOutput),
+            pathAddresses,
+            recipientEvmAddress,
+            BigInt(deadline)
+          )
+        : encodeSaucerSwapTokensForETH(
+            BigInt(rawInput),
+            BigInt(minOutput),
+            pathAddresses,
+            recipientEvmAddress,
+            BigInt(deadline)
+          );
+
+      // [AUDIT] SaucerSwap-parity diagnostic for Token→HBAR V1
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
+      console.log(`[AUDIT] V1 Token→HBAR EXECUTION PARAMETERS`);
+      console.log(`[AUDIT]   function:     ${fotEthLabel}`);
+      console.log(`[AUDIT]   router:       ${v1Router}`);
+      console.log(`[AUDIT]   gas:          ${SWAP_GAS}`);
+      console.log(`[AUDIT]   amountIn:     ${rawInput} (raw ${inputToken.decimals}-decimal)`);
+      console.log(`[AUDIT]   minOutput:    ${minOutput} tinybar = ${minOutput / 1e8} HBAR`);
+      console.log(`[AUDIT]   path:         [${pathAddresses.map((a) => `${evmAddressToHtsId(a)}(${a.slice(0,10)}…)`).join(", ")}]`);
+      console.log(`[AUDIT]   recipient:    ${recipientEvmAddress}`);
+      console.log(`[AUDIT]   deadline:     ${deadline}`);
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
 
       const swapTx = new ContractExecuteTransaction()
         .setContractId(ContractId.fromString(v1Router))
@@ -2426,6 +2920,16 @@ async function executeSaucerSwapDirect(
 
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] Swap result:", JSON.stringify(swapResult));
+
+      // [FOT] Runtime detection for Token→HBAR
+      if (!swapResult.success && !useFotRouter) {
+        const swapErr = (swapResult.error || "").toLowerCase();
+        if (swapErr.includes("insufficient_output_amount") || swapErr.includes("insufficient output") || swapErr.includes("contract_revert")) {
+          markTokenAsFOT(inputToken.htsId);
+          console.log(`[FOT] V1 Token→HBAR reverted — ${inputToken.symbol} marked as FOT. Next swap will use RouterWithFee automatically.`);
+        }
+      }
+
       const displayRoute = logicalPath.map(t => t.symbol);
       displayRoute[displayRoute.length - 1] = "HBAR";
 
@@ -2477,26 +2981,49 @@ async function executeSaucerSwapDirect(
       const v1TotalSteps2 = v1ApproveResult2.skipped ? 1 : 2;
 
       // Swap step: swapExactTokensForTokens
-      console.log(`[HBAR.h] Step ${v1SwapStep2}: swapExactTokensForTokens`);
+      // [FOT] Use SupportingFeeOnTransferTokens variant when fees detected
+      const fotTTLabel = useFotRouter ? "swapExactTokensForTokensSupportingFeeOnTransferTokens" : "swapExactTokensForTokens";
+      console.log(`[HBAR.h] Step ${v1SwapStep2}: ${fotTTLabel}${useFotRouter ? ` [FOT: ${fotFeeDescription}]` : ""}`);
       // [C108-S13] Emit swap-step for V1 Token→Token swap
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: v1SwapStep2, total: v1TotalSteps2,
-        description: `Swapping ${inputToken.symbol} → ${outputToken.symbol}`,
+        description: `Swapping ${inputToken.symbol} → ${outputToken.symbol}${useFotRouter ? " (fee token)" : ""}`,
       }}));
       // [C95] Log the ACTUAL path being sent to V1 router — critical for debugging
-      console.log(`[HBAR.h] [C95] V1 Token→Token execution path (${pathAddresses.length} tokens):`);
+      console.log(`[HBAR.h] [C95] V1 Token→Token execution path (${pathAddresses.length} tokens):${useFotRouter ? " [FOT Router]" : ""}`);
       pathAddresses.forEach((addr, idx) => {
         const id = evmAddressToHtsId(addr);
         const tok = SAUCERSWAP_TOKENS.find(t => t.htsId === id || getSaucerswapRoutingId(t) === id);
         console.log(`[HBAR.h] [C95]   [${idx}] ${addr} → ${id} (${tok?.symbol || "???"})`);
       });
-      const functionData = encodeSaucerSwapCall(
-        BigInt(rawInput),
-        BigInt(minOutput),
-        pathAddresses,
-        recipientEvmAddress,
-        BigInt(deadline)
-      );
+      const functionData = useFotRouter
+        ? encodeSaucerSwapCallFOT(
+            BigInt(rawInput),
+            BigInt(minOutput),
+            pathAddresses,
+            recipientEvmAddress,
+            BigInt(deadline)
+          )
+        : encodeSaucerSwapCall(
+            BigInt(rawInput),
+            BigInt(minOutput),
+            pathAddresses,
+            recipientEvmAddress,
+            BigInt(deadline)
+          );
+
+      // [AUDIT] SaucerSwap-parity diagnostic for Token→Token V1
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
+      console.log(`[AUDIT] V1 Token→Token EXECUTION PARAMETERS`);
+      console.log(`[AUDIT]   function:     ${fotTTLabel}`);
+      console.log(`[AUDIT]   router:       ${v1Router}`);
+      console.log(`[AUDIT]   gas:          ${SWAP_GAS}`);
+      console.log(`[AUDIT]   amountIn:     ${rawInput} (raw ${inputToken.decimals}-decimal)`);
+      console.log(`[AUDIT]   minOutput:    ${minOutput} (raw ${outputToken.decimals}-decimal)`);
+      console.log(`[AUDIT]   path:         [${pathAddresses.map((a) => `${evmAddressToHtsId(a)}(${a.slice(0,10)}…)`).join(", ")}]`);
+      console.log(`[AUDIT]   recipient:    ${recipientEvmAddress}`);
+      console.log(`[AUDIT]   deadline:     ${deadline}`);
+      console.log(`[AUDIT] ══════════════════════════════════════════════`);
 
       const swapTx = new ContractExecuteTransaction()
         .setContractId(ContractId.fromString(v1Router))
@@ -2505,6 +3032,16 @@ async function executeSaucerSwapDirect(
 
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] Swap result:", JSON.stringify(swapResult));
+
+      // [FOT] Runtime detection for Token→Token
+      if (!swapResult.success && !useFotRouter) {
+        const swapErr = (swapResult.error || "").toLowerCase();
+        if (swapErr.includes("insufficient_output_amount") || swapErr.includes("insufficient output") || swapErr.includes("contract_revert")) {
+          markTokenAsFOT(inputToken.htsId);
+          markTokenAsFOT(outputToken.htsId);
+          console.log(`[FOT] V1 Token→Token reverted — ${inputToken.symbol} & ${outputToken.symbol} marked as FOT. Next swap will use RouterWithFee automatically.`);
+        }
+      }
 
       return {
         success: swapResult.success,
@@ -2532,6 +3069,15 @@ async function executeSaucerSwapDirect(
     console.error("[HBAR.h] Swap execution error:", err);
     const errMsg = err?.message || "Direct swap failed";
     const errLower = errMsg.toLowerCase();
+
+    // [FOT] Detect INSUFFICIENT_OUTPUT_AMOUNT — mark both tokens as FOT
+    // for automatic RouterWithFee usage on the next attempt.
+    if (errLower.includes("insufficient_output_amount") || errLower.includes("insufficient output")) {
+      if (!isInputNative) markTokenAsFOT(inputToken.htsId);
+      if (!isOutputNative) markTokenAsFOT(outputToken.htsId);
+      console.log(`[FOT] INSUFFICIENT_OUTPUT_AMOUNT detected — tokens marked as FOT for next retry`);
+    }
+
     const isCancellation =
       errLower.includes("user_reject") ||
       errLower.includes("cancelled by user") ||
@@ -2655,6 +3201,15 @@ export interface SwapPrerequisites {
     spender: string;
     routerVersion: "v1" | "v2" | "unknown";
   };
+  /** [FOT] Fee-on-transfer token info — present when input or output has custom fees */
+  feeOnTransfer?: {
+    detected: boolean;
+    inputFee: TokenFeeInfo;
+    outputFee: TokenFeeInfo;
+    totalFeePercent: number;
+    /** Human-readable summary for UI display */
+    summary: string;
+  };
 }
 
 /**
@@ -2691,6 +3246,31 @@ export async function checkSwapPrerequisites(
 
   const isInputNative = !!inputToken.isNative;
   const isOutputNative = !!outputToken.isNative;
+
+  // ── [FOT] Fee-on-transfer detection (parallel with other checks) ──
+  // Run early so the UI can display fee warnings before the user swaps.
+  try {
+    const [inputFeeInfo, outputFeeInfo] = await Promise.all([
+      !isInputNative ? fetchTokenFeeSchedule(inputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
+      !isOutputNative ? fetchTokenFeeSchedule(outputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
+    ]);
+    if (inputFeeInfo.hasFee || outputFeeInfo.hasFee) {
+      const totalPct = inputFeeInfo.feePercent + outputFeeInfo.feePercent;
+      const parts: string[] = [];
+      if (inputFeeInfo.hasFee) parts.push(`${inputToken.symbol}: ${inputFeeInfo.feeDescription}`);
+      if (outputFeeInfo.hasFee) parts.push(`${outputToken.symbol}: ${outputFeeInfo.feeDescription}`);
+      result.feeOnTransfer = {
+        detected: true,
+        inputFee: inputFeeInfo,
+        outputFee: outputFeeInfo,
+        totalFeePercent: totalPct,
+        summary: parts.join("; "),
+      };
+      console.log(`[FOT] Pre-flight: fee-on-transfer detected — ${result.feeOnTransfer.summary}`);
+    }
+  } catch (fotErr: any) {
+    console.log(`[FOT] Pre-flight fee detection failed (non-blocking): ${fotErr?.message}`);
+  }
 
   // ── Auto-association check ──
   // If maxAutoAssociations is -1 (unlimited) or > 0 (slots available),

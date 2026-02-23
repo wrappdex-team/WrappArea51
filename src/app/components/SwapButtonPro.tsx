@@ -277,7 +277,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                 }`}
               >
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span className="break-all leading-relaxed">{swapError}</span>
+                <span className="break-words whitespace-pre-line leading-relaxed">{swapError}</span>
               </motion.div>
             )}
             <button
@@ -359,9 +359,16 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                 : "bg-amber-50 text-amber-600 border border-amber-200"
             }`}
           >
-            <div className="flex items-center justify-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              No Quote — Try Different Pair
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                <span>Quote Unavailable</span>
+              </div>
+              <span className={`text-xs font-normal ${
+                isDark ? "text-amber-400/60" : "text-amber-500/80"
+              }`}>
+                No price data for {inputToken.symbol}/{outputToken.symbol} — try a different pair or amount
+              </span>
             </div>
           </motion.button>
         ) : (

@@ -4,6 +4,49 @@
  * Extracted from the monolith saucerswap.ts for maintainability.
  * Contains: All EVM ABI encode/decode functions for SaucerSwap V1 + V2 contracts.
  * Zero side effects, zero network calls -- pure byte manipulation.
+ *
+ * ════════════════════════════════════════════════════════════════════════
+ * [AUDIT] FUNCTION SELECTOR VERIFICATION — Last audited 2026-02-23
+ *
+ * All 16 selectors verified against keccak256(signature):
+ *
+ * V1 Router (UniswapV2Router02 fork):
+ *   0xd06ca61f  getAmountsOut(uint256,address[])
+ *   0x38ed1739  swapExactTokensForTokens(uint256,uint256,address[],address,uint256)
+ *   0x7ff36ab5  swapExactETHForTokens(uint256,address[],address,uint256)
+ *   0x18cbafe5  swapExactTokensForETH(uint256,uint256,address[],address,uint256)
+ *   0xe6a43905  getPair(address,address)
+ *
+ * V1 RouterWithFee (FOT variants):
+ *   0x5c11d795  swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)
+ *   0xb6f9de95  swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)
+ *   0x791ac947  swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)
+ *
+ * V2 SwapRouter (UniswapV3 fork):
+ *   0x414bf389  exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))
+ *   0xc04b8d59  exactInput((bytes,address,uint256,uint256,uint256))
+ *   0x49404b7c  unwrapWETH9(uint256,address)
+ *   0xac9650d8  multicall(bytes[])
+ *
+ * V2 QuoterV2:
+ *   0xc6a5026a  quoteExactInputSingle((address,address,uint256,uint24,uint160))
+ *   0xcdca1753  quoteExactInput(bytes,uint256)
+ *
+ * V2 Factory:
+ *   0x1698ee82  getPool(address,address,uint24)
+ *
+ * ERC-20:
+ *   0x095ea7b3  approve(address,uint256)
+ *
+ * ABI Encoding Notes:
+ *   - V1 swapExactETHForTokens: head offset for path[] = 128 (4 head slots × 32)
+ *   - V1 swapExact*For* (5-param): head offset for path[] = 160 (5 head slots × 32)
+ *   - V2 exactInputSingle: static struct → no outer offset needed
+ *   - V2 exactInput: dynamic struct (has bytes path) → outer offset 0x20
+ *     + inner path offset 0xa0 (5 struct fields × 32)
+ *   - V2 packed path: 20-byte addresses + 3-byte fees (uint24 big-endian)
+ *   - V2 multicall: array offset 0x20 + per-element offsets + length-prefixed data
+ * ════════════════════════════════════════════════════════════════════════
  */
 
 // ── Primitive Helpers ───────────────────────────────────────────────
@@ -203,6 +246,91 @@ export function encodeSaucerSwapTokensForETH(
     offset += part.length;
   }
   return result;
+}
+
+// ── V1 Fee-on-Transfer (FOT) Router Encoding ────────────────────────
+//
+// [FOT] SaucerSwap V1 RouterWithFee (0.0.6755814) implements the UniswapV2
+// "SupportingFeeOnTransferTokens" variants. These check the ACTUAL balance
+// change of the recipient after each swap hop, instead of relying on the
+// router's internal accounting. This handles HTS tokens with custom fee
+// schedules (fractional fees, royalty fees) that deduct from every transfer.
+//
+// Function signatures are identical to the standard variants — only the
+// 4-byte selector and internal logic differ.
+
+/**
+ * Encode swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)
+ * Selector: 0x5c11d795
+ */
+export function encodeSaucerSwapCallFOT(
+  amountIn: bigint,
+  amountOutMin: bigint,
+  path: string[],
+  to: string,
+  deadline: bigint
+): Uint8Array {
+  const selector = new Uint8Array([0x5c, 0x11, 0xd7, 0x95]);
+  return concatBytes(
+    selector,
+    encodeUint256(amountIn),
+    encodeUint256(amountOutMin),
+    encodeUint256(160n),
+    encodeAddress(to),
+    encodeUint256(deadline),
+    encodeUint256(BigInt(path.length)),
+    ...path.map(addr => encodeAddress(addr)),
+  );
+}
+
+/**
+ * Encode swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)
+ * Selector: 0xb6f9de95
+ *
+ * HBAR amount is sent as the payable value. Path must start with WHBAR.
+ */
+export function encodeSaucerSwapETHForTokensFOT(
+  amountOutMin: bigint,
+  path: string[],
+  to: string,
+  deadline: bigint
+): Uint8Array {
+  const selector = new Uint8Array([0xb6, 0xf9, 0xde, 0x95]);
+  return concatBytes(
+    selector,
+    encodeUint256(amountOutMin),
+    encodeUint256(128n),
+    encodeAddress(to),
+    encodeUint256(deadline),
+    encodeUint256(BigInt(path.length)),
+    ...path.map(addr => encodeAddress(addr)),
+  );
+}
+
+/**
+ * Encode swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)
+ * Selector: 0x791ac947
+ *
+ * Path must end with WHBAR EVM address.
+ */
+export function encodeSaucerSwapTokensForETHFOT(
+  amountIn: bigint,
+  amountOutMin: bigint,
+  path: string[],
+  to: string,
+  deadline: bigint
+): Uint8Array {
+  const selector = new Uint8Array([0x79, 0x1a, 0xc9, 0x47]);
+  return concatBytes(
+    selector,
+    encodeUint256(amountIn),
+    encodeUint256(amountOutMin),
+    encodeUint256(160n),
+    encodeAddress(to),
+    encodeUint256(deadline),
+    encodeUint256(BigInt(path.length)),
+    ...path.map(addr => encodeAddress(addr)),
+  );
 }
 
 // ── V1 Factory Encoding ─────────────────────────────────────────────

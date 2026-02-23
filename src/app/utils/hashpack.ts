@@ -76,7 +76,7 @@ async function pollMirrorNodeReceipt(
   network: HederaNetwork,
   maxAttempts = 8,
   initialDelayMs = 800,
-): Promise<{ result: string; status: string } | null> {
+): Promise<{ result: string; status: string; revertReason?: string } | null> {
   const base = MIRROR_NODES[network];
   const nid = _fmtTxId(txId);
   for (let i = 0; i < maxAttempts; i++) {
@@ -98,7 +98,31 @@ async function pollMirrorNodeReceipt(
       if (txList.length === 0) continue;
       const result = txList[0].result || "";
       log.info("HashPack", `Mirror receipt: "${result}" (attempt ${i + 1}, ${((i === 0 ? 0 : i <= 3 ? (i === 1 ? initialDelayMs : 1000) : 3 + (1000 * Math.pow(1.5, i - 3)) / 1000)).toFixed(1)}s)`);
-      return { result, status: result };
+
+      // [DIAG-01] For contract reverts, try to fetch the revert reason
+      let revertReason: string | undefined;
+      if (result === "CONTRACT_REVERT_EXECUTED") {
+        try {
+          const cNid = nid.replace(/-/g, ".").replace(".", "-"); // Mirror Node needs 0.0.xxx-sec-nanos format
+          const crRes = await fetch(`${base}/api/v1/contracts/results/${nid}`, {
+            signal: AbortSignal.timeout(6000),
+          });
+          if (crRes.ok) {
+            const crData = await crRes.json();
+            if (crData.error_message) {
+              revertReason = crData.error_message;
+              log.info("HashPack", `[DIAG-01] Revert reason: ${revertReason}`);
+            }
+            if (crData.gas_used !== undefined) {
+              log.info("HashPack", `[DIAG-01] Gas used: ${crData.gas_used} / ${crData.gas_limit || "?"}`);
+            }
+          }
+        } catch (crErr: any) {
+          log.warn("HashPack", `[DIAG-01] Failed to fetch revert reason: ${crErr?.message}`);
+        }
+      }
+
+      return { result, status: result, revertReason };
     } catch {
       log.info("HashPack", `Mirror poll ${i + 1}/${maxAttempts}: network error`);
     }
@@ -171,6 +195,7 @@ export async function connectViaHashConnect(
   network: HederaNetwork,
   onPairingString?: (uri: string) => void,
   onConnectionState?: (state: string) => void,
+  options?: { skipWCModal?: boolean },
 ): Promise<HashPackConnectionResult> {
   if (!isWalletConnectConfigured()) {
     return {
@@ -189,12 +214,14 @@ export async function connectViaHashConnect(
   const signal = _connectionAbortController.signal;
 
   try {
-    onConnectionState?.("Initializing WalletConnect...");
+    // [WALLET-SURGERY Step 1] If SignClient was prewarmed at boot, this resolves
+    // instantly. If not, it's the only wait — typically 1-3s for the first load.
+    onConnectionState?.("Connecting...");
 
     await getSignClient();
     if (signal.aborted) throw new Error("Connection aborted");
 
-    onConnectionState?.("Generating pairing code...");
+    onConnectionState?.("Connecting...");
 
     const { uri, approval } = await proposeSession(network);
     if (signal.aborted) throw new Error("Connection aborted");
@@ -202,28 +229,35 @@ export async function connectViaHashConnect(
     // Also pass the URI to the callback for backward compatibility
     onPairingString?.(uri);
 
-    // Open the official WalletConnect modal with wallet list & QR
-    onConnectionState?.("Opening wallet selector...");
-    try {
-      await openWCModal(uri);
-    } catch (modalErr: any) {
-      log.warn("HashPack", "WC Modal failed to open, falling back", modalErr?.message);
-      // If modal fails, the UI still has the URI via onPairingString
+    // [WALLET-SURGERY Step 4] Skip the generic WalletConnect modal when the
+    // caller opts out (e.g., when we're sending the URI directly to the
+    // HashPack extension or showing our own QR code in the custom UI).
+    if (!options?.skipWCModal) {
+      onConnectionState?.("Opening wallet selector...");
+      try {
+        await openWCModal(uri);
+      } catch (modalErr: any) {
+        log.warn("HashPack", "WC Modal failed to open, falling back", modalErr?.message);
+      }
     }
 
-    onConnectionState?.("Waiting for wallet approval...");
+    onConnectionState?.("Approve in your wallet...");
 
     // Watch for modal close → treat as user cancellation
+    // (only relevant when the WC modal is open — skip when using direct flow)
     let userClosedModal = false;
     let graceElapsed = false;
-    // Small grace period — the modal may briefly report { open: false }
-    // during its own init animation before settling to { open: true }.
-    setTimeout(() => { graceElapsed = true; }, 1500);
-    const unsubModal = subscribeWCModal((state) => {
-      if (!state.open && graceElapsed && !userClosedModal) {
-        userClosedModal = true;
-      }
-    });
+    let unsubModal = () => {};
+    if (!options?.skipWCModal) {
+      // Small grace period — the modal may briefly report { open: false }
+      // during its own init animation before settling to { open: true }.
+      setTimeout(() => { graceElapsed = true; }, 1500);
+      unsubModal = subscribeWCModal((state) => {
+        if (!state.open && graceElapsed && !userClosedModal) {
+          userClosedModal = true;
+        }
+      });
+    }
 
     // Race: approval vs timeout vs modal-close vs abort
     const session = await Promise.race([
@@ -236,17 +270,17 @@ export async function connectViaHashConnect(
           120_000,
         );
 
-        // Poll for modal close
-        const modalPoll = setInterval(() => {
+        // Poll for modal close (only when WC modal is open)
+        const modalPoll = !options?.skipWCModal ? setInterval(() => {
           if (userClosedModal) {
             clearInterval(modalPoll);
             clearTimeout(t);
             reject(new Error("Connection aborted"));
           }
-        }, 300);
+        }, 300) : null;
 
         signal.addEventListener("abort", () => {
-          clearInterval(modalPoll);
+          if (modalPoll) clearInterval(modalPoll);
           clearTimeout(t);
           reject(new Error("Connection aborted"));
         });
@@ -254,7 +288,7 @@ export async function connectViaHashConnect(
     ]);
 
     unsubModal();
-    closeWCModal();
+    if (!options?.skipWCModal) closeWCModal();
 
     if (signal.aborted) throw new Error("Connection aborted");
 
@@ -286,9 +320,40 @@ export async function connectViaHashConnect(
   } catch (err: any) {
     closeWCModal(); // Ensure modal is closed on error
     const msg = err?.message || String(err);
+    const lc = msg.toLowerCase();
     if (msg.includes("aborted")) return { success: false, session: null, error: "Connection was cancelled." };
     if (msg.includes("rejected") || msg.includes("User rejected")) return { success: false, session: null, error: "Connection rejected by wallet." };
     if (msg.includes("expired") || msg.includes("Proposal expired")) return { success: false, session: null, error: "Pairing expired. Please try connecting again." };
+
+    // [WALLET-STEP-11] Relay / network error recovery — classify and provide
+    // actionable guidance instead of raw WC internals
+    if (lc.includes("relay") || lc.includes("websocket") || lc.includes("send was called before connect")) {
+      log.warn("HashPack", `[STEP-11] Relay error during connection: ${msg}`);
+      // Force-reset the SignClient so next attempt gets a fresh relay
+      try { await forceResetSignClient(); } catch { /* best-effort */ }
+      return {
+        success: false,
+        session: null,
+        error: "WalletConnect relay temporarily unavailable. The connection has been reset — please try again.",
+      };
+    }
+    if (lc.includes("no matching key") || lc.includes("missing or invalid")) {
+      log.warn("HashPack", `[STEP-11] Session key mismatch: ${msg}`);
+      try { await forceResetSignClient(); } catch { /* best-effort */ }
+      return {
+        success: false,
+        session: null,
+        error: "Session key mismatch — the WalletConnect state has been reset. Please try connecting again.",
+      };
+    }
+    if (lc.includes("timed out") || lc.includes("timeout")) {
+      return {
+        success: false,
+        session: null,
+        error: "Connection timed out. Make sure your Hedera wallet is open and ready, then try again.",
+      };
+    }
+
     return { success: false, session: null, error: msg };
   }
 }
@@ -358,7 +423,7 @@ async function _getEvmAddress(accountId: string, network: HederaNetwork): Promis
   } catch { return null; }
 }
 
-// ── Session Persistence ────────────────────────────────────────────────
+// ── Session Persistence ───────────────────────────────────────────────
 
 const SESSION_KEY = "hashpack_session";
 
@@ -576,10 +641,14 @@ export async function executeHederaTransaction(
     if (txId) {
       const receipt = await pollMirrorNodeReceipt(txId, _activeNetwork);
       if (receipt && receipt.status !== "SUCCESS") {
+        // [DIAG-01] Include decoded revert reason when available
+        const revertDetail = receipt.revertReason
+          ? ` — ${receipt.revertReason}`
+          : "";
         return {
           success: false,
           transactionId: txId,
-          error: `Transaction reverted on-chain: ${receipt.status}`,
+          error: `Transaction reverted on-chain: ${receipt.status}${revertDetail}`,
         };
       }
       // [C28-03] If mirror node polling returns null (receipt not found in time),

@@ -22,7 +22,7 @@ import { discoverV2Factory } from "./pools";
 import { verifyIsContract, getDiscoveredRouter } from "./verification";
 
 // ══════════════════════════════════════════════════════════════════════
-// ── TRANSACTION DIAGNOSTICS ─────────────────────────────────────────
+// ── TRANSACTION DIAGNOSTICS ────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 
 /**
@@ -345,4 +345,169 @@ export async function checkNetworkHealth(
   }
 
   return { mirrorNode, saucerSwapApi, dexScreener, v2Router, v2Factory, timestamp };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── [DIAG-02] SWAP ERROR CLASSIFIER ────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * Parse a raw swap error message and return user-friendly guidance.
+ *
+ * Called by swap-engine.ts after a swap fails to enrich the error message
+ * with actionable advice. The raw error may come from:
+ *   - Mirror Node revert reason (DIAG-01)
+ *   - Hedera consensus status codes
+ *   - Solidity require() messages decoded from revert data
+ *   - WalletConnect relay errors
+ */
+export function classifySwapError(
+  rawError: string,
+  context?: {
+    inputSymbol?: string;
+    outputSymbol?: string;
+    venue?: string;
+    slippagePct?: number;
+    isV2Fallback?: boolean;
+  }
+): { category: string; userMessage: string; suggestion: string } {
+  const lc = (rawError || "").toLowerCase();
+  const inp = context?.inputSymbol || "input token";
+  const out = context?.outputSymbol || "output token";
+  const slip = context?.slippagePct || 0.5;
+
+  // ── Slippage / insufficient output ──
+  if (lc.includes("insufficient_output_amount") || lc.includes("insufficient output") || lc.includes("too little received")) {
+    return {
+      category: "slippage",
+      userMessage: `Price moved too much during the swap. Your ${slip}% slippage tolerance was exceeded.`,
+      suggestion: `Increase slippage to 2-5% in Settings, or try a smaller amount.`,
+    };
+  }
+
+  // ── Deadline expired ──
+  if (lc.includes("expired") || lc.includes("transaction too old") || lc.includes("deadline")) {
+    return {
+      category: "deadline",
+      userMessage: `The swap deadline expired before the transaction reached consensus.`,
+      suggestion: `Try again — Hedera consensus typically takes 3-5 seconds. If this persists, check your internet connection.`,
+    };
+  }
+
+  // ── Safe Transfer Failed (token not associated) ──
+  if (lc.includes("safe token transfer failed") || lc.includes("stf")) {
+    return {
+      category: "association",
+      userMessage: `${out} is not associated with your account, or a token transfer failed.`,
+      suggestion: `Associate ${out} in your wallet (HashPack → Tokens → Add), then retry.`,
+    };
+  }
+
+  // ── Transfer failed (generic) ──
+  if (lc.includes("transfer failed") || lc.includes("tf")) {
+    return {
+      category: "transfer",
+      userMessage: `A token transfer failed during the swap — likely insufficient balance or missing approval.`,
+      suggestion: `Verify your ${inp} balance and that the approval transaction succeeded.`,
+    };
+  }
+
+  // ── Insufficient input amount ──
+  if (lc.includes("insufficient_input_amount") || lc.includes("iia")) {
+    return {
+      category: "input",
+      userMessage: `The swap router received less ${inp} than expected.`,
+      suggestion: `Try again with a slightly lower amount to account for rounding.`,
+    };
+  }
+
+  // ── Price slippage check (V2 concentrated liquidity) ──
+  if (lc.includes("price slippage check") || lc.includes("spl")) {
+    return {
+      category: "v2-slippage",
+      userMessage: `V2 concentrated liquidity price moved beyond the acceptable range.`,
+      suggestion: `Increase slippage to 3-5%, or try the swap again (V2 pools are more volatile).`,
+    };
+  }
+
+  // ── No pool / pair found ──
+  if (lc.includes("no pool") || lc.includes("pair does not exist") || lc.includes("address(0)")) {
+    return {
+      category: "no-pool",
+      userMessage: `No liquidity pool exists for ${inp} → ${out} at the attempted fee tier.`,
+      suggestion: `Try swapping through HBAR as an intermediary: ${inp} → HBAR → ${out}.`,
+    };
+  }
+
+  // ── Gas limit exceeded ──
+  if (lc.includes("gas_limit") || lc.includes("out of gas") || lc.includes("gas_used")) {
+    return {
+      category: "gas",
+      userMessage: `The transaction ran out of gas during execution.`,
+      suggestion: `This is unusual on Hedera. Try the swap again — if it persists, report the issue.`,
+    };
+  }
+
+  // ── Insufficient HBAR for gas / payer balance ──
+  if (lc.includes("insufficient_payer_balance") || lc.includes("insufficient payer balance") || lc.includes("payer balance")) {
+    return {
+      category: "insufficient-hbar",
+      userMessage: `Not enough HBAR to pay for transaction fees.`,
+      suggestion: `You need HBAR for gas fees on Hedera (~0.5-2 HBAR for swaps). Add more HBAR to your account.`,
+    };
+  }
+
+  // ── Relay / WalletConnect connectivity errors ──
+  if (lc.includes("relay") || lc.includes("websocket") || lc.includes("send was called before connect")) {
+    return {
+      category: "relay",
+      userMessage: `Lost connection to the WalletConnect relay. The swap was not submitted.`,
+      suggestion: `Your wallet session may have dropped. Try the swap again — the relay will auto-reconnect.`,
+    };
+  }
+
+  // ── Generic CONTRACT_REVERT with 0 gas ──
+  if (lc.includes("contract_revert") && (lc.includes("0 gas") || lc.includes("gas_used: 0"))) {
+    return {
+      category: "selector-mismatch",
+      userMessage: `The transaction was sent to a contract that doesn't recognize the function call (0 gas used).`,
+      suggestion: `This usually means the wrong router was used. Try the swap again — the system will auto-detect the correct router.`,
+    };
+  }
+
+  // ── Generic CONTRACT_REVERT ──
+  if (lc.includes("contract_revert")) {
+    return {
+      category: "revert",
+      userMessage: `The swap smart contract reverted: ${rawError.slice(0, 200)}`,
+      suggestion: context?.isV2Fallback
+        ? `Both V2 and V1 routes failed. Try swapping ${inp} → HBAR first, then HBAR → ${out}.`
+        : `Try again with higher slippage (3-5%), or reduce the swap amount.`,
+    };
+  }
+
+  // ── User rejection ──
+  if (lc.includes("rejected") || lc.includes("user_reject") || lc.includes("cancelled") || lc.includes("canceled")) {
+    return {
+      category: "user-cancelled",
+      userMessage: `Transaction was rejected in your wallet.`,
+      suggestion: `Open your wallet and approve the transaction when prompted.`,
+    };
+  }
+
+  // ── Timeout ──
+  if (lc.includes("timeout") || lc.includes("timed out")) {
+    return {
+      category: "timeout",
+      userMessage: `The wallet connection timed out before receiving a response.`,
+      suggestion: `Check that your wallet app is open and connected. The transaction may have succeeded — check HashScan.`,
+    };
+  }
+
+  // ── Fallback ──
+  return {
+    category: "unknown",
+    userMessage: rawError.slice(0, 300),
+    suggestion: `Check the browser console (F12) for detailed logs, or try the swap again.`,
+  };
 }

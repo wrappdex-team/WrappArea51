@@ -352,18 +352,104 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   const isIframe = (() => { try { return window !== window.top; } catch { return true; } })();
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-  // ── Resolve wallet redirect URL for mobile ────────────────────────
+  // ── [MOB-FIX] Resolve wallet redirect URL for mobile ────────────────
+  //
+  // On mobile, the WC relay delivers the signing request to the wallet,
+  // but we need to bring the wallet app to the FOREGROUND so the user
+  // can see the approval prompt. Without this, the request arrives
+  // silently and the dApp spins until timeout.
+  //
+  // Priority order for redirect URL:
+  //   1. Session peer metadata `redirect.native` (e.g., "hashpack://")
+  //   2. Session peer metadata `redirect.universal` (e.g., "https://...")
+  //   3. Detect wallet by peer name/url → use known native deep link
+  //   4. Last resort: generic "wc:" deep link pass-through
+  //
+  // CRITICAL: On mobile, `window.open(url, "_blank")` opens a BROWSER TAB
+  // (shows the website, not the app). iOS Universal Links and Android App
+  // Links only activate from `window.location.href` navigation or user taps.
+  // Native custom schemes (hashpack://) work with `window.location.href`.
   let walletRedirect: string | null = null;
+  let walletRedirectKind: "native" | "universal" | "fallback" = "fallback";
   if (isMobile && params.topic) {
     try {
       const session = client.session?.get?.(params.topic);
       const redirect = session?.peer?.metadata?.redirect;
-      walletRedirect = redirect?.native || redirect?.universal || null;
-      if (!walletRedirect) {
-        const peerUrl = session?.peer?.metadata?.url || "";
-        if (peerUrl.includes("hashpack")) walletRedirect = "https://www.hashpack.app/wc";
+      const peerName = (session?.peer?.metadata?.name || "").toLowerCase();
+      const peerUrl = (session?.peer?.metadata?.url || "").toLowerCase();
+      console.log(`[WC] [MOB-FIX] Mobile redirect resolution:`,
+        `peer="${peerName}", url="${peerUrl}",`,
+        `redirect.native="${redirect?.native || "—"}",`,
+        `redirect.universal="${redirect?.universal || "—"}"`);
+
+      // 1. Peer-provided native deep link (most reliable)
+      if (redirect?.native) {
+        walletRedirect = redirect.native;
+        walletRedirectKind = "native";
       }
-    } catch { /* session lookup failed — proceed without redirect */ }
+      // 2. Peer-provided universal link
+      else if (redirect?.universal) {
+        walletRedirect = redirect.universal;
+        walletRedirectKind = "universal";
+      }
+      // 3. Detect HashPack by name or URL → use native scheme
+      //    "hashpack://" is the registered custom URL scheme for HashPack's
+      //    iOS and Android apps. Using the native scheme directly opens the
+      //    app without any browser tab — far more reliable than the
+      //    universal link "https://www.hashpack.app/wc" which just opens
+      //    the website in a browser tab.
+      else if (peerName.includes("hashpack") || peerUrl.includes("hashpack")) {
+        walletRedirect = "hashpack://";
+        walletRedirectKind = "native";
+        console.log(`[WC] [MOB-FIX] Detected HashPack — using native scheme "hashpack://"`);
+      }
+      // 4. Detect Blade wallet
+      else if (peerName.includes("blade") || peerUrl.includes("blade")) {
+        walletRedirect = "blade://";
+        walletRedirectKind = "native";
+      }
+    } catch (e: any) {
+      console.warn("[WC] [MOB-FIX] Session lookup failed:", e?.message);
+    }
+    console.log(`[WC] [MOB-FIX] Resolved: walletRedirect="${walletRedirect}", kind=${walletRedirectKind}`);
+  }
+
+  /**
+   * [MOB-FIX] Fire mobile redirect to bring wallet app to foreground.
+   *
+   * Uses `window.location.href` for ALL redirect types on mobile:
+   * - Native schemes (hashpack://) → OS intercepts, opens app, page stays
+   * - Universal links (https://...) → OS intercepts IF app is installed
+   *   and the domain has .well-known/apple-app-site-association configured
+   *
+   * `window.open(url, "_blank")` DOES NOT work for bringing apps to
+   * foreground on mobile — it opens a browser tab to the website instead.
+   */
+  function fireMobileRedirect(): boolean {
+    if (!walletRedirect) {
+      console.warn("[WC] [MOB-FIX] No wallet redirect URL available — wallet may not open");
+      return false;
+    }
+    console.log(`[WC] [MOB-FIX] Firing mobile redirect (${walletRedirectKind}): ${walletRedirect}`);
+    try {
+      // For native schemes (hashpack://, blade://, etc.), window.location.href
+      // triggers the OS deep link handler. The browser page is NOT navigated
+      // away — the OS intercepts the custom scheme before navigation occurs.
+      // For universal links, window.location.href is also the correct approach
+      // (window.open would just open a browser tab).
+      window.location.href = walletRedirect;
+      return true;
+    } catch (e1: any) {
+      console.warn("[WC] [MOB-FIX] location.href redirect failed:", e1?.message);
+      // Fallback: try window.open as last resort
+      try {
+        origOpen.call(window, walletRedirect, "_blank");
+        return true;
+      } catch (e2: any) {
+        console.warn("[WC] [MOB-FIX] window.open fallback also failed:", e2?.message);
+        return false;
+      }
+    }
   }
 
   // ── [C89] Non-blocking wallet pre-activation ───────────────────────
@@ -380,26 +466,37 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     await _tryActivateWalletFast(client, params.topic);
   }
 
+  // ── [MOB-FIX] Mobile pre-activation: bring wallet to foreground ────
+  // On mobile, fire the native deep link BEFORE sending the WC request.
+  // This gives the wallet app time to become active and reconnect its
+  // relay WebSocket so it can receive the signing request promptly.
+  // Without this, the relay message arrives while the wallet is in
+  // background and the user never sees the approval prompt.
+  if (isMobile && params.topic) {
+    console.log("[WC] [MOB-FIX] Mobile pre-activation: opening wallet before signing request...");
+    fireMobileRedirect();
+    // Brief pause to let the OS process the deep link and bring the wallet
+    // to foreground. The WC relay WebSocket in the wallet app needs a moment
+    // to reconnect after being backgrounded by the OS.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+  }
+
   if (isIframe || isMobile) {
-    let redirectFired = false;
+    let redirectFired = isMobile; // [MOB-FIX] pre-activation already fired on mobile
     window.open = function (url?: any, target?: any, features?: any): WindowProxy | null {
       const urlStr = String(url || "");
 
       // ── Mobile: suppress WC pairing URI deep links ──────────────
+      // The WC SDK fires window.open("wc:<pairingTopic>@2?...") which
+      // the mobile OS misinterprets as a NEW pairing request. Suppress
+      // it — the pre-activation redirect already brought the wallet to
+      // foreground, and the relay delivers the actual signing request.
       if (isMobile && (urlStr.startsWith("wc:") || urlStr.includes("wc%3A") || urlStr.includes("/wc?uri=wc"))) {
-        console.log("[WC] Mobile: suppressed WC pairing deep-link:", urlStr.slice(0, 120));
-        if (walletRedirect && !redirectFired) {
+        console.log("[WC] [MOB-FIX] Suppressed WC pairing deep-link:", urlStr.slice(0, 120));
+        // If pre-activation didn't fire (edge case), try the redirect now
+        if (!redirectFired) {
           redirectFired = true;
-          console.log("[WC] Mobile: opening wallet via redirect:", walletRedirect);
-          try {
-            if (walletRedirect.startsWith("http")) {
-              origOpen.call(window, walletRedirect, "_blank");
-            } else {
-              window.location.href = walletRedirect;
-            }
-          } catch {
-            try { origOpen.call(window, walletRedirect, "_blank"); } catch { /* */ }
-          }
+          fireMobileRedirect();
         }
         return null;
       }
@@ -644,7 +741,7 @@ export function getWalletConnectProjectId(): string {
   return WC_PROJECT_ID;
 }
 
-// ── Relay Prewarm ──────────────────────────────────────────────────────
+// ── Relay Prewarm ─────────────────────────────────────────────────────
 
 /**
  * [C81-01] Pre-warm the WalletConnect relay WebSocket connection.
@@ -1172,88 +1269,6 @@ const KNOWN_WALLET_EXTENSION_IDS = [
 ];
 
 /**
- * [C85] Try to activate the wallet's browser extension service worker.
- *
- * Chrome Manifest V3 kills extension service workers after ~30s of
- * inactivity, severing the WC relay WebSocket. The signing request gets
- * queued at the relay but never delivered until the user manually opens
- * the extension.
- *
- * Multi-strategy activation:
- *   1. WC session ping — sends a `wc_sessionPing` via the relay, which
- *      can wake the wallet if its relay WebSocket is still alive.
- *   2. chrome.runtime.sendMessage — directly wakes the extension's
- *      service worker (if the extension has configured
- *      `externally_connectable` for our domain).
- *   3. Pairing topic ping — pings the underlying pairing connection
- *      which may have a separate keep-alive.
- *
- * All strategies are non-blocking and fail silently. The worst case is
- * that the wallet doesn't auto-prompt and the user has to click the
- * extension icon (same as before this fix).
- */
-async function _tryActivateWallet(client: any, topic: string): Promise<void> {
-  const startMs = Date.now();
-
-  // ── Strategy 2 (fire-and-forget): chrome.runtime.sendMessage ───────
-  // Run this FIRST because it's non-blocking and the most reliable for
-  // browser extensions. It directly triggers Chrome to start the service
-  // worker even if the WC relay WebSocket is completely dead.
-  const chromeApi = (globalThis as any).chrome;
-  if (chromeApi?.runtime?.sendMessage) {
-    for (const extId of KNOWN_WALLET_EXTENSION_IDS) {
-      try {
-        chromeApi.runtime.sendMessage(extId, {
-          type: "wc_activate",
-          topic,
-          origin: window.location.origin,
-        }, () => {
-          const _lastError = chromeApi.runtime.lastError;
-          if (_lastError) {
-            console.log(`[WC] Extension ${extId.slice(0, 8)}… not externally connectable`);
-          } else {
-            console.log(`[WC] Extension ${extId.slice(0, 8)}… activated via chrome.runtime`);
-          }
-        });
-      } catch {
-        // chrome.runtime may throw in sandboxed iframes
-      }
-    }
-  }
-
-  // ── Strategies 1 + 3 (parallel): WC session ping + pairing ping ────
-  // Run both simultaneously with a shared 3s timeout. The session ping
-  // wakes the wallet if its relay WS is still alive; the pairing ping
-  // is a secondary channel that may survive longer.
-  const sessionPing = client.ping({ topic }).then(
-    () => console.log(`[WC] Session ping OK (${Date.now() - startMs}ms)`),
-    (e: any) => console.log(`[WC] Session ping failed (${Date.now() - startMs}ms):`, e?.message?.slice(0, 80)),
-  );
-
-  let pairingPing: Promise<void> = Promise.resolve();
-  try {
-    const session = client.session?.get?.(topic);
-    if (session?.pairingTopic && client.core?.pairing?.ping) {
-      pairingPing = client.core.pairing.ping({ topic: session.pairingTopic }).then(
-        () => console.log("[WC] Pairing ping OK"),
-        () => { /* non-critical */ },
-      );
-    }
-  } catch { /* */ }
-
-  // Wait for both pings with a 3s ceiling
-  await Promise.race([
-    Promise.allSettled([sessionPing, pairingPing]),
-    new Promise<void>((resolve) => setTimeout(resolve, 3000)),
-  ]);
-
-  // Brief grace period for the service worker to reconnect to the relay
-  // after being woken by chrome.runtime.sendMessage (strategy 2).
-  await new Promise<void>((resolve) => setTimeout(resolve, 250));
-  console.log(`[WC] Wallet activation complete (${Date.now() - startMs}ms total)`);
-}
-
-/**
  * [C85] Public helper: attempt to bring the connected wallet to foreground.
  *
  * Called from the signing overlay's "Open Wallet" button to give users
@@ -1261,8 +1276,12 @@ async function _tryActivateWallet(client: any, topic: string): Promise<void> {
  *
  * Tries:
  *   1. chrome.runtime.sendMessage to known wallet extensions
- *   2. Opening the wallet's redirect URL from the session peer metadata
- *   3. Opening a generic HashPack URL as last resort
+ *   2. WC session ping to wake the extension's service worker via relay
+ *
+ * IMPORTANT: Do NOT open any URLs (hashpack.app, deep links, etc.) — that
+ * opens the website instead of the extension and confuses users.
+ * The chrome.runtime + WC ping combo reliably wakes the extension
+ * without any URL tab opening.
  */
 export async function tryOpenWalletExtension(): Promise<void> {
   // Try chrome.runtime first
@@ -1290,13 +1309,6 @@ export async function tryOpenWalletExtension(): Promise<void> {
       } catch { /* non-fatal */ }
     }
   } catch { /* */ }
-
-  // [C93] REMOVED: Don't open HashPack webapp URL — this causes a visible
-  // browser tab flicker (new tab opens then immediately loses focus when
-  // the extension activates). The chrome.runtime + WC ping combo above
-  // reliably wakes the extension without any URL tab opening.
-  //
-  // Previously: window.open("https://www.hashpack.app", "_blank", "noopener,noreferrer");
 }
 
 /**
@@ -1353,11 +1365,13 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
     (e: any) => console.log(`[WC] Session ping failed (${Date.now() - startMs}ms):`, e?.message?.slice(0, 80)),
   );
 
-  // ── Brief wait (800ms total) ───────────────────────────────────────
-  // [C93] Increased from 500ms to 800ms for more reliable service worker
-  // wake-up. The extra 300ms significantly improves the hit rate for
-  // Chrome extension activation, especially after the service worker has
-  // been killed by Chrome's 30s inactivity timeout.
-  await new Promise<void>((resolve) => setTimeout(resolve, 800));
+  // ── Brief wait ───────────────────────────────────────────────────────
+  // [WALLET-SURGERY Step 9] Reduced from 800ms to 300ms. The relay keepalive
+  // (startRelayKeepalive in SwapPanel) keeps the service worker alive, so we
+  // only need a brief yield for chrome.runtime.sendMessage to fire. The WC
+  // relay delivers the signing request regardless; this wait only affects
+  // whether the wallet auto-pops or the user has to click the extension icon.
+  // 300ms is enough for chrome.runtime to trigger the service worker start.
+  await new Promise<void>((resolve) => setTimeout(resolve, 300));
   console.log(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
 }

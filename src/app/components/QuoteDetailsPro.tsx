@@ -50,6 +50,14 @@ interface QuoteDetailsProProps {
   slippage: number;
   customSlippage: string;
   onSetCustomSlippage: (val: string) => void;
+  // [FOT] Fee-on-transfer token info
+  feeOnTransfer?: {
+    detected: boolean;
+    totalFeePercent: number;
+    summary: string;
+  };
+  // [Step 16] Quote freshness — true when TTL expired and prices are refreshing
+  quoteStale?: boolean;
 }
 
 export const QuoteDetailsPro = memo(function QuoteDetailsPro({
@@ -70,6 +78,8 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
   slippage,
   customSlippage,
   onSetCustomSlippage,
+  feeOnTransfer,
+  quoteStale,
 }: QuoteDetailsProProps) {
   // ── Collapsed by default ──
   const [isExpanded, setIsExpanded] = useState(false);
@@ -158,6 +168,24 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
           }`}>
             {effectiveSlippage}%
           </span>
+          {/* [FOT] Fee token badge (compact) */}
+          {feeOnTransfer?.detected && (
+            <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border ${
+              isDark ? "bg-amber-500/10 border-amber-500/20 text-amber-400" : "bg-amber-50 border-amber-200 text-amber-600"
+            }`}>
+              <AlertTriangle className="w-2.5 h-2.5" />
+              Fee
+            </span>
+          )}
+          {/* [Step 16] Stale quote badge — shows when TTL expired, refreshing */}
+          {quoteStale && (
+            <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border ${
+              isDark ? "bg-orange-500/10 border-orange-500/20 text-orange-400" : "bg-orange-50 border-orange-200 text-orange-600"
+            }`}>
+              <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+              Updating
+            </span>
+          )}
           {/* Confidence badge (compact) */}
           {!isWrapUnwrap && (
             <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-semibold border ${confidenceConfig.bg} ${confidenceConfig.color}`}>
@@ -186,6 +214,21 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
             <div className={`px-3.5 pb-3.5 space-y-2.5 text-sm ${
               isDark ? "border-t border-white/[0.04]" : "border-t border-gray-100"
             }`}>
+              {/* [FOT] Fee-on-transfer warning banner */}
+              {feeOnTransfer?.detected && (
+                <div className={`mt-2.5 flex items-start gap-2 px-3 py-2 rounded-lg text-xs ${
+                  isDark
+                    ? "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                    : "bg-amber-50 border border-amber-200 text-amber-700"
+                }`}>
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold">Transfer Fee Token</span>
+                    <span className="opacity-80"> — This token has a ~{feeOnTransfer.totalFeePercent.toFixed(1)}% custom fee on transfers. Slippage is adjusted automatically to prevent failed swaps. {feeOnTransfer.summary}</span>
+                  </div>
+                </div>
+              )}
+
               <div className="pt-2.5">
                 {/* Rate (full) */}
                 <Row isDark={isDark} label="Rate">
@@ -452,7 +495,7 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
                     </span>
                   </div>
                   <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    {countdownUrgent ? "Refreshing soon..." : "Quote refreshes"}
+                    {quoteStale ? "Updating quote..." : countdownUrgent ? "Refreshing soon..." : "Quote refreshes"}
                   </span>
                 </div>
                 <Tip content="Refresh quote now" side="top">
@@ -464,8 +507,8 @@ export const QuoteDetailsPro = memo(function QuoteDetailsPro({
                         : "text-pink-600 hover:bg-pink-50 hover:text-pink-700"
                     }`}
                   >
-                    <RefreshCw className={`w-3 h-3 ${countdownUrgent ? "animate-spin" : ""}`} />
-                    Refresh
+                    <RefreshCw className={`w-3 h-3 ${quoteStale || countdownUrgent ? "animate-spin" : ""}`} />
+                    {quoteStale ? "Updating..." : "Refresh"}
                   </button>
                 </Tip>
               </div>
