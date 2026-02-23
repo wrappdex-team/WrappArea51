@@ -374,7 +374,7 @@ export function classifySwapError(
   const lc = (rawError || "").toLowerCase();
   const inp = context?.inputSymbol || "input token";
   const out = context?.outputSymbol || "output token";
-  const slip = context?.slippagePct || 0.5;
+  const slip = context?.slippagePct || 3;
 
   // ── Slippage / insufficient output ──
   if (lc.includes("insufficient_output_amount") || lc.includes("insufficient output") || lc.includes("too little received")) {

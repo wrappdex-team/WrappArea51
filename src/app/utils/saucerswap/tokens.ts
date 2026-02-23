@@ -134,7 +134,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
   {
     // [C85] Updated from 0.0.786931 → 0.0.968069 (reconciliation detected mismatch
     // with SaucerSwap API — the old ID was a deprecated HST token).
-    symbol: "HST", name: "HSuite Token", htsId: "0.0.968069",
+    symbol: "HST", name: "HeadStarter", htsId: "0.0.968069",
     evmAddress: htsIdToEvmAddress("0.0.968069"), decimals: 8,
     logo: "https://www.saucerswap.finance/images/tokens/hst.svg",
     rank: 11, isWrapped: false,
@@ -174,7 +174,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
     rank: 16, isWrapped: true, bridge: "HashPort",
   },
-  // ── HashPort / LayerZero Bridge Stablecoins ──
+  // ── HashPort / LayerZero Bridge Stablecoins ���─
   {
     symbol: "USDCh", name: "USDC (HashPort)", htsId: "0.0.1055459",
     evmAddress: htsIdToEvmAddress("0.0.1055459"), decimals: 6,
@@ -199,6 +199,127 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     evmAddress: htsIdToEvmAddress("0.0.540318"), decimals: 8,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
     rank: 24, isWrapped: true, bridge: "HashPort",
+  },
+  // ── Whitelisted Top Tokens by Market Cap ──────────────────────────
+  {
+    symbol: "XSGD", name: "XSGD", htsId: "0.0.1985922",
+    evmAddress: htsIdToEvmAddress("0.0.1985922"), decimals: 6,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.1985922.svg",
+    rank: 30, isWrapped: false,
+  },
+  {
+    symbol: "AUDD", name: "Australian Digital Dollar", htsId: "0.0.8317071",
+    evmAddress: htsIdToEvmAddress("0.0.8317071"), decimals: 6,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.8317071.svg",
+    rank: 31, isWrapped: false,
+  },
+  {
+    symbol: "XPACK", name: "xPACK", htsId: "0.0.7245006",
+    evmAddress: htsIdToEvmAddress("0.0.7245006"), decimals: 6,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7245006.svg",
+    rank: 32, isWrapped: false,
+  },
+  {
+    symbol: "HSUITE", name: "HubSuite", htsId: "0.0.786931",
+    evmAddress: htsIdToEvmAddress("0.0.786931"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/hsuite.svg",
+    rank: 33, isWrapped: false,
+  },
+  {
+    symbol: "BTC.\u210F", name: "Bitcoin.\u210F", htsId: "0.0.4873177",
+    evmAddress: htsIdToEvmAddress("0.0.4873177"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.4873177.svg",
+    rank: 34, isWrapped: false,
+  },
+  {
+    symbol: "GIB", name: "\u0F3C \u3064 \u25D5_\u25D5 \u0F3D\u3064 GIB", htsId: "0.0.7893707",
+    evmAddress: htsIdToEvmAddress("0.0.7893707"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7893707.svg",
+    rank: 35, isWrapped: false,
+  },
+  {
+    symbol: "JAM", name: "Tune.Fm", htsId: "0.0.127877",
+    evmAddress: htsIdToEvmAddress("0.0.127877"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/jam.svg",
+    rank: 36, isWrapped: false,
+  },
+  {
+    symbol: "STEAM", name: "STEAM", htsId: "0.0.5733578",
+    evmAddress: htsIdToEvmAddress("0.0.5733578"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.5733578.svg",
+    rank: 37, isWrapped: false,
+  },
+  {
+    symbol: "GRELF", name: "GRELF", htsId: "0.0.1159074",
+    evmAddress: htsIdToEvmAddress("0.0.1159074"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/grelf.svg",
+    rank: 38, isWrapped: false,
+  },
+  {
+    symbol: "KBL", name: "Kabila", htsId: "0.0.5989978",
+    evmAddress: htsIdToEvmAddress("0.0.5989978"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.5989978.svg",
+    rank: 39, isWrapped: false,
+  },
+  {
+    symbol: "GC", name: "GCoin", htsId: "0.0.3241481",
+    evmAddress: htsIdToEvmAddress("0.0.3241481"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.3241481.svg",
+    rank: 40, isWrapped: false,
+  },
+  {
+    symbol: "HCHF", name: "Hedera Swiss Franc", htsId: "0.0.6070123",
+    evmAddress: htsIdToEvmAddress("0.0.6070123"), decimals: 6,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.6070123.svg",
+    rank: 41, isWrapped: false,
+  },
+  {
+    symbol: "DOSA", name: "Dosa the Demon", htsId: "0.0.7892591",
+    evmAddress: htsIdToEvmAddress("0.0.7892591"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7892591.svg",
+    rank: 42, isWrapped: false,
+  },
+  {
+    symbol: "MFM", name: "Meme Millionaires", htsId: "0.0.4599983",
+    evmAddress: htsIdToEvmAddress("0.0.4599983"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.4599983.svg",
+    rank: 43, isWrapped: false,
+  },
+  {
+    symbol: "SMACKM", name: "SMACKM", htsId: "0.0.8041571",
+    evmAddress: htsIdToEvmAddress("0.0.8041571"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.8041571.svg",
+    rank: 44, isWrapped: false,
+  },
+  {
+    symbol: "CLXY", name: "Calaxy", htsId: "0.0.859814",
+    evmAddress: htsIdToEvmAddress("0.0.859814"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/clxy.svg",
+    rank: 45, isWrapped: false,
+  },
+  {
+    symbol: "DINO", name: "DINO", htsId: "0.0.7907968",
+    evmAddress: htsIdToEvmAddress("0.0.7907968"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7907968.svg",
+    rank: 46, isWrapped: false,
+  },
+  {
+    symbol: "LEEMON", name: "LeemonHead", htsId: "0.0.7974354",
+    evmAddress: htsIdToEvmAddress("0.0.7974354"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7974354.svg",
+    rank: 47, isWrapped: false,
+  },
+  {
+    symbol: "HBARBARIAN", name: "HBARbarian", htsId: "0.0.4816828",
+    evmAddress: htsIdToEvmAddress("0.0.4816828"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.4816828.svg",
+    rank: 48, isWrapped: false,
+  },
+  {
+    symbol: "JEET", name: "Jeeteroo", htsId: "0.0.9632905",
+    evmAddress: htsIdToEvmAddress("0.0.9632905"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.9632905.svg",
+    rank: 49, isWrapped: false,
   },
 ];
 

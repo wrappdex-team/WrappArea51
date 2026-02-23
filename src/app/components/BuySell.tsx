@@ -41,7 +41,7 @@ const HBAR_LOGO = "https://assets.coingecko.com/coins/images/3688/large/hbar.png
 const USDC_LOGO = "https://assets.coingecko.com/coins/images/6319/large/usdc.png";
 const CHANGENOW_LOGO = "https://changenow.io/images/changenow-logo.svg";
 
-const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
+const SLIPPAGE_OPTIONS = [1.0, 3.0];
 
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │  SENIOR DEV NOTE #11 — SAUCERSWAP SWAP PRODUCTION LOCK             │
@@ -158,7 +158,7 @@ export function BuySell() {
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const [hbarAmount, setHbarAmount] = useState("");
   const [usdcAmount, setUsdcAmount] = useState("");
-  const [slippage, setSlippage] = useState(0.5);
+  const [slippage, setSlippage] = useState(3);
   const [showSlippageSettings, setShowSlippageSettings] = useState(false);
   const [customSlippage, setCustomSlippage] = useState("");
   const [livePrice, setLivePrice] = useState(0);

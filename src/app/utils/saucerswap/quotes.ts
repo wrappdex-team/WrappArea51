@@ -551,7 +551,7 @@ export function estimateSwapQuote(
   inputAmount: number,
   inputPriceUsd: number,
   outputPriceUsd: number,
-  slippagePct: number = 0.5
+  slippagePct: number = 3
 ): SwapQuote {
   const feePct = 0.3;
   const feeAmount = inputAmount * (feePct / 100);

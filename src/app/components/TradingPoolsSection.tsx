@@ -38,8 +38,24 @@ import { AddLiquidityModal as AtomicLiquidityModal } from "./AddLiquidityModal";
 import { findPoolForPair } from "../utils/atomic-swap-engine";
 import { TokenIcon } from "./TokenIcon";
 import { displaySymbol } from "../utils/display-symbol";
+import { SAUCERSWAP_TOKENS, type AllowedToken } from "../utils/saucerswap";
 
 // [C66] displaySymbol() centralized — canonical copy in ../utils/display-symbol.ts
+
+// ── Token icon resolver: WRAPPED_TOKENS first, then SAUCERSWAP_TOKENS fallback ──
+const _ssTokenBySymbol = new Map<string, AllowedToken>(
+  SAUCERSWAP_TOKENS.map(t => [t.symbol, t])
+);
+
+function resolvePoolTokenIcon(symbol: string): { logo: string; htsId: string } | null {
+  // Try WRAPPED_TOKENS first (has tokenId field)
+  const wt = WRAPPED_TOKENS.find(t => t.symbol === symbol);
+  if (wt) return { logo: wt.logo, htsId: wt.tokenId };
+  // Fall back to main SAUCERSWAP_TOKENS registry
+  const st = _ssTokenBySymbol.get(symbol);
+  if (st) return { logo: st.logo, htsId: st.htsId };
+  return null;
+}
 
 // ── Stat Card ───────────────────────────────────────────────────────
 
@@ -150,8 +166,8 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
   }, [accountId, expanded, pool.id]);
 
   const isEmpty = pool.reserveA === "0" && pool.reserveB === "0";
-  const seedA = WRAPPED_TOKENS.find(t => t.symbol === pool.tokenA);
-  const seedB = WRAPPED_TOKENS.find(t => t.symbol === pool.tokenB);
+  const seedA = resolvePoolTokenIcon(pool.tokenA);
+  const seedB = resolvePoolTokenIcon(pool.tokenB);
 
   return (
     <motion.div
@@ -164,8 +180,14 @@ function PoolCard({ pool, isDark, accountId, onAddLiquidity }: {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="flex -space-x-1.5">
-              {seedA && <TokenIcon src={seedA.logo} symbol={seedA.symbol} htsId={seedA.tokenId} size="w-7 h-7" className="border-2 border-slate-900 relative z-10" />}
-              {seedB && <TokenIcon src={seedB.logo} symbol={seedB.symbol} htsId={seedB.tokenId} size="w-7 h-7" className="border-2 border-slate-900" />}
+              {seedA
+                ? <TokenIcon src={seedA.logo} symbol={pool.tokenA} htsId={seedA.htsId} size="w-7 h-7" className="border-2 border-slate-900 relative z-10" />
+                : <TokenIcon src="" symbol={pool.tokenA} size="w-7 h-7" className="border-2 border-slate-900 relative z-10" />
+              }
+              {seedB
+                ? <TokenIcon src={seedB.logo} symbol={pool.tokenB} htsId={seedB.htsId} size="w-7 h-7" className="border-2 border-slate-900" />
+                : <TokenIcon src="" symbol={pool.tokenB} size="w-7 h-7" className="border-2 border-slate-900" />
+              }
             </div>
             <div>
               <div className="font-bold text-sm">{displaySymbol(pool.tokenA)}/{displaySymbol(pool.tokenB)}</div>

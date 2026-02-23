@@ -1352,7 +1352,7 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
     const inputToken    = c.req.query("inputToken") || "";
     const outputToken   = c.req.query("outputToken") || "";
     const amountIn      = c.req.query("amountIn") || "";
-    const slippage      = parseFloat(c.req.query("slippage") || "0.5");
+    const slippage      = parseFloat(c.req.query("slippage") || "3");
     const inputDecimals = parseInt(c.req.query("inputDecimals") || "8", 10);
     const outputDecimals = parseInt(c.req.query("outputDecimals") || "8", 10);
     const network       = normalizeNetwork(c.req.query("network"));

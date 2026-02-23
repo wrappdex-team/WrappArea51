@@ -93,9 +93,9 @@ function maxSwapFraction(tvlUsd: number): number {
 /** Minimum pool TVL for routing eligibility — excludes dust pools */
 const MIN_ROUTING_TVL_USD = 100;
 
-// ── Default slippage (bps) ──────────────────────────────────��───────
+// ── Default slippage (bps) ─────────────────────────────────────────
 
-export const DEFAULT_SLIPPAGE_BPS = 50; // 0.5%
+export const DEFAULT_SLIPPAGE_BPS = 300; // 3%
 export const MAX_SLIPPAGE_BPS = 500; // 5%
 
 // ═══════════════════════════════════════════════════════════════════════

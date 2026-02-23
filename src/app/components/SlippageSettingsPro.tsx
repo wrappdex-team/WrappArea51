@@ -1,11 +1,11 @@
 /**
- * SlippageSettingsPro — Premium slippage settings drawer.
+ * SlippageSettingsPro — Minimalist slippage settings drawer.
  *
  * Features:
- * - Pill buttons for common slippage values
+ * - Two preset buttons: 1% and 3% (default)
  * - Custom slippage input with validation
  * - Smooth expand/collapse animation
- * - Visual highlight for active selection
+ * - Exact-amount approval security note
  *
  * [STEP-15] Infinite approval toggle removed — all approvals now use
  * exact swap amounts to prevent AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY errors.
@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { Tip } from "./Tip";
 
-const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
+const SLIPPAGE_OPTIONS = [1.0, 3.0];
 
 interface SlippageSettingsProProps {
   slippage: number;
@@ -77,7 +77,7 @@ export const SlippageSettingsPro = memo(function SlippageSettingsPro({
             transition={{ duration: 0.2, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className={`mt-2.5 p-4 rounded-xl space-y-4 ${
+            <div className={`mt-2.5 p-4 rounded-xl space-y-3 ${
               isDark
                 ? "bg-slate-800/30 border border-white/[0.04]"
                 : "bg-gray-50/80 border border-gray-100"

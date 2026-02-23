@@ -72,7 +72,7 @@ import { QuoteDetailsPro } from "./QuoteDetailsPro";
 import { SwapButtonPro } from "./SwapButtonPro";
 import { SlippageSettingsPro } from "./SlippageSettingsPro";
 
-const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
+const SLIPPAGE_OPTIONS = [1.0, 3.0];
 const GAS_RESERVE = 1; // HBAR reserved for gas — Hedera fees are sub-cent, 1 HBAR covers dozens of txns
 const QUOTE_REFRESH_INTERVAL = 30; // seconds
 
@@ -182,7 +182,7 @@ export function SwapPanel() {
   // This prevents AMOUNT_EXCEEDS_TOKEN_MAX_SUPPLY errors on low-supply tokens.
 
   // ── UI state ──
-  const [slippage, setSlippage] = useState(0.5);
+  const [slippage, setSlippage] = useState(3);
   const [customSlippage, setCustomSlippage] = useState("");
   const [showSlippage, setShowSlippage] = useState(false);
   const [showInputSelector, setShowInputSelector] = useState(false);
@@ -278,7 +278,7 @@ export function SwapPanel() {
     }, 60_000);
     return () => { cancelled = true; clearInterval(iv); };
   }, []);
-  const effectiveSlippage = customSlippage ? parseFloat(customSlippage) || 0.5 : slippage;
+  const effectiveSlippage = customSlippage ? parseFloat(customSlippage) || 3 : slippage;
   const inputPrice = livePrices[inputToken.symbol] || (inputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
   const outputPrice = livePrices[outputToken.symbol] || (outputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
   const inputUsd = inputAmount ? parseFloat(inputAmount) * inputPrice : 0;

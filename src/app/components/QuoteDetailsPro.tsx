@@ -26,7 +26,7 @@ import {
 import { Tip } from "./Tip";
 import type { SwapQuote, ScoredRouteInfo, AllowedToken } from "../utils/saucerswap";
 
-const SLIPPAGE_OPTIONS = [0.1, 0.5, 1.0, 3.0];
+const SLIPPAGE_OPTIONS = [1.0, 3.0];
 
 interface QuoteDetailsProProps {
   quote: SwapQuote;

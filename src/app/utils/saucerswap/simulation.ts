@@ -38,7 +38,7 @@ export async function simulateSwap(
   inputSymbol: string,
   outputSymbol: string,
   inputAmount: string,
-  slippagePct: number = 0.5
+  slippagePct: number = 3
 ): Promise<SwapResult & { quote: SwapQuote | null; route: string[]; routeDetail: PoolRoute[] }> {
   const route = findSwapRoute(inputSymbol, outputSymbol);
   if (!route) {
