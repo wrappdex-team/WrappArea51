@@ -45,6 +45,17 @@
  *     value exceeds on-chain reality (e.g., after a prior partial removal),
  *     the engine caps liquidityToRemove and scales slippage amounts
  *     proportionally. Prevents CONTRACT_REVERT_EXECUTED from stale data.
+ *
+ * (8) [LP-REM-FIX-3] NFT Existence Check via ownerOf:
+ *     On Hedera, when an LP NFT is burned (after full removal), the HTS serial
+ *     is destroyed. Calling ownerOf(tokenId) on the LP NFT token returns
+ *     INVALID_TOKEN_NFT_SERIAL_NUMBER (error 225). The NonfungiblePositionManager's
+ *     positions(tokenId) may also revert on Hedera because it internally checks
+ *     ownerOf.
+ *
+ *     This function explicitly checks if an LP NFT serial still exists before
+ *     attempting any on-chain operations. Prevents wasting gas and user popups
+ *     on burned/ghost positions.
  * ============================================================================
  */
 
@@ -142,6 +153,9 @@ export interface RemoveResult {
 
 /** positions(uint256) selector = keccak256("positions(uint256)")[:4] */
 const POSITIONS_SELECTOR = new Uint8Array([0x99, 0xfb, 0xab, 0x88]);
+
+/** ownerOf(uint256) selector = keccak256("ownerOf(uint256)")[:4] */
+const OWNEROF_SELECTOR = new Uint8Array([0x63, 0x52, 0x21, 0x1e]);
 
 export interface OnChainPositionData {
   liquidity: bigint;
@@ -256,6 +270,99 @@ async function readOnChainPosition(
 }
 
 // ==========================================================================
+// [LP-REM-FIX-3] NFT Existence Check via ownerOf
+// ==========================================================================
+//
+// On Hedera, when an LP NFT is burned (after full removal), the HTS serial
+// is destroyed. Calling ownerOf(tokenId) on the LP NFT token returns
+// INVALID_TOKEN_NFT_SERIAL_NUMBER (error 225). The NonfungiblePositionManager's
+// positions(tokenId) may also revert on Hedera because it internally checks
+// ownerOf.
+//
+// This function explicitly checks if an LP NFT serial still exists before
+// attempting any on-chain operations. Prevents wasting gas and user popups
+// on burned/ghost positions.
+
+/**
+ * Check if an LP NFT serial number still exists on-chain via ownerOf.
+ * Returns true if the NFT exists, false if burned/invalid.
+ */
+async function checkNftExists(
+  tokenSN: number,
+  nftManagerId: string,
+  network: HederaNetwork,
+): Promise<boolean> {
+  const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
+
+  let managerEvm: string;
+  try {
+    managerEvm = await resolveContractEvmAddress(nftManagerId, network);
+  } catch {
+    console.warn("[LP-REM-FIX-3] Failed to resolve NFT Manager EVM address for ownerOf check");
+    return true; // Assume exists on resolution failure — let the main flow handle it
+  }
+
+  const callData = concatBytes(OWNEROF_SELECTOR, encodeUint256(BigInt(tokenSN)));
+  const callDataHex = bytesToHex(callData);
+  const gasHex = "0x" + (200_000).toString(16);
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: managerEvm, data: callDataHex, gas: gasHex }, "latest"],
+        id: 1,
+      }),
+    });
+
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`[LP-REM-FIX-3] ownerOf() RPC HTTP ${res.status}`);
+      return true; // Assume exists on HTTP failure
+    }
+
+    const data = await res.json();
+
+    // If there's an error field, the call reverted — NFT doesn't exist
+    if (data.error) {
+      console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) REVERTED: ${JSON.stringify(data.error).slice(0, 200)}`);
+      console.log("[LP-REM-FIX-3] NFT serial does not exist — was likely burned");
+      return false;
+    }
+
+    // Empty result or revert-like response
+    if (!data.result || data.result === "0x" || data.result.length < 42) {
+      console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) returned empty/short result — NFT likely burned`);
+      return false;
+    }
+
+    // Valid result — extract owner address
+    const hex = data.result.replace("0x", "");
+    const ownerHex = hex.slice(24, 64); // Last 20 bytes of the 32-byte word
+    const isZeroAddress = ownerHex === "0".repeat(40);
+
+    if (isZeroAddress) {
+      console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) returned zero address — NFT burned`);
+      return false;
+    }
+
+    console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) = 0x${ownerHex} — NFT EXISTS`);
+    return true;
+  } catch (err: any) {
+    console.warn(`[LP-REM-FIX-3] ownerOf() eth_call failed: ${err?.message || err}`);
+    return true; // Assume exists on network failure — main flow will catch the real error
+  }
+}
+
+// ==========================================================================
 // SECTION 3: Remove Liquidity (partial or full)
 // ==========================================================================
 
@@ -348,7 +455,22 @@ export async function removeLiquidity(params: RemoveLiquidityParams): Promise<Re
         console.log(`[LP-REM] On-chain liquidity OK: ${onChain.liquidity} >= requested ${liquidityToRemove}`);
       }
     } else {
-      console.warn("[LP-REM] Could not read on-chain position -- proceeding with client data (risky)");
+      // [LP-REM-FIX-3] positions() returned null — likely means the NFT was burned
+      // (on Hedera, positions() reverts when ownerOf fails for burned serials).
+      // Do NOT proceed blindly — verify NFT existence first.
+      console.warn("[LP-REM] positions() returned null — checking NFT existence via ownerOf...");
+      const nftExists = await checkNftExists(tokenSN, nftManagerId, network);
+      if (!nftExists) {
+        console.error(`[LP-REM-FIX-3] NFT #${tokenSN} does NOT exist on-chain — it was burned or transferred`);
+        return {
+          success: false,
+          error: `Position NFT #${tokenSN} no longer exists on-chain. It was likely burned after a previous full removal. Please refresh your positions to remove this ghost entry.`,
+          popupCount: 0,
+        };
+      }
+      // NFT exists but positions() failed for another reason (RPC timeout, etc.)
+      // Proceed with caution using client data
+      console.warn("[LP-REM] NFT exists but positions() failed — proceeding with client data (RPC issue)");
     }
 
     // -- 2. If burning NFT: approve NFT Manager to operate the specific NFT
@@ -545,6 +667,17 @@ export async function collectFees(params: CollectFeesParams): Promise<RemoveResu
     console.log(`[LP-COL]   HBAR Pool:   ${poolInvolvesHbar}`);
     console.log(`[LP-COL]   Recipient:   ${recipientEvm}`);
     console.log("[LP-COL] ===================================================");
+
+    // [LP-REM-FIX-3] Verify NFT exists before attempting collect
+    const nftExists = await checkNftExists(tokenSN, nftManagerId, network);
+    if (!nftExists) {
+      console.error(`[LP-COL-FIX-3] NFT #${tokenSN} does NOT exist — burned or transferred`);
+      return {
+        success: false,
+        error: `Position NFT #${tokenSN} no longer exists on-chain. It was likely burned after a previous full removal. Please refresh your positions.`,
+        popupCount: 0,
+      };
+    }
 
     emitStep("Collecting fees...");
 

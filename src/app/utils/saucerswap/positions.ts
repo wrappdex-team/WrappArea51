@@ -714,10 +714,19 @@ export async function fetchRawV2Positions(
   const data = await fetchSaucerSwapJson<ApiNftPositionV2[]>(path, POSITIONS_TIMEOUT_MS);
 
   if (data && Array.isArray(data)) {
-    // Filter out deleted positions
-    const active = data.filter(p => !p.deleted);
+    // Filter out deleted positions AND zero-liquidity ghost positions
+    // [LP-REM-FIX-3] Zero liquidity positions are ghosts — the NFT was
+    // likely burned but the SaucerSwap API indexer hasn't caught up yet.
+    const active = data.filter(p => {
+      if (p.deleted) return false;
+      if (p.liquidity <= 0 && p.tokensOwed0 <= 0 && p.tokensOwed1 <= 0) {
+        log.info("LP-Positions", `Filtering out ghost position SN=${p.tokenSN}: liq=0, owed0=0, owed1=0`);
+        return false;
+      }
+      return true;
+    });
     _positionsCache.set(cacheKey, { data: active, ts: Date.now() });
-    log.info("LP-Positions", `Fetched ${active.length} active V2 positions for ${accountId} (${data.length} total)`);
+    log.info("LP-Positions", `Fetched ${active.length} active V2 positions for ${accountId} (${data.length} total, ${data.length - active.length} filtered)`);
     return active;
   }
 
