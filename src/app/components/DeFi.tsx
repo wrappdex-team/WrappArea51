@@ -15,6 +15,8 @@ import {
   BarChart3,
   Info,
   RefreshCw,
+  Wallet,
+  ExternalLink,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
@@ -38,19 +40,25 @@ import {
 } from "../utils/defi-stats";
 import { isVipEligible } from "../utils/vip";
 import { VIPAccessGate } from "./VIPAccessGate";
+import { AnimatePresence } from "motion/react";
+import { V2PositionTracker } from "./V2PositionTracker";
+import { AddLiquidityV2Modal } from "./AddLiquidityV2Modal";
+import { RemoveLiquidityV2Modal } from "./RemoveLiquidityV2Modal";
+import type { V2PositionEnriched } from "../utils/saucerswap/positions";
+import { isPoolWhitelisted, isPoolForceIncluded } from "../utils/v2-token-whitelist";
 
 // ══════════════════════════════════════════════════════════════════════
 // NO HARDCODED POOL DATA
 // All pool data comes from SaucerSwap's live API via defi-stats.ts.
 // If the API is unreachable, the UI shows an honest error state.
-// ═════════��════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 
 // ── Liquidity Pool types ──
 
 interface LiquidityPool {
   id: string;
-  tokenA: { symbol: string; logo: string };
-  tokenB: { symbol: string; logo: string };
+  tokenA: { symbol: string; logo: string; htsId: string };
+  tokenB: { symbol: string; logo: string; htsId: string };
   tvl: number;
   volume24h: number;
   apr: number;
@@ -62,7 +70,7 @@ interface LiquidityPool {
   source: "v1" | "v2";
 }
 
-type Tab = "pools" | "lend" | "staking";
+type Tab = "pools" | "lend" | "staking" | "positions";
 type SortField = "tvl" | "apr" | "volume24h" | "utilization";
 type SortDir = "asc" | "desc";
 
@@ -70,7 +78,21 @@ function formatUsd(n: number): string {
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
-  return `$${n.toFixed(2)}`;
+  if (n > 0) return `$${n.toFixed(2)}`;
+  return "—";
+}
+
+/** Format APR — show "—" for zero (no data) vs actual 0% */
+function formatApr(n: number): string {
+  if (n <= 0) return "—";
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
+  return `${n.toFixed(1)}%`;
+}
+
+/** Format utilization — show "—" for zero */
+function formatUtil(n: number): string {
+  if (n <= 0) return "—";
+  return `${n.toFixed(1)}%`;
 }
 
 function formatCompact(n: number): string {
@@ -96,6 +118,11 @@ export function DeFi() {
   const [expandedPool, setExpandedPool] = useState<string | null>(null);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(["pool-hbar-usdc", "pool-hbar-weth"]);
+
+  // ── V2 Liquidity Modal State ──
+  const [addLiquidityPool, setAddLiquidityPool] = useState<LivePool | null>(null);
+  const [removeLiquidityPosition, setRemoveLiquidityPosition] = useState<V2PositionEnriched | null>(null);
+  const [collectFeesPosition, setCollectFeesPosition] = useState<V2PositionEnriched | null>(null);
 
   // ── Bonzo lending markets state ──
   const [bonzoMarkets, setBonzoMarkets] = useState<BonzoMarket[]>([]);
@@ -198,22 +225,28 @@ export function DeFi() {
   const poolCount = isLive ? defiStats!.poolCount : 0;
 
   // Display pools — prefer live, fall back to static
+  // [LP-WHITELIST] Only show curated pools where BOTH tokens are whitelisted
   const displayPools: LiquidityPool[] = useMemo(() => {
     if (livePools.length > 0) {
-      return livePools.map((lp) => ({
-        id: lp.id,
-        tokenA: { symbol: lp.tokenA.symbol, logo: lp.tokenA.logo },
-        tokenB: { symbol: lp.tokenB.symbol, logo: lp.tokenB.logo },
-        tvl: lp.tvl,
-        volume24h: lp.volume24h,
-        apr: lp.apr,
-        feeAPR: lp.feeAPR,
-        farmAPR: lp.farmAPR,
-        fee: lp.fee,
-        utilization: lp.utilization,
-        trending: lp.trending,
-        source: lp.source,
-      }));
+      return livePools
+        .filter((lp) => isPoolWhitelisted(
+          lp.tokenA.symbol, lp.tokenB.symbol,
+          lp.tokenA.htsId, lp.tokenB.htsId,
+        ) || isPoolForceIncluded(lp.id))
+        .map((lp) => ({
+          id: lp.id,
+          tokenA: { symbol: lp.tokenA.symbol, logo: lp.tokenA.logo, htsId: lp.tokenA.htsId },
+          tokenB: { symbol: lp.tokenB.symbol, logo: lp.tokenB.logo, htsId: lp.tokenB.htsId },
+          tvl: lp.tvl,
+          volume24h: lp.volume24h,
+          apr: lp.apr,
+          feeAPR: lp.feeAPR,
+          farmAPR: lp.farmAPR,
+          fee: lp.fee,
+          utilization: lp.utilization,
+          trending: lp.trending,
+          source: lp.source,
+        }));
     }
     return [];
   }, [livePools]);
@@ -222,11 +255,12 @@ export function DeFi() {
   const filteredPools = useMemo(() => {
     let pools = [...displayPools];
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
+      const q = searchQuery.toLowerCase().replace(/[ħĦ]/g, "h");
       pools = pools.filter(
         (p) =>
-          p.tokenA.symbol.toLowerCase().includes(q) ||
-          p.tokenB.symbol.toLowerCase().includes(q)
+          p.tokenA.symbol.toLowerCase().replace(/[ħĦ]/g, "h").includes(q) ||
+          p.tokenB.symbol.toLowerCase().replace(/[ħĦ]/g, "h").includes(q) ||
+          p.id.toLowerCase().includes(q)
       );
     }
     pools.sort((a, b) => {
@@ -267,6 +301,7 @@ export function DeFi() {
     { key: "pools", label: "Liquidity Pools", icon: Droplets, count: poolCount },
     { key: "lend", label: "Lend & Borrow", icon: Zap, count: bonzoMarkets.length || 6 },
     { key: "staking", label: "Staking", icon: Lock, count: stakingPools.length || 5 },
+    { key: "positions", label: "Positions", icon: Wallet },
   ];
 
   // VIP Gate
@@ -349,10 +384,7 @@ export function DeFi() {
               ) : isLive ? (
                 <span className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  Live from SaucerSwap &middot; {poolCount} pools
-                  {defiStats?.v1Count != null && defiStats?.v2Count != null && (defiStats.v1Count > 0 || defiStats.v2Count > 0) && (
-                    <> ({defiStats.v1Count} V1, {defiStats.v2Count} V2)</>
-                  )}
+                  Live from SaucerSwap &middot; {displayPools.length} curated pools
                   {" "}&middot; Updated {defiStats ? new Date(defiStats.lastUpdated).toLocaleTimeString() : ""}
                 </span>
               ) : defiError ? (
@@ -463,11 +495,11 @@ export function DeFi() {
                       </div>
                       <div>
                         <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>APR</div>
-                        <div className="text-xs font-bold text-emerald-400">{pool.apr}%</div>
+                        <div className="text-xs font-bold text-emerald-400">{formatApr(pool.apr)}</div>
                       </div>
                       <div>
                         <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Util</div>
-                        <div className="text-xs font-bold">{pool.utilization}%</div>
+                        <div className="text-xs font-bold">{formatUtil(pool.utilization)}</div>
                       </div>
                     </div>
 
@@ -483,7 +515,7 @@ export function DeFi() {
 
                     {/* Desktop: APR */}
                     <div className="hidden md:flex col-span-2 items-center">
-                      <span className="font-bold text-sm text-emerald-400">{pool.apr}%</span>
+                      <span className="font-bold text-sm text-emerald-400">{formatApr(pool.apr)}</span>
                     </div>
 
                     {/* Desktop: Utilization */}
@@ -496,7 +528,7 @@ export function DeFi() {
                           style={{ width: `${pool.utilization}%` }}
                         />
                       </div>
-                      <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{pool.utilization}%</span>
+                      <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{formatUtil(pool.utilization)}</span>
                     </div>
                   </div>
 
@@ -514,28 +546,78 @@ export function DeFi() {
                             {pool.farmAPR > 0 && (
                               <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Farm APR</span><span className="text-purple-400">+{pool.farmAPR}%</span></div>
                             )}
-                            <div className="flex justify-between font-bold"><span className={isDark ? "text-slate-300" : "text-gray-700"}>Total APR</span><span className="text-emerald-400">{pool.apr}%</span></div>
+                            <div className="flex justify-between font-bold"><span className={isDark ? "text-slate-300" : "text-gray-700"}>Total APR</span><span className="text-emerald-400">{formatApr(pool.apr)}</span></div>
                           </div>
                         </div>
                         <div className={`rounded-lg p-3 ${isDark ? "bg-slate-800/50" : "bg-white"}`}>
                           <div className={`text-xs mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Your Position</div>
                           {primaryWallet ? (
-                            <div className="space-y-1.5 text-sm">
-                              <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Liquidity</span><span>$0.00</span></div>
-                              <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Unclaimed Fees</span><span>$0.00</span></div>
-                              <div className="flex justify-between"><span className={isDark ? "text-slate-400" : "text-gray-500"}>Pool Share</span><span>0%</span></div>
-                            </div>
+                            pool.source === "v2" ? (
+                              <div className="space-y-1.5 text-sm">
+                                <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                                  V2 positions are shown in the "Positions" tab below
+                                </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setActiveTab("positions"); }}
+                                  className={`text-xs font-bold transition-colors ${isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"}`}
+                                >
+                                  View My Positions →
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5 text-sm">
+                                <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                                  V1 positions are managed on SaucerSwap
+                                </div>
+                              </div>
+                            )
                           ) : (
                             <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>Connect wallet to view</div>
                           )}
                         </div>
                         <div className="flex flex-col gap-2">
-                          <button className="px-4 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white rounded-lg text-sm font-bold transition-all shadow-lg shadow-pink-500/20">
-                            Add Liquidity
-                          </button>
-                          <button className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}>
-                            Remove Liquidity
-                          </button>
+                          {pool.source === "v2" ? (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const livePool = livePools.find(lp => lp.id === pool.id);
+                                  if (livePool) setAddLiquidityPool(livePool);
+                                }}
+                                disabled={!isPoolWhitelisted(pool.tokenA.symbol, pool.tokenB.symbol, pool.tokenA.htsId, pool.tokenB.htsId, pool.id)}
+                                className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-lg ${
+                                  isPoolWhitelisted(pool.tokenA.symbol, pool.tokenB.symbol, pool.tokenA.htsId, pool.tokenB.htsId, pool.id)
+                                    ? "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-pink-500/20"
+                                    : isDark
+                                      ? "bg-slate-800 text-slate-500 cursor-not-allowed shadow-none"
+                                      : "bg-gray-200 text-gray-400 cursor-not-allowed shadow-none"
+                                }`}
+                                title={
+                                  !isPoolWhitelisted(pool.tokenA.symbol, pool.tokenB.symbol, pool.tokenA.htsId, pool.tokenB.htsId, pool.id)
+                                    ? "Liquidity management is only available for blue-chip token pairs"
+                                    : undefined
+                                }
+                              >
+                                Add Liquidity
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setActiveTab("positions"); }}
+                                className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}
+                              >
+                                Manage Positions
+                              </button>
+                            </>
+                          ) : (
+                            <a
+                              href="https://www.saucerswap.finance/liquidity"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className={`flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}
+                            >
+                              Manage on SaucerSwap <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -737,8 +819,68 @@ export function DeFi() {
         </div>
       )}
 
+      {/* ═══ MY POSITIONS TAB ═══ */}
+      {activeTab === "positions" && (
+        <div className="space-y-4">
+          {/* Info Banner */}
+          <div className={`rounded-xl p-4 flex items-start gap-3 ${isDark ? "bg-purple-500/5 border border-purple-500/20" : "bg-purple-50 border border-purple-200"}`}>
+            <Wallet className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-sm mb-0.5">V2 Concentrated Liquidity Positions</div>
+              <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                Manage your SaucerSwap V2 LP positions. Add more liquidity, collect earned fees, or remove liquidity at any time. Positions earn fees when the pool price is within your selected range.
+              </div>
+            </div>
+          </div>
+
+          {/* V2 Position Tracker */}
+          <V2PositionTracker
+            onAddLiquidity={(pos) => {
+              const lp = livePools.find(
+                p => p.source === "v2" &&
+                  ((p.tokenA.symbol === pos.token0.symbol && p.tokenB.symbol === pos.token1.symbol) ||
+                   (p.tokenA.symbol === pos.token1.symbol && p.tokenB.symbol === pos.token0.symbol))
+              );
+              if (lp) setAddLiquidityPool(lp);
+            }}
+            onRemoveLiquidity={(pos) => setRemoveLiquidityPosition(pos)}
+            onCollectFees={(pos) => setCollectFeesPosition(pos)}
+          />
+        </div>
+      )}
+
       {/* Wallet Connect Modal */}
       {showWalletModal && <WalletConnectModal onClose={() => setShowWalletModal(false)} />}
+
+      {/* ═══ V2 LIQUIDITY MODALS ═══ */}
+      <AnimatePresence>
+        {addLiquidityPool && (
+          <AddLiquidityV2Modal
+            pool={addLiquidityPool}
+            onClose={() => setAddLiquidityPool(null)}
+            onSuccess={() => setAddLiquidityPool(null)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {removeLiquidityPosition && (
+          <RemoveLiquidityV2Modal
+            position={removeLiquidityPosition}
+            onClose={() => setRemoveLiquidityPosition(null)}
+            onSuccess={() => setRemoveLiquidityPosition(null)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {collectFeesPosition && (
+          <RemoveLiquidityV2Modal
+            position={collectFeesPosition}
+            collectOnly
+            onClose={() => setCollectFeesPosition(null)}
+            onSuccess={() => setCollectFeesPosition(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

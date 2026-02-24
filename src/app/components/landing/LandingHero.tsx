@@ -220,7 +220,7 @@ export function LandingHero() {
 
           {/* headline */}
           <motion.h1
-            className="text-[2.8rem] sm:text-[4rem] md:text-[5.5rem] lg:text-[6.5rem] leading-[1.1] tracking-[-0.04em] text-black mx-auto max-w-5xl mb-6 overflow-visible py-2"
+            className="text-[2.8rem] sm:text-[4rem] md:text-[5.5rem] lg:text-[6.5rem] leading-[1.1] tracking-[-0.04em] text-black mx-auto max-w-5xl mb-8 overflow-visible py-2"
             style={{ fontFamily: "'Playfair Display', serif" }}
             variants={{
               hidden: {},
@@ -236,8 +236,7 @@ export function LandingHero() {
             </div>
             <div className="flex flex-wrap justify-center gap-x-[0.2em]">
               <Word text="Digital" gradient italic />
-              <Word text="Assets" gradient italic />
-              <Word text="today." />
+              <Word text="Assets." gradient italic />
             </div>
           </motion.h1>
 
@@ -245,7 +244,7 @@ export function LandingHero() {
           <motion.p
             custom={0.35}
             variants={fade}
-            className="text-base sm:text-lg md:text-xl text-slate-500 max-w-2xl mx-auto mb-10 leading-relaxed font-light"
+            className="text-base sm:text-lg md:text-xl text-slate-500 max-w-2xl mx-auto mb-12 leading-relaxed font-light"
             style={{ fontFamily: "'Inter', sans-serif" }}
           >
             High-performance decentralized custody & liquidity settlement on{" "}
@@ -257,7 +256,7 @@ export function LandingHero() {
           <motion.div
             custom={0.5}
             variants={fade}
-            className="flex flex-wrap justify-center gap-4 mb-14"
+            className="flex flex-wrap justify-center gap-4 mb-16"
           >
             <Link to="/markets">
               <button
@@ -299,7 +298,7 @@ export function LandingHero() {
           <motion.div
             custom={0.65}
             variants={fade}
-            className="flex justify-center gap-8 sm:gap-14 mb-16 sm:mb-20"
+            className="flex justify-center gap-8 sm:gap-14 mb-20 sm:mb-28"
           >
             {[
               { label: "Avg Transaction Fee", value: fee },
@@ -322,7 +321,7 @@ export function LandingHero() {
       {/* ══════════════════════════════════════════
           DEVICE SHOWCASE  — full-width, centred
          ══════════════════════════════════════════ */}
-      <div className="relative z-10 container mx-auto px-6 pb-20 sm:pb-28">
+      <div className="relative z-10 container mx-auto px-6 pb-20 sm:pb-28 mt-8 sm:mt-12">
         <motion.div
           initial={{ opacity: 0, y: 60 }}
           animate={{ opacity: 1, y: 0 }}
@@ -342,7 +341,7 @@ export function LandingHero() {
           <TeaserBadge
             icon={TrendingUp}
             label="Markets"
-            value="38 Curated Tokens"
+            value="Top 50 Tokens by MC"
             accent="#10b981"
             className="-top-6 left-0 xl:-left-16"
             delay={0.9}

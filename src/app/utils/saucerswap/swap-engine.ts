@@ -93,6 +93,56 @@ import { verifyIsContract } from "./verification";
 const CONSENSUS_WAIT_MS = 0;
 
 // ══════════════════════════════════════════════════════════════════════
+// ── [STALE-ALLOW] MIRROR NODE STALE-ALLOWANCE RACE GUARD ────────────
+// ══════════════════════════════════════════════════════════════════════
+//
+// After a swap consumes a token allowance on-chain, the Mirror Node may
+// still report the OLD (pre-consumption) allowance for up to 15 seconds.
+// If the user does a back-to-back swap of the same token, `approveIfNeeded`
+// queries the Mirror Node, sees stale allowance >= rawInput, skips the
+// approve tx, and the swap hits the router with ZERO actual allowance →
+// "Safe token transfer failed!" (HTS response code 178 =
+// SPENDER_DOES_NOT_HAVE_ALLOWANCE).
+//
+// Fix: After every successful swap that consumed an allowance, record
+// (tokenId, spenderId) in a short-lived map. `approveIfNeeded` checks
+// this map BEFORE trusting Mirror Node — if recently consumed, it forces
+// a fresh approval regardless of what Mirror Node reports.
+//
+// TTL = 15 seconds (Mirror Node lag is typically 3-8s, 15s is generous).
+
+const STALE_ALLOW_TTL_MS = 15_000;
+const _recentlyConsumedAllowances: Map<string, number> = new Map();
+
+function _staleAllowKey(tokenHtsId: string, spenderAccountId: string): string {
+  return `${tokenHtsId}:${spenderAccountId}`;
+}
+
+function markAllowanceConsumed(tokenHtsId: string, spenderAccountId: string): void {
+  const key = _staleAllowKey(tokenHtsId, spenderAccountId);
+  _recentlyConsumedAllowances.set(key, Date.now());
+  console.log(`[STALE-ALLOW] Marked allowance consumed: ${key} (TTL ${STALE_ALLOW_TTL_MS / 1000}s)`);
+  // Auto-cleanup after TTL
+  setTimeout(() => {
+    const currentTs = _recentlyConsumedAllowances.get(key);
+    if (currentTs !== undefined && Date.now() - currentTs >= STALE_ALLOW_TTL_MS) {
+      _recentlyConsumedAllowances.delete(key);
+    }
+  }, STALE_ALLOW_TTL_MS + 100);
+}
+
+function isAllowanceRecentlyConsumed(tokenHtsId: string, spenderAccountId: string): boolean {
+  const key = _staleAllowKey(tokenHtsId, spenderAccountId);
+  const ts = _recentlyConsumedAllowances.get(key);
+  if (!ts) return false;
+  if (Date.now() - ts > STALE_ALLOW_TTL_MS) {
+    _recentlyConsumedAllowances.delete(key);
+    return false;
+  }
+  return true;
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // ── [V2-SKIP] V2 EXECUTION FAILURE CACHE ────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 //
@@ -379,10 +429,17 @@ async function approveIfNeeded(params: {
     console.log(`[C100-S7] Approval target: ${tokenSymbol} (${tokenHtsId}) �� ${routerVersion.toUpperCase()} Router ${spenderAccountId}`);
   }
 
+  // ── [STALE-ALLOW] Check if allowance was recently consumed ──
+  // If yes, Mirror Node may report stale (pre-consumption) value — force re-approval.
+  const recentlyConsumed = isAllowanceRecentlyConsumed(tokenHtsId, spenderAccountId);
+  if (recentlyConsumed) {
+    console.log(`[STALE-ALLOW] Allowance for ${tokenSymbol} → ${spenderAccountId} was consumed within ${STALE_ALLOW_TTL_MS / 1000}s — forcing re-approval (Mirror Node may be stale)`);
+  }
+
   // ── Check existing allowance via Mirror Node ──
-  const existingAllowance = await fetchTokenAllowance(
-    ownerAccountId, tokenHtsId, spenderAccountId, network,
-  );
+  const existingAllowance = recentlyConsumed
+    ? 0  // Don't trust Mirror Node during stale window — treat as zero
+    : await fetchTokenAllowance(ownerAccountId, tokenHtsId, spenderAccountId, network);
 
   if (existingAllowance >= rawInput) {
     console.log(
@@ -1128,6 +1185,9 @@ async function executeSaucerSwapV2Direct(
         const swapResult = await executeHederaTransaction(accountId, multicallTx);
         console.log("[HBAR.h] V2: Token→HBAR multicall result:", JSON.stringify(swapResult));
 
+        // [STALE-ALLOW] Mark allowance consumed on success — prevents stale Mirror Node race
+        if (swapResult.success) markAllowanceConsumed(inputToken.htsId, v2RouterId);
+
         return {
           success: swapResult.success,
           transactionId: swapResult.transactionId || undefined,
@@ -1167,6 +1227,9 @@ async function executeSaucerSwapV2Direct(
 
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] V2: Swap result:", JSON.stringify(swapResult));
+
+      // [STALE-ALLOW] Mark allowance consumed on success — prevents stale Mirror Node race
+      if (swapResult.success && !isInputNative) markAllowanceConsumed(inputToken.htsId, v2RouterId);
 
       return {
         success: swapResult.success,
@@ -1848,6 +1911,9 @@ async function executeSaucerSwapV2MultiHop(
         const swapResult = await executeHederaTransaction(accountId, multicallTx);
         console.log("[HBAR.h] V2 Multi-hop: Token→HBAR multicall result:", JSON.stringify(swapResult));
 
+        // [STALE-ALLOW] Mark allowance consumed on success — prevents stale Mirror Node race
+        if (swapResult.success) markAllowanceConsumed(inputToken.htsId, v2RouterId);
+
         return {
           success: swapResult.success,
           transactionId: swapResult.transactionId || undefined,
@@ -1878,6 +1944,9 @@ async function executeSaucerSwapV2MultiHop(
 
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] V2 Multi-hop: Swap result:", JSON.stringify(swapResult));
+
+      // [STALE-ALLOW] Mark allowance consumed on success — prevents stale Mirror Node race
+      if (swapResult.success && !isInputNative) markAllowanceConsumed(inputToken.htsId, v2RouterId);
 
       return {
         success: swapResult.success,
@@ -3593,6 +3662,9 @@ async function executeSaucerSwapDirect(
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] Swap result:", JSON.stringify(swapResult));
 
+      // [STALE-ALLOW] Mark allowance consumed on success — prevents stale Mirror Node race
+      if (swapResult.success) markAllowanceConsumed(inputToken.htsId, v1Router);
+
       // [FOT] Runtime detection for Token→HBAR
       if (!swapResult.success && !useFotRouter) {
         const swapErr = (swapResult.error || "").toLowerCase();
@@ -3704,6 +3776,9 @@ async function executeSaucerSwapDirect(
 
       const swapResult = await executeHederaTransaction(accountId, swapTx);
       console.log("[HBAR.h] Swap result:", JSON.stringify(swapResult));
+
+      // [STALE-ALLOW] Mark allowance consumed on success — prevents stale Mirror Node race
+      if (swapResult.success) markAllowanceConsumed(inputToken.htsId, v1Router);
 
       // [FOT] Runtime detection for Token→Token
       if (!swapResult.success && !useFotRouter) {

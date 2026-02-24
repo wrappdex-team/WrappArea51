@@ -37,12 +37,26 @@ const SAUCERSWAP_API = "https://api.saucerswap.finance";
 // ── Path Whitelist ──────────────────────────────────────────────────
 // Only allow paths that match known SaucerSwap API patterns.
 // Prevents SSRF by restricting the proxy to legitimate endpoints.
-const ALLOWED_PATH_RE = /^\/(v[12]\/)?(tokens|pools|liqpools|lp)(\/[a-zA-Z0-9._-]+)?(\/[a-zA-Z0-9._-]+)?$/;
+//
+// Supported paths:
+//   /tokens, /v1/pools, /v2/pools, /v2/pools/verbose
+//   /V2/nfts/{accountId}/positions  (uppercase V2 — SaucerSwap quirk)
+//   /v2/farm/allData
+//   /tokens/0.0.9356476
+
+const ALLOWED_PATHS: RegExp[] = [
+  // Standard lowercase v1/v2 endpoints: /tokens, /v1/pools, /v2/pools/verbose, etc.
+  /^\/(v[12]\/)?(tokens|pools|liqpools|lp)(\/[a-zA-Z0-9._-]+)?(\/[a-zA-Z0-9._-]+)?$/,
+  // V2 positions endpoint: /V2/nfts/{accountId}/positions (uppercase V2)
+  /^\/V2\/nfts\/0\.0\.\d+\/positions$/,
+  // V2 farm data
+  /^\/v2\/farm\/[a-zA-Z]+$/,
+];
 
 function isAllowedPath(path: string): boolean {
   if (!path || !path.startsWith("/")) return false;
   if (path.length > 200) return false;
-  return ALLOWED_PATH_RE.test(path);
+  return ALLOWED_PATHS.some(re => re.test(path));
 }
 
 // ── In-Memory Response Cache ────────────────────────────────────────

@@ -101,7 +101,7 @@ const makeFeatured = (urls: Record<string, string>) => [
 ];
 
 const stats = [
-  { value: "38", label: "Supported Tokens", icon: Sparkles },
+  { value: "50", label: "Supported Tokens", icon: Sparkles },
   { value: "8", label: "Platform Modules", icon: Layers },
   { value: "3", label: "Bridge Protocols", icon: Globe },
   { value: "6", label: "Chart Indicators", icon: BarChart3 },

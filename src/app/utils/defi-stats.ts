@@ -15,13 +15,14 @@
 
 import { log } from "./logger";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { FORCE_INCLUDE_POOL_CONTRACT_IDS } from "./v2-token-whitelist";
 
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface LivePool {
   id: string;
-  tokenA: { symbol: string; name: string; logo: string; htsId: string };
-  tokenB: { symbol: string; name: string; logo: string; htsId: string };
+  tokenA: { symbol: string; name: string; logo: string; htsId: string; decimals: number };
+  tokenB: { symbol: string; name: string; logo: string; htsId: string; decimals: number };
   tvl: number;          // USD
   volume24h: number;    // USD
   volume7d: number;     // USD (7-day rolling)
@@ -68,16 +69,17 @@ const TOKEN_LOGOS: Record<string, string> = {
   "WETH[hts]": "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
   LINK:        "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
   "LINK[hts]": "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
+  BNB:         "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+  "BNB[hts]":  "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+  QNT:         "https://assets.coingecko.com/coins/images/3370/large/5ZOu7brX_400x400.jpg",
+  "QNT[hts]":  "https://assets.coingecko.com/coins/images/3370/large/5ZOu7brX_400x400.jpg",
   SAUCE:       "https://www.saucerswap.finance/images/tokens/sauce.svg",
   HBARX:       "https://www.saucerswap.finance/images/tokens/hbarx.svg",
-  KARATE:      "https://www.saucerswap.finance/images/tokens/karate.svg",
-  PACK:        "https://www.saucerswap.finance/images/tokens/pack.svg",
-  HST:         "https://www.saucerswap.finance/images/tokens/hst.svg",
-  DOVU:        "https://www.saucerswap.finance/images/tokens/dovu.svg",
-  "HBAR.ħ":    "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
-  AAVE:        "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
   DAI:         "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
+  AAVE:        "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
   DOT:         "https://assets.coingecko.com/coins/images/12171/large/polkadot.png",
+  "HBAR.h":    `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#0a0e1a" stroke="#1D63ED" stroke-width="3"/><text x="50" y="70" text-anchor="middle" font-family="system-ui,sans-serif" font-size="58" font-weight="700" fill="#1D63ED">' + "\u0127" + '</text></svg>')}`,
+  "HBAR.\u0127":  `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#0a0e1a" stroke="#1D63ED" stroke-width="3"/><text x="50" y="70" text-anchor="middle" font-family="system-ui,sans-serif" font-size="58" font-weight="700" fill="#1D63ED">' + "\u0127" + '</text></svg>')}`,
 };
 
 function resolveTokenLogo(symbol: string, apiIcon?: string): string {
@@ -100,12 +102,15 @@ const WHBAR_TOKEN_ID = "0.0.1456986";
 
 function normalizeSymbolForDisplay(symbol: string, htsId?: string): string {
   if (symbol === "WHBAR" || htsId === WHBAR_TOKEN_ID) return "HBAR";
+  // Normalize HBAR.ħ unicode variant → HBAR.h
+  if (symbol === "HBAR.ħ" || symbol === "HBAR.H" || symbol === "hbar.h") return "HBAR.h";
   // Strip [hts] suffix from SaucerSwap API symbols
   return symbol.replace("[hts]", "").replace("[HTS]", "");
 }
 
 function normalizeNameForDisplay(name: string, symbol: string, htsId?: string): string {
   if (symbol === "WHBAR" || htsId === WHBAR_TOKEN_ID) return "HBAR";
+  if (symbol === "HBAR.ħ" || symbol === "HBAR.h" || symbol === "HBAR.H") return "HBAR.h Protocol";
   return name;
 }
 
@@ -195,6 +200,10 @@ function parseV1Pool(raw: any): LivePool | null {
     const symA = tA.symbol || tA.name || "???";
     const symB = tB.symbol || tB.name || "???";
 
+    // Token decimals — used for TVL computation and passed through to LivePool
+    const decA = safeFloat(tA.decimals ?? 8);
+    const decB = safeFloat(tB.decimals ?? 8);
+
     // ── TVL: check pre-computed USD first, sanity-check raw `liquidity` ──
     // V1 API's `liquidity` may be the LP token total supply or raw reserve
     // value, not USD. Only use it if it looks like a plausible USD amount
@@ -212,8 +221,6 @@ function parseV1Pool(raw: any): LivePool | null {
     if (tvl <= 0) {
       const priceA = safeFloat(tA.priceUsd ?? tA.price ?? 0);
       const priceB = safeFloat(tB.priceUsd ?? tB.price ?? 0);
-      const decA = safeFloat(tA.decimals ?? 8);
-      const decB = safeFloat(tB.decimals ?? 8);
       const resA = safeFloat(raw.reserveA ?? raw.reserve0 ?? raw.tokenAAmount ?? 0);
       const resB = safeFloat(raw.reserveB ?? raw.reserve1 ?? raw.tokenBAmount ?? 0);
       if (resA > 0 && priceA > 0) tvl += (resA / Math.pow(10, decA)) * priceA;
@@ -245,12 +252,14 @@ function parseV1Pool(raw: any): LivePool | null {
         name: normalizeNameForDisplay(tA.name || symA, symA, tA.id),
         logo: resolveTokenLogo(symA, tA.icon ?? tA.image),
         htsId: tA.id || tA.tokenId || "",
+        decimals: decA,
       },
       tokenB: {
         symbol: normalizeSymbolForDisplay(symB, tB.id),
         name: normalizeNameForDisplay(tB.name || symB, symB, tB.id),
         logo: resolveTokenLogo(symB, tB.icon ?? tB.image),
         htsId: tB.id || tB.tokenId || "",
+        decimals: decB,
       },
       tvl,
       volume24h: vol24,
@@ -279,6 +288,10 @@ function parseV2Pool(raw: any): LivePool | null {
     const symA = tA.symbol || tA.name || "???";
     const symB = tB.symbol || tB.name || "???";
 
+    // Token decimals — used for TVL computation and passed through to LivePool
+    const decA = safeFloat(tA.decimals ?? 8);
+    const decB = safeFloat(tB.decimals ?? 8);
+
     // ── TVL: try pre-computed USD fields first, NEVER use raw `liquidity` ──
     // The V2 API's `liquidity` field is the concentrated-liquidity L value
     // (a massive raw integer), NOT a USD amount. Using it directly produces
@@ -294,12 +307,10 @@ function parseV2Pool(raw: any): LivePool | null {
     if (tvl <= 0) {
       const priceA = safeFloat(tA.priceUsd ?? tA.price ?? 0);
       const priceB = safeFloat(tB.priceUsd ?? tB.price ?? 0);
-      const decA = safeFloat(tA.decimals ?? 8);
-      const decB = safeFloat(tB.decimals ?? 8);
 
       // Try totalValueLockedToken fields (raw smallest-unit amounts)
-      const tvlToken0 = safeFloat(raw.totalValueLockedToken0 ?? raw.tvlToken0 ?? raw.amount0 ?? raw.reserve0 ?? 0);
-      const tvlToken1 = safeFloat(raw.totalValueLockedToken1 ?? raw.tvlToken1 ?? raw.amount1 ?? raw.reserve1 ?? 0);
+      const tvlToken0 = safeFloat(raw.totalValueLockedToken0 ?? raw.tvlToken0 ?? raw.amountA ?? raw.amount0 ?? raw.reserve0 ?? 0);
+      const tvlToken1 = safeFloat(raw.totalValueLockedToken1 ?? raw.tvlToken1 ?? raw.amountB ?? raw.amount1 ?? raw.reserve1 ?? 0);
 
       if (tvlToken0 > 0 && priceA > 0) tvl += (tvlToken0 / Math.pow(10, decA)) * priceA;
       if (tvlToken1 > 0 && priceB > 0) tvl += (tvlToken1 / Math.pow(10, decB)) * priceB;
@@ -347,12 +358,14 @@ function parseV2Pool(raw: any): LivePool | null {
         name: normalizeNameForDisplay(tA.name || symA, symA, tA.id),
         logo: resolveTokenLogo(symA, tA.icon ?? tA.image),
         htsId: tA.id || tA.tokenId || "",
+        decimals: decA,
       },
       tokenB: {
         symbol: normalizeSymbolForDisplay(symB, tB.id),
         name: normalizeNameForDisplay(tB.name || symB, symB, tB.id),
         logo: resolveTokenLogo(symB, tB.icon ?? tB.image),
         htsId: tB.id || tB.tokenId || "",
+        decimals: decB,
       },
       tvl,
       volume24h: vol24,
@@ -416,12 +429,14 @@ async function fetchFromBackend(): Promise<{
         name: normalizeNameForDisplay(p.tokenA?.name || p.tokenA?.symbol || "Unknown", p.tokenA?.symbol || "???", p.tokenA?.id),
         logo: resolveTokenLogo(p.tokenA?.symbol || "", p.tokenA?.icon),
         htsId: p.tokenA?.id || "",
+        decimals: p.tokenA?.decimals || 8,
       },
       tokenB: {
         symbol: normalizeSymbolForDisplay(p.tokenB?.symbol || "???", p.tokenB?.id),
         name: normalizeNameForDisplay(p.tokenB?.name || p.tokenB?.symbol || "Unknown", p.tokenB?.symbol || "???", p.tokenB?.id),
         logo: resolveTokenLogo(p.tokenB?.symbol || "", p.tokenB?.icon),
         htsId: p.tokenB?.id || "",
+        decimals: p.tokenB?.decimals || 8,
       },
       tvl: safeFloat(p.tvl),
       volume24h: safeFloat(p.volume24h),
@@ -434,7 +449,7 @@ async function fetchFromBackend(): Promise<{
       source: p.source || "v1",
       trending: p.trending || "stable",
       contractId: p.contractId || p.id || "",
-    })).filter((p: LivePool) => p.tvl >= MIN_TVL_DISPLAY);
+    })).filter((p: LivePool) => p.tvl >= MIN_TVL_DISPLAY || FORCE_INCLUDE_POOL_CONTRACT_IDS.has(p.contractId));
 
     const stats = data.stats || {};
     const isLive = pools.length > 0;

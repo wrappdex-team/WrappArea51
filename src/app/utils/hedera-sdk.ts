@@ -25,6 +25,7 @@ export {
   TokenAssociateTransaction,
   AccountId,
   TokenId,
+  NftId,
   TransactionId,
   Long,
   ContractFunctionParameters,

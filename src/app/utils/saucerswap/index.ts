@@ -54,3 +54,9 @@ export * from "./swap-engine";
 
 // -- Swap Verification: post-swap verification, balance checks, association --
 export * from "./swap-verification";
+
+// -- Tick Math: concentrated liquidity math, tick/price conversion --
+export * from "./tick-math";
+
+// -- Positions: V2 LP position fetching, enrichment, mint fee --
+export * from "./positions";
