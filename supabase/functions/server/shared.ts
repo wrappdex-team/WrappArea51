@@ -18,7 +18,7 @@ const RATE_LIMIT_L1_MAX_SIZE = 10_000; // Cap in-memory map to prevent unbounded
 // Prevents spam from compromised sessions sharing different IPs.
 // L1-only (in-memory) — KV cost not justified for short windows.
 //
-// SENIOR DEV NOTE [PERF-01]:
+// NOTE [PERF-01]:
 //   Per-account limiting is critical because a single compromised session
 //   could rotate source IPs (proxies/VPNs) to bypass IP limits. Account-level
 //   tracking is immune to IP rotation.

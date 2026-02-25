@@ -1,6 +1,11 @@
 /**
  * [LP-07] V2 Liquidity Token Whitelist -- WRAPpDEX Curated Pools
  *
+ * [LIQUIDITY-FIX-2026-02-25] All token IDs updated to use high-liquidity
+ * canonical versions. Previous low-liquidity tokens risked loss of pair value.
+ * Key changes: WETH 0.0.9770617 ($1.8M TVL), WBTC 0.0.1055483, USDT 0.0.1055472,
+ * DAI 0.0.1055477, HBARX 0.0.834116, HBAR.h 0.0.9356476.
+ *
  * WRAPpDEX is a wrapped-asset focused DEX. Only blue-chip, ID-verified
  * tokens with real market cap are whitelisted. Zero meme coins.
  *
@@ -37,23 +42,23 @@ export const CURATED_TOKENS: CuratedToken[] = [
   { htsId: "0.0.1456986", symbol: "WHBAR",       displayName: "Wrapped HBAR",              category: "native" },
 
   // ── Wrapped Major L1 Assets (via Hashport) ──
-  { htsId: "0.0.1055482", symbol: "WBTC",        displayName: "Wrapped Bitcoin",            category: "wrapped" },
-  { htsId: "0.0.541108",  symbol: "WETH",        displayName: "Wrapped Ether",              category: "wrapped" },
+  { htsId: "0.0.1055483", symbol: "WBTC",        displayName: "Wrapped Bitcoin",            category: "wrapped" },
+  { htsId: "0.0.9770617", symbol: "WETH",        displayName: "Wrapped Ether",              category: "wrapped" },
   { htsId: "0.0.7350565", symbol: "BNB",         displayName: "Wrapped BNB",                category: "wrapped" },
   { htsId: "0.0.1309164", symbol: "LINK",        displayName: "Wrapped Chainlink",          category: "wrapped" },
   { htsId: "0.0.3155415", symbol: "QNT",         displayName: "Wrapped Quant",              category: "wrapped" },
 
   // ── Stablecoins ──
   { htsId: "0.0.456858",  symbol: "USDC",        displayName: "USD Coin",                   category: "stablecoin" },
-  { htsId: "0.0.1055483", symbol: "USDT",        displayName: "Tether USD",                 category: "stablecoin" },
-  { htsId: "0.0.786931",  symbol: "DAI",         displayName: "DAI Stablecoin",             category: "stablecoin" },
+  { htsId: "0.0.1055472", symbol: "USDT",        displayName: "Tether USD",                 category: "stablecoin" },
+  { htsId: "0.0.1055477", symbol: "DAI",         displayName: "DAI Stablecoin",             category: "stablecoin" },
 
   // ── Core Hedera Ecosystem ──
   { htsId: "0.0.731861",  symbol: "SAUCE",       displayName: "SaucerSwap",                 category: "ecosystem" },
-  { htsId: "0.0.1207335", symbol: "HBARX",       displayName: "Stader Staked HBAR",         category: "ecosystem" },
+  { htsId: "0.0.834116",  symbol: "HBARX",       displayName: "Stader Staked HBAR",         category: "ecosystem" },
 
   // ── WRAPpDEX Partner Tokens ──
-  { htsId: "0.0.9356724", symbol: "HBAR.h",      displayName: "HBAR.h Protocol",            category: "partner" },
+  { htsId: "0.0.9356476", symbol: "HBAR.h",      displayName: "HBAR.h Protocol",            category: "partner" },
 ];
 
 // ── Force-Included Pools ────────────────────────────────────────────

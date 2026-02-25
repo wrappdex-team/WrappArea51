@@ -11,7 +11,7 @@
  *   AMM math runs client-side (browser). The server only validates + co-signs.
  *   Settlement is a single CryptoTransfer with both legs — atomic or nothing.
  *
- * SENIOR DEV NOTE [ATOMIC-01]:
+ * NOTE [ATOMIC-01]:
  *   Phase 1 uses server-held pool account keys (signing oracle pattern).
  *   Phase 2 upgrades to threshold keys (2-of-3 multisig on pool accounts).
  *   Phase 3 uses Hedera account abstraction (HIP-206) for on-chain AMM rules.
@@ -81,7 +81,7 @@ export interface PoolAccountDef {
  * Pool reserves read directly from the Hedera Mirror Node.
  * These are the ACTUAL token balances of the pool account — ground truth.
  *
- * SENIOR DEV NOTE [ATOMIC-02]:
+ * NOTE [ATOMIC-02]:
  *   Reserves are NEVER cached for swap math. Every swap reads fresh balances
  *   from Mirror Node. The server validates the same balances before co-signing.
  *   Race condition window is 3-5s (Hedera finality), mitigated by the server

@@ -7,13 +7,13 @@
  * the atomic CryptoTransfer (3-leg: user→pool tokenA, user→pool tokenB,
  * pool→user LP tokens).
  *
- * SENIOR DEV NOTE [C5-01]:
+ * NOTE [C5-01]:
  *   This modal interacts with the same atomic settlement layer as
  *   TradingSwapPanel. The server co-signs the liquidity transaction
  *   after validating LP share math matches its own computation.
  *   All reserves are read from Mirror Node (on-chain ground truth).
  *
- * SENIOR DEV NOTE [C5-02]:
+ * NOTE [C5-02]:
  *   LP share calculation uses min(amountA/reserveA, amountB/reserveB)
  *   to prevent donation attacks. The "optimal deposit" helper ensures
  *   both token amounts are proportional to current reserves, so users

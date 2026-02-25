@@ -83,7 +83,7 @@ interface QuoteResult {
 }
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — 1INCH TESTING LOCK                              │
+// │  IMPLEMENTATION NOTE — 1INCH TESTING LOCK                          │
 // │  The 1inch swap widget is locked to ONLY the founder's Hedera      │
 // │  account (0.0.518487) until end-to-end swap flow has been          │
 // │  smoke-tested on a live deployment. Non-matching users see a       │

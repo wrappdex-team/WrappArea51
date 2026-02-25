@@ -48,7 +48,7 @@
 //   Auth: Public (read-only data — no mutations).
 //   Rate limited per-IP via shared isRateLimited().
 //
-//   SENIOR DEV NOTE: This module is the foundation for C45 (pool detection),
+//   NOTE: This module is the foundation for C45 (pool detection),
 //   C46 (quote fetching), and C47 (frontend migration).  Future phases will
 //   add routes here rather than creating additional server files.
 // ═══════════════════════════════════════════════════════════════════════

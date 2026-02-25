@@ -17,7 +17,7 @@
 //
 //   Quote cache: 10s TTL for same pair+amount combo.
 //
-// SENIOR DEV NOTE: This module imports core utilities from
+// NOTE: This module imports core utilities from
 // saucerswap-engine.ts.  It is registered separately in index.tsx.
 // ════════════════════════════════════════════════════════════════════════
 
@@ -76,9 +76,8 @@ const WHBAR_HTS_ID = "0.0.1456986";
 // ═════════════════════════════════════════════════════════════════════
 
 const TOKEN_ALIAS_MAP: Record<string, string> = {
-  "0.0.1055483": "0.0.10104132",  // WBTC: canonical → V2 wrapper
-  "0.0.1055495": "0.0.10152778",  // LINK: canonical → V2 wrapper
-  "0.0.541564":  "0.0.1969708",   // WETH: canonical → V2 wrapper
+  // [LIQUIDITY-FIX] WETH aliases REMOVED — 0.0.9770617 is the canonical high-liquidity token
+  // Old aliases (0.0.541564, 0.0.1969708) were low-liquidity and risked loss of pair value
 };
 
 /**
@@ -137,10 +136,10 @@ const INTERMEDIARY_TOKENS: { htsId: string; symbol: string; v2AliasId?: string }
   { htsId: "0.0.731861",  symbol: "SAUCE" },
   { htsId: "0.0.834116",  symbol: "HBARX" },
   { htsId: "0.0.1055459", symbol: "USDCh" },
-  // [C99] Fixed WETH: was 0.0.1055481 (wrong ID), correct is 0.0.541564
-  { htsId: "0.0.541564",  symbol: "WETH",  v2AliasId: "0.0.1969708" },
+  // [LIQUIDITY-FIX] Updated to high-liquidity WETH 0.0.9770617 ($1.8M TVL, SaucerSwap's largest pool)
+  { htsId: "0.0.9770617", symbol: "WETH" },
   // [C99] Fixed WBTC: was 0.0.1055482 (wrong ID), correct is 0.0.1055483
-  { htsId: "0.0.1055483", symbol: "WBTC",  v2AliasId: "0.0.10104132" },
+  { htsId: "0.0.1055483", symbol: "WBTC" },
   { htsId: "0.0.1157005", symbol: "WBNB" },
   // [C99] Fixed LINK: was 0.0.1055480 (wrong ID), correct is 0.0.1055495
   { htsId: "0.0.1055495", symbol: "LINK",  v2AliasId: "0.0.10152778" },
@@ -426,11 +425,8 @@ const FALLBACK_PRICES_USD: Record<string, number> = {
   "0.0.456858": 1.0,     // USDC
   "0.0.1055472": 1.0,    // USDT
   "0.0.1055483": 104000, // WBTC (canonical)
-  "0.0.10104132": 104000,// WBTC (V2 alias)
-  "0.0.541564": 2650,    // WETH (canonical)
-  "0.0.1969708": 2650,   // WETH (V2 alias)
+  "0.0.9770617": 2650,   // WETH (high-liquidity, $1.8M TVL)
   "0.0.1055495": 16.50,  // LINK (canonical)
-  "0.0.10152778": 16.50, // LINK (V2 alias)
   "0.0.834116": 0.11,    // HBARX
   "0.0.7374029": 0.000001, // HBAR.h
   "0.0.968069": 0.018,   // HST

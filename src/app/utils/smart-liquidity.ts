@@ -14,7 +14,7 @@
  *   USDT:   0.0.4291336  (6 decimals,  native Tether)
  *   DAI:    0.0.1055477  (8 decimals,  HashPort bridge)
  *   WBTC:   0.0.1055483  (8 decimals,  HashPort/LayerZero bridge)
- *   WETH:   0.0.541564   (18 decimals, HashPort bridge — verify on HashScan)
+ *   WETH:   0.0.9770617  (18 decimals, SaucerSwap's largest WETH pool, $1.8M TVL)
  *   LINK:   0.0.1055495  (8 decimals,  HashPort bridge)
  *   AAVE:   0.0.1055498  (8 decimals,  HashPort bridge — verify on HashScan)
  *   WBNB:   0.0.1157005  (8 decimals,  LayerZero bridge)
@@ -185,7 +185,7 @@ export const WRAPPED_TOKENS: WrappedTokenSeed[] = [
   { tokenId: "0.0.1055477", symbol: "DAI", name: "Dai Stablecoin", decimals: 8, fallbackPrice: 1.00, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4943.png", bridge: "HashPort" },
   // ── Major Wrapped Assets (HashPort / LayerZero canonical HTS IDs) ──
   { tokenId: "0.0.1055483", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, fallbackPrice: 104000, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png", bridge: "HashPort" },
-  { tokenId: "0.0.541564", symbol: "WETH", name: "Wrapped Ether", decimals: 18, fallbackPrice: 2650, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png", bridge: "HashPort" },
+  { tokenId: "0.0.9770617", symbol: "WETH", name: "Wrapped Ether", decimals: 18, fallbackPrice: 2650, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png", bridge: "HashPort" },
   { tokenId: "0.0.1055495", symbol: "LINK", name: "Chainlink", decimals: 8, fallbackPrice: 16.50, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png", bridge: "HashPort" },
   { tokenId: "0.0.1055498", symbol: "AAVE", name: "Aave", decimals: 8, fallbackPrice: 180.0, logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/7278.png", bridge: "HashPort" },
   // ── Cross-Chain (LayerZero / BiT Global) ────────────────────────────

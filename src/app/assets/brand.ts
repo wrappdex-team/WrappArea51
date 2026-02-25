@@ -131,7 +131,7 @@ export const HASHPORT_LOGO = `data:image/svg+xml,${encodeURIComponent(
 // SaucerSwap — "Larry" the alien mascot logo
 // Hosted in Supabase Storage bucket "SWAP LOGOS".
 // Used as the venue badge below the swap button and in pool route headers.
-export const SAUCERSWAP_LARRY_LOGO = `${LOGO_BUCKET}/saucerswap_larry.png`;
+export const SAUCERSWAP_LARRY_LOGO = `${LOGO_BUCKET}/Saucerswap_larry.svg`;
 
 // ── 1inch Official Logo ──────────────────────────────────────────────
 // Hosted in Supabase Storage bucket "SWAP LOGOS".
@@ -140,7 +140,7 @@ export const ONEINCH_LOGO = `${LOGO_BUCKET}/1inch_logo.png`;
 
 // ── SaucerSwap Official Logo (Full) ──────────────────────────────────
 // Same Larry mascot — used for larger venue badges and route visualization.
-export const SAUCERSWAP_LOGO = `${LOGO_BUCKET}/saucerswap_larry.png`;
+export const SAUCERSWAP_LOGO = `${LOGO_BUCKET}/Saucerswap_larry.svg`;
 
 // ── Hedera Logo ──────────────────────────────────────────────────────
 // Official Hedera Hashgraph "H" bar logo.

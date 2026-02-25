@@ -4,7 +4,7 @@
  * Uses the atomic CryptoTransfer AMM engine (constant-product math).
  * Features: animated borders, neon glow, sound effects, particle bursts.
  *
- * SENIOR DEV NOTE [C4-02]:
+ * NOTE [C4-02]:
  *   Token association pre-check is integrated inline. When the user selects
  *   an output token, we query Mirror Node to verify the token is associated
  *   with their account. If not, an inline association prompt appears between
@@ -141,7 +141,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
   // ── AMM Kill Switch Status ──────────────────────────────────────
   const [ammHalted, setAmmHalted] = useState(false);
   // ┌─────────────────────────────────────────────────────────────────────┐
-  // │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+  // │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
   // │  ammPrelaunch is set from the kill-switch endpoint's               │
   // │  prelaunchLocked field. When true, the entire swap body is         │
   // │  replaced with AmmPrelaunchBanner. Remove this state +             │

@@ -68,7 +68,7 @@ const HBARH_TOKEN_ID = "0.0.9356476";
 const WBTC_TOKEN_ID = "0.0.1055483";
 const AAVE_TOKEN_ID = "0.0.1055498";
 const DAI_TOKEN_ID = "0.0.1055477";
-const WETH_TOKEN_ID = "0.0.541564";
+const WETH_TOKEN_ID = "0.0.9770617"; // [LIQUIDITY-FIX] Updated from 0.0.541564 to high-liquidity WETH
 const LINK_TOKEN_ID = "0.0.1055495";
 const WBNB_TOKEN_ID = "0.0.1157005";
 const WAVAX_TOKEN_ID = "0.0.1157020";
@@ -125,7 +125,8 @@ const TOKEN_ID_TO_LOGO: Record<string, string> = {
   [AAVE_TOKEN_ID]: "AAVE",
   [DAI_TOKEN_ID]: "DAI",
   [WETH_TOKEN_ID]: "WETH",
-  "0.0.1969708": "WETH",  // SaucerSwap alias
+  "0.0.541564": "WETH",   // Old low-liquidity token
+  "0.0.1969708": "WETH",  // Old SaucerSwap alias
   [LINK_TOKEN_ID]: "LINK",
   "0.0.1970030": "LINK",  // SaucerSwap old alias
   "0.0.10152778": "LINK", // SaucerSwap current alias [C85]

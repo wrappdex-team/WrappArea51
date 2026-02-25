@@ -142,14 +142,13 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 11, isWrapped: false,
   },
   {
-    // [C36-04] WETH decimals: 18 is correct (verified via HashScan).
-    // [C85] RESTORED saucerswapAliasId — same issue as WBTC/LINK above.
-    // SaucerSwap V2 pools use 0.0.1969708, not the canonical bridge ID.
-    symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.541564",
-    evmAddress: htsIdToEvmAddress("0.0.541564"), decimals: 18,
+    // [LIQUIDITY-FIX] Updated to 0.0.9770617 — SaucerSwap's largest WETH pool
+    // with $1.8M TVL. Old IDs (0.0.541564, 0.0.1969708) were low-liquidity
+    // tokens risking loss of pair value. This is the canonical high-liquidity WETH.
+    symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.9770617",
+    evmAddress: htsIdToEvmAddress("0.0.9770617"), decimals: 18,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
     rank: 12, isWrapped: true, bridge: "HashPort",
-    saucerswapAliasId: "0.0.1969708",
   },
   {
     symbol: "AAVE", name: "Aave", htsId: "0.0.1055498",

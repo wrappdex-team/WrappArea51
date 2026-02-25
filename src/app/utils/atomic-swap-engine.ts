@@ -15,7 +15,7 @@
  * The server's ONLY role is co-signing the pool account's side of the
  * CryptoTransfer. It validates the math independently and holds pool keys.
  *
- * SENIOR DEV NOTE [ATOMIC-03]:
+ * NOTE [ATOMIC-03]:
  *   The engine is deliberately stateless. No in-memory pool state, no cached
  *   reserves for swap math. Every quote/swap reads fresh reserves from Mirror
  *   Node. This eliminates desync between client and on-chain state.
@@ -130,7 +130,8 @@ export const TOKEN_WHITELIST: AtomicTokenDef[] = [
   // ── Major Wrapped Assets ────────────────────────────────────────────
   // [SECURITY-FIX-2] Removed bad WBTC alias (0.0.10104132 is SCAM token)
   { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPriceUsd: 104000, bridge: "HashPort", tier: 1 },
-  { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPriceUsd: 2650,   bridge: "HashPort", tier: 1, saucerswapId: "0.0.1969708" },
+  // [LIQUIDITY-FIX] Updated from 0.0.541564 → 0.0.9770617 (SaucerSwap's largest WETH pool, $1.8M TVL)
+  { tokenId: "0.0.9770617", symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPriceUsd: 2650,   bridge: "HashPort", tier: 1 },
   // [SECURITY-FIX] REMOVED saucerswapId: 0.0.10152778 was SCAM/FAKE token with low liquidity
   { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPriceUsd: 16.50,  bridge: "HashPort", tier: 1 },
   { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPriceUsd: 17.25,  bridge: "HashPort", tier: 1 }, // [C33-01] Updated from 180.0
@@ -158,7 +159,7 @@ for (const t of TOKEN_WHITELIST) {
 // SECTION 3: Pool Registry
 // ═══════════════════════════════════════════════════════════════════════
 //
-// SENIOR DEV NOTE [ATOMIC-04]:
+// NOTE [ATOMIC-04]:
 //   Pool accounts must be created on-chain BEFORE trading can begin.
 //   Each pool requires:
 //     1. A Hedera account (created via AccountCreateTransaction)
@@ -179,8 +180,8 @@ export const POOL_REGISTRY: PoolAccountDef[] = [
     poolId: "ap-usdc-whbar",
     tokenA: "USDC",
     tokenB: "WHBAR",
-    accountId: "PENDING",     // TODO: Deploy pool account on mainnet
-    lpTokenId: "PENDING",     // TODO: Create LP token after pool account
+    accountId: "PENDING",     // Deploy pool account on mainnet before activation
+    lpTokenId: "PENDING",     // Create LP token after pool account deployment
     lpDecimals: 8,
     createdAt: 0,
     status: "paused",         // Will be "active" after deployment
@@ -510,7 +511,7 @@ async function fetchTokenTotalSupply(tokenId: string): Promise<bigint> {
  * Read pool reserves from the Mirror Node — on-chain ground truth.
  * The pool account's HTS token balances ARE the reserves.
  *
- * SENIOR DEV NOTE [ATOMIC-05]:
+ * NOTE [ATOMIC-05]:
  *   This is the critical difference from the KV-backed AMM. Reserves are
  *   not a server-managed integer in a database — they are the actual token
  *   balances of a real Hedera account, verifiable by anyone via Mirror Node
@@ -585,7 +586,7 @@ export async function fetchAllPoolReserves(): Promise<Map<string, PoolReserves>>
   return results;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════��══════════
 // SECTION 6: Oracle Price Fetching (Display Only — Swaps Use Reserves)
 // ══════════════════════════════════════════════════════════════════════
 
@@ -709,7 +710,7 @@ export async function fetchOraclePrices(): Promise<Record<string, number>> {
   // oracle could push TVL artificially high → widen depth caps → enable
   // larger swaps than intended. This sanity check mitigates that vector.
   //
-  // SENIOR DEV NOTE [PERF-02]:
+  // NOTE [PERF-02]:
   //   Threshold is 50% (generous) because legitimate price swings can be
   //   large for volatile assets (WETH, WBTC). The goal is catching gross
   //   manipulation (10x), not normal volatility. Stablecoins get a tighter
@@ -934,7 +935,7 @@ export function computeFeeBreakdown(
 // SECTION 8: Transaction Building (Hedera SDK)
 // ═══════════════════════════════════════════════════════════════════════
 //
-// SENIOR DEV NOTE [ATOMIC-06]:
+// NOTE [ATOMIC-06]:
 //   Transactions are built CLIENT-SIDE using the Hedera SDK. The resulting
 //   frozen (but unsigned) transaction bytes are sent to the server for
 //   pool-side co-signing. The client then sends the pool-signed bytes
@@ -1204,7 +1205,7 @@ export async function getPoolMetrics(poolId: string): Promise<PoolMetrics | null
     reserveBDisplay: displayB,
     priceA,
     priceB,
-    hbarBalance: 0, // TODO: fetch HBAR balance for rent monitoring
+    hbarBalance: 0, // HBAR balance monitoring not yet implemented
     tokensAssociated: reserves.isLive,
     lpTotalSupply: Number(reserves.lpTotalSupply) / 10 ** pool.lpDecimals,
     lastRefreshed: reserves.fetchedAt,

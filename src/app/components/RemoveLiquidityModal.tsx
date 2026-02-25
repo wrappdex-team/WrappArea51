@@ -7,14 +7,14 @@
  * and executes the atomic CryptoTransfer (3-leg: user->pool LP tokens,
  * pool->user tokenA, pool->user tokenB).
  *
- * SENIOR DEV NOTE [C6-01]:
+ * NOTE [C6-01]:
  *   Removal mirrors addition — same atomic settlement layer, same
  *   server co-sign validation. The key difference is that the server
  *   validates the burn math (shares * reserveX / totalSupply) matches
  *   its own independent computation from Mirror Node. Slippage
  *   protection is client-enforced via minAmountARaw / minAmountBRaw.
  *
- * SENIOR DEV NOTE [C6-02]:
+ * NOTE [C6-02]:
  *   LP share amounts are in raw integer units (typically 8 decimals
  *   for HTS). The percentage slider maps [0, 100] -> [0, userBalance]
  *   in raw units. We always floor the result to prevent rounding errors

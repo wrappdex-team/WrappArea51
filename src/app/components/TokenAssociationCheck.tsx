@@ -12,7 +12,7 @@
  * Uses: checkTokenAssociation() and buildTokenAssociateTransaction()
  * from atomic-swap-client.ts, sendHederaTransaction() from hashpack.ts.
  *
- * SENIOR DEV NOTE [C4-01]:
+ * NOTE [C4-01]:
  *   Token association is a Hedera-specific requirement with no EVM equivalent.
  *   Unlike ERC-20 approvals, association is a one-time on-chain transaction
  *   that costs ~0.05 HBAR. Without it, any CryptoTransfer crediting the

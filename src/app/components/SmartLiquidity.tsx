@@ -49,7 +49,7 @@ import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 // ── Swap Panel ──────────────────────────────────────────────────────
 
 // ┌────────────────────��────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+// │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
 // │  SwapPanel returns AmmPrelaunchBanner while AMM is locked.        │
 // │  Remove the early-return when AMM_PRELAUNCH_LOCKED = false.       │
 // └─────────────────────────────────────────────────────────────────────┘
@@ -271,7 +271,7 @@ function SwapPanel({ pools, isDark, accountId }: { pools: PoolState[]; isDark: b
 
 // ── Create Pool Modal ────────────────────────────────────────────────
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+// │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
 // │  Restore original form body when AMM_PRELAUNCH_LOCKED = false.    │
 // │  See atomic-signer.ts for the server-side flag.                   │
 // └─────────────────────────────────────────────────────────────────────┘
@@ -292,7 +292,7 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
 // ── Add Liquidity Modal ─────────────────────────────────────────────
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+// │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
 // │  AddLiquidityModal shows AmmPrelaunchBanner while AMM is locked.  │
 // │  Restore original form body when AMM_PRELAUNCH_LOCKED = false.    │
 // └─────────────────────────────────────────────────────────────────────┘

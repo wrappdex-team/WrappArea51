@@ -15,7 +15,7 @@
 // All functions are PURE: no I/O, no state, no side effects. BigInt-only
 // math avoids IEEE 754 precision loss for 18-decimal tokens (WETH).
 //
-// SENIOR DEV NOTE [SHARED-01]:
+// NOTE [SHARED-01]:
 //   The Deno server cannot share a module with the Vite-bundled frontend
 //   (different runtimes, different module resolution). This file covers
 //   server-side dedup only. Client-side dedup would require a monorepo

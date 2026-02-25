@@ -6,14 +6,14 @@
  * — no server dependency, no KV. Share-of-pool and estimated token amounts
  * are derived from on-chain reserves (ground truth).
  *
- * SENIOR DEV NOTE [C7-02]:
+ * NOTE [C7-02]:
  *   Each LP "position" is simply the user's HTS balance of the pool's LP
  *   token. The share-of-pool percentage and estimated token amounts are
  *   computed from current reserves using the same burn math as the Remove
  *   Liquidity flow. Positions update on a 30s polling interval — fast
  *   enough for a dashboard, slow enough to avoid Mirror Node rate limits.
  *
- * SENIOR DEV NOTE [C7-03]:
+ * NOTE [C7-03]:
  *   This component is intentionally read-only. All mutation actions
  *   (add/remove liquidity) are handled by their respective modals.
  *   The tracker only provides navigation entry points to those modals.

@@ -5,7 +5,7 @@ import { Lock } from "lucide-react";
  * the AMM is in pre-launch lockdown.
  *
  * ┌─────────────────────────────────────────────────────────────────┐
- * │  SENIOR DEV NOTE                                               │
+ * │  IMPLEMENTATION NOTE                                            │
  * │  This component can be deleted once AMM goes live.             │
  * │  Backend flag: AMM_PRELAUNCH_LOCKED in atomic-signer.ts        │
  * │  See the master go-live checklist for all usages.              │

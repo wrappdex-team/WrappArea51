@@ -44,7 +44,7 @@ const CHANGENOW_LOGO = "https://changenow.io/images/changenow-logo.svg";
 const SLIPPAGE_OPTIONS = [1.0, 3.0];
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE #11 — SAUCERSWAP SWAP PRODUCTION LOCK             │
+// │  IMPLEMENTATION NOTE — SAUCERSWAP SWAP PRODUCTION LOCK             │
 // │                                                                    │
 // │  The Hedera swap tab (Buy/Sell HBAR) is production-ready and       │
 // │  routes through SaucerSwap V1. It is locked                        │

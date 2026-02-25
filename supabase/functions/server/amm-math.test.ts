@@ -34,6 +34,17 @@ import {
   assertThrows,
 } from "jsr:@std/assert";
 
+// ── All math imports from amm-math-shared.ts (single source of truth) ───
+//
+// IMPLEMENTATION NOTE [SHARED-01]:
+//   All pure AMM math functions live in amm-math-shared.ts. Previously some
+//   were imported via amm.ts re-exports, but amm.ts is deprecated dead code
+//   (never registered in index.tsx). This test now imports everything directly.
+//
+//   The client-side copy in src/app/utils/atomic-swap-engine.ts must be kept
+//   in manual sync (different runtime — Deno server vs Vite browser bundle).
+//   Any divergence between amm-math-shared.ts and atomic-swap-engine.ts is
+//   itself a bug — the server validation MUST agree with client math.
 import {
   getAmountOut,
   decimalToBigInt,
@@ -46,19 +57,6 @@ import {
   PROTOCOL_FEE_BPS,
   PROTOCOL_FEE_USD,
   MAX_PROTOCOL_FEE_TINYBAR,
-} from "./amm.ts";
-
-// ── Shared math imports (from amm-math-shared.ts via amm.ts re-exports) ─
-//
-// SHARED-01: These functions were previously inline replicas of client-side
-// code in atomic-swap-engine.ts. Now imported from amm-math-shared.ts (the
-// server-side single source of truth). The client-side copy in
-// src/app/utils/atomic-swap-engine.ts must still be kept in manual sync
-// (different runtime — Deno server vs Vite browser bundle).
-//
-// Any divergence between amm-math-shared.ts and atomic-swap-engine.ts is
-// itself a bug — the server validation MUST agree with client math.
-import {
   getAmountIn,
   bigIntToDecimal,
   getSpotPrice,
@@ -66,7 +64,6 @@ import {
   computeLPSharesBurn,
   computeOptimalDeposit,
 } from "./amm-math-shared.ts";
-
 
 // ── 1. getAmountOut ─────────────────────────────────────────────────
 

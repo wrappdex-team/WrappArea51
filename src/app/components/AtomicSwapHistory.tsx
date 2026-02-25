@@ -5,14 +5,14 @@
  * KV-backed history endpoint. Each entry was written at co-sign time
  * by the sign-swap handler in atomic-signer.ts.
  *
- * SENIOR DEV NOTE [C8-02]:
+ * NOTE [C8-02]:
  *   The history endpoint is auth-gated — the ED25519 session token must
  *   match the requested accountId. Users can only see their own swaps.
  *   The KV entries are keyed as `atomic_swap_<timestamp>_<accountId>`,
  *   read via prefix scan, and filtered + sorted server-side. The server
  *   caps responses at 50 most recent entries.
  *
- * SENIOR DEV NOTE [C8-03]:
+ * NOTE [C8-03]:
  *   These events represent server co-signs, not confirmed on-chain
  *   settlements. A co-signed swap that the user subsequently rejected
  *   in their wallet (or that expired) will still appear here. For

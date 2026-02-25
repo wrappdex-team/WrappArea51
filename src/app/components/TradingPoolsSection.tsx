@@ -83,7 +83,7 @@ function StatCard({ label, value, isDark, accent }: { label: string; value: stri
 // ── Create Pool Modal ───────────────────────────────────────────────
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — PRE-LAUNCH LOCK                                │
+// │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
 // │  The CreatePoolModal currently shows only AmmPrelaunchBanner.      │
 // │  When AMM_PRELAUNCH_LOCKED is flipped to false in atomic-signer,  │
 // │  restore the original form body and remove the banner import.      │
@@ -113,7 +113,7 @@ function CreatePoolModal({ isDark, accountId, onClose, onCreated }: {
 // ── Add Liquidity Modal ─────────────────────────────────────────────
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  SENIOR DEV NOTE — ATOMIC LIQUIDITY INTEGRATION                   │
+// │  IMPLEMENTATION NOTE — ATOMIC LIQUIDITY INTEGRATION                │
 // │  When a user clicks "Add Liquidity" on a legacy KV pool card,     │
 // │  we attempt to resolve the matching atomic pool by token pair.     │
 // │  If found, we open the full AtomicLiquidityModal. If no matching  │

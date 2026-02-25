@@ -13,7 +13,7 @@
 //   Phase 2: Threshold keys (2-of-3 multisig on pool accounts)
 //   Phase 3: Hedera account abstraction (HIP-206) for on-chain AMM rules
 //
-// SENIOR DEV NOTE [ATOMIC-09]:
+// NOTE [ATOMIC-09]:
 //   The server's ONLY power is deciding whether to co-sign. It cannot:
 //     - Steal user funds (user sees full TX in wallet before signing)
 //     - Forge transactions (user must also sign; 2-of-2 requirement)
@@ -157,7 +157,7 @@ const TOKEN_WHITELIST: TokenDef[] = [
   { tokenId: "0.0.1055459", symbol: "USDCh", decimals: 6 },
   { tokenId: "0.0.1055472", symbol: "USDTh", decimals: 6 },
   { tokenId: "0.0.1055483", symbol: "WBTC",  decimals: 8 },
-  { tokenId: "0.0.541564",  symbol: "WETH",  decimals: 18 },
+  { tokenId: "0.0.9770617", symbol: "WETH",  decimals: 18 }, // [LIQUIDITY-FIX] High-liquidity WETH
   { tokenId: "0.0.1055495", symbol: "LINK",  decimals: 8 },
   { tokenId: "0.0.1055498", symbol: "AAVE",  decimals: 8 },
   { tokenId: "0.0.1157005", symbol: "WBNB",  decimals: 8 },
@@ -408,7 +408,7 @@ async function signTransactionWithPoolKey(
 // SEC-14: Transaction Content Validation
 // ═══════════════════════════════════════════════════════════════════════
 //
-// SENIOR DEV NOTE [SEC-14]:
+// NOTE [SEC-14]:
 //   validateSwap (SEC-07) verifies the MATH is correct: server reads reserves,
 //   recomputes the output, and confirms the client's claimed output is within
 //   tolerance. But it does NOT inspect the actual transaction body.
@@ -684,7 +684,7 @@ async function validateSwapTransactionContents(
 // SEC-15: Replay Protection — Transaction ID Deduplication
 // ═══════════════════════════════════════════════════════════════════════
 //
-// SENIOR DEV NOTE [SEC-15]:
+// NOTE [SEC-15]:
 //   Hedera consensus nodes reject duplicate TX IDs within the validity
 //   window (~180s), but the co-signing oracle operates BEFORE submission.
 //   A captured co-signed TX could be replayed if:
@@ -1455,7 +1455,7 @@ export function registerAtomicSignerRoutes(app: Hono) {
   // /amm/kill, and /amm/resume. These shims proxy to the same KV key as
   // /atomic/admin/kill-switch, preventing 404s.
   //
-  // TODO: Rewire frontend to /atomic/* endpoints and remove these shims.
+  // IMPLEMENTATION NOTE: Rewire frontend to /atomic/* endpoints and remove these shims.
   // ══════════════════════════════════════════════════════════════════════
 
   // GET /amm/kill-switch — Public: check if AMM is halted

@@ -42,7 +42,7 @@
 //   - Per-pool pessimistic lock + optimistic CAS versioning
 //   - AMM_PRELAUNCH_LOCKED = true (never went live)
 //
-// SENIOR DEV NOTE [LEGACY-01]:
+// NOTE [LEGACY-01]:
 //   Rated 5.5/10 during architecture review. Core weakness: pool reserves
 //   exist only in KV, not on-chain — users must trust the server for
 //   reserve integrity. The atomic model (atomic-signer.ts +
@@ -148,7 +148,7 @@ function isOracleStale(): boolean {
 // PERF-03: KV Payload Compression
 // ═══════════════════════════════════════════════════════════════════════
 //
-// SENIOR DEV NOTE [PERF-03]:
+// NOTE [PERF-03]:
 //   Pool state averages ~600 bytes JSON-encoded. At 500 pools × 2 reads/swap
 //   (index + pool), each swap moves ~1.2 KB through KV. Volume accumulators
 //   grow unbounded (micro-USD strings). Compression cuts KV I/O by ~60-70%
@@ -312,7 +312,7 @@ const PROTOCOL_FEE_ACCUM_LOCK = "sl_pfee_lock_"; // Per-pool lock for fee writes
 const AMM_KILL_SWITCH_KEY = "amm_kill_switch";
 
 // ╔═══════════════════════════════════════════════════════════════════════╗
-// ║  SENIOR DEV NOTE [LEGACY-03] — PRE-LAUNCH LOCK (MOOT)              ║
+// ║  IMPLEMENTATION NOTE [LEGACY-03] — PRE-LAUNCH LOCK (MOOT)          ║
 // ║                                                                      ║
 // ║  This module NEVER went live. AMM_PRELAUNCH_LOCKED was always true.  ║
 // ║  The atomic CryptoTransfer AMM (atomic-signer.ts) replaced this      ║
@@ -544,10 +544,9 @@ const TOKEN_WHITELIST: TokenDef[] = [
   // [SECURITY-FIX-2] Removed bad WBTC & LINK aliases (were SCAM tokens)
   // WBTC: HashPort bridge. NO ALIAS — canonical 0.0.1055483 is correct.
   { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPrice: 104000, bridge: "HashPort", tier: 1 },
-  // WETH: HashPort bridge (token ID 0.0.541564). SaucerSwap lists 0.0.1969708 (18 dec).
-  // NOTE: Decimals MUST be confirmed on HashScan — HashPort may bridge at 8 or 18.
-  { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPrice: 2650,   bridge: "HashPort", tier: 1,
-    saucerswapId: "0.0.1969708" },
+  // WETH: Updated to 0.0.9770617 (SaucerSwap's largest pool, $1.8M TVL).
+  // Old IDs (0.0.541564, 0.0.1969708) were low-liquidity tokens risking loss of pair value.
+  { tokenId: "0.0.9770617", symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPrice: 2650,   bridge: "HashPort", tier: 1 },
   // LINK: HashPort bridge. [SECURITY-FIX] REMOVED saucerswapId 0.0.10152778 — was SCAM/FAKE token
   { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPrice: 16.50,  bridge: "HashPort", tier: 1 },
   // AAVE: HashPort bridge (same ID as SaucerSwap — no alias needed)
@@ -626,13 +625,13 @@ interface LPPosition {
 
 // ── Pool TVL & Swap Limits ──────────────────────────────────────────
 //
-// SENIOR DEV NOTE [LEGACY-02]:
+// NOTE [LEGACY-02]:
 //   Number(BigInt(reserve)) overflows Number.MAX_SAFE_INTEGER for tokens
 //   with 18 decimals (WETH) at reserves > ~90 ETH. This was a P0 bug in
 //   the original code. Fixed below using string-based decimal conversion
 //   (same approach as atomic-swap-engine.ts bigIntToDecimal).
 
-// SENIOR DEV NOTE [LEGACY-05]:
+// NOTE [LEGACY-05]:
 //   Returns IEEE 754 double (~15-17 significant digits). This is intentionally
 //   lossy — the function is used for USD display values and TVL calculations,
 //   not for AMM math (which uses BigInt exclusively). For an 18-decimal token
@@ -1515,7 +1514,7 @@ export function registerAmmRoutes(app: Hono): void {
       }
 
       // Multi-hop execution not yet supported in the KV-backed AMM.
-      // SENIOR DEV NOTE [LEGACY-08]:
+      // NOTE [LEGACY-08]:
       //   Multi-hop quotes work (see routing logic above) but EXECUTION requires
       //   atomically locking two pools and updating both reserves in a single tx.
       //   In the KV model this means acquiring two pool locks simultaneously
@@ -1627,7 +1626,7 @@ export function registerAmmRoutes(app: Hono): void {
             const treasuryFeeTinybar = protocolFeeTinybar - Math.floor(protocolFeeTinybar / 2);
 
             // ── Fee Accrual (non-critical, parallelized) ─────────────────
-            // SENIOR DEV NOTE [LEGACY-07]:
+            // NOTE [LEGACY-07]:
             //   Treasury fee lock and per-pool protocol fee lock write to DIFFERENT
             //   keys — they can run concurrently without conflict. Running them in
             //   parallel halves the post-CAS latency on the swap hot path (~10ms → ~5ms).
@@ -1861,7 +1860,7 @@ export function registerAmmRoutes(app: Hono): void {
 
       const pfeeKey = PROTOCOL_FEE_ACCUM_PREFIX + poolId;
 
-      // SENIOR DEV NOTE [LEGACY-06]:
+      // NOTE [LEGACY-06]:
       //   Oracle prices fetched OUTSIDE the pool lock. fetchOraclePrices() makes
       //   an external HTTP call to SaucerSwap (up to 8s timeout). If called inside
       //   the 5s lock TTL, the lock would expire mid-HTTP, allowing a concurrent
@@ -1906,7 +1905,7 @@ export function registerAmmRoutes(app: Hono): void {
         }
 
         // Safety: never deduct more than 50% of reserves (sanity ceiling)
-        // SENIOR DEV NOTE [LEGACY-04]:
+        // NOTE [LEGACY-04]:
         //   Min TVL guard prevents fee extraction from draining small pools.
         //   Without this, a $10 pool could have 50% of reserves extracted,
         //   leaving it with ~$5 TVL — effectively dead. The $100 floor matches

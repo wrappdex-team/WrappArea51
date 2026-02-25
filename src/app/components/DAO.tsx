@@ -228,9 +228,32 @@ export function DAO() {
     } catch (err: any) {
       toast.dismiss(signingToast);
       const msg = err?.message || "Authentication failed";
+      
+      // ── AUTH-FIX-2026-02: User-friendly error messages ──
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("cancel")) {
         toast.error("Signing cancelled — you need to sign to participate", { duration: 5000 });
+      } else if (msg.toLowerCase().includes("key length") || msg.toLowerCase().includes("key type")) {
+        // Key format/validation errors (should be rare after AUTH-FIX-2026-02 fix)
+        toast.error(
+          "Wallet authentication failed. Your wallet may be using an unsupported key type. " +
+          "Please try reconnecting your wallet or contact support.",
+          { duration: 8000 }
+        );
+        console.error("[DAO] Key validation error:", msg);
+      } else if (msg.toLowerCase().includes("mirror node") || msg.toLowerCase().includes("unavailable")) {
+        // Hedera Mirror Node connectivity issues
+        toast.error(
+          "Hedera network temporarily unavailable. Please wait a moment and try again.",
+          { duration: 6000 }
+        );
+      } else if (msg.toLowerCase().includes("not found") || msg.toLowerCase().includes("404")) {
+        // Account not found on Mirror Node
+        toast.error(
+          "Account not found on Hedera. Make sure you're connected to mainnet.",
+          { duration: 6000 }
+        );
       } else {
+        // Generic error with original message
         toast.error(`Sign-in failed: ${msg}`, { duration: 5000 });
       }
       return false;

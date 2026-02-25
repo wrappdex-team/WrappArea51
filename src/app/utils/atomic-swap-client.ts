@@ -14,7 +14,7 @@
  * does NOT hold state, and does NOT route orders. All computation is
  * client-side, all settlement is on-chain.
  *
- * SENIOR DEV NOTE [ATOMIC-07]:
+ * NOTE [ATOMIC-07]:
  *   This is the trust model:
  *     - Users trust MATH (constant product, open source, auditable)
  *     - Users trust HEDERA (atomic CryptoTransfer, consensus-guaranteed)
@@ -95,7 +95,7 @@ const SERVER_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-5
  *
  * Returns a result with the transaction ID, amounts, and HashScan URL.
  *
- * SENIOR DEV NOTE [ATOMIC-08]:
+ * NOTE [ATOMIC-08]:
  *   Every step can fail independently. Error handling is granular:
  *   - Build failure → error before any signing
  *   - Server rejection → error before wallet interaction
@@ -590,7 +590,7 @@ const MIRROR_NODE_MAINNET = "https://mainnet-public.mirrornode.hedera.com";
 /**
  * Fetch a user's LP token balance for a specific pool.
  *
- * SENIOR DEV NOTE [C7-01]:
+ * NOTE [C7-01]:
  *   LP positions are read directly from Mirror Node — the user's account
  *   balance of the pool's LP HTS token. No server dependency, no KV.
  *   The position is the on-chain ground truth. Share-of-pool and estimated
@@ -708,7 +708,7 @@ export interface AtomicSwapEvent {
  * Fetch the user's atomic swap history from the server.
  * Requires an active session (ED25519 challenge-response auth).
  *
- * SENIOR DEV NOTE [C8-01]:
+ * NOTE [C8-01]:
  *   The server reads from KV (prefix scan on `atomic_swap_*`) and
  *   filters by accountId server-side. Auth ensures users can only
  *   see their own history. The KV entries are written by the

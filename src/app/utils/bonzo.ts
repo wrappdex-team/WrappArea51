@@ -204,7 +204,7 @@ const BONZO_SUPPORTED_TOKENS: BonzoTokenDef[] = [
   {
     symbol: "WETH",
     name: "Wrapped Ether",
-    hederaTokenId: "0.0.541564",
+    hederaTokenId: "0.0.9770617", // [LIQUIDITY-FIX] Updated to high-liquidity WETH
     decimals: 18,
     logo: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
     canBeCollateral: true,

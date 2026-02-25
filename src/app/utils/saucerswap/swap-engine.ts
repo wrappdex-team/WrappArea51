@@ -1041,7 +1041,7 @@ async function executeSaucerSwapV2Direct(
       //   Popup 2: Token→HBAR: atomic multicall(exactInputSingle(recipient=ROUTER) + unwrapWETH9(0, user)) [C34-01]
       //            Token→Token: single exactInputSingle(recipient=user)
       //
-      // SENIOR DEV NOTE [C35-01]: Reverted from C33-01 ERC-20 approve() back to
+      // NOTE [C35-01]: Reverted from C33-01 ERC-20 approve() back to
       // native HTS AccountAllowanceApproveTransaction. The C33-01 comment that
       // "native HTS allowances do NOT reliably bridge to EVM-level allowances" was
       // INCORRECT — SaucerSwap's own production UI (saucerswap.finance) uses native
@@ -1118,7 +1118,7 @@ async function executeSaucerSwapV2Direct(
         // This is ATOMIC — if anything fails, the whole tx reverts and
         // the user's input tokens are safe (no partial execution).
         //
-        // SENIOR DEV NOTE: recipient MUST be the router's EVM address,
+        // NOTE: recipient MUST be the router's EVM address,
         // NOT the user's. The unwrapWETH9 function checks address(this).balance.
         // [C100-S9] WHBAR contract verification — log the split architecture
         // for post-mortem diagnostics if the multicall reverts.
@@ -1151,7 +1151,7 @@ async function executeSaucerSwapV2Direct(
         // form, so these match. Even if the Mirror Node returns a CREATE-deployed
         // address, HTS precompile resolves both forms to the same entity.
         //
-        // SENIOR DEV NOTE [C34-01]: The C33 address(0) sentinel was wrong for
+        // NOTE [C34-01]: The C33 address(0) sentinel was wrong for
         // the original V3 SwapRouter. This caused CONTRACT_REVERT_EXECUTED on
         // every Token→HBAR multicall. The C33 ERC-20 approve fix remains correct.
         const swapCalldata = encodeExactInputSingle(
@@ -1810,7 +1810,7 @@ async function executeSaucerSwapV2MultiHop(
 
     // [C34-01] For Token→HBAR: recipient = ROUTER so WHBAR lands in router's
     // balance for unwrapWETH9 to access. For Token→Token: recipient = USER.
-    // SENIOR DEV NOTE [C34-01]: C33 used address(0) as a "sentinel" but the
+    // NOTE [C34-01]: C33 used address(0) as a "sentinel" but the
     // original V3 SwapRouter does NOT replace address(0) with address(this).
     // That sentinel only exists in SwapRouter02 (different selector). Using
     // address(0) caused CONTRACT_REVERT_EXECUTED on every Token→HBAR multicall.

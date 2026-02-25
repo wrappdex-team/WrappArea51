@@ -113,19 +113,47 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
     }
     const data = await res.json();
     const keyData = data?.key;
+    
+    // ── AUTH-FIX-2026-02: Comprehensive key format logging ──────────────────
+    console.log(`[AUTH] Mirror Node response for ${accountId}: keyType=${keyData?._type}, rawKeyLength=${keyData?.key?.length}, rawKeyPreview=${keyData?.key?.slice(0, 20)}...`);
+    
     if (!keyData || !keyData._type || !keyData.key) {
       return { error: "Account has no public key (possibly a smart contract account)" };
     }
     if (keyData._type !== "ED25519" && keyData._type !== "ECDSA_SECP256K1") {
       return { error: `Unsupported key type: ${keyData._type}. Only ED25519 and ECDSA_SECP256K1 accounts supported for authentication.` };
     }
+    
+    // ── AUTH-FIX-2026-02: Normalize public key format ──────────────────────
+    // HashPack and other wallets may return keys with "0x" prefix or DER encoding.
+    // Strip all common prefixes before validation to support any HIP-820 compliant wallet.
     let rawKeyHex: string = keyData.key.toLowerCase();
+    const originalLength = rawKeyHex.length;
+    
+    // Strip "0x" prefix if present (common in wallet responses)
+    if (rawKeyHex.startsWith("0x")) {
+      rawKeyHex = rawKeyHex.substring(2);
+      console.log(`[AUTH] Stripped "0x" prefix: ${originalLength} → ${rawKeyHex.length} chars`);
+    }
+    
+    // Strip ED25519 DER prefix if present (ASN.1 encoded public keys)
     if (rawKeyHex.startsWith(ED25519_DER_PREFIX)) {
       rawKeyHex = rawKeyHex.substring(ED25519_DER_PREFIX.length);
+      console.log(`[AUTH] Stripped DER prefix: → ${rawKeyHex.length} chars`);
     }
-    if (rawKeyHex.length !== 64) {
-      return { error: `Invalid ED25519 key length: expected 64 hex chars, got ${rawKeyHex.length}` };
+    
+    // Validate key length based on algorithm type:
+    // - ED25519: 32 bytes = 64 hex characters
+    // - ECDSA_SECP256K1: 64 bytes (uncompressed) = 128 hex characters
+    const expectedLength = keyData._type === "ED25519" ? 64 : 128;
+    console.log(`[AUTH] Key validation: type=${keyData._type}, expected=${expectedLength}, actual=${rawKeyHex.length}`);
+    
+    if (rawKeyHex.length !== expectedLength) {
+      console.log(`[AUTH] ERROR: Invalid key length for ${accountId}: type=${keyData._type}, expected=${expectedLength}, got=${rawKeyHex.length}`);
+      return { error: `Invalid ${keyData._type} key length: expected ${expectedLength} hex chars, got ${rawKeyHex.length}` };
     }
+    
+    console.log(`[AUTH] Public key validated successfully for ${accountId}: ${keyData._type} (${rawKeyHex.length} chars)`);
     const result: PublicKeyResult = { type: keyData._type, rawKeyHex };
     try { await kv.set(cacheKey, { key: result, ts: Date.now() }); } catch { /* non-critical */ }
     return result;
