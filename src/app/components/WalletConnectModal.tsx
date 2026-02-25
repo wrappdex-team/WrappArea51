@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode, lazy, Suspense } from "react";
 import { motion } from "motion/react";
 import {
   X,
@@ -27,7 +27,9 @@ import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
 import { getSignClient } from "../utils/wallet-core";
-import { QRCodeSVG } from "qrcode.react";
+
+// [PERFORMANCE-FIX] Lazy-load QRCodeSVG — only needed when showing QR, not on modal open
+const QRCodeSVG = lazy(() => import("qrcode.react").then(m => ({ default: m.QRCodeSVG })));
 
 // ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ──────────────
 // Fire getSignClient() the moment the modal opens, so by the time the user
@@ -395,7 +397,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     // Errors are surfaced via WalletContext.hederaConnectionError
   }, [connectHashPack, onClose]);
 
-  // ── MetaMask Connect ────────���────────────────────────────────────
+  // ── MetaMask Connect ────────────────────────────────────────────
 
   const handleMetaMaskConnect = async () => {
     const connectId = ++mmConnectIdRef.current;
@@ -587,13 +589,15 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
             /* ── QR Code for non-extension users ── */
             <div className="text-center py-4">
               <div className="bg-white rounded-2xl p-4 w-56 h-56 mx-auto mb-5 flex items-center justify-center">
-                <QRCodeSVG
-                  value={pairingUri}
-                  size={208}
-                  level="M"
-                  bgColor="#ffffff"
-                  fgColor="#0c0c14"
-                />
+                <Suspense fallback={<div className="w-56 h-56 bg-gray-200 animate-pulse" />}>
+                  <QRCodeSVG
+                    value={pairingUri}
+                    size={208}
+                    level="M"
+                    bgColor="#ffffff"
+                    fgColor="#0c0c14"
+                  />
+                </Suspense>
               </div>
               <p className="text-white/90 text-sm mb-1">Scan with HashPack</p>
               <p className="text-white/30 text-xs mb-4">
