@@ -232,14 +232,21 @@ export function DAO() {
       // ── AUTH-FIX-2026-02: User-friendly error messages ──
       if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("cancel")) {
         toast.error("Signing cancelled — you need to sign to participate", { duration: 5000 });
-      } else if (msg.toLowerCase().includes("key length") || msg.toLowerCase().includes("key type")) {
-        // Key format/validation errors (should be rare after AUTH-FIX-2026-02 fix)
+      } else if (msg.toLowerCase().includes("key length") || msg.toLowerCase().includes("key type") || msg.toLowerCase().includes("key format")) {
+        // Key format/validation errors
         toast.error(
           "Wallet authentication failed. Your wallet may be using an unsupported key type. " +
           "Please try reconnecting your wallet or contact support.",
           { duration: 8000 }
         );
         console.error("[DAO] Key validation error:", msg);
+      } else if (msg.toLowerCase().includes("signature verification failed") || msg.toLowerCase().includes("signature_invalid")) {
+        // Signature verification failed — all server-side strategies exhausted
+        toast.error(
+          "Signature verification failed. Please disconnect and reconnect your wallet, then try again.",
+          { duration: 8000 }
+        );
+        console.error("[DAO] Signature verification error:", msg);
       } else if (msg.toLowerCase().includes("mirror node") || msg.toLowerCase().includes("unavailable")) {
         // Hedera Mirror Node connectivity issues
         toast.error(

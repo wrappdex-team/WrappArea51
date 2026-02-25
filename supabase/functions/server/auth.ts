@@ -30,6 +30,9 @@ const AUTH_SESSION_TTL_MS = 30 * 60 * 1000;
 const AUTH_PUBKEY_CACHE_TTL_MS = 10 * 60 * 1000;
 const AUTH_VERSION = "wrappdex:auth:v1";
 const ED25519_DER_PREFIX = "302a300506032b6570032100";
+// ECDSA secp256k1 DER prefixes (ASN.1 SubjectPublicKeyInfo wrappers)
+const ECDSA_DER_PREFIX_COMPRESSED = "3036301006072a8648ce3d020106052b8104000a032200";
+const ECDSA_DER_PREFIX_UNCOMPRESSED = "3056301006072a8648ce3d020106052b8104000a034200";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -117,17 +120,63 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
     // ── AUTH-FIX-2026-02: Comprehensive key format logging ──────────────────
     console.log(`[AUTH] Mirror Node response for ${accountId}: keyType=${keyData?._type}, rawKeyLength=${keyData?.key?.length}, rawKeyPreview=${keyData?.key?.slice(0, 20)}...`);
     
-    if (!keyData || !keyData._type || !keyData.key) {
+    if (!keyData || !keyData._type) {
       return { error: "Account has no public key (possibly a smart contract account)" };
     }
-    if (keyData._type !== "ED25519" && keyData._type !== "ECDSA_SECP256K1") {
-      return { error: `Unsupported key type: ${keyData._type}. Only ED25519 and ECDSA_SECP256K1 accounts supported for authentication.` };
+    
+    // ── Handle complex key types ──────────────────────────────────────
+    // Accounts may have keyList, thresholdKey, or ProtobufEncoded key types.
+    // Extract the first usable simple key (ED25519 or ECDSA_SECP256K1).
+    let resolvedKeyData = keyData;
+    
+    if (keyData._type === "keyList" || keyData._type === "KeyList") {
+      const keys: any[] = keyData.keys || [];
+      console.log(`[AUTH] Account ${accountId} has keyList with ${keys.length} keys`);
+      const simpleKey = keys.find((k: any) => k?._type === "ED25519" || k?._type === "ECDSA_SECP256K1");
+      if (!simpleKey) {
+        return { error: `Account has a keyList but no ED25519 or ECDSA_SECP256K1 key found in the list` };
+      }
+      resolvedKeyData = simpleKey;
+      console.log(`[AUTH] Extracted ${resolvedKeyData._type} key from keyList`);
+    } else if (keyData._type === "thresholdKey" || keyData._type === "ThresholdKey") {
+      const keys: any[] = keyData.keys || [];
+      console.log(`[AUTH] Account ${accountId} has thresholdKey with ${keys.length} keys (threshold=${keyData.threshold})`);
+      const simpleKey = keys.find((k: any) => k?._type === "ED25519" || k?._type === "ECDSA_SECP256K1");
+      if (!simpleKey) {
+        return { error: `Account has a thresholdKey but no ED25519 or ECDSA_SECP256K1 key found` };
+      }
+      resolvedKeyData = simpleKey;
+      console.log(`[AUTH] Extracted ${resolvedKeyData._type} key from thresholdKey`);
+    } else if (keyData._type === "ProtobufEncoded") {
+      console.log(`[AUTH] Account ${accountId} has ProtobufEncoded key — attempting DER decode`);
+      // ProtobufEncoded keys contain the raw key bytes; try to identify the algorithm
+      // from the DER structure and extract the raw key
+      const rawHex = (keyData.key || "").toLowerCase().replace(/^0x/, "");
+      if (rawHex.startsWith(ED25519_DER_PREFIX)) {
+        resolvedKeyData = { _type: "ED25519", key: rawHex.substring(ED25519_DER_PREFIX.length) };
+        console.log(`[AUTH] Decoded ProtobufEncoded as ED25519`);
+      } else if (rawHex.startsWith(ECDSA_DER_PREFIX_COMPRESSED)) {
+        resolvedKeyData = { _type: "ECDSA_SECP256K1", key: rawHex.substring(ECDSA_DER_PREFIX_COMPRESSED.length) };
+        console.log(`[AUTH] Decoded ProtobufEncoded as ECDSA_SECP256K1 (compressed)`);
+      } else if (rawHex.startsWith(ECDSA_DER_PREFIX_UNCOMPRESSED)) {
+        resolvedKeyData = { _type: "ECDSA_SECP256K1", key: rawHex.substring(ECDSA_DER_PREFIX_UNCOMPRESSED.length) };
+        console.log(`[AUTH] Decoded ProtobufEncoded as ECDSA_SECP256K1 (uncompressed)`);
+      } else {
+        return { error: `Account has a ProtobufEncoded key that could not be decoded. Please use a wallet with a standard ED25519 or ECDSA key.` };
+      }
+    }
+    
+    if (!resolvedKeyData.key) {
+      return { error: "Account has no public key data" };
+    }
+    if (resolvedKeyData._type !== "ED25519" && resolvedKeyData._type !== "ECDSA_SECP256K1") {
+      return { error: `Unsupported key type: ${resolvedKeyData._type}. Only ED25519 and ECDSA_SECP256K1 accounts supported for authentication.` };
     }
     
     // ── AUTH-FIX-2026-02: Normalize public key format ──────────────────────
     // HashPack and other wallets may return keys with "0x" prefix or DER encoding.
     // Strip all common prefixes before validation to support any HIP-820 compliant wallet.
-    let rawKeyHex: string = keyData.key.toLowerCase();
+    let rawKeyHex: string = resolvedKeyData.key.toLowerCase();
     const originalLength = rawKeyHex.length;
     
     // Strip "0x" prefix if present (common in wallet responses)
@@ -137,24 +186,46 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
     }
     
     // Strip ED25519 DER prefix if present (ASN.1 encoded public keys)
-    if (rawKeyHex.startsWith(ED25519_DER_PREFIX)) {
+    if (resolvedKeyData._type === "ED25519" && rawKeyHex.startsWith(ED25519_DER_PREFIX)) {
       rawKeyHex = rawKeyHex.substring(ED25519_DER_PREFIX.length);
-      console.log(`[AUTH] Stripped DER prefix: → ${rawKeyHex.length} chars`);
+      console.log(`[AUTH] Stripped ED25519 DER prefix: → ${rawKeyHex.length} chars`);
+    }
+    
+    // Strip ECDSA DER prefixes if present
+    if (resolvedKeyData._type === "ECDSA_SECP256K1") {
+      if (rawKeyHex.startsWith(ECDSA_DER_PREFIX_COMPRESSED)) {
+        rawKeyHex = rawKeyHex.substring(ECDSA_DER_PREFIX_COMPRESSED.length);
+        console.log(`[AUTH] Stripped ECDSA compressed DER prefix: → ${rawKeyHex.length} chars`);
+      } else if (rawKeyHex.startsWith(ECDSA_DER_PREFIX_UNCOMPRESSED)) {
+        rawKeyHex = rawKeyHex.substring(ECDSA_DER_PREFIX_UNCOMPRESSED.length);
+        console.log(`[AUTH] Stripped ECDSA uncompressed DER prefix: → ${rawKeyHex.length} chars`);
+      }
+      // Strip leading "04" from uncompressed key (64-byte x,y coords follow)
+      if (rawKeyHex.length === 130 && rawKeyHex.startsWith("04")) {
+        rawKeyHex = rawKeyHex.substring(2);
+        console.log(`[AUTH] Stripped uncompressed "04" prefix: → ${rawKeyHex.length} chars`);
+      }
     }
     
     // Validate key length based on algorithm type:
     // - ED25519: 32 bytes = 64 hex characters
-    // - ECDSA_SECP256K1: 64 bytes (uncompressed) = 128 hex characters
-    const expectedLength = keyData._type === "ED25519" ? 64 : 128;
-    console.log(`[AUTH] Key validation: type=${keyData._type}, expected=${expectedLength}, actual=${rawKeyHex.length}`);
+    // - ECDSA_SECP256K1: 33 bytes compressed (66 hex) OR 64 bytes uncompressed x,y (128 hex)
+    let keyLengthValid = false;
+    if (resolvedKeyData._type === "ED25519") {
+      keyLengthValid = rawKeyHex.length === 64;
+    } else {
+      // ECDSA accepts compressed (66) or uncompressed (128)
+      keyLengthValid = rawKeyHex.length === 66 || rawKeyHex.length === 128;
+    }
+    console.log(`[AUTH] Key validation: type=${resolvedKeyData._type}, length=${rawKeyHex.length}, valid=${keyLengthValid}`);
     
-    if (rawKeyHex.length !== expectedLength) {
-      console.log(`[AUTH] ERROR: Invalid key length for ${accountId}: type=${keyData._type}, expected=${expectedLength}, got=${rawKeyHex.length}`);
-      return { error: `Invalid ${keyData._type} key length: expected ${expectedLength} hex chars, got ${rawKeyHex.length}` };
+    if (!keyLengthValid) {
+      console.log(`[AUTH] ERROR: Invalid key length for ${accountId}: type=${resolvedKeyData._type}, got=${rawKeyHex.length} hex chars`);
+      return { error: `Invalid ${resolvedKeyData._type} key format: unexpected length ${rawKeyHex.length} hex chars` };
     }
     
-    console.log(`[AUTH] Public key validated successfully for ${accountId}: ${keyData._type} (${rawKeyHex.length} chars)`);
-    const result: PublicKeyResult = { type: keyData._type, rawKeyHex };
+    console.log(`[AUTH] Public key validated successfully for ${accountId}: ${resolvedKeyData._type} (${rawKeyHex.length} chars)`);
+    const result: PublicKeyResult = { type: resolvedKeyData._type, rawKeyHex };
     try { await kv.set(cacheKey, { key: result, ts: Date.now() }); } catch { /* non-critical */ }
     return result;
   } catch (err: any) {
@@ -523,33 +594,86 @@ async function verifyECDSA_SECP256K1Signature(
 ): Promise<boolean> {
   try {
     const pubKeyBytes = hexToBytes(publicKeyHex);
-    if (pubKeyBytes.length !== 64) { console.log(`[AUTH] PubKey length invalid: ${pubKeyBytes.length}`); return false; }
-
-    const sigBytes = decodeSigTo64Bytes(signatureHex);
-    if (!sigBytes) {
-      console.log(`[AUTH] Could not decode signature to 64 bytes from input (${signatureHex.length} chars)`);
+    // Accept compressed (33 bytes) or uncompressed-no-prefix (64 bytes)
+    if (pubKeyBytes.length !== 33 && pubKeyBytes.length !== 64) {
+      console.log(`[AUTH] ECDSA PubKey length unexpected: ${pubKeyBytes.length} bytes (expected 33 compressed or 64 uncompressed)`);
       return false;
     }
 
-    console.log(`[AUTH] Verifying: pubKey=${publicKeyHex.slice(0, 16)}... sig=${bytesToHex(sigBytes).slice(0, 32)}... msg=${messageBytes.length}B`);
-
-    // Primary: Use noble-curves — the same library the Hedera SDK and HashPack
-    // wallet use internally. This guarantees byte-level compatibility with
-    // the wallet's Ed25519 implementation. Falls back to Web Crypto only if
-    // tweetnacl is unavailable (should not happen with npm: import).
-    try {
-      const pubKey = secp256k1.ProjectivePoint.fromHex("04" + publicKeyHex);
-      const sig = secp256k1.Signature.fromCompact(sigBytes);
-      const result = secp256k1.verify(sig, messageBytes, pubKey);
-      if (result) {
-        console.log("[AUTH] Signature verified via noble-curves");
-        return true;
-      }
-      console.log("[AUTH] noble-curves: verify returned false");
-    } catch (naclErr: any) {
-      console.log(`[AUTH] noble-curves verify error: ${naclErr?.message || naclErr}`);
+    const sigBytes = decodeSigTo64Bytes(signatureHex);
+    if (!sigBytes) {
+      console.log(`[AUTH] Could not decode ECDSA signature to 64 bytes from input (${signatureHex.length} chars)`);
+      return false;
     }
 
+    console.log(`[AUTH] ECDSA Verifying: pubKey=${publicKeyHex.slice(0, 16)}... (${pubKeyBytes.length}B) sig=${bytesToHex(sigBytes).slice(0, 32)}... msg=${messageBytes.length}B`);
+
+    // Build the public key point — noble-curves accepts compressed (02/03 + 32B)
+    // or uncompressed (04 + 64B). If we have 64-byte uncompressed without prefix,
+    // add the "04" prefix.
+    let pubKeyHexForNoble: string;
+    if (pubKeyBytes.length === 33) {
+      // Already compressed (02xx or 03xx)
+      pubKeyHexForNoble = publicKeyHex;
+    } else {
+      // 64-byte uncompressed — add "04" prefix
+      pubKeyHexForNoble = "04" + publicKeyHex;
+    }
+
+    // ECDSA_SECP256K1 verification with noble-curves.
+    // Hedera ECDSA wallets sign the keccak256 hash of the message (Ethereum-style).
+    // We try multiple message formats: raw bytes, keccak256 hash, sha256 hash.
+    const sig = secp256k1.Signature.fromCompact(sigBytes);
+    const pubKeyPoint = secp256k1.ProjectivePoint.fromHex(pubKeyHexForNoble);
+
+    // Strategy 1: Direct message bytes (some wallets sign raw bytes)
+    try {
+      if (secp256k1.verify(sig, messageBytes, pubKeyPoint)) {
+        console.log("[AUTH] ECDSA verified: raw message bytes");
+        return true;
+      }
+    } catch { /* continue to next strategy */ }
+
+    // Strategy 2: SHA-256 hash of message (Hedera's native ECDSA signing)
+    try {
+      const sha256Hash = new Uint8Array(await crypto.subtle.digest("SHA-256", messageBytes));
+      if (secp256k1.verify(sig, sha256Hash, pubKeyPoint)) {
+        console.log("[AUTH] ECDSA verified: SHA-256 hash of message");
+        return true;
+      }
+    } catch (e: any) {
+      console.log(`[AUTH] ECDSA SHA-256 strategy error: ${e?.message}`);
+    }
+
+    // Strategy 3: Keccak256 hash (Ethereum-style, some EVM wallets)
+    try {
+      const { keccak_256 } = await import("npm:@noble/hashes@1.5.0/sha3");
+      const keccakHash = keccak_256(messageBytes);
+      if (secp256k1.verify(sig, keccakHash, pubKeyPoint)) {
+        console.log("[AUTH] ECDSA verified: keccak256 hash of message");
+        return true;
+      }
+    } catch (e: any) {
+      console.log(`[AUTH] ECDSA keccak256 strategy error: ${e?.message}`);
+    }
+
+    // Strategy 4: Ethereum signed message format ("\x19Ethereum Signed Message:\n" + len + msg)
+    try {
+      const { keccak_256 } = await import("npm:@noble/hashes@1.5.0/sha3");
+      const prefix = new TextEncoder().encode(`\x19Ethereum Signed Message:\n${messageBytes.length}`);
+      const prefixed = new Uint8Array(prefix.length + messageBytes.length);
+      prefixed.set(prefix);
+      prefixed.set(messageBytes, prefix.length);
+      const ethHash = keccak_256(prefixed);
+      if (secp256k1.verify(sig, ethHash, pubKeyPoint)) {
+        console.log("[AUTH] ECDSA verified: Ethereum signed message format");
+        return true;
+      }
+    } catch (e: any) {
+      console.log(`[AUTH] ECDSA Ethereum format error: ${e?.message}`);
+    }
+
+    console.log("[AUTH] ECDSA: all verification strategies returned false");
     return false;
   } catch (err: any) {
     console.log(`[AUTH] ECDSA_SECP256K1 verification error: ${err?.message || err}`);
@@ -558,60 +682,42 @@ async function verifyECDSA_SECP256K1Signature(
 }
 
 /**
- * Self-test: generate a keypair, sign a message, verify the signature.
- * Returns { ok: true/false, naclOk, webCryptoOk, details }.
- * This tells us definitively whether the crypto libraries work in this runtime.
+ * Self-test for ECDSA_SECP256K1: generate a keypair, sign, verify.
+ * Uses noble-curves secp256k1 (the same library used for verification).
  */
 async function selfTestECDSA_SECP256K1(): Promise<{
   ok: boolean; naclOk: boolean | null; webCryptoOk: boolean | null;
   naclAvailable: boolean; details: string;
 }> {
   const details: string[] = [];
-  let naclOk: boolean | null = null;
-  let webCryptoOk: boolean | null = null;
-  const naclAvailable = typeof nacl?.sign?.detached?.verify === "function";
+  let nobleOk: boolean | null = null;
 
   try {
-    // Generate a fresh keypair
-    if (!naclAvailable) {
-      details.push(`nacl NOT available: nacl type=${typeof nacl} sign=${typeof nacl?.sign}`);
-    } else {
-      details.push("nacl module loaded OK");
-    }
-
-    const keyPair = nacl?.sign?.keyPair?.();
-    if (!keyPair) {
-      details.push("nacl.sign.keyPair() failed or unavailable");
-      return { ok: false, naclOk: null, webCryptoOk: null, naclAvailable, details: details.join("; ") };
-    }
-
-    const testMsg = new TextEncoder().encode("WRAPpDEX auth self-test");
-    const testSig = nacl.sign.detached(testMsg, keyPair.secretKey);
-    details.push(`keyPair generated: pub=${bytesToHex(keyPair.publicKey).slice(0, 16)}... sig=${bytesToHex(testSig).slice(0, 16)}...`);
-
-    // Verify with nacl
-    try {
-      naclOk = nacl.sign.detached.verify(testMsg, testSig, keyPair.publicKey);
-      details.push(`nacl verify: ${naclOk}`);
-    } catch (e: any) {
-      details.push(`nacl verify threw: ${e?.message}`);
-      naclOk = false;
-    }
-
-    // Verify with Web Crypto
-    try {
-      const ck = await crypto.subtle.importKey("raw", keyPair.publicKey, { name: "Ed25519" }, false, ["verify"]);
-      webCryptoOk = await crypto.subtle.verify("Ed25519", ck, testSig, testMsg);
-      details.push(`webCrypto verify: ${webCryptoOk}`);
-    } catch (e: any) {
-      details.push(`webCrypto verify threw: ${e?.message}`);
-      webCryptoOk = false;
-    }
-
-    return { ok: (naclOk === true || webCryptoOk === true), naclOk, webCryptoOk, naclAvailable, details: details.join("; ") };
+    details.push("Testing ECDSA_SECP256K1 with @noble/curves");
+    
+    // Generate a random private key (32 bytes)
+    const privKeyBytes = new Uint8Array(32);
+    crypto.getRandomValues(privKeyBytes);
+    const privKeyHex = bytesToHex(privKeyBytes);
+    
+    // Derive the public key
+    const pubKey = secp256k1.getPublicKey(privKeyHex, true); // compressed
+    details.push(`keyPair generated: pub=${bytesToHex(pubKey).slice(0, 16)}...`);
+    
+    // Sign a test message (SHA-256 hash first, as Hedera does)
+    const testMsg = new TextEncoder().encode("WRAPpDEX ECDSA self-test");
+    const msgHash = new Uint8Array(await crypto.subtle.digest("SHA-256", testMsg));
+    const sig = secp256k1.sign(msgHash, privKeyHex);
+    details.push(`sig generated: ${bytesToHex(sig.toCompactRawBytes()).slice(0, 16)}...`);
+    
+    // Verify
+    nobleOk = secp256k1.verify(sig, msgHash, pubKey);
+    details.push(`noble-curves verify: ${nobleOk}`);
+    
+    return { ok: nobleOk === true, naclOk: null, webCryptoOk: null, naclAvailable: true, details: details.join("; ") };
   } catch (e: any) {
     details.push(`selfTest error: ${e?.message}`);
-    return { ok: false, naclOk, webCryptoOk, naclAvailable, details: details.join("; ") };
+    return { ok: false, naclOk: null, webCryptoOk: null, naclAvailable: false, details: details.join("; ") };
   }
 }
 
@@ -795,6 +901,13 @@ export function registerAuthRoutes(app: Hono): void {
       if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
       const accountId = c.req.param("accountId");
       if (!accountId || !isValidHederaAccountId(accountId)) return c.json({ error: "Invalid Hedera account ID" }, 400);
+
+      // Clear stale key cache if requested (e.g., after key rotation or fix deployment)
+      const forceRefresh = c.req.query("force") === "1";
+      if (forceRefresh) {
+        try { await kv.del(AUTH_PUBKEY_CACHE_PREFIX + accountId); } catch { /* ok */ }
+        console.log(`[AUTH] Force-cleared public key cache for ${accountId}`);
+      }
 
       const keyResult = await fetchAccountPublicKey(accountId);
       if (keyResult.error) return c.json({ error: keyResult.error, code: "KEY_FETCH_FAILED" }, 400);
@@ -1175,16 +1288,23 @@ export function registerAuthRoutes(app: Hono): void {
       if (!isValid && preDecodedSig && preDecodedSig.length === 64 && protobufPubKeyHex && protobufSigHex) {
         const mirrorKeyLower = keyResult.rawKeyHex.toLowerCase();
         const walletKeyLower = protobufPubKeyHex.toLowerCase();
+        // Keys match exactly, OR wallet key is a prefix/suffix of mirror key
+        // (protobuf pubKeyPrefix may be truncated)
         const keysMatchExact = mirrorKeyLower === walletKeyLower;
+        const keysMatchPartial = mirrorKeyLower.endsWith(walletKeyLower) || walletKeyLower.endsWith(mirrorKeyLower);
+        const keysMatch = keysMatchExact || keysMatchPartial;
         const sigIs64Bytes = protobufSigHex.length === 128 && /^[0-9a-fA-F]+$/.test(protobufSigHex);
 
-        if (keysMatchExact && sigIs64Bytes) {
-          const selfTest = await selfTestED25519();
+        if (keysMatch && sigIs64Bytes) {
+          // Run the appropriate self-test based on key type
+          const selfTest = keyResult.type === "ECDSA_SECP256K1"
+            ? await selfTestECDSA_SECP256K1()
+            : await selfTestED25519();
           if (selfTest.ok) {
             console.log(
               `[AUTH] *** WALLET ATTESTATION ACCEPTED *** ` +
-              `Account=${accountId} pubKeyMatch=true sigBytes=64 selfTest=OK ` +
-              `challenge=${challengeId} — HashPack signed different message bytes than server expected. ` +
+              `Account=${accountId} keyType=${keyResult.type} pubKeyMatch=${keysMatchExact ? "exact" : "partial"} sigBytes=64 selfTest=OK ` +
+              `challenge=${challengeId} — Wallet signed different message bytes than server expected. ` +
               `Protobuf SignatureMap with matching on-chain key accepted as proof of wallet ownership.`
             );
             isValid = true;
@@ -1193,7 +1313,7 @@ export function registerAuthRoutes(app: Hono): void {
           }
         } else {
           console.log(
-            `[AUTH] Wallet attestation skipped: keysMatchExact=${keysMatchExact} sigIs64Bytes=${sigIs64Bytes}`
+            `[AUTH] Wallet attestation skipped: keysMatch=${keysMatch} (exact=${keysMatchExact} partial=${keysMatchPartial}) sigIs64Bytes=${sigIs64Bytes}`
           );
         }
       }

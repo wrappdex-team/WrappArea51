@@ -105,10 +105,14 @@ export async function clearSession(): Promise<void> {
 
 /**
  * Step 1: Request a challenge nonce from the server.
- * The server verifies the account exists and has an ED25519 key.
+ * The server verifies the account exists and has an ED25519 or ECDSA key.
+ * @param forceRefresh - If true, server clears cached public key (useful after key rotation)
  */
-async function requestChallenge(accountId: string): Promise<ChallengeResponse> {
-  const res = await fetch(`${API_BASE}/auth/challenge/${accountId}`, {
+async function requestChallenge(accountId: string, forceRefresh = false): Promise<ChallengeResponse> {
+  const url = forceRefresh
+    ? `${API_BASE}/auth/challenge/${accountId}?force=1`
+    : `${API_BASE}/auth/challenge/${accountId}`;
+  const res = await fetch(url, {
     headers: baseHeaders,
     signal: AbortSignal.timeout(15000),
   });
@@ -265,9 +269,9 @@ export async function authenticate(accountId: string): Promise<string> {
 
   log.info("Auth", `Starting authentication for ${accountId}`);
 
-  // Step 1: Request challenge
-  const challenge = await requestChallenge(accountId);
-  log.info("Auth", `Challenge received: ${challenge.challengeId}`);
+  // Step 1: Request challenge (force-refresh key cache to bust stale entries)
+  const challenge = await requestChallenge(accountId, true);
+  log.info("Auth", `Challenge received: ${challenge.challengeId} keyType=${challenge.keyType}`);
 
   // Step 2: Sign in wallet
   const { sigHex, rawSignatureMap } = await signChallengeMessage(accountId, challenge.message);
