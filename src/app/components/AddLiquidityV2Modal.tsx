@@ -22,6 +22,11 @@
  *   - Full range default with ħ–Ħ / ∞ symbols instead of scientific notation [LP-UX-04]
  *   - Custom % input with direct min/max price fallback [LP-UX-04]
  *   - Fixed TokenIcon size prop (Tailwind classes vs numbers) [LP-UX-04]
+ *   - Full-screen mobile sheet with safe area insets [LP-UX-05]
+ *   - 44px minimum touch targets for all buttons on mobile [LP-UX-05]
+ *   - Grid-based range presets to avoid 6-button cramping [LP-UX-05]
+ *   - inputMode="decimal" for mobile numeric keyboards [LP-UX-05]
+ *   - Wrappable quick-fill pills on narrow screens [LP-UX-05]
  *   - Slippage settings
  *   - Transaction flow states
  *
@@ -30,6 +35,7 @@
  * [LP-UX-02] Step 2 of the 5-Step UX Overhaul — Quick-Fill Buttons.
  * [LP-UX-03] Step 3 of the 5-Step UX Overhaul — Validation & Funds Guard.
  * [LP-UX-04] Step 4 of the 5-Step UX Overhaul — Compact Token Input Cards.
+ * [LP-UX-05] Step 5 of the 5-Step UX Overhaul — Mobile Responsiveness.
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
@@ -855,10 +861,11 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
   );
 
   // ── Styling ───────────────────────────────────────────────────────
-  const overlayClass = "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm";
+  // [LP-UX-05] Mobile: full-screen bottom sheet; Desktop: centered dialog
+  const overlayClass = "fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm";
   const modalClass = isDark
-    ? "bg-slate-900 border border-pink-500/20 text-white"
-    : "bg-white border border-gray-200 text-gray-900";
+    ? "bg-slate-900 border-t sm:border border-pink-500/20 text-white"
+    : "bg-white border-t sm:border border-gray-200 text-gray-900";
   const inputClass = isDark
     ? "bg-slate-800/50 border border-pink-500/10 text-white placeholder-slate-500"
     : "bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400";
@@ -878,8 +885,12 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         transition={{ duration: 0.2 }}
         onClick={(e) => e.stopPropagation()}
-        className={`${modalClass} rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto`}
+        className={`${modalClass} rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto pb-[env(safe-area-inset-bottom)]`}
       >
+        {/* [LP-UX-05] Mobile drag handle */}
+        <div className="flex justify-center pt-2 pb-0 sm:hidden">
+          <div className={`w-10 h-1 rounded-full ${isDark ? "bg-slate-700" : "bg-gray-300"}`} />
+        </div>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-pink-500/10">
           <div className="flex items-center gap-3">
@@ -898,7 +909,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
               </div>
             </div>
           </div>
-          <button onClick={onClose} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}>
+          <button onClick={onClose} className={`p-2.5 sm:p-1.5 rounded-lg transition-colors min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0 flex items-center justify-center ${isDark ? "hover:bg-slate-800 active:bg-slate-700" : "hover:bg-gray-100 active:bg-gray-200"}`}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -918,8 +929,8 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
             <div>
               <div className={`text-xs font-bold mb-2 ${labelClass}`}>Select Price Range</div>
 
-              {/* Preset Buttons Row */}
-              <div className="flex gap-1">
+              {/* [LP-UX-05] Preset Buttons — grid on mobile, flex on desktop */}
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 sm:gap-1">
                 {RANGE_PRESETS.map((preset, i) => {
                   const isActive = selectedPreset === i;
                   // "Full" gets special styling with ħ–Ħ symbol pair
@@ -935,7 +946,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                           setCustomPriceUpper("");
                         }
                       }}
-                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                      className={`py-2.5 sm:py-1.5 rounded-lg text-xs sm:text-[11px] font-bold transition-all min-h-[44px] sm:min-h-0 ${
                         isActive
                           ? isFull
                             ? "bg-gradient-to-r from-cyan-600 to-purple-600 text-white shadow-lg shadow-cyan-500/20"
@@ -966,10 +977,11 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                     <label className={`text-[11px] font-bold shrink-0 ${labelClass}`}>±</label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       placeholder="15"
                       value={customPct}
                       onChange={(e) => setCustomPct(e.target.value)}
-                      className={`w-16 px-2 py-1 rounded text-sm font-mono text-right ${inputClass}`}
+                      className={`w-20 sm:w-16 px-2.5 sm:px-2 py-2 sm:py-1 rounded text-sm font-mono text-right min-h-[40px] sm:min-h-0 ${inputClass}`}
                       min="1"
                       max="99"
                     />
@@ -981,20 +993,22 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                       <label className={`text-[10px] ${labelClass}`}>or Min Price</label>
                       <input
                         type="number"
+                        inputMode="decimal"
                         placeholder={priceLower > 0 ? formatPrice(priceLower) : "0.00"}
                         value={customPriceLower}
                         onChange={(e) => { setCustomPriceLower(e.target.value); setCustomPct(""); }}
-                        className={`w-full px-2 py-1 rounded text-xs font-mono ${inputClass}`}
+                        className={`w-full px-2.5 sm:px-2 py-2 sm:py-1 rounded text-xs font-mono min-h-[40px] sm:min-h-0 ${inputClass}`}
                       />
                     </div>
                     <div>
                       <label className={`text-[10px] ${labelClass}`}>or Max Price</label>
                       <input
                         type="number"
+                        inputMode="decimal"
                         placeholder={priceUpper > 0 ? formatPrice(priceUpper) : "∞"}
                         value={customPriceUpper}
                         onChange={(e) => { setCustomPriceUpper(e.target.value); setCustomPct(""); }}
-                        className={`w-full px-2 py-1 rounded text-xs font-mono ${inputClass}`}
+                        className={`w-full px-2.5 sm:px-2 py-2 sm:py-1 rounded text-xs font-mono min-h-[40px] sm:min-h-0 ${inputClass}`}
                       />
                     </div>
                   </div>
@@ -1078,6 +1092,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                   <div className="flex-1 min-w-0 relative">
                     <input
                       type="number"
+                      inputMode="decimal"
                       placeholder="0.0"
                       value={amount0Input}
                       onChange={(e) => {
@@ -1085,7 +1100,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                         setActiveInput(0);
                         setSelectedPct0(null);
                       }}
-                      className={`w-full bg-transparent text-right text-base font-mono font-bold outline-none pr-0.5 ${
+                      className={`w-full bg-transparent text-right text-lg sm:text-base font-mono font-bold outline-none pr-0.5 ${
                         isDark ? "placeholder-slate-600" : "placeholder-gray-300"
                       }`}
                     />
@@ -1097,14 +1112,14 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                     )}
                   </div>
                   {balance0.loaded && balance0.available > 0 && (
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1.5 sm:gap-1 shrink-0 flex-wrap justify-end">
                       {QUICK_FILL_PCTS.map((pct) => {
                         const isActive = selectedPct0 === pct.value;
                         return (
                           <button
                             key={pct.label}
                             onClick={() => handleQuickFill0(pct.value)}
-                            className={`px-2 py-1 rounded text-[10px] font-bold transition-all duration-150 ${
+                            className={`px-3 sm:px-2 py-1.5 sm:py-1 rounded text-xs sm:text-[10px] font-bold transition-all duration-150 min-h-[36px] sm:min-h-0 ${
                               isActive
                                 ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm shadow-pink-500/20"
                                 : isDark
@@ -1179,6 +1194,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                   <div className="flex-1 min-w-0 relative">
                     <input
                       type="number"
+                      inputMode="decimal"
                       placeholder="0.0"
                       value={amount1Input}
                       onChange={(e) => {
@@ -1186,7 +1202,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                         setActiveInput(1);
                         setSelectedPct1(null);
                       }}
-                      className={`w-full bg-transparent text-right text-base font-mono font-bold outline-none pr-0.5 ${
+                      className={`w-full bg-transparent text-right text-lg sm:text-base font-mono font-bold outline-none pr-0.5 ${
                         isDark ? "placeholder-slate-600" : "placeholder-gray-300"
                       }`}
                     />
@@ -1198,14 +1214,14 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                     )}
                   </div>
                   {balance1.loaded && balance1.available > 0 && (
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1.5 sm:gap-1 shrink-0 flex-wrap justify-end">
                       {QUICK_FILL_PCTS.map((pct) => {
                         const isActive = selectedPct1 === pct.value;
                         return (
                           <button
                             key={pct.label}
                             onClick={() => handleQuickFill1(pct.value)}
-                            className={`px-2 py-1 rounded text-[10px] font-bold transition-all duration-150 ${
+                            className={`px-3 sm:px-2 py-1.5 sm:py-1 rounded text-xs sm:text-[10px] font-bold transition-all duration-150 min-h-[36px] sm:min-h-0 ${
                               isActive
                                 ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm shadow-pink-500/20"
                                 : isDark
@@ -1244,7 +1260,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                   <button
                     key={bps}
                     onClick={() => setSlippageBps(bps)}
-                    className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                    className={`px-3.5 sm:px-2.5 py-2 sm:py-1 rounded text-xs font-bold transition-all min-h-[40px] sm:min-h-0 ${
                       slippageBps === bps
                         ? "bg-pink-600 text-white"
                         : isDark ? "bg-slate-800 text-slate-400 hover:bg-slate-700" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
@@ -1448,7 +1464,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                 <button
                   onClick={handleExecute}
                   disabled={isDisabled}
-                  className={`w-full py-3.5 rounded-xl text-sm font-bold transition-all ${ctaClass}`}
+                  className={`w-full py-4 sm:py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px] sm:min-h-0 ${ctaClass}`}
                 >
                   {ctaText}
                 </button>
@@ -1494,7 +1510,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
             <div className="flex gap-2">
               <button
                 onClick={() => { onSuccess?.(); onClose(); }}
-                className="flex-1 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg text-sm font-bold"
+                className="flex-1 py-3 sm:py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg text-sm font-bold min-h-[48px] sm:min-h-0"
               >
                 Done
               </button>
@@ -1503,7 +1519,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
                   href={`https://hashscan.io/${hederaNetwork || "mainnet"}/transaction/${txId}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-bold ${isDark ? "bg-slate-800 text-slate-300" : "bg-gray-200 text-gray-700"}`}
+                  className={`flex items-center gap-1.5 px-4 py-3 sm:py-2.5 rounded-lg text-sm font-bold min-h-[48px] sm:min-h-0 ${isDark ? "bg-slate-800 text-slate-300" : "bg-gray-200 text-gray-700"}`}
                 >
                   HashScan <ExternalLink className="w-3 h-3" />
                 </a>
@@ -1522,7 +1538,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
             </div>
             <button
               onClick={() => setModalState("idle")}
-              className="px-6 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg text-sm font-bold"
+              className="px-6 py-3 sm:py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg text-sm font-bold min-h-[48px] sm:min-h-0"
             >
               Try Again
             </button>

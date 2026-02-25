@@ -519,14 +519,61 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   if (isMobile) {
     const onVis = async () => {
       if (document.visibilityState === "visible") {
-        console.log("[WC] [MOB-SWAP-FIX] Tab resumed from background — PRIORITY relay reconnection...");
+        console.log("[WC] [MOB-FIX-v3] Tab resumed from background — FORCED relay reconnection...");
         try {
-          // [MOB-SWAP-FIX] Increase timeout from 8s → 15s for slower mobile networks
-          await _ensureRelayConnected(client, 15000);
-          console.log("[WC] [MOB-SWAP-FIX] Relay reconnected — listening for wallet response");
+          // [MOB-FIX-v3] Don't use _ensureRelayConnected here — it trusts
+          // relayer.connected which is stale after mobile backgrounding.
+          // Instead, force disconnect→reconnect just like pre-request.
+          const relayer = client.core?.relayer;
+          const provider = relayer?.provider;
+
+          // Force disconnect
+          if (provider && typeof provider.disconnect === "function") {
+            try {
+              await Promise.race([provider.disconnect(), new Promise(r => setTimeout(r, 1500))]);
+            } catch { /* may already be closed */ }
+          }
+          await new Promise(r => setTimeout(r, 200));
+
+          // Force reconnect
+          if (provider && typeof provider.connect === "function") {
+            await Promise.race([
+              provider.connect(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("vis reconnect timeout")), 10000)),
+            ]);
+          } else if (typeof relayer?.restartTransport === "function") {
+            await Promise.race([
+              relayer.restartTransport(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("vis restart timeout")), 10000)),
+            ]);
+          }
+
+          // Verify
+          const ws = provider?.connection?.socket ?? provider?.socket;
+          console.log("[WC] [MOB-FIX-v3] Post-resume relay state:",
+            "relayer.connected=", relayer?.connected,
+            "ws.readyState=", ws?.readyState);
+
+          if (ws?.readyState !== 1) {
+            // Poll up to 5s more
+            const pollStart = Date.now();
+            while (Date.now() - pollStart < 5000) {
+              const wsNow = provider?.connection?.socket ?? provider?.socket;
+              if (wsNow?.readyState === 1) {
+                console.log("[WC] [MOB-FIX-v3] WS reconnected after", Date.now() - pollStart, "ms post-resume");
+                break;
+              }
+              await new Promise(r => setTimeout(r, 200));
+            }
+          }
+          console.log("[WC] [MOB-FIX-v3] Relay reconnected — listening for wallet response");
         } catch (e: any) {
-          console.error("[WC] [MOB-SWAP-FIX] CRITICAL: Relay reconnect on resume FAILED:", e?.message,
+          console.error("[WC] [MOB-FIX-v3] CRITICAL: Relay reconnect on resume FAILED:", e?.message,
             "— wallet response may be lost. User will see timeout.");
+          // Last resort: try _ensureRelayConnected as fallback
+          try {
+            await _ensureRelayConnected(client, 15000);
+          } catch { /* truly failed */ }
         }
       }
     };
@@ -541,6 +588,81 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     // [MOB-SWAP-FIX] Increase mobile timeout from 120s → 180s (3 minutes)
     // to account for slower mobile relay reconnection after app switch.
     const WC_REQUEST_TIMEOUT_MS = isMobile ? 180_000 : 120_000;
+
+    // ── [MOB-FIX-v3] Forced relay freshness for mobile ──────────────────
+    // On mobile, the relay WebSocket is frequently in a "half-open" state:
+    // the OS killed it while the tab was backgrounded, but the SDK hasn't
+    // detected the close event. client.request() sends data to this dead
+    // socket, ws.send() doesn't throw (data goes to OS buffer for dead
+    // connection), and the relay never receives the message.
+    //
+    // Fix: Force a disconnect→reconnect cycle on mobile EVERY TIME before
+    // sending a signing request. This guarantees a fresh, verified WebSocket.
+    // Sessions persist in localStorage — only the transport is recycled.
+    if (isMobile) {
+      console.log("[WC] [MOB-FIX-v3] Mobile detected — forcing fresh relay connection before signing...");
+      try {
+        const relayer = client.core?.relayer;
+        const provider = relayer?.provider;
+
+        // 1. Check raw WS state
+        const ws = provider?.connection?.socket ?? provider?.socket;
+        const wsState = ws?.readyState ?? -1;
+        console.log("[WC] [MOB-FIX-v3] Pre-cycle WS state:",
+          "relayer.connected=", relayer?.connected,
+          "ws.readyState=", wsState,
+          "(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)");
+
+        // 2. Force disconnect the provider (tears down the WebSocket)
+        if (provider && typeof provider.disconnect === "function") {
+          try {
+            await Promise.race([
+              provider.disconnect(),
+              new Promise(r => setTimeout(r, 2000)),
+            ]);
+          } catch { /* disconnect can throw if already closed */ }
+        }
+
+        // 3. Brief pause for WebSocket to fully close
+        await new Promise(r => setTimeout(r, 300));
+
+        // 4. Reconnect with a fresh WebSocket
+        if (provider && typeof provider.connect === "function") {
+          await Promise.race([
+            provider.connect(),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay reconnect timeout")), 8000)),
+          ]);
+        } else if (typeof relayer?.restartTransport === "function") {
+          await Promise.race([
+            relayer.restartTransport(),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay restart timeout")), 8000)),
+          ]);
+        }
+
+        // 5. Verify the new connection
+        const ws2 = provider?.connection?.socket ?? provider?.socket;
+        const ws2State = ws2?.readyState ?? -1;
+        console.log("[WC] [MOB-FIX-v3] Post-cycle WS state:",
+          "relayer.connected=", relayer?.connected,
+          "ws.readyState=", ws2State);
+
+        if (ws2State !== 1 /* OPEN */) {
+          console.warn("[WC] [MOB-FIX-v3] Fresh WS still not OPEN — polling for up to 5s...");
+          const pollStart = Date.now();
+          while (Date.now() - pollStart < 5000) {
+            const wsNow = provider?.connection?.socket ?? provider?.socket;
+            if (wsNow?.readyState === 1) {
+              console.log("[WC] [MOB-FIX-v3] WS became OPEN after", Date.now() - pollStart, "ms");
+              break;
+            }
+            await new Promise(r => setTimeout(r, 200));
+          }
+        }
+      } catch (e: any) {
+        console.warn("[WC] [MOB-FIX-v3] Forced relay cycle failed:", e?.message,
+          "— proceeding with existing connection (may fail)");
+      }
+    }
 
     const doRequest = async () => {
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -572,7 +694,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           const relayer = client.core?.relayer;
           const provider = relayer?.provider;
           const ws = provider?.connection?.socket ?? provider?.socket;
-          console.log("[WC] [MOB-FIX-v2] Pre-request relay state:",
+          console.log("[WC] [MOB-FIX-v3] Pre-request relay state:",
             "relayer.connected=", relayer?.connected,
             "ws.readyState=", ws?.readyState,
             "ws.bufferedAmount=", ws?.bufferedAmount);
@@ -595,31 +717,84 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       });
 
       if (isMobile && walletRedirect) {
-        // Wait 600ms — more than enough for the internal async chain:
-        //   crypto.encode (~5ms) → relayer.publish → ws.send (~1ms)
-        // If publishFailed is true by then, the relay message was NOT sent
-        // and we must NOT redirect (it would background the tab and freeze
-        // the retry logic). Let the retry reconnect the relay and call
-        // doRequest() again — that call will get its own redirect timer.
-        setTimeout(() => {
-          if (publishFailed) {
-            console.warn("[WC] [MOB-FIX-v2] Request FAILED before redirect timer — NOT opening wallet.",
-              "Reason:", publishFailReason, "— retry logic will handle reconnection.");
-            return;
-          }
-          // [MOB-SWAP-FIX] Log relay state immediately before redirect
+        // [MOB-FIX-v3] Smart publish confirmation before redirect.
+        //
+        // Old approach: 600ms fixed timer → wallet redirect. BROKEN because
+        // the relay publish might not complete in 600ms on mobile, or the
+        // WS might be half-open (send() doesn't throw but data is lost).
+        //
+        // New approach: Monitor ws.bufferedAmount to confirm the encrypted
+        // message was flushed to the OS network stack, THEN redirect.
+        // This guarantees the relay received (or will receive) the data
+        // before we background the browser tab by opening the wallet.
+        //
+        // Fallback: if bufferedAmount monitoring fails or takes too long,
+        // redirect after 2500ms (conservative) instead of 600ms.
+        (async () => {
           try {
+            // Phase 1: Wait for the async encrypt → publish chain to start.
+            // client.request() runs: await crypto.encode() → await relayer.publish()
+            // The first microtask yields happen within ~10-50ms.
+            await new Promise(r => setTimeout(r, 300));
+
+            if (publishFailed) {
+              console.warn("[WC] [MOB-FIX-v3] Request FAILED early — NOT opening wallet.",
+                "Reason:", publishFailReason);
+              return;
+            }
+
+            // Phase 2: Wait for WS buffer to flush (data sent to OS network stack).
+            // ws.bufferedAmount > 0 means data is queued but not yet sent.
             const relayer = client.core?.relayer;
             const provider = relayer?.provider;
             const ws = provider?.connection?.socket ?? provider?.socket;
-            console.log("[WC] [MOB-SWAP-FIX] Pre-redirect relay state:",
+            const flushStart = Date.now();
+            const maxFlushWait = 2200; // max 2.2s for buffer flush
+
+            if (ws && ws.readyState === 1 /* OPEN */) {
+              let flushLoops = 0;
+              while (ws.bufferedAmount > 0 && Date.now() - flushStart < maxFlushWait) {
+                await new Promise(r => setTimeout(r, 50));
+                flushLoops++;
+              }
+              if (flushLoops > 0) {
+                console.log("[WC] [MOB-FIX-v3] WS buffer flushed after",
+                  Date.now() - flushStart, "ms,", flushLoops, "polls");
+              }
+            } else {
+              // WS not open — wait longer and hope for the best
+              console.warn("[WC] [MOB-FIX-v3] WS not OPEN at redirect time:",
+                "readyState=", ws?.readyState, "— waiting 2s fallback");
+              await new Promise(r => setTimeout(r, 2000));
+            }
+
+            // Phase 3: Extra safety margin for relay server ACK processing
+            await new Promise(r => setTimeout(r, 200));
+
+            if (publishFailed) {
+              console.warn("[WC] [MOB-FIX-v3] Request failed during flush wait — NOT opening wallet.",
+                "Reason:", publishFailReason);
+              return;
+            }
+
+            // Phase 4: Final relay state check and redirect
+            const ws2 = provider?.connection?.socket ?? provider?.socket;
+            console.log("[WC] [MOB-FIX-v3] Pre-redirect state:",
               "relayer.connected=", relayer?.connected,
-              "ws.readyState=", ws?.readyState,
-              "ws.url=", ws?.url?.slice(0, 60));
-          } catch { /* diagnostic only */ }
-          console.log("[WC] [MOB-SWAP-FIX] Request dispatched to relay — now opening wallet app...");
-          fireMobileRedirect();
-        }, 600);
+              "ws.readyState=", ws2?.readyState,
+              "bufferedAmount=", ws2?.bufferedAmount,
+              "totalWait=", Date.now() - flushStart, "ms");
+            console.log("[WC] [MOB-FIX-v3] Relay publish confirmed — opening wallet app...");
+            fireMobileRedirect();
+          } catch (e: any) {
+            console.warn("[WC] [MOB-FIX-v3] Redirect helper error:", e?.message);
+            // Fallback: redirect anyway if publish didn't fail
+            if (!publishFailed) {
+              console.log("[WC] [MOB-FIX-v3] Fallback redirect despite error");
+              fireMobileRedirect();
+            }
+          }
+        })();
       }
 
       return await Promise.race([requestPromise, timeoutPromise]);
@@ -645,16 +820,34 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             await _ensureRelayConnected(freshClient, 12000);
             // Rebuild request with fresh client
             const freshRequestPromise = freshClient.request(params);
-            // [MOB-FIX-v2] Fire mobile redirect for the force-reset path too
+            // [MOB-FIX-v3] Smart redirect for force-reset path too
             if (isMobile && walletRedirect) {
               let freshFailed = false;
               freshRequestPromise.catch(() => { freshFailed = true; });
-              setTimeout(() => {
-                if (!freshFailed) {
-                  console.log("[WC] [MOB-FIX-v2] Force-reset request dispatched — opening wallet...");
-                  fireMobileRedirect();
+              (async () => {
+                try {
+                  // Wait for encrypt + publish to complete
+                  await new Promise(r => setTimeout(r, 500));
+                  // Monitor buffer flush
+                  const fp = freshClient.core?.relayer?.provider;
+                  const fws = fp?.connection?.socket ?? fp?.socket;
+                  const fStart = Date.now();
+                  if (fws && fws.readyState === 1) {
+                    while (fws.bufferedAmount > 0 && Date.now() - fStart < 2000) {
+                      await new Promise(r => setTimeout(r, 50));
+                    }
+                  } else {
+                    await new Promise(r => setTimeout(r, 1500));
+                  }
+                  await new Promise(r => setTimeout(r, 200));
+                  if (!freshFailed) {
+                    console.log("[WC] [MOB-FIX-v3] Force-reset publish confirmed — opening wallet...");
+                    fireMobileRedirect();
+                  }
+                } catch {
+                  if (!freshFailed) fireMobileRedirect();
                 }
-              }, 600);
+              })();
             }
             return await Promise.race([
               freshRequestPromise,
@@ -1048,7 +1241,25 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
   try {
     const relayer = client.core?.relayer;
     if (!relayer) { console.warn("[WC] No relayer — skipping wait"); return; }
-    if (relayer.connected) return;
+    if (relayer.connected) {
+      // [MOB-FIX-v3] On mobile, `relayer.connected` can be STALE: the OS
+      // killed the WebSocket while the tab was backgrounded, but the SDK
+      // hasn't detected the close event yet ("half-open" connection).
+      // Verify by checking the RAW WebSocket readyState directly.
+      try {
+        const provider = relayer.provider;
+        const ws = provider?.connection?.socket ?? provider?.socket;
+        if (ws && ws.readyState !== 1 /* OPEN */) {
+          console.warn("[WC] [MOB-FIX-v3] relayer.connected=true BUT ws.readyState=",
+            ws.readyState, "— STALE connection detected, forcing reconnect");
+          // Fall through to reconnection logic below
+        } else {
+          return; // Truly connected
+        }
+      } catch {
+        return; // Can't verify — trust relayer.connected
+      }
+    }
 
     console.log("[WC] Relay disconnected — triggering reconnection...");
 

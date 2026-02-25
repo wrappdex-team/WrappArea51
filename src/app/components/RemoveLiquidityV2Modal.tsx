@@ -296,9 +296,10 @@ export function RemoveLiquidityV2Modal({
   };
 
   // ── Styling ───────────────────────────────────────────────────────
-  const overlayClass = "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm";
+  // [LP-UX-05] Mobile: full-screen bottom sheet; Desktop: centered dialog
+  const overlayClass = "fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm";
   const modalClass = isDark
-    ? "bg-slate-900 border border-pink-500/20 text-white"
+    ? "bg-slate-900 border-t sm:border border-pink-500/20 text-white"
     : "bg-white border border-gray-200 text-gray-900";
   const labelClass = isDark ? "text-slate-400" : "text-gray-500";
 
@@ -309,7 +310,7 @@ export function RemoveLiquidityV2Modal({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         onClick={(e) => e.stopPropagation()}
-        className={`${modalClass} rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto`}
+        className={`${modalClass} rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[95vh] sm:max-h-[90vh] overflow-y-auto pb-[env(safe-area-inset-bottom)]`}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-pink-500/10">
