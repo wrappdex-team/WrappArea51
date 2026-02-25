@@ -2,7 +2,7 @@
 // Wrappdex Edge Function Server — Route Orchestrator
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Modules: Auth, VIP, Spin Wheel, News, Atomic Signer, VIP Chat, DAO, Storage, Health, 1inch, SaucerSwap
+// Modules: Auth, VIP, Spin Wheel, News, Atomic Signer, VIP Chat, DAO, Storage, Health, 1inch, SaucerSwap, Beta Terms
 // Auth:    ED25519 challenge-response sessions (30-min TTL, KV-backed)
 // AMM:     Hedera-native atomic CryptoTransfer co-signing oracle (atomic-signer.ts)
 // Storage: All state persisted in KV (survives cold starts, multi-instance safe)
@@ -28,6 +28,7 @@ import { registerSaucerswapQuoteRoutes } from "./saucerswap-quote.ts";
 import { registerSaucerswapProxyRoutes } from "./saucerswap-proxy.ts";
 import { registerIconProxyRoutes } from "./icon-proxy.ts";
 import { registerLpHistoryRoutes } from "./lp-history.ts";
+import { registerBetaTermsRoutes } from "./beta-terms.ts";
 
 const app = new Hono();
 
@@ -96,5 +97,6 @@ registerSaucerswapQuoteRoutes(app);
 registerSaucerswapProxyRoutes(app);
 registerIconProxyRoutes(app);
 registerLpHistoryRoutes(app);
+registerBetaTermsRoutes(app);
 
 Deno.serve(app.fetch);
