@@ -27,6 +27,7 @@ import {
   Building2,
   Coins,
   LayoutGrid,
+  AlertCircle,
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { FounderLetter } from "./FounderLetter";
@@ -369,6 +370,7 @@ export function WhitePaper() {
       "swap-flow",
       "oracles",
       "amm",
+      "v2-liquidity",
       "bridges",
       "dao",
       "vip",
@@ -404,6 +406,7 @@ export function WhitePaper() {
     { id: "swap-flow", label: "How Swaps Work" },
     { id: "oracles", label: "Price Oracles" },
     { id: "amm", label: "AMM Engine" },
+    { id: "v2-liquidity", label: "V2 Concentrated Liquidity" },
     { id: "bridges", label: "Bridges" },
     { id: "dao", label: "Governance" },
     { id: "vip", label: "VIP System" },
@@ -500,7 +503,7 @@ export function WhitePaper() {
               <p
                 className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}
               >
-                Version 2.0 &middot; February 2026
+                Version 2.1 &middot; February 2026
               </p>
             </div>
           </div>
@@ -518,8 +521,8 @@ export function WhitePaper() {
             className={`text-lg md:text-xl leading-relaxed max-w-2xl ${isDark ? "text-slate-300" : "text-slate-600"}`}
           >
             Trade smarter. Not harder. One platform for swaps, pro charting,
-            lending, bridging, and governance &mdash; built on the fastest
-            enterprise-grade public ledger. Structured as a Wyoming DUNA for
+            V2 concentrated liquidity, lending, bridging, and governance &mdash; built on the fastest
+            enterprise-grade public ledger with scam token protection. Structured as a Wyoming DUNA for
             regulatory clarity from day one.
           </p>
 
@@ -545,9 +548,10 @@ export function WhitePaper() {
               WRAPpDEX is a decentralized exchange built natively on Hedera
               and structured as a Wyoming DUNA (Decentralized Unincorporated
               Nonprofit Association). It combines token swapping,
-              professional-grade trading charts, liquidity pools, lending
+              professional-grade trading charts, SaucerSwap V2 concentrated liquidity pools, lending
               &amp; borrowing, cross-chain bridges, a fiat on-ramp, DEX
-              aggregation, and community governance into a single platform.
+              aggregation, and community governance into a single platform with 
+              active scam token protection.
             </p>
             <p className={`${prose} mb-4`}>
               No account registration. No custody of your assets. Connect your
@@ -556,21 +560,24 @@ export function WhitePaper() {
               &mdash; not minutes, not hours.
             </p>
             <p className={prose}>
-              The protocol features a custom constant-product AMM with
-              Hedera-native atomic CryptoTransfer settlement (zero MEV,
+              The protocol features both V1 constant-product AMM and full 
+              SaucerSwap V2 integration for concentrated liquidity with 
+              custom price ranges, Hedera-native atomic CryptoTransfer settlement (zero MEV,
               zero front-running), a 4-tier oracle pipeline backed by
               Chainlink decentralized feeds, a dual-layer fee model 17%
-              cheaper than competitors, and full DAO governance where
-              every proposal vote carries real legal weight under Wyoming law.
+              cheaper than competitors, active scam token blocklist (2 fake tokens blocked),
+              and full DAO governance where every proposal vote carries real legal weight under Wyoming law.
             </p>
           </GlassCard>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { v: "18", l: "Price Feeds" },
-              { v: "13", l: "AMM Tokens" },
+              { v: "13", l: "V1 AMM Tokens" },
+              { v: "V2", l: "Concentrated Liquidity" },
               { v: "60+", l: "Bridge Chains" },
               { v: "10", l: "Chart Timeframes" },
+              { v: "2", l: "Scam Tokens Blocked" },
             ].map((s) => (
               <GlassCard key={s.l} className="p-4 text-center">
                 <div
@@ -768,7 +775,7 @@ export function WhitePaper() {
               {
                 icon: Layers,
                 title: "DeFi Suite",
-                desc: "Constant-product AMM with 13 whitelisted tokens including WBTC, WETH, USDC, USDT, LINK, AAVE, DAI, WBNB, and WAVAX. Bonzo Finance lending/borrowing (Aave V2 on Hedera), and smart routing with USDC-hop discovery.",
+                desc: "V1 constant-product AMM with 13 whitelisted tokens including WBTC, WETH, USDC, USDT, LINK, AAVE, DAI, WBNB, and WAVAX. Full SaucerSwap V2 concentrated liquidity integration (add/remove positions, custom price ranges, fee collection). Bonzo Finance lending/borrowing (Aave V2 on Hedera), and smart routing with USDC-hop discovery.",
                 color: "from-amber-500 to-orange-500",
               },
               {
@@ -1012,27 +1019,24 @@ export function WhitePaper() {
         <Section id="amm" className="mb-16">
           <h2 className={h2}>Smart Liquidity Engine</h2>
           <p className={subtitle}>
-            A custom AMM built for Hedera &mdash; front-running eliminated by design.
+            Dual AMM architecture: V1 constant-product + V2 concentrated liquidity &mdash; front-running eliminated by design.
           </p>
           <p
             className={`text-xs md:text-sm leading-relaxed mb-6 max-w-3xl ${isDark ? "text-slate-400" : "text-gray-500"}`}
           >
-            Most decentralized exchanges settle trades on-chain, which means
-            every pending swap sits in a public mempool before it executes.
-            Bots exploit that transparency to front-run ordinary users,
-            extracting value on every trade. WRAPpDEX takes a fundamentally
-            different approach: pool reserves are the actual on-chain token
-            balances of real Hedera accounts, and every swap settles as a
-            single atomic CryptoTransfer containing both token legs. AMM
-            math runs client-side in BigInt, and the server acts as a
-            signing oracle that independently validates the math and
-            co-signs the pool side. There is no mempool to snipe, no block
-            producer who can reorder your transaction, and no MEV leakage.
-            The server re-reads reserves from Mirror Node and recomputes the
-            expected output before co-signing &mdash; if client and server
-            disagree by more than 1 raw unit, the transaction is rejected.
-            A post-swap k-invariant assertion guarantees that reserves can
-            never decrease.
+            WRAPpDEX offers two complementary liquidity strategies. <strong>V1 pools</strong> use
+            the battle-tested constant-product formula (x × y = k) for passive liquidity across
+            all price ranges &mdash; ideal for blue-chip pairs and long-term LPs. <strong>V2 pools</strong>{" "}
+            leverage SaucerSwap's concentrated liquidity engine, allowing LPs to provide capital
+            within custom price ranges for dramatically higher capital efficiency and fee earnings
+            (up to 4000x vs. V1 for narrow ranges). Every swap on both systems settles as a single
+            atomic CryptoTransfer containing both token legs. AMM math runs client-side in BigInt,
+            and the server acts as a signing oracle that independently validates the math and
+            co-signs the pool side. There is no mempool to snipe, no block producer who can reorder
+            your transaction, and no MEV leakage. The server re-reads reserves from Mirror Node and
+            recomputes the expected output before co-signing &mdash; if client and server disagree
+            by more than 1 raw unit, the transaction is rejected. A post-swap k-invariant assertion
+            guarantees that reserves can never decrease.
           </p>
 
           {/* Token Whitelist Callout */}
@@ -1420,6 +1424,90 @@ export function WhitePaper() {
           </GlassCard>
         </Section>
 
+        {/* ═══ V2 CONCENTRATED LIQUIDITY ═══ */}
+        <Section id="v2-liquidity" className="mb-16">
+          <h2 className={h2}>V2 Concentrated Liquidity</h2>
+          <p className={subtitle}>
+            SaucerSwap V2 integration — up to 4000x capital efficiency vs. V1.
+          </p>
+
+          <GlassCard className="p-6 md:p-8 mb-6" hover={false}>
+            <p className={`${prose} mb-4`}>
+              Unlike V1 pools that spread liquidity across all prices (0 to ∞), V2 concentrated 
+              liquidity lets you deploy capital within a custom price range. If you believe 
+              HBAR/USDC will trade between $0.08 and $0.12, you can concentrate 100% of your 
+              capital in that zone — earning potentially 10-40x more fees than a V1 LP providing 
+              the same liquidity across all prices. The tradeoff: if price exits your range, 
+              you earn zero fees until it returns (but you never lose your principal).
+            </p>
+            <p className={prose}>
+              WRAPpDEX provides a full V2 management suite: add liquidity with preset ranges 
+              (Narrow ±5%, Medium ±10%, Wide ±25%) or custom percentages, remove liquidity 
+              (partial or full), collect accumulated fees, and view all positions with real-time 
+              in-range status indicators. Token association is handled automatically. V2 operations 
+              are restricted to blue-chip whitelisted tokens (WHBAR, USDC, USDT, WETH, WBTC, LINK, AAVE)
+              for security.
+            </p>
+          </GlassCard>
+
+          <div className="grid md:grid-cols-2 gap-3 mb-4">
+            <GlassCard className="p-5 md:p-6">
+              <h4
+                className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
+              >
+                How It Works
+              </h4>
+              <p
+                className={`text-xs md:text-sm leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}
+              >
+                V2 pools use Uniswap V3-style tick-based math. Each position is an NFT 
+                representing your custom price range (tickLower to tickUpper). As swaps occur, 
+                you earn a proportional share of the 0.30% fee <strong>only when price is inside 
+                your range</strong>. Capital efficiency formula: 1 / (tickUpper - tickLower). A 
+                ±5% range around current price provides ~20x the capital efficiency of V1's 
+                infinite range. Narrower = higher multiplier, but also higher risk of going 
+                out-of-range.
+              </p>
+            </GlassCard>
+
+            <GlassCard className="p-5 md:p-6">
+              <h4
+                className={`font-bold text-sm mb-3 ${isDark ? "text-white" : "text-slate-900"}`}
+              >
+                Position Management
+              </h4>
+              <p
+                className={`text-xs md:text-sm leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}
+              >
+                The DeFi page shows all your V2 positions with current price, your range bounds, 
+                in-range status (green dot = earning fees, amber = out-of-range), and claimable 
+                fees. "Add Liquidity" opens the V2 modal with balance resolution, quick-fill 
+                buttons (25%/50%/Max), and real-time validation. "Remove Liquidity" lets you 
+                withdraw partial (25%/50%/75%) or full amounts. "Collect Fees" claims accumulated 
+                earnings without closing the position. All operations require HashPack signature 
+                via ContractExecuteTransaction.
+              </p>
+            </GlassCard>
+          </div>
+
+          {/* Security Callout */}
+          <GlassCard className="p-5" hover={false}>
+            <div className="flex items-start gap-3">
+              <Shield className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
+              <div>
+                <h4 className={`font-bold text-sm mb-1 ${isDark ? "text-white" : "text-slate-900"}`}>
+                  Blue-Chip Token Restriction
+                </h4>
+                <p className={`text-xs leading-relaxed ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                  V2 liquidity operations are restricted to 7 whitelisted tokens (WHBAR, USDC, USDT, 
+                  WETH, WBTC, LINK, AAVE) to prevent scam token exposure. Only verified bridge tokens 
+                  from HashPort are permitted. This whitelist is independent of V1's 13-token AMM list.
+                </p>
+              </div>
+            </div>
+          </GlassCard>
+        </Section>
+
         {/* ═══ BRIDGES ═══ */}
         <Section id="bridges" className="mb-16">
           <h2 className={h2}>Cross-Chain Bridges</h2>
@@ -1788,6 +1876,11 @@ export function WhitePaper() {
                 icon: Target,
                 title: "Rate Limiting & Depth Caps",
                 desc: "In-memory rate limiting with depth-proportional swap caps: 2% for small pools (<$10K TVL), 5% mid-size, 10% large. The server re-reads on-chain reserves before co-signing. Low-TVL pools excluded from routing.",
+              },
+              {
+                icon: AlertCircle,
+                title: "Scam Token Blocklist",
+                desc: "Active blocklist protects users from fake tokens with similar names to legitimate assets. Currently blocking 2 scam tokens (fake WBTC 0.0.10104132, fake LINK 0.0.10152778). Validated via low liquidity (<$10K) and astronomical fake balances. Hard-blocked at all swap/liquidity layers.",
               },
             ].map((s) => (
               <GlassCard key={s.title} className="p-5">

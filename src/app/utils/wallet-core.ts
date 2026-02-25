@@ -510,16 +510,23 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   // but the relay WebSocket is likely dead (mobile OS killed it while
   // backgrounded). This handler reconnects the relay so the signed
   // response can be delivered from the relay server's message queue.
+  //
+  // [MOB-SWAP-FIX] Extended timeout + immediate reconnection attempt.
+  // The signed transaction response is queued at the relay server, but
+  // we must reconnect the WS FAST or the 120s client.request() timeout
+  // will expire before we retrieve it. Give the relay 15s to reconnect.
   let _visCleanup: (() => void) | null = null;
   if (isMobile) {
     const onVis = async () => {
       if (document.visibilityState === "visible") {
-        console.log("[WC] [MOB-FIX-v2] Tab resumed from background — re-ensuring relay connection...");
+        console.log("[WC] [MOB-SWAP-FIX] Tab resumed from background — PRIORITY relay reconnection...");
         try {
-          await _ensureRelayConnected(client, 8000);
-          console.log("[WC] [MOB-FIX-v2] Relay reconnected after tab resume");
+          // [MOB-SWAP-FIX] Increase timeout from 8s → 15s for slower mobile networks
+          await _ensureRelayConnected(client, 15000);
+          console.log("[WC] [MOB-SWAP-FIX] Relay reconnected — listening for wallet response");
         } catch (e: any) {
-          console.warn("[WC] [MOB-FIX-v2] Relay reconnect on resume failed:", e?.message);
+          console.error("[WC] [MOB-SWAP-FIX] CRITICAL: Relay reconnect on resume FAILED:", e?.message,
+            "— wallet response may be lost. User will see timeout.");
         }
       }
     };
@@ -531,12 +538,14 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     // ── Relay readiness + retry for "send was called before connect" ──
     // Even after _ensureRelayConnected, the WebSocket may still be in a
     // brief CONNECTING state. Retry once on this specific error. [C15-01]
-    const WC_REQUEST_TIMEOUT_MS = 120_000;
+    // [MOB-SWAP-FIX] Increase mobile timeout from 120s → 180s (3 minutes)
+    // to account for slower mobile relay reconnection after app switch.
+    const WC_REQUEST_TIMEOUT_MS = isMobile ? 180_000 : 120_000;
 
     const doRequest = async () => {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(
-          "WalletConnect request timed out after 120 seconds. " +
+          `WalletConnect request timed out after ${WC_REQUEST_TIMEOUT_MS / 1000} seconds. ` +
           "The wallet may not have received the request, or the relay failed to deliver the response. " +
           "Check your wallet for any pending approval prompts, then try again."
         )), WC_REQUEST_TIMEOUT_MS)
@@ -598,7 +607,17 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
               "Reason:", publishFailReason, "— retry logic will handle reconnection.");
             return;
           }
-          console.log("[WC] [MOB-FIX-v2] Request dispatched to relay — now opening wallet app...");
+          // [MOB-SWAP-FIX] Log relay state immediately before redirect
+          try {
+            const relayer = client.core?.relayer;
+            const provider = relayer?.provider;
+            const ws = provider?.connection?.socket ?? provider?.socket;
+            console.log("[WC] [MOB-SWAP-FIX] Pre-redirect relay state:",
+              "relayer.connected=", relayer?.connected,
+              "ws.readyState=", ws?.readyState,
+              "ws.url=", ws?.url?.slice(0, 60));
+          } catch { /* diagnostic only */ }
+          console.log("[WC] [MOB-SWAP-FIX] Request dispatched to relay — now opening wallet app...");
           fireMobileRedirect();
         }, 600);
       }
@@ -1033,10 +1052,12 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
 
     console.log("[WC] Relay disconnected — triggering reconnection...");
 
-    // [C96] Two-phase reconnection strategy:
+    // [C96] [MOB-SWAP-FIX] Multi-phase reconnection strategy:
     //   Phase 1: Try restartTransport / transportOpen / provider.connect
     //   Phase 2: If still disconnected, hard disconnect→connect cycle on the provider
-    for (let attempt = 0; attempt < 2; attempt++) {
+    //   Phase 3 (mobile only): One more aggressive attempt with extended polling
+    const maxAttempts = timeoutMs >= 15000 ? 3 : 2; // mobile gets 3 attempts
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (relayer.connected) { console.log("[WC] Relay connected (attempt", attempt, ")"); return; }
 
       try {
@@ -1058,7 +1079,7 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
               new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), 5000)),
             ]).catch((e: any) => console.warn("[WC] provider.connect error:", e?.message));
           }
-        } else {
+        } else if (attempt === 1) {
           // Phase 2: Hard disconnect→connect cycle on the WebSocket provider
           console.log("[WC] Phase 2: hard provider disconnect→connect cycle...");
           const provider = relayer.provider;
@@ -1082,6 +1103,23 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
               relayer.restartTransport(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase2 timeout")), 5000)),
             ]).catch((e: any) => console.warn("[WC] Phase 2 restartTransport error:", e?.message));
+          }
+        } else {
+          // Phase 3 (mobile only): Extended aggressive reconnection for slow mobile networks
+          console.log("[WC] [MOB-SWAP-FIX] Phase 3: Extended mobile reconnection attempt...");
+          const provider = relayer.provider;
+          if (provider && typeof provider.connect === "function") {
+            // Wait longer for mobile OS to stabilize network after app switch
+            await new Promise(r => setTimeout(r, 1000));
+            await Promise.race([
+              provider.connect(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase3 timeout")), 8000)),
+            ]).catch((e: any) => console.warn("[WC] [MOB-SWAP-FIX] Phase 3 provider.connect error:", e?.message));
+          } else if (typeof relayer.restartTransport === "function") {
+            await Promise.race([
+              relayer.restartTransport(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase3 timeout")), 8000)),
+            ]).catch((e: any) => console.warn("[WC] [MOB-SWAP-FIX] Phase 3 restartTransport error:", e?.message));
           }
         }
       } catch { /* transport methods may throw — try next phase */ }
