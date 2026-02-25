@@ -76,16 +76,16 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 3, isWrapped: true, bridge: "HashPort",
   },
   {
-    // [C82] RESTORED saucerswapAliasId — SaucerSwap V2 pools trade this ID,
-    // not the canonical bridge ID. Without it, pool detection fails →
-    // routes fall to V1 → V1 has no pair → CONTRACT_REVERT_EXECUTED.
-    // [C85] Updated alias from 0.0.1969769 → 0.0.10104132 (SaucerSwap API
-    // now lists this as the primary WBTC token; old alias was V2-era).
+    // [SECURITY-FIX-2] REMOVED saucerswapAliasId: 0.0.10104132 was routing to FAKE/SCAM WBTC
+    // with astronomical fake balances and near-zero price ($0.000004). The CORRECT WBTC is
+    // the canonical HashPort bridge token 0.0.1055483 at proper BTC price (~$65k-$104k).
+    // Previous comment claiming "SaucerSwap API lists 0.0.10104132 as primary" was INCORRECT
+    // and caused users to receive worthless scam tokens instead of real WBTC.
     symbol: "WBTC", name: "Wrapped Bitcoin", htsId: "0.0.1055483",
     evmAddress: htsIdToEvmAddress("0.0.1055483"), decimals: 8,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png",
     rank: 4, isWrapped: true, bridge: "HashPort",
-    saucerswapAliasId: "0.0.10104132",
+    // saucerswapAliasId removed — use canonical ID for routing
   },
   {
     // [SECURITY-FIX] REMOVED saucerswapAliasId: 0.0.10152778 was routing to FAKE/SCAM token
@@ -347,18 +347,40 @@ const _dynamicTokenByHtsId = new Map<string, AllowedToken>();
 /**
  * Register dynamically fetched tokens so resolveToken(), TOKEN_BY_HTS_ID
  * lookups, and the swap engine can find them. Static tokens take priority.
+ * [SECURITY] Filters out scam tokens from the blocklist.
  */
 export function registerDynamicTokens(tokens: AllowedToken[]): void {
-  for (const t of tokens) {
-    // Never overwrite static tokens
-    if (!TOKEN_BY_SYMBOL.has(t.symbol)) {
-      _dynamicTokenBySymbol.set(t.symbol, t);
+  // [SECURITY] Import blocklist lazily to avoid circular deps
+  import("./scam-blocklist").then(({ isTokenBlocked }) => {
+    let blockedCount = 0;
+    for (const t of tokens) {
+      // [SECURITY] Never register blocked scam tokens
+      if (isTokenBlocked(t.htsId)) {
+        blockedCount++;
+        continue;
+      }
+      
+      // Never overwrite static tokens
+      if (!TOKEN_BY_SYMBOL.has(t.symbol)) {
+        _dynamicTokenBySymbol.set(t.symbol, t);
+      }
+      if (!TOKEN_BY_HTS_ID.has(t.htsId)) {
+        _dynamicTokenByHtsId.set(t.htsId, t);
+      }
     }
-    if (!TOKEN_BY_HTS_ID.has(t.htsId)) {
-      _dynamicTokenByHtsId.set(t.htsId, t);
+    console.log(`[C56] Registered ${tokens.length - blockedCount} dynamic tokens (blocked ${blockedCount} scam tokens, total dynamic: ${_dynamicTokenBySymbol.size})`);
+  }).catch(() => {
+    // Fallback if blocklist fails to load — proceed without filtering
+    for (const t of tokens) {
+      if (!TOKEN_BY_SYMBOL.has(t.symbol)) {
+        _dynamicTokenBySymbol.set(t.symbol, t);
+      }
+      if (!TOKEN_BY_HTS_ID.has(t.htsId)) {
+        _dynamicTokenByHtsId.set(t.htsId, t);
+      }
     }
-  }
-  console.log(`[C56] Registered ${tokens.length} dynamic tokens (total dynamic: ${_dynamicTokenBySymbol.size})`);
+    console.log(`[C56] Registered ${tokens.length} dynamic tokens (blocklist unavailable, total dynamic: ${_dynamicTokenBySymbol.size})`);
+  });
 }
 
 /**

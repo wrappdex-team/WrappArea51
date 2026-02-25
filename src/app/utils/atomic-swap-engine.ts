@@ -128,8 +128,8 @@ export const TOKEN_WHITELIST: AtomicTokenDef[] = [
   { tokenId: "0.0.1055472", symbol: "USDTh",  name: "USDT (HashPort)",       decimals: 6,  fallbackPriceUsd: 1.00,   bridge: "HashPort", tier: 2 },
 
   // ── Major Wrapped Assets ────────────────────────────────────────────
-  // [C85] Updated saucerswapId aliases to current SaucerSwap API values
-  { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPriceUsd: 104000, bridge: "HashPort", tier: 1, saucerswapId: "0.0.10104132" },
+  // [SECURITY-FIX-2] Removed bad WBTC alias (0.0.10104132 is SCAM token)
+  { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPriceUsd: 104000, bridge: "HashPort", tier: 1 },
   { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPriceUsd: 2650,   bridge: "HashPort", tier: 1, saucerswapId: "0.0.1969708" },
   // [SECURITY-FIX] REMOVED saucerswapId: 0.0.10152778 was SCAM/FAKE token with low liquidity
   { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPriceUsd: 16.50,  bridge: "HashPort", tier: 1 },

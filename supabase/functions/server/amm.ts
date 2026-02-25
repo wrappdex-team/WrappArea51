@@ -541,10 +541,9 @@ const TOKEN_WHITELIST: TokenDef[] = [
   { tokenId: "0.0.1055472", symbol: "USDTh",  name: "USDT (HashPort)",       decimals: 6,  fallbackPrice: 1.00,   bridge: "HashPort", tier: 2 },
 
   // ── Major Wrapped Assets (HashPort / LayerZero bridges) ───────────
-  // [C85] Updated saucerswapId aliases to current SaucerSwap API values
-  // WBTC: HashPort bridge. SaucerSwap now lists 0.0.10104132 (was 0.0.1969769).
-  { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPrice: 104000, bridge: "HashPort", tier: 1,
-    saucerswapId: "0.0.10104132" },
+  // [SECURITY-FIX-2] Removed bad WBTC & LINK aliases (were SCAM tokens)
+  // WBTC: HashPort bridge. NO ALIAS — canonical 0.0.1055483 is correct.
+  { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPrice: 104000, bridge: "HashPort", tier: 1 },
   // WETH: HashPort bridge (token ID 0.0.541564). SaucerSwap lists 0.0.1969708 (18 dec).
   // NOTE: Decimals MUST be confirmed on HashScan — HashPort may bridge at 8 or 18.
   { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPrice: 2650,   bridge: "HashPort", tier: 1,

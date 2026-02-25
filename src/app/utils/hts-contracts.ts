@@ -116,8 +116,9 @@ export const BRIDGE_TOKEN_REGISTRY: BridgeToken[] = [
     symbol: "WBTC", name: "Wrapped Bitcoin",
     htsId: "0.0.1055483", evmAddress: htsIdToEvmAddress("0.0.1055483"),
     decimals: 8, bridge: "HashPort", originalChain: "Bitcoin",
-    // [C85] Updated saucerswapId from 0.0.1969769 → 0.0.10104132
-    saucerswapId: "0.0.10104132", coingeckoId: "wrapped-bitcoin",
+    // [SECURITY-FIX-2] REMOVED saucerswapId: 0.0.10104132 was SCAM/FAKE token
+    // NO ALIAS NEEDED — canonical ID is correct for SaucerSwap pools
+    coingeckoId: "wrapped-bitcoin",
   },
   {
     symbol: "WETH", name: "Wrapped Ether",
