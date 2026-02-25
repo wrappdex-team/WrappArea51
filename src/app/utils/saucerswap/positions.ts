@@ -243,6 +243,12 @@ const V2_POOLS_CACHE_TTL_MS = 60_000;    // 60s — pool list for matching
 // ── Position cache: keyed by accountId ──────────────────────────────
 const _positionsCache: Map<string, { data: ApiNftPositionV2[]; ts: number }> = new Map();
 
+// ── Mirror Node NFT ownership cache: keyed by accountId ─────────────
+// [LP-REM-FIX-4] Authoritative set of LP NFT serials the user owns.
+// Fetched from Hedera Mirror Node — the source of truth for HTS NFT ownership.
+const _ownedSerialsCache: Map<string, { serials: Set<number>; ts: number }> = new Map();
+const OWNED_SERIALS_CACHE_TTL_MS = 30_000; // 30s — same as positions cache
+
 // ── Pool state cache: keyed by contractId ───────────────────────────
 const _poolStateCache: Map<string, { data: V2PoolState; ts: number }> = new Map();
 
@@ -683,6 +689,87 @@ function displayNameForLP(name: string, symbol: string, htsId: string): string {
 // SECTION 8: Position Fetching & Enrichment
 // ═══════════════════════════════════════════════════════════════════════
 
+// ── [LP-REM-FIX-4] Mirror Node NFT Ownership Verification ──────────
+//
+// The SaucerSwap API positions endpoint can return stale data for
+// positions whose NFTs have been burned (full removal + burn on
+// SaucerSwap's own UI or another frontend). The API indexer may lag
+// behind the actual HTS state by minutes or even hours.
+//
+// The Hedera Mirror Node is the authoritative source for NFT ownership.
+// By querying it, we can definitively determine which LP NFT serials
+// the user actually holds, and filter out ghost positions before they
+// ever reach the UI.
+//
+// Endpoint: GET /api/v1/tokens/{lpNftTokenId}/nfts?account.id={accountId}
+// Returns: { nfts: [{ serial_number: N, ... }, ...], links: { next } }
+
+/**
+ * Fetch the set of LP NFT serial numbers the user actually owns on-chain.
+ * Uses Hedera Mirror Node — the source of truth for HTS NFT ownership.
+ *
+ * Paginated: follows `links.next` to get all serials (users may have 100+).
+ * Cached for 30s to match the position cache TTL.
+ *
+ * @returns Set of owned serial numbers, or null if the check failed
+ *          (null = skip filtering, don't block the user)
+ */
+async function fetchOwnedLpNftSerials(
+  accountId: string,
+  network: HederaNetwork,
+): Promise<Set<number> | null> {
+  const cacheKey = `${network}:${accountId}`;
+  const cached = _ownedSerialsCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < OWNED_SERIALS_CACHE_TTL_MS) {
+    return cached.serials;
+  }
+
+  const lpNftTokenId = SAUCERSWAP_V2_LP_NFT[network] || SAUCERSWAP_V2_LP_NFT.mainnet;
+  const mirrorBase = MIRROR_NODES[network] || MIRROR_NODES.mainnet;
+
+  const serials = new Set<number>();
+  let nextUrl: string | null =
+    `${mirrorBase}/api/v1/tokens/${lpNftTokenId}/nfts?account.id=${accountId}&limit=100`;
+
+  try {
+    let pages = 0;
+    while (nextUrl && pages < 10) { // Safety cap at 10 pages (1000 NFTs)
+      pages++;
+      const res = await fetch(nextUrl, { signal: makeAbort(8_000) });
+      if (!res.ok) {
+        log.info("LP-Positions", `[FIX-4] Mirror Node NFT query HTTP ${res.status}`);
+        return null; // Don't block on failure — skip filtering
+      }
+      const data = await res.json();
+
+      if (data.nfts && Array.isArray(data.nfts)) {
+        for (const nft of data.nfts) {
+          if (typeof nft.serial_number === "number") {
+            serials.add(nft.serial_number);
+          }
+        }
+      }
+
+      // Follow pagination
+      nextUrl = data.links?.next
+        ? (data.links.next.startsWith("http") ? data.links.next : `${mirrorBase}${data.links.next}`)
+        : null;
+    }
+
+    // Cache the result
+    _ownedSerialsCache.set(cacheKey, { serials, ts: Date.now() });
+
+    log.info("LP-Positions",
+      `[FIX-4] Mirror Node: user ${accountId} owns ${serials.size} LP NFT serials` +
+      (serials.size <= 20 ? `: [${[...serials].join(", ")}]` : ""));
+
+    return serials;
+  } catch (err: any) {
+    log.info("LP-Positions", `[FIX-4] Mirror Node NFT query failed: ${err?.message || err}`);
+    return null; // Don't block on failure
+  }
+}
+
 /**
  * Fetch raw V2 positions for a given account from SaucerSwap REST API.
  *
@@ -890,10 +977,11 @@ export async function fetchUserV2Positions(
 
   const startMs = Date.now();
 
-  // ── Step 1: Fetch raw positions and V2 pool list in parallel ────
-  const [rawPositions, v2Pools] = await Promise.all([
+  // ── Step 1: Fetch raw positions, V2 pool list, AND owned NFT serials in parallel ──
+  const [rawPositions, v2Pools, ownedSerials] = await Promise.all([
     fetchRawV2Positions(accountId, network),
     fetchV2PoolsList(network),
+    fetchOwnedLpNftSerials(accountId, network),
   ]);
 
   if (rawPositions.length === 0) {
@@ -901,14 +989,38 @@ export async function fetchUserV2Positions(
     return [];
   }
 
+  // ── Step 1.5 [LP-REM-FIX-4]: Filter ghost positions via Mirror Node ──
+  // Cross-reference SaucerSwap API positions against the authoritative
+  // set of LP NFT serials the user actually owns on-chain.
+  // If Mirror Node query failed (ownedSerials === null), skip filtering
+  // to avoid blocking legitimate positions.
+  let verifiedPositions = rawPositions;
+  if (ownedSerials !== null) {
+    const beforeCount = rawPositions.length;
+    verifiedPositions = rawPositions.filter(p => {
+      if (ownedSerials.has(p.tokenSN)) return true;
+      log.info("LP-Positions",
+        `[FIX-4] GHOST POSITION FILTERED: SN=${p.tokenSN} — NFT not owned (burned/transferred)`);
+      return false;
+    });
+    const ghostCount = beforeCount - verifiedPositions.length;
+    if (ghostCount > 0) {
+      log.info("LP-Positions",
+        `[FIX-4] Filtered ${ghostCount} ghost position(s) via Mirror Node ownership check`);
+    }
+  } else {
+    log.info("LP-Positions",
+      "[FIX-4] Mirror Node ownership check unavailable — skipping ghost filter");
+  }
+
   log.info("LP-Positions",
-    `Enriching ${rawPositions.length} positions against ${v2Pools.length} pools...`);
+    `Enriching ${verifiedPositions.length} positions against ${v2Pools.length} pools...`);
 
   // ── Step 2: Match each position to its pool ─────────────────────
   const enriched: V2PositionEnriched[] = [];
   const unmatchedPositions: ApiNftPositionV2[] = [];
 
-  for (const pos of rawPositions) {
+  for (const pos of verifiedPositions) {
     if (!pos.token0 || !pos.token1) {
       continue; // Skip positions with missing token data
     }
@@ -994,6 +1106,7 @@ export async function fetchUserV2Positions(
 export function invalidatePositionCaches(): void {
   _positionsCache.clear();
   _poolStateCache.clear();
+  _ownedSerialsCache.clear(); // [LP-REM-FIX-4] Also clear ownership cache
   log.info("LP-Positions", "All position caches invalidated");
 }
 
@@ -1005,6 +1118,7 @@ export function invalidatePositionCaches(): void {
 export function invalidatePositionCacheForAccount(accountId: string, network: HederaNetwork = "mainnet"): void {
   const cacheKey = `${network}:${accountId}`;
   _positionsCache.delete(cacheKey);
+  _ownedSerialsCache.delete(cacheKey); // [LP-REM-FIX-4] Also clear ownership cache
   log.info("LP-Positions", `Position cache invalidated for ${accountId}`);
 }
 

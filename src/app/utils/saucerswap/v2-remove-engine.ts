@@ -286,19 +286,30 @@ async function readOnChainPosition(
 /**
  * Check if an LP NFT serial number still exists on-chain via ownerOf.
  * Returns true if the NFT exists, false if burned/invalid.
+ *
+ * IMPORTANT: On Hedera, ownerOf must be called on the LP NFT HTS token
+ * contract (0.0.4054027), NOT the NonfungiblePositionManager (0.0.4053945).
+ * The Manager delegates to HTS internally, but calling ownerOf directly
+ * on the Manager's EVM address will revert for ALL tokens (false positive).
  */
 async function checkNftExists(
   tokenSN: number,
-  nftManagerId: string,
+  lpNftTokenId: string,
   network: HederaNetwork,
 ): Promise<boolean> {
   const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
 
-  let managerEvm: string;
+  // Compute the EVM address of the LP NFT HTS token directly from its ID.
+  // On Hedera, HTS token EVM addresses are deterministic: 0x + padded account number.
+  // e.g. 0.0.4054027 → 0x00000000000000000000000000000000003ddc0b
+  let nftTokenEvm: string;
   try {
-    managerEvm = await resolveContractEvmAddress(nftManagerId, network);
-  } catch {
-    console.warn("[LP-REM-FIX-3] Failed to resolve NFT Manager EVM address for ownerOf check");
+    const accountNum = parseInt(lpNftTokenId.split(".")[2], 10);
+    if (isNaN(accountNum) || accountNum <= 0) throw new Error(`Invalid token ID: ${lpNftTokenId}`);
+    nftTokenEvm = "0x" + accountNum.toString(16).padStart(40, "0");
+    console.log(`[LP-REM-FIX-3] ownerOf target: LP NFT token ${lpNftTokenId} → ${nftTokenEvm}`);
+  } catch (err) {
+    console.warn(`[LP-REM-FIX-3] Failed to compute LP NFT EVM address from ${lpNftTokenId}`);
     return true; // Assume exists on resolution failure — let the main flow handle it
   }
 
@@ -317,7 +328,7 @@ async function checkNftExists(
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "eth_call",
-        params: [{ to: managerEvm, data: callDataHex, gas: gasHex }, "latest"],
+        params: [{ to: nftTokenEvm, data: callDataHex, gas: gasHex }, "latest"],
         id: 1,
       }),
     });
@@ -333,7 +344,7 @@ async function checkNftExists(
 
     // If there's an error field, the call reverted — NFT doesn't exist
     if (data.error) {
-      console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) REVERTED: ${JSON.stringify(data.error).slice(0, 200)}`);
+      console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) on ${lpNftTokenId} REVERTED: ${JSON.stringify(data.error).slice(0, 200)}`);
       console.log("[LP-REM-FIX-3] NFT serial does not exist — was likely burned");
       return false;
     }
@@ -354,7 +365,7 @@ async function checkNftExists(
       return false;
     }
 
-    console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) = 0x${ownerHex} — NFT EXISTS`);
+    console.log(`[LP-REM-FIX-3] ownerOf(${tokenSN}) = 0x${ownerHex} — NFT EXISTS ✓`);
     return true;
   } catch (err: any) {
     console.warn(`[LP-REM-FIX-3] ownerOf() eth_call failed: ${err?.message || err}`);
@@ -459,7 +470,7 @@ export async function removeLiquidity(params: RemoveLiquidityParams): Promise<Re
       // (on Hedera, positions() reverts when ownerOf fails for burned serials).
       // Do NOT proceed blindly — verify NFT existence first.
       console.warn("[LP-REM] positions() returned null — checking NFT existence via ownerOf...");
-      const nftExists = await checkNftExists(tokenSN, nftManagerId, network);
+      const nftExists = await checkNftExists(tokenSN, lpNftTokenId, network);
       if (!nftExists) {
         console.error(`[LP-REM-FIX-3] NFT #${tokenSN} does NOT exist on-chain — it was burned or transferred`);
         return {
@@ -658,6 +669,7 @@ export async function collectFees(params: CollectFeesParams): Promise<RemoveResu
   try {
     const nftManagerId = getV2NftManager(network);
     const recipientEvm = await resolveAccountEvmAddress(accountId, network);
+    const lpNftTokenId = SAUCERSWAP_V2_LP_NFT[network] || SAUCERSWAP_V2_LP_NFT.mainnet;
 
     console.log("[LP-COL] ===================================================");
     console.log("[LP-COL] V2 COLLECT FEES -- LIVE EXECUTION");
@@ -669,7 +681,7 @@ export async function collectFees(params: CollectFeesParams): Promise<RemoveResu
     console.log("[LP-COL] ===================================================");
 
     // [LP-REM-FIX-3] Verify NFT exists before attempting collect
-    const nftExists = await checkNftExists(tokenSN, nftManagerId, network);
+    const nftExists = await checkNftExists(tokenSN, lpNftTokenId, network);
     if (!nftExists) {
       console.error(`[LP-COL-FIX-3] NFT #${tokenSN} does NOT exist — burned or transferred`);
       return {
