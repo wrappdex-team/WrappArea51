@@ -10,6 +10,7 @@ const cards = [
     desc: "Utilizing distributed infrastructure designed for absolute asset sovereignty and secure operations in a modern economy.",
     link: "CUSTODY PROTOCOLS",
     url: "https://www.curvegrid.com/blog/2023-05-23-decentralized-vs-centralized-custody",
+    accent: "#8b5cf6",
   },
   {
     title: "Network Resilience",
@@ -17,12 +18,14 @@ const cards = [
     link: "TECHNICAL SPECIFICATIONS",
     url: "https://hedera.com/service/consensus-service/",
     highlight: true,
+    accent: BLUE,
   },
   {
     title: "Global Liquidity",
     desc: "Access international asset management with a focus on institutional transparency and 24/7 strategic support.",
     link: "INSTITUTIONAL ACCESS",
     url: "https://coinmarketcap.com/currencies/hedera/",
+    accent: "#06b6d4",
   },
 ];
 
@@ -37,27 +40,36 @@ const wallets = [
 
 export function LandingCards() {
   return (
-    <section className="py-12 sm:py-16 md:py-20 bg-white relative overflow-hidden" id="custody" style={{ borderBottom: "1px solid #e2e8f0" }}>
+    <section className="py-16 sm:py-20 md:py-28 bg-white relative overflow-hidden" id="custody">
       <div className="container mx-auto px-4 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.8 }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-px bg-slate-100"
-          style={{ border: "1px solid #f1f5f9", boxShadow: "0 16px 48px -12px rgba(0,0,0,0.06)" }}
+          className="grid grid-cols-1 md:grid-cols-3 gap-px bg-slate-100 rounded-xl overflow-hidden"
+          style={{ border: "1px solid #e2e8f0", boxShadow: "0 16px 48px -12px rgba(0,0,0,0.06)" }}
         >
           {cards.map((card, i) => (
             <div
               key={i}
-              className="bg-white px-6 py-8 sm:px-8 sm:py-10 md:px-10 md:py-12 flex flex-col justify-between hover:bg-slate-50 transition-all duration-500 group relative overflow-hidden"
+              className="bg-white px-6 py-8 sm:px-8 sm:py-10 md:px-10 md:py-12 flex flex-col justify-between hover:bg-slate-50/80 transition-all duration-500 group relative overflow-hidden"
             >
+              {/* top accent line */}
               <div
                 className="absolute top-0 left-0 w-full h-[2px] transform scale-x-0 group-hover:scale-x-100 transition-transform duration-700 origin-left"
-                style={{ backgroundColor: BLUE }}
+                style={{ backgroundColor: card.accent }}
+              />
+              {/* left accent on hover */}
+              <div
+                className="absolute left-0 top-0 bottom-0 w-[3px] transform scale-y-0 group-hover:scale-y-100 transition-transform duration-500 origin-top"
+                style={{ backgroundColor: card.accent }}
               />
               <div>
-                <span className="text-[9px] font-black mb-4 block tracking-[0.3em]" style={{ color: `${BLUE}40` }}>
+                <span
+                  className="text-[9px] font-black mb-4 block tracking-[0.3em]"
+                  style={{ color: `${card.accent}60` }}
+                >
                   0{i + 1}
                 </span>
                 <h3

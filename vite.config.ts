@@ -115,6 +115,8 @@ export default defineConfig(({ mode }) => ({
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
+      // Alias /utils to project-root utils (used by supabase/info imports)
+      '/utils': path.resolve(__dirname, './utils'),
       // Polyfill Node.js built-ins for browser compatibility
       // Required by @hashgraph/sdk and @walletconnect/sign-client
       // MUST use absolute path — 'buffer/' alone gets externalized by Vite 6

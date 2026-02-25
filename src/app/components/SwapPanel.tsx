@@ -79,6 +79,7 @@ import { SwapRouteViz } from "./SwapRouteViz";
 import { QuoteDetailsPro } from "./QuoteDetailsPro";
 import { SwapButtonPro } from "./SwapButtonPro";
 import { SlippageSettingsPro } from "./SlippageSettingsPro";
+import { QuickPairGrid } from "./QuickPairGrid";
 
 const SLIPPAGE_OPTIONS = [1.0, 3.0];
 const GAS_RESERVE = 1; // HBAR reserved for gas — Hedera fees are sub-cent, 1 HBAR covers dozens of txns
@@ -1023,144 +1024,15 @@ export function SwapPanel() {
 
         {/* ═══ POOL ROUTES TABLE ═══ */}
         <div className="lg:col-span-7">
-          <div className={`rounded-2xl overflow-hidden ${
-            isDark
-              ? "bg-[#0c0f1a]/95 backdrop-blur-xl border border-white/[0.04]"
-              : "bg-white/95 backdrop-blur-xl border border-gray-200 shadow-xl"
-          }`}>
-            <div className="flex items-center justify-between px-5 pt-4 pb-3">
-              <div className="flex items-center gap-2.5">
-                <Droplets className={`w-5 h-5 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                <h3 className={`font-extrabold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>
-                  Pool Routes
-                </h3>
-                {poolsLoading ? (
-                  <RefreshCw className="w-3 h-3 text-pink-400 animate-spin" />
-                ) : (
-                  <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                    isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                  }`}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Live
-                  </span>
-                )}
-              </div>
-              <a href="https://www.saucerswap.finance/swap" target="_blank" rel="noopener noreferrer"
-                className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                  isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"
-                }`}>
-                <img src={SAUCERSWAP_LARRY_LOGO} alt="" className="w-4 h-4 rounded-full" width={16} height={16} />
-                SaucerSwap
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className={`text-[11px] uppercase tracking-wider font-semibold ${
-                    isDark ? "text-slate-500" : "text-gray-400"
-                  }`}>
-                    <th className="text-left px-5 py-2.5">Pool</th>
-                    <th className="text-right px-3 py-2.5">TVL</th>
-                    <th className="text-right px-3 py-2.5 hidden sm:table-cell">24h Vol</th>
-                    <th className="text-right px-3 py-2.5">Fee</th>
-                    <th className="text-right px-3 py-2.5">APR</th>
-                    <th className="text-center px-3 py-2.5">Swap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allPools.map(pool => {
-                    const isActive =
-                      pool.id === activePoolId ||
-                      (pool.tokenA.symbol === inputToken.symbol && pool.tokenB.symbol === outputToken.symbol) ||
-                      (pool.tokenB.symbol === inputToken.symbol && pool.tokenA.symbol === outputToken.symbol) ||
-                      (route && route.pools.some(p => p.id === pool.id));
-                    return (
-                      <tr key={pool.id}
-                        className={`transition-colors ${
-                          isActive
-                            ? isDark ? "bg-pink-500/[0.04]" : "bg-pink-50/50"
-                            : isDark ? "hover:bg-white/[0.02]" : "hover:bg-gray-50/50"
-                        } ${isDark ? "border-t border-white/[0.03]" : "border-t border-gray-100"}`}>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex -space-x-2">
-                              <TokenIcon src={pool.tokenA.logo} symbol={pool.tokenA.symbol} htsId={pool.tokenA.htsId} size="w-6 h-6" className={`ring-2 relative z-10 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
-                              <TokenIcon src={pool.tokenB.logo} symbol={pool.tokenB.symbol} htsId={pool.tokenB.htsId} size="w-6 h-6" className={`ring-2 ${isDark ? "ring-[#0c0f1a]" : "ring-white"}`} />
-                            </div>
-                            <div>
-                              <div className={`font-bold text-xs ${isDark ? "text-white" : "text-slate-800"}`}>
-                                {pool.tokenA.symbol}/{pool.tokenB.symbol}
-                              </div>
-                              {(pool.tokenA.isWrapped || pool.tokenB.isWrapped) && (
-                                <span className={`text-[10px] ${isDark ? "text-purple-400/70" : "text-purple-500"}`}>
-                                  {pool.tokenA.bridge || pool.tokenB.bridge || "Wrapped"}
-                                </span>
-                              )}
-                            </div>
-                            {isActive && (
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
-                                isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
-                              }`}>
-                                Active
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className={`text-right px-3 py-3 font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                          {formatUsdCompact(pool.tvlUsd)}
-                        </td>
-                        <td className={`text-right px-3 py-3 hidden sm:table-cell ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                          {formatUsdCompact(pool.volume24hUsd)}
-                        </td>
-                        <td className={`text-right px-3 py-3 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                          {pool.fee}%
-                        </td>
-                        <td className="text-right px-3 py-3">
-                          <span className={`font-semibold ${
-                            pool.apr > 50
-                              ? "text-emerald-400"
-                              : pool.apr > 10
-                              ? isDark ? "text-emerald-400/80" : "text-emerald-600"
-                              : isDark ? "text-slate-400" : "text-gray-500"
-                          }`}>
-                            {pool.apr}%
-                          </span>
-                        </td>
-                        <td className="text-center px-3 py-3">
-                          <Tip content={`Swap ${pool.tokenA.symbol}/${pool.tokenB.symbol}`}>
-                            <motion.button
-                              whileHover={{ scale: 1.1 }}
-                              whileTap={{ scale: 0.9 }}
-                              onClick={() => handlePoolSwap(pool)}
-                              className={`p-2 rounded-xl transition-colors ${
-                                isDark ? "hover:bg-pink-500/10 text-pink-400" : "hover:bg-pink-50 text-pink-600"
-                              }`}
-                            >
-                              <ArrowDownUp className="w-3.5 h-3.5" />
-                            </motion.button>
-                          </Tip>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pool legend */}
-            <div className={`px-5 py-3 border-t flex items-center gap-4 text-[11px] flex-wrap ${
-              isDark ? "border-white/[0.03] text-slate-600" : "border-gray-100 text-gray-400"
-            }`}>
-              <span className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${isDark ? "bg-pink-500/30" : "bg-pink-200"}`} />
-                Active in current route
-              </span>
-              <span className="font-medium">{allPools.length} pools</span>
-              <span>Powered by SaucerSwap</span>
-            </div>
-          </div>
+          <QuickPairGrid
+            allPools={allPools}
+            poolsLoading={poolsLoading}
+            inputToken={inputToken}
+            outputToken={outputToken}
+            activePoolId={activePoolId}
+            route={route}
+            onSelectPair={handlePoolSwap}
+          />
 
           {/* ── Swap History ── */}
           <div className="mt-4">

@@ -27,10 +27,10 @@ export function LandingNavbar() {
     <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
         scrolled
-          ? "bg-white/80 backdrop-blur-md border-b border-white/20 shadow-lg py-0"
-          : "bg-white py-2"
+          ? "bg-white/90 backdrop-blur-2xl shadow-[0_1px_3px_rgba(0,0,0,0.05),0_8px_24px_-8px_rgba(0,0,0,0.04)] py-0"
+          : "bg-white/0 py-2"
       }`}
-      style={{ borderWidth: scrolled ? undefined : 0 }}
+      style={{ borderBottom: scrolled ? "1px solid rgba(226,232,240,0.6)" : "none" }}
     >
       {/* Top Utility Nav */}
       <AnimatePresence>
@@ -82,7 +82,7 @@ export function LandingNavbar() {
             onClick={handleLogoClick}
             className="flex items-center transition-transform hover:scale-[1.02] active:scale-[0.98]"
           >
-            <LandingLogo className="text-2xl md:text-3xl" />
+            <LandingLogo className="text-[1.65rem] md:text-[1.85rem]" />
           </Link>
 
           {/* Desktop Nav Links */}
@@ -108,7 +108,7 @@ export function LandingNavbar() {
 
         <div className="hidden md:flex items-center gap-6">
           <Link to="/markets">
-            <button type="button" className="border border-black text-black font-black uppercase tracking-[0.2em] text-[10px] h-11 px-8 hover:bg-black hover:text-white transition-all shadow-sm hover:shadow-xl hover:translate-y-[-1px] cursor-pointer">
+            <button type="button" className="border-2 border-slate-900 text-slate-900 font-black uppercase tracking-[0.2em] text-[10px] h-11 px-8 hover:bg-slate-900 hover:text-white transition-all duration-300 cursor-pointer rounded-sm">
               Launch App
             </button>
           </Link>

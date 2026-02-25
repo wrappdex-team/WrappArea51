@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useScroll, useTransform } from "motion/react";
 import {
   TrendingUp,
   ArrowRightLeft,
@@ -96,21 +96,23 @@ function TeaserBadge({
       custom={delay}
       variants={fade}
       initial="hidden"
-      animate="visible"
+      whileInView="visible"
+      viewport={{ once: true }}
       className={`absolute z-30 hidden lg:block ${className}`}
     >
       <motion.div
         animate={{ y: [0, -6, 0] }}
         transition={{ duration: 4 + delay, repeat: Infinity, ease: "easeInOut" }}
-        className="flex items-center gap-3 bg-white/95 backdrop-blur-xl rounded-2xl pl-3 pr-5 py-2.5 border border-slate-100"
+        className="flex items-center gap-3 bg-white/95 backdrop-blur-xl rounded-2xl pl-3 pr-5 py-2.5"
         style={{
           boxShadow:
             "0 8px 32px -8px rgba(0,0,0,0.08), 0 2px 8px -2px rgba(0,0,0,0.04)",
+          border: `1px solid ${accent ?? BLUE}18`,
         }}
       >
         <div
           className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-          style={{ background: `${accent ?? BLUE}15` }}
+          style={{ background: `${accent ?? BLUE}12` }}
         >
           <Icon size={16} style={{ color: accent ?? BLUE }} />
         </div>
@@ -139,6 +141,10 @@ export function LandingHero() {
   const mobileDark = marketingshots["mobildark.png"] || "";
   const mobileLight = marketingshots["mobilelight.png"] || "";
 
+  /* parallax for device showcase */
+  const { scrollY } = useScroll();
+  const deviceY = useTransform(scrollY, [0, 800], [0, -60]);
+
   /* animated volume counter */
   const [fee, setFee] = useState("$0.0000");
   useEffect(() => {
@@ -157,50 +163,48 @@ export function LandingHero() {
   }, []);
 
   return (
-    <section className="relative overflow-x-hidden bg-white">
-      {/* ── BG: dot grid ── */}
+    <section className="relative bg-white">
+      {/* ── BG: subtle dot grid ── */}
       <div
-        className="absolute inset-0 z-0 opacity-30"
+        className="absolute inset-0 z-0 opacity-20"
         style={{
           backgroundImage:
-            "radial-gradient(circle, #94a3b8 0.8px, transparent 0.8px)",
-          backgroundSize: "28px 28px",
+            "radial-gradient(circle, #cbd5e1 0.6px, transparent 0.6px)",
+          backgroundSize: "32px 32px",
         }}
       />
 
       {/* ── BG: gradient orbs ── */}
       <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
         <div
-          className="absolute -top-60 right-0 w-[800px] h-[800px] rounded-full opacity-[0.18]"
+          className="absolute -top-60 right-0 w-[800px] h-[800px] rounded-full opacity-[0.12]"
           style={{
             background: `radial-gradient(circle, ${BLUE}40, transparent 70%)`,
           }}
         />
         <div
-          className="absolute top-[60%] -left-60 w-[600px] h-[600px] rounded-full opacity-[0.12]"
+          className="absolute top-[60%] -left-60 w-[600px] h-[600px] rounded-full opacity-[0.08]"
           style={{
             background: `radial-gradient(circle, #06b6d440, transparent 70%)`,
           }}
         />
       </div>
 
-      {/* fade-in top edge */}
-      <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-white to-transparent z-[1]" />
-
       {/* ══════════════════════════════════════════
-          TEXT BLOCK  — centred
+          TEXT BLOCK — centred, fills the viewport
          ══════════════════════════════════════════ */}
-      <div className="relative z-10 container mx-auto px-6 pt-12 sm:pt-16 text-center">
+      <div className="relative z-10 container mx-auto px-6 flex flex-col items-center justify-center min-h-[calc(100vh-5rem)] text-center">
         <motion.div
           variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
           initial="hidden"
           animate="visible"
+          className="max-w-4xl"
         >
           {/* eyebrow */}
           <motion.div
             custom={0}
             variants={fade}
-            className="inline-flex items-center gap-3 mb-6"
+            className="inline-flex items-center gap-3 mb-8"
           >
             <span
               className="w-10 h-px inline-block"
@@ -220,7 +224,7 @@ export function LandingHero() {
 
           {/* headline */}
           <motion.h1
-            className="text-[2.8rem] sm:text-[4rem] md:text-[5.5rem] lg:text-[6.5rem] leading-[1.1] tracking-[-0.04em] text-black mx-auto max-w-5xl mb-8 overflow-visible py-2"
+            className="text-[2.8rem] sm:text-[4rem] md:text-[5.5rem] lg:text-[6.5rem] leading-[1.05] tracking-[-0.04em] text-black mx-auto max-w-5xl mb-8 overflow-visible py-2"
             style={{ fontFamily: "'Playfair Display', serif" }}
             variants={{
               hidden: {},
@@ -261,7 +265,7 @@ export function LandingHero() {
             <Link to="/markets">
               <button
                 type="button"
-                className="relative h-14 px-10 text-white font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer overflow-hidden group transition-transform hover:-translate-y-0.5 active:translate-y-0"
+                className="relative h-14 px-10 text-white font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer overflow-hidden group transition-transform hover:-translate-y-0.5 active:translate-y-0 rounded-sm"
                 style={{
                   background: `linear-gradient(135deg, ${BLUE}, #3b82f6)`,
                   boxShadow: `0 16px 40px -10px ${BLUE}55`,
@@ -288,45 +292,80 @@ export function LandingHero() {
               </button>
             </Link>
             <a href="mailto:Info@Wrappdex.io">
-              <button type="button" className="h-14 px-10 border-2 border-slate-200 text-slate-700 font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer bg-white/60 backdrop-blur-sm hover:border-slate-900 hover:bg-white transition-all duration-300">
+              <button type="button" className="h-14 px-10 border-2 border-slate-200 text-slate-700 font-black uppercase tracking-[0.2em] text-[11px] cursor-pointer bg-white/60 backdrop-blur-sm hover:border-slate-900 hover:bg-white transition-all duration-300 rounded-sm">
                 Partner With Us
               </button>
             </a>
           </motion.div>
 
-          {/* trust metrics */}
+          {/* trust metrics — with themed accent borders */}
           <motion.div
             custom={0.65}
             variants={fade}
-            className="flex justify-center gap-8 sm:gap-14 mb-20 sm:mb-28"
+            className="flex justify-center gap-6 sm:gap-10 mb-8"
           >
             {[
-              { label: "Avg Transaction Fee", value: fee },
-              { label: "Finality", value: "< 3 sec" },
-              { label: "Hedera-native", value: "100%" },
+              { label: "Avg Transaction Fee", value: fee, accent: BLUE },
+              { label: "Finality", value: "< 3 sec", accent: CYAN },
+              { label: "Hedera-native", value: "100%", accent: "#10b981" },
             ].map((s) => (
-              <div key={s.label} className="text-center">
+              <div
+                key={s.label}
+                className="text-center px-5 sm:px-8 py-4 rounded-xl relative group"
+                style={{
+                  background: "rgba(255,255,255,0.7)",
+                  backdropFilter: "blur(8px)",
+                  border: `1px solid ${s.accent}20`,
+                  boxShadow: `0 4px 20px -4px ${s.accent}10`,
+                }}
+              >
+                {/* top accent line */}
+                <div
+                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] rounded-full"
+                  style={{ backgroundColor: s.accent }}
+                />
                 <div className="text-xl sm:text-2xl font-black text-slate-900 tabular-nums">
                   {s.value}
                 </div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mt-1">
+                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mt-1.5">
                   {s.label}
                 </div>
               </div>
             ))}
           </motion.div>
         </motion.div>
+
+        {/* scroll hint */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.5, duration: 1 }}
+          className="absolute bottom-6 left-1/2 -translate-x-1/2"
+        >
+          <motion.div
+            animate={{ y: [0, 8, 0] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+            className="flex flex-col items-center gap-2"
+          >
+            <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-slate-300">
+              Scroll
+            </span>
+            <div className="w-[1px] h-6 bg-gradient-to-b from-slate-300 to-transparent" />
+          </motion.div>
+        </motion.div>
       </div>
 
       {/* ══════════════════════════════════════════
-          DEVICE SHOWCASE  — full-width, centred
+          DEVICE SHOWCASE — below the fold, revealed on scroll
          ══════════════════════════════════════════ */}
-      <div className="relative z-10 container mx-auto px-6 pb-20 sm:pb-28 mt-8 sm:mt-12">
+      <div className="relative z-10 container mx-auto px-6 pb-24 sm:pb-32">
         <motion.div
-          initial={{ opacity: 0, y: 60 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 1.2, delay: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, y: 80 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
           className="relative max-w-5xl mx-auto"
+          style={{ y: deviceY }}
         >
           {/* Ambient glow */}
           <div
@@ -344,7 +383,7 @@ export function LandingHero() {
             value="Top 50 Tokens by MC"
             accent="#10b981"
             className="-top-6 left-0 xl:-left-16"
-            delay={0.9}
+            delay={0.2}
           />
           <TeaserBadge
             icon={ArrowRightLeft}
@@ -352,7 +391,7 @@ export function LandingHero() {
             value="Instant Trades"
             accent={BLUE}
             className="top-1/4 -left-4 xl:-left-20"
-            delay={1.1}
+            delay={0.4}
           />
           <TeaserBadge
             icon={BarChart3}
@@ -360,7 +399,7 @@ export function LandingHero() {
             value="Live Price"
             accent="#06b6d4"
             className="-top-6 right-0 xl:-right-12"
-            delay={1.0}
+            delay={0.3}
           />
           <TeaserBadge
             icon={Zap}
@@ -368,7 +407,7 @@ export function LandingHero() {
             value="< 3 seconds"
             accent="#f59e0b"
             className="top-[38%] -right-4 xl:-right-20"
-            delay={1.2}
+            delay={0.5}
           />
           <TeaserBadge
             icon={ShieldCheck}
@@ -376,7 +415,7 @@ export function LandingHero() {
             value="Non-Custodial"
             accent="#8b5cf6"
             className="bottom-28 -left-4 xl:-left-16"
-            delay={1.3}
+            delay={0.6}
           />
           <TeaserBadge
             icon={Landmark}
@@ -384,7 +423,7 @@ export function LandingHero() {
             value="Governance"
             accent="#ec4899"
             className="bottom-28 -right-4 xl:-right-12"
-            delay={1.4}
+            delay={0.7}
           />
 
           {/* ── Clickable device area ── */}

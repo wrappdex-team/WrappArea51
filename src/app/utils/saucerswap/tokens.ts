@@ -174,7 +174,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
     rank: 16, isWrapped: true, bridge: "HashPort",
   },
-  // ── HashPort / LayerZero Bridge Stablecoins ���─
+  // ── HashPort / LayerZero Bridge Stablecoins ─
   {
     symbol: "USDCh", name: "USDC (HashPort)", htsId: "0.0.1055459",
     evmAddress: htsIdToEvmAddress("0.0.1055459"), decimals: 6,
@@ -214,9 +214,10 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 31, isWrapped: false,
   },
   {
-    symbol: "XPACK", name: "xPACK", htsId: "0.0.7245006",
-    evmAddress: htsIdToEvmAddress("0.0.7245006"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7245006.svg",
+    // [C-RECONCILE] Updated from 0.0.7245006 → 0.0.7243470 (SaucerSwap API canonical ID)
+    symbol: "XPACK", name: "xPACK", htsId: "0.0.7243470",
+    evmAddress: htsIdToEvmAddress("0.0.7243470"), decimals: 6,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7243470.svg",
     rank: 32, isWrapped: false,
   },
   {
@@ -226,9 +227,10 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 33, isWrapped: false,
   },
   {
-    symbol: "BTC.\u210F", name: "Bitcoin.\u210F", htsId: "0.0.4873177",
-    evmAddress: htsIdToEvmAddress("0.0.4873177"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.4873177.svg",
+    // [C-RECONCILE] Updated from 0.0.4873177 → 0.0.9370957 (SaucerSwap API canonical ID)
+    symbol: "BTC.\u210F", name: "Bitcoin.\u210F", htsId: "0.0.9370957",
+    evmAddress: htsIdToEvmAddress("0.0.9370957"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.9370957.svg",
     rank: 34, isWrapped: false,
   },
   {
@@ -244,9 +246,10 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 36, isWrapped: false,
   },
   {
-    symbol: "STEAM", name: "STEAM", htsId: "0.0.5733578",
-    evmAddress: htsIdToEvmAddress("0.0.5733578"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.5733578.svg",
+    // [C-RECONCILE] Updated from 0.0.5733578 → 0.0.3210123 (SaucerSwap API canonical ID)
+    symbol: "STEAM", name: "STEAM", htsId: "0.0.3210123",
+    evmAddress: htsIdToEvmAddress("0.0.3210123"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.3210123.svg",
     rank: 37, isWrapped: false,
   },
   {
@@ -262,21 +265,24 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 39, isWrapped: false,
   },
   {
-    symbol: "GC", name: "GCoin", htsId: "0.0.3241481",
-    evmAddress: htsIdToEvmAddress("0.0.3241481"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.3241481.svg",
+    // [C-RECONCILE] Updated from 0.0.3241481 → 0.0.5185941 (SaucerSwap API canonical ID)
+    symbol: "GC", name: "GCoin", htsId: "0.0.5185941",
+    evmAddress: htsIdToEvmAddress("0.0.5185941"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.5185941.svg",
     rank: 40, isWrapped: false,
   },
   {
-    symbol: "HCHF", name: "Hedera Swiss Franc", htsId: "0.0.6070123",
-    evmAddress: htsIdToEvmAddress("0.0.6070123"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.6070123.svg",
+    // [C-RECONCILE] Updated from 0.0.6070123 → 0.0.5892321 (SaucerSwap API canonical ID)
+    symbol: "HCHF", name: "Hedera Swiss Franc", htsId: "0.0.5892321",
+    evmAddress: htsIdToEvmAddress("0.0.5892321"), decimals: 6,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.5892321.svg",
     rank: 41, isWrapped: false,
   },
   {
-    symbol: "DOSA", name: "Dosa the Demon", htsId: "0.0.7892591",
-    evmAddress: htsIdToEvmAddress("0.0.7892591"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7892591.svg",
+    // [C-RECONCILE] Updated from 0.0.7892591 → 0.0.7894159 (SaucerSwap API canonical ID)
+    symbol: "DOSA", name: "Dosa the Demon", htsId: "0.0.7894159",
+    evmAddress: htsIdToEvmAddress("0.0.7894159"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7894159.svg",
     rank: 42, isWrapped: false,
   },
   {
@@ -286,9 +292,10 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 43, isWrapped: false,
   },
   {
-    symbol: "SMACKM", name: "SMACKM", htsId: "0.0.8041571",
-    evmAddress: htsIdToEvmAddress("0.0.8041571"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.8041571.svg",
+    // [C-RECONCILE] Updated from 0.0.8041571 → 0.0.10096415 (SaucerSwap API canonical ID)
+    symbol: "SMACKM", name: "SMACKM", htsId: "0.0.10096415",
+    evmAddress: htsIdToEvmAddress("0.0.10096415"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.10096415.svg",
     rank: 44, isWrapped: false,
   },
   {
@@ -298,15 +305,17 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 45, isWrapped: false,
   },
   {
-    symbol: "DINO", name: "DINO", htsId: "0.0.7907968",
-    evmAddress: htsIdToEvmAddress("0.0.7907968"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7907968.svg",
+    // [C-RECONCILE] Updated from 0.0.7907968 → 0.0.7570117 (SaucerSwap API canonical ID)
+    symbol: "DINO", name: "DINO", htsId: "0.0.7570117",
+    evmAddress: htsIdToEvmAddress("0.0.7570117"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.7570117.svg",
     rank: 46, isWrapped: false,
   },
   {
-    symbol: "LEEMON", name: "LeemonHead", htsId: "0.0.7974354",
-    evmAddress: htsIdToEvmAddress("0.0.7974354"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7974354.svg",
+    // [C-RECONCILE] Updated from 0.0.7974354 → 0.0.4381245 (SaucerSwap API canonical ID)
+    symbol: "LEEMON", name: "LeemonHead", htsId: "0.0.4381245",
+    evmAddress: htsIdToEvmAddress("0.0.4381245"), decimals: 8,
+    logo: "https://www.saucerswap.finance/images/tokens/0.0.4381245.svg",
     rank: 47, isWrapped: false,
   },
   {

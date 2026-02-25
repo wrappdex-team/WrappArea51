@@ -760,7 +760,17 @@ async function executeSaucerSwapV2Direct(
         }
       }
       if (!poolFound) {
-        console.warn(`[SWAP-FIX-3] No V2 pool found for ${evmAddressToHtsId(tokenInEvm)}/${evmAddressToHtsId(tokenOutEvm)} at any fee tier — V2 swap will likely revert`);
+        console.warn(`[SWAP-FIX-3] No V2 pool found for ${evmAddressToHtsId(tokenInEvm)}/${evmAddressToHtsId(tokenOutEvm)} at any fee tier — aborting V2 to avoid doomed transaction`);
+        // [SWAP-FIX-3b] EARLY ABORT: Don't proceed with a V2 swap when we've
+        // confirmed on-chain that no pool exists. Previously we continued anyway,
+        // causing a doomed dry-run → doomed WC transaction → WC timeout → wasted
+        // time before V1 fallback kicked in. Returning early lets the caller
+        // fall through to V1 immediately.
+        return {
+          success: false,
+          error: `No V2 pool exists for ${inputToken.symbol}/${outputToken.symbol} at any fee tier. V1 fallback recommended.`,
+          executionVenue: "saucerswap-v2" as const,
+        };
       }
       // Re-read the (possibly corrected) fee
       const correctedFee = poolInfo.feeTier || 3000;

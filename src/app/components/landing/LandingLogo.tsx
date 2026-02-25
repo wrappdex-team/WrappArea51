@@ -7,13 +7,35 @@ interface LandingLogoProps {
 
 export function LandingLogo({ className = "", inverted = false }: LandingLogoProps) {
   return (
-    <div className={`flex items-baseline font-black tracking-[-0.05em] leading-none select-none ${className}`}>
-      <span className={`transition-colors duration-500 font-sans ${inverted ? "text-white" : "text-black"}`}>
+    <div className={`flex items-baseline leading-none select-none ${className}`}>
+      <span
+        className={`font-black tracking-[-0.04em] transition-colors duration-500 font-sans ${inverted ? "text-white" : "text-slate-900"}`}
+        style={{ letterSpacing: "-0.03em" }}
+      >
         WRAP
       </span>
-      <span className="text-[#1D63ED] italic transform -skew-x-6 font-sans">p</span>
-      <span className={`text-[0.45em] ml-2 font-black uppercase tracking-[0.3em] transition-colors duration-500 font-sans opacity-80 ${inverted ? "text-white/60" : "text-slate-500"}`}>
-        Dex
+      <span
+        className="italic font-black font-sans"
+        style={{
+          color: "#1D63ED",
+          letterSpacing: "-0.04em",
+          transform: "skewX(-8deg)",
+          display: "inline-block",
+          marginLeft: "-0.02em",
+        }}
+      >
+        p
+      </span>
+      <span
+        className={`font-black uppercase font-sans transition-colors duration-500 ${inverted ? "text-white/50" : "text-slate-400"}`}
+        style={{
+          fontSize: "0.38em",
+          letterSpacing: "0.35em",
+          marginLeft: "0.35em",
+          verticalAlign: "baseline",
+        }}
+      >
+        DEX
       </span>
     </div>
   );

@@ -62,7 +62,7 @@ export function LandingPage() {
 
   return (
     <div
-      className="min-h-screen text-slate-900 relative overflow-hidden"
+      className="min-h-screen text-slate-900 relative overflow-x-hidden"
       style={{
         fontFamily: "'Inter', sans-serif",
         backgroundColor: "#ffffff",
@@ -77,7 +77,7 @@ export function LandingPage() {
 
       <LandingNavbar />
 
-      <main className="pt-24 md:pt-32">
+      <main>
         <LandingHero />
         <LandingCards />
         <LandingWhyWrappdex />
