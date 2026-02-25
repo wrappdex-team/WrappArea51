@@ -321,13 +321,16 @@ export function SwapPanel() {
   const outputUsd = outputAmount ? parseFloat(outputAmount) * outputPrice : 0;
 
   // [C53] Pre-flight balance check — shows "Insufficient balance" on button
+  // [PRECISION-FIX] 0.001 tolerance buffer prevents false alerts due to rounding
+  const BALANCE_TOLERANCE = 0.001;
   const insufficientBalance = useMemo(() => {
     if (!isWalletConnected || !inputAmount || !parseFloat(inputAmount)) return false;
     if (inputBalance === null) return false; // Still loading
     const amt = parseFloat(inputAmount);
     if (amt <= 0) return false;
-    if (inputToken.isNative) return inputBalance < (amt + GAS_RESERVE);
-    return inputBalance < amt;
+    // Allow 0.001 tolerance for rounding precision
+    if (inputToken.isNative) return inputBalance + BALANCE_TOLERANCE < (amt + GAS_RESERVE);
+    return inputBalance + BALANCE_TOLERANCE < amt;
   }, [isWalletConnected, inputAmount, inputBalance, inputToken.isNative]);
 
   // [C93] Block swap when quote output is 0 — prevents CONTRACT_REVERT_EXECUTED

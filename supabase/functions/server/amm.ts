@@ -549,9 +549,8 @@ const TOKEN_WHITELIST: TokenDef[] = [
   // NOTE: Decimals MUST be confirmed on HashScan — HashPort may bridge at 8 or 18.
   { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPrice: 2650,   bridge: "HashPort", tier: 1,
     saucerswapId: "0.0.1969708" },
-  // LINK: HashPort bridge. SaucerSwap now lists 0.0.10152778 (was 0.0.1970030).
-  { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPrice: 16.50,  bridge: "HashPort", tier: 1,
-    saucerswapId: "0.0.10152778" },
+  // LINK: HashPort bridge. [SECURITY-FIX] REMOVED saucerswapId 0.0.10152778 — was SCAM/FAKE token
+  { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPrice: 16.50,  bridge: "HashPort", tier: 1 },
   // AAVE: HashPort bridge (same ID as SaucerSwap — no alias needed)
   // NOTE: Decimals (8) need HashScan confirmation — could be 18 if HashPort preserved ERC-20 decimals.
   { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPrice: 180.0,  bridge: "HashPort", tier: 1 },

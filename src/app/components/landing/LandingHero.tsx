@@ -358,7 +358,7 @@ export function LandingHero() {
       {/* ══════════════════════════════════════════
           DEVICE SHOWCASE — below the fold, revealed on scroll
          ══════════════════════════════════════════ */}
-      <div className="relative z-10 container mx-auto px-6 pb-24 sm:pb-32">
+      <div className="relative z-10 container mx-auto px-6 pt-32 sm:pt-40 lg:pt-48 pb-24 sm:pb-32">
         <motion.div
           initial={{ opacity: 0, y: 80 }}
           whileInView={{ opacity: 1, y: 0 }}

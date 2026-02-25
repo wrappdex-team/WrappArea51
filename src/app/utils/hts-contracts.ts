@@ -129,8 +129,9 @@ export const BRIDGE_TOKEN_REGISTRY: BridgeToken[] = [
     symbol: "LINK", name: "Chainlink",
     htsId: "0.0.1055495", evmAddress: htsIdToEvmAddress("0.0.1055495"),
     decimals: 8, bridge: "HashPort", originalChain: "Ethereum",
-    // [C85] Updated saucerswapId from 0.0.1970030 → 0.0.10152778
-    saucerswapId: "0.0.10152778", coingeckoId: "chainlink",
+    // [SECURITY-FIX] REMOVED saucerswapId: 0.0.10152778 was SCAM/FAKE token
+    // NO ALIAS NEEDED — canonical ID is correct for SaucerSwap pools
+    coingeckoId: "chainlink",
   },
   {
     symbol: "AAVE", name: "Aave",

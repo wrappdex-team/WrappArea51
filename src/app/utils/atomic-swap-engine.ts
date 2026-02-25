@@ -131,7 +131,8 @@ export const TOKEN_WHITELIST: AtomicTokenDef[] = [
   // [C85] Updated saucerswapId aliases to current SaucerSwap API values
   { tokenId: "0.0.1055483", symbol: "WBTC",   name: "Wrapped Bitcoin",       decimals: 8,  fallbackPriceUsd: 104000, bridge: "HashPort", tier: 1, saucerswapId: "0.0.10104132" },
   { tokenId: "0.0.541564",  symbol: "WETH",   name: "Wrapped Ether",         decimals: 18, fallbackPriceUsd: 2650,   bridge: "HashPort", tier: 1, saucerswapId: "0.0.1969708" },
-  { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPriceUsd: 16.50,  bridge: "HashPort", tier: 1, saucerswapId: "0.0.10152778" },
+  // [SECURITY-FIX] REMOVED saucerswapId: 0.0.10152778 was SCAM/FAKE token with low liquidity
+  { tokenId: "0.0.1055495", symbol: "LINK",   name: "Chainlink",             decimals: 8,  fallbackPriceUsd: 16.50,  bridge: "HashPort", tier: 1 },
   { tokenId: "0.0.1055498", symbol: "AAVE",   name: "Aave",                  decimals: 8,  fallbackPriceUsd: 17.25,  bridge: "HashPort", tier: 1 }, // [C33-01] Updated from 180.0
 
   // ── Cross-Chain Wrapped Assets ──────────────────────────────────────

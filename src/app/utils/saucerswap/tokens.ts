@@ -88,14 +88,16 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     saucerswapAliasId: "0.0.10104132",
   },
   {
-    // [C82] RESTORED saucerswapAliasId — same issue as WBTC above.
-    // [C85] Updated alias from 0.0.1970030 → 0.0.10152778 (SaucerSwap API
-    // now lists this as the primary LINK token; old alias was V2-era).
+    // [SECURITY-FIX] REMOVED saucerswapAliasId: 0.0.10152778 was routing to FAKE/SCAM token
+    // with very low liquidity. The CORRECT LINK token is the canonical HashPort bridge
+    // token 0.0.1055495. NO ALIAS NEEDED — SaucerSwap pools use the canonical ID.
+    // Previous comments claiming "SaucerSwap API now lists 0.0.10152778 as primary" were
+    // INCORRECT and caused users to receive worthless scam tokens instead of real LINK.
     symbol: "LINK", name: "Chainlink", htsId: "0.0.1055495",
     evmAddress: htsIdToEvmAddress("0.0.1055495"), decimals: 8,
     logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png",
     rank: 5, isWrapped: true, bridge: "HashPort",
-    saucerswapAliasId: "0.0.10152778",
+    // saucerswapAliasId removed — use canonical ID for routing
   },
   {
     symbol: "SAUCE", name: "SaucerSwap", htsId: "0.0.731861",

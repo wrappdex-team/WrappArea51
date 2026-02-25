@@ -428,18 +428,24 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
   // ── Insufficient balance flags ────────────────────────────────────
   // Real-time per-input validation. Shows red warning on individual cards
   // and feeds into the global validationError to disable the CTA button.
+  // [PRECISION-FIX] 0.001 tolerance buffer prevents false alerts when
+  // calculated amounts match balances but differ by tiny rounding precision.
+  const BALANCE_TOLERANCE = 0.001;
+  
   const insufficientBalance0 = useMemo(() => {
     if (!balance0.loaded || !amount0Input) return false;
     const inputVal = parseFloat(amount0Input);
     if (!inputVal || inputVal <= 0) return false;
-    return inputVal > balance0.available;
+    // Allow up to 0.001 over balance (rounding tolerance)
+    return inputVal > balance0.available + BALANCE_TOLERANCE;
   }, [balance0.loaded, balance0.available, amount0Input]);
 
   const insufficientBalance1 = useMemo(() => {
     if (!balance1.loaded || !amount1Input) return false;
     const inputVal = parseFloat(amount1Input);
     if (!inputVal || inputVal <= 0) return false;
-    return inputVal > balance1.available;
+    // Allow up to 0.001 over balance (rounding tolerance)
+    return inputVal > balance1.available + BALANCE_TOLERANCE;
   }, [balance1.loaded, balance1.available, amount1Input]);
 
   // ── [LP-UX-02] Paired balance warning (non-blocking) ─────────────
