@@ -1,22 +1,23 @@
 // ═══════════════════════════════════════════════════════════════════════
-// AUTHENTICATION — ED25519 Challenge-Response Sessions
+// AUTHENTICATION — ED25519 & ECDSA_SECP256K1 Challenge-Response Sessions
 // ═══════════════════════════════════════════════════════════════════════
 //
 // Flow:
 //   1. GET  /auth/challenge/:accountId → server issues CSPRNG nonce (5-min TTL)
-//   2. Client signs nonce in HashPack wallet (ED25519)
+//   2. Client signs nonce in HashPack wallet (ED25519 or ECDSA_SECP256K1)
 //   3. POST /auth/session → server verifies sig against Mirror Node public key
 //   4. Server returns 32-byte CSPRNG session token (30-min TTL, KV-stored)
 //   5. All mutating requests carry X-Session-Token header
 //
 // Security: single-use nonces, replay protection, account-bound sessions,
-// public key caching (10-min TTL), fail-closed on unsupported key types.
+// public key caching (10-min TTL), supports both ED25519 and ECDSA_SECP256K1.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
 import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET, mirrorNodeBreaker, isHttpFailure } from "./shared.ts";
 import nacl from "npm:tweetnacl@1.0.3";
+import { secp256k1 } from "npm:@noble/curves@1.6.0/secp256k1";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ interface AuthChallenge {
 
 export interface AuthSession { token: string; accountId: string; createdAt: number; expiresAt: number; }
 
-interface PublicKeyResult { type: "ED25519"; rawKeyHex: string; error?: undefined; }
+interface PublicKeyResult { type: "ED25519" | "ECDSA_SECP256K1"; rawKeyHex: string; error?: undefined; }
 interface PublicKeyError { type?: undefined; rawKeyHex?: undefined; error: string; }
 
 // ── Hex/Byte Helpers ────────────────────────────────────────────────
@@ -115,8 +116,8 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
     if (!keyData || !keyData._type || !keyData.key) {
       return { error: "Account has no public key (possibly a smart contract account)" };
     }
-    if (keyData._type !== "ED25519") {
-      return { error: `Unsupported key type: ${keyData._type}. Only ED25519 accounts supported for authentication.` };
+    if (keyData._type !== "ED25519" && keyData._type !== "ECDSA_SECP256K1") {
+      return { error: `Unsupported key type: ${keyData._type}. Only ED25519 and ECDSA_SECP256K1 accounts supported for authentication.` };
     }
     let rawKeyHex: string = keyData.key.toLowerCase();
     if (rawKeyHex.startsWith(ED25519_DER_PREFIX)) {
@@ -125,7 +126,7 @@ async function fetchAccountPublicKey(accountId: string): Promise<PublicKeyResult
     if (rawKeyHex.length !== 64) {
       return { error: `Invalid ED25519 key length: expected 64 hex chars, got ${rawKeyHex.length}` };
     }
-    const result: PublicKeyResult = { type: "ED25519", rawKeyHex };
+    const result: PublicKeyResult = { type: keyData._type, rawKeyHex };
     try { await kv.set(cacheKey, { key: result, ts: Date.now() }); } catch { /* non-critical */ }
     return result;
   } catch (err: any) {
@@ -489,6 +490,103 @@ async function selfTestED25519(): Promise<{
   }
 }
 
+async function verifyECDSA_SECP256K1Signature(
+  publicKeyHex: string, messageBytes: Uint8Array, signatureHex: string,
+): Promise<boolean> {
+  try {
+    const pubKeyBytes = hexToBytes(publicKeyHex);
+    if (pubKeyBytes.length !== 64) { console.log(`[AUTH] PubKey length invalid: ${pubKeyBytes.length}`); return false; }
+
+    const sigBytes = decodeSigTo64Bytes(signatureHex);
+    if (!sigBytes) {
+      console.log(`[AUTH] Could not decode signature to 64 bytes from input (${signatureHex.length} chars)`);
+      return false;
+    }
+
+    console.log(`[AUTH] Verifying: pubKey=${publicKeyHex.slice(0, 16)}... sig=${bytesToHex(sigBytes).slice(0, 32)}... msg=${messageBytes.length}B`);
+
+    // Primary: Use noble-curves — the same library the Hedera SDK and HashPack
+    // wallet use internally. This guarantees byte-level compatibility with
+    // the wallet's Ed25519 implementation. Falls back to Web Crypto only if
+    // tweetnacl is unavailable (should not happen with npm: import).
+    try {
+      const pubKey = secp256k1.ProjectivePoint.fromHex("04" + publicKeyHex);
+      const sig = secp256k1.Signature.fromCompact(sigBytes);
+      const result = secp256k1.verify(sig, messageBytes, pubKey);
+      if (result) {
+        console.log("[AUTH] Signature verified via noble-curves");
+        return true;
+      }
+      console.log("[AUTH] noble-curves: verify returned false");
+    } catch (naclErr: any) {
+      console.log(`[AUTH] noble-curves verify error: ${naclErr?.message || naclErr}`);
+    }
+
+    return false;
+  } catch (err: any) {
+    console.log(`[AUTH] ECDSA_SECP256K1 verification error: ${err?.message || err}`);
+    return false;
+  }
+}
+
+/**
+ * Self-test: generate a keypair, sign a message, verify the signature.
+ * Returns { ok: true/false, naclOk, webCryptoOk, details }.
+ * This tells us definitively whether the crypto libraries work in this runtime.
+ */
+async function selfTestECDSA_SECP256K1(): Promise<{
+  ok: boolean; naclOk: boolean | null; webCryptoOk: boolean | null;
+  naclAvailable: boolean; details: string;
+}> {
+  const details: string[] = [];
+  let naclOk: boolean | null = null;
+  let webCryptoOk: boolean | null = null;
+  const naclAvailable = typeof nacl?.sign?.detached?.verify === "function";
+
+  try {
+    // Generate a fresh keypair
+    if (!naclAvailable) {
+      details.push(`nacl NOT available: nacl type=${typeof nacl} sign=${typeof nacl?.sign}`);
+    } else {
+      details.push("nacl module loaded OK");
+    }
+
+    const keyPair = nacl?.sign?.keyPair?.();
+    if (!keyPair) {
+      details.push("nacl.sign.keyPair() failed or unavailable");
+      return { ok: false, naclOk: null, webCryptoOk: null, naclAvailable, details: details.join("; ") };
+    }
+
+    const testMsg = new TextEncoder().encode("WRAPpDEX auth self-test");
+    const testSig = nacl.sign.detached(testMsg, keyPair.secretKey);
+    details.push(`keyPair generated: pub=${bytesToHex(keyPair.publicKey).slice(0, 16)}... sig=${bytesToHex(testSig).slice(0, 16)}...`);
+
+    // Verify with nacl
+    try {
+      naclOk = nacl.sign.detached.verify(testMsg, testSig, keyPair.publicKey);
+      details.push(`nacl verify: ${naclOk}`);
+    } catch (e: any) {
+      details.push(`nacl verify threw: ${e?.message}`);
+      naclOk = false;
+    }
+
+    // Verify with Web Crypto
+    try {
+      const ck = await crypto.subtle.importKey("raw", keyPair.publicKey, { name: "Ed25519" }, false, ["verify"]);
+      webCryptoOk = await crypto.subtle.verify("Ed25519", ck, testSig, testMsg);
+      details.push(`webCrypto verify: ${webCryptoOk}`);
+    } catch (e: any) {
+      details.push(`webCrypto verify threw: ${e?.message}`);
+      webCryptoOk = false;
+    }
+
+    return { ok: (naclOk === true || webCryptoOk === true), naclOk, webCryptoOk, naclAvailable, details: details.join("; ") };
+  } catch (e: any) {
+    details.push(`selfTest error: ${e?.message}`);
+    return { ok: false, naclOk, webCryptoOk, naclAvailable, details: details.join("; ") };
+  }
+}
+
 // ── Owner & Admin Session Authorization ─────────────────────────────
 // All admin operations use ED25519 session auth. The service role key is
 // NEVER transmitted from any client. Owner (0.0.518487) has elevated
@@ -768,8 +866,17 @@ export function registerAuthRoutes(app: Hono): void {
         console.log(`[AUTH] Signature decode failed for ${accountId} — raw input ${cleanSig.length} chars could not be reduced to 64 bytes`);
       }
 
+      // Create a dispatch wrapper that calls the appropriate verification function based on key type
+      const verifySignature = async (publicKeyHex: string, messageBytes: Uint8Array, signatureHex: string): Promise<boolean> => {
+        if (keyResult.type === "ECDSA_SECP256K1") {
+          return await verifyECDSA_SECP256K1Signature(publicKeyHex, messageBytes, signatureHex);
+        } else {
+          return await verifyED25519Signature(publicKeyHex, messageBytes, signatureHex);
+        }
+      };
+
       // Primary: verify against original challenge message (UTF-8 bytes)
-      let isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, cleanSig);
+      let isValid = await verifySignature(keyResult.rawKeyHex, messageBytes, cleanSig);
 
       // Fallback A: Some wallets sign the base64-encoded message string
       // (per HIP-820 spec where message param is base64). If the wallet
@@ -785,7 +892,7 @@ export function registerAuthRoutes(app: Hono): void {
           const b64Msg = btoa(binStr);
           const b64MsgBytes = new TextEncoder().encode(b64Msg);
           console.log(`[AUTH] Primary failed — trying base64 message variant (${b64MsgBytes.length}B, b64 first 20: ${b64Msg.slice(0, 20)})`);
-          isValid = await verifyED25519Signature(keyResult.rawKeyHex, b64MsgBytes, cleanSig);
+          isValid = await verifySignature(keyResult.rawKeyHex, b64MsgBytes, cleanSig);
           if (isValid) console.log("[AUTH] Signature verified via base64-message fallback");
         } catch { /* btoa might fail on non-Latin1 — skip this fallback */ }
       }
@@ -794,7 +901,7 @@ export function registerAuthRoutes(app: Hono): void {
       if (!isValid && challenge.nonce) {
         const nonceBytes = new TextEncoder().encode(challenge.nonce);
         console.log(`[AUTH] Base64 variant failed — trying nonce-only variant (${nonceBytes.length}B)`);
-        isValid = await verifyED25519Signature(keyResult.rawKeyHex, nonceBytes, cleanSig);
+        isValid = await verifySignature(keyResult.rawKeyHex, nonceBytes, cleanSig);
         if (isValid) console.log("[AUTH] Signature verified via nonce-only fallback");
       }
 
@@ -805,7 +912,7 @@ export function registerAuthRoutes(app: Hono): void {
         const crlfBytes = new TextEncoder().encode(crlfMessage);
         if (crlfBytes.length !== messageBytes.length) {
           console.log(`[AUTH] Nonce-only failed — trying CRLF line-ending variant (${crlfBytes.length}B)`);
-          isValid = await verifyED25519Signature(keyResult.rawKeyHex, crlfBytes, cleanSig);
+          isValid = await verifySignature(keyResult.rawKeyHex, crlfBytes, cleanSig);
           if (isValid) console.log("[AUTH] Signature verified via CRLF line-ending fallback");
         }
       }
@@ -837,7 +944,7 @@ export function registerAuthRoutes(app: Hono): void {
           for (let offset = 0; offset <= rawSigBytes.length - 64; offset++) {
             const window64 = rawSigBytes.slice(offset, offset + 64);
             const windowHex = bytesToHex(window64);
-            const windowValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, windowHex);
+            const windowValid = await verifySignature(keyResult.rawKeyHex, messageBytes, windowHex);
             if (windowValid) {
               console.log(`[AUTH] Window scan matched at offset ${offset} — non-standard protobuf layout`);
               isValid = true;
@@ -921,7 +1028,7 @@ export function registerAuthRoutes(app: Hono): void {
 
             // Strategy E1: Re-extracted sig + Mirror Node key + original message
             if (parsed.ed25519 && protobufSigHex) {
-              isValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, protobufSigHex);
+              isValid = await verifySignature(keyResult.rawKeyHex, messageBytes, protobufSigHex);
               if (isValid) {
                 console.log("[AUTH] Verified: re-extracted sig from rawSignatureMap + Mirror Node key");
               }
@@ -935,7 +1042,7 @@ export function registerAuthRoutes(app: Hono): void {
                 for (let i = 0; i < msgUtf8.length; i++) binStr2 += String.fromCharCode(msgUtf8[i]);
                 const b64Msg2 = btoa(binStr2);
                 const b64MsgBytes2 = new TextEncoder().encode(b64Msg2);
-                isValid = await verifyED25519Signature(keyResult.rawKeyHex, b64MsgBytes2, protobufSigHex);
+                isValid = await verifySignature(keyResult.rawKeyHex, b64MsgBytes2, protobufSigHex);
                 if (isValid) console.log("[AUTH] Verified: re-extracted sig + Mirror Node key + base64 message");
               } catch { /* skip */ }
             }
@@ -988,7 +1095,7 @@ export function registerAuthRoutes(app: Hono): void {
                 const w64 = rawBytes.slice(offset, offset + 64);
                 const wHex = bytesToHex(w64);
                 // Try Mirror Node key
-                let wValid = await verifyED25519Signature(keyResult.rawKeyHex, messageBytes, wHex);
+                let wValid = await verifySignature(keyResult.rawKeyHex, messageBytes, wHex);
                 if (wValid) {
                   console.log(`[AUTH] rawSignatureMap window scan matched at offset ${offset} with Mirror Node key`);
                   isValid = true;

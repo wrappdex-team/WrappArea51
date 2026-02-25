@@ -1,8 +1,9 @@
 /**
- * Wrappdex Authentication — ED25519 Challenge-Response Sessions
+ * Wrappdex Authentication — ED25519 & ECDSA_SECP256K1 Challenge-Response Sessions
  *
  * Flow: requestChallenge → wallet signs → server verifies → 30-min session token.
  * Private key never leaves the wallet. Nonces are single-use, sessions KV-backed.
+ * Supports both ED25519 and ECDSA_SECP256K1 key types.
  */
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";
