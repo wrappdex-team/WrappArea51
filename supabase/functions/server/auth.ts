@@ -66,7 +66,9 @@ function bytesToHex(bytes: Uint8Array): string {
 // ── Challenge & Session Generators ──────────────────────────────────
 
 function generateChallengeNonce(): string {
-  const buf = new Uint8Array(32);
+  // 12 bytes = 24 hex chars. Provides 2^96 entropy — more than sufficient
+  // for single-use nonce replay protection while keeping the wallet display clean.
+  const buf = new Uint8Array(12);
   crypto.getRandomValues(buf);
   return bytesToHex(buf);
 }
@@ -78,17 +80,18 @@ function generateSessionToken(): string {
 }
 
 function buildChallengeMessage(accountId: string, nonce: string, timestamp: number): string {
-  const dateStr = new Date(timestamp).toISOString();
+  // Short, clean format for wallet display. Each field is on its own line
+  // for readability in HashPack's message preview.
+  const dateStr = new Date(timestamp).toISOString().replace("T", " ").slice(0, 19);
   return [
-    "Wrappdex Identity Verification",
+    "WRAPpDEX Identity Verification",
     "",
-    "Sign this message to prove you own this account.",
-    "No transaction will be submitted and no fees will be charged.",
+    "Sign to prove you own this account.",
+    "No fees will be charged.",
     "",
     `Account: ${accountId}`,
-    `Nonce: ${nonce}`,
-    `Issued: ${dateStr}`,
-    `Version: ${AUTH_VERSION}`,
+    `Time: ${dateStr} UTC`,
+    `ID: ${nonce}`,
   ].join("\n");
 }
 
@@ -1019,9 +1022,8 @@ export function registerAuthRoutes(app: Hono): void {
       // Primary: verify against original challenge message (UTF-8 bytes)
       let isValid = await verifySignature(keyResult.rawKeyHex, messageBytes, cleanSig);
 
-      // Fallback A: Some wallets sign the base64-encoded message string
-      // (per HIP-820 spec where message param is base64). If the wallet
-      // received base64 and signed those bytes without decoding first.
+      // Fallback A: Legacy compatibility — some wallets may receive a base64-
+      // encoded message and sign those base64 bytes without decoding first.
       if (!isValid) {
         try {
           // Use the EXACT same UTF-8-safe base64 encoding as the client

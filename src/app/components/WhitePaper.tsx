@@ -2039,13 +2039,13 @@ export function WhitePaper() {
               title="Expansion"
               icon={Target}
               items={[
-                "Formal smart contract audit (Weighted Pool Factory)",
-                "Threshold-key DAO multisig for pool governance",
-                "Native staking contracts",
-                "HBAR.ħ lending market on Bonzo",
-                "Limit order types",
+                "Back-end infrastructure hardening & security review",
+                "Community growth & membership acquisition initiatives",
+                "Ivyfy native staking integration for HBAR.ħ",
+                "AMM engine development, stress testing & hardening",
                 "Multi-hop swap execution (USDC-hop routes)",
-                "Portfolio P&L analytics",
+                "Portfolio P&L analytics & reporting dashboard",
+                "Formal smart contract audit (Weighted Pool Factory)",
               ]}
             />
             <RoadmapQ

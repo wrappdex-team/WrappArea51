@@ -937,11 +937,11 @@ export async function signMessageViaWC(
   await _validateSessionBeforeRequest(client, topic);
   const chainId = getHederaChainId(network);
 
-  // HIP-820 spec requires the message parameter to be base64-encoded.
-  const msgBytes = new TextEncoder().encode(message);
-  let binStr = "";
-  for (let i = 0; i < msgBytes.length; i++) binStr += String.fromCharCode(msgBytes[i]);
-  const messageB64 = btoa(binStr);
+  // IMPLEMENTATION NOTE: Send the message as plain UTF-8 text to the wallet.
+  // HashPack (and most HIP-820 wallets) treat the message parameter as a
+  // plain string — displaying it directly and signing its UTF-8 bytes.
+  // Base64 encoding caused HashPack to display gibberish and sign the wrong
+  // bytes, leading to server-side verification failures.
 
   try {
     const result = await _safeRequest(client, {
@@ -951,7 +951,7 @@ export async function signMessageViaWC(
         method: "hedera_signMessage",
         params: {
           signerAccountId: `${chainId}:${accountId}`,
-          message: messageB64,
+          message: message,
         },
       },
     });
