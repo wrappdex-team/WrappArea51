@@ -43,7 +43,7 @@ export const CURATED_TOKENS: CuratedToken[] = [
 
   // ── Wrapped Major L1 Assets (via Hashport) ──
   { htsId: "0.0.1055483", symbol: "WBTC",        displayName: "Wrapped Bitcoin",            category: "wrapped" },
-  { htsId: "0.0.9770617", symbol: "WETH",        displayName: "Wrapped Ether",              category: "wrapped" },
+  { htsId: "0.0.541564",  symbol: "WETH",        displayName: "Wrapped Ether",              category: "wrapped" },
   { htsId: "0.0.7350565", symbol: "BNB",         displayName: "Wrapped BNB",                category: "wrapped" },
   { htsId: "0.0.1309164", symbol: "LINK",        displayName: "Wrapped Chainlink",          category: "wrapped" },
   { htsId: "0.0.3155415", symbol: "QNT",         displayName: "Wrapped Quant",              category: "wrapped" },

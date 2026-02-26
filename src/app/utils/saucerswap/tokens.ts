@@ -151,12 +151,15 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 11, isWrapped: false,
   },
   {
-    // [LIQUIDITY-FIX] Updated to 0.0.9770617 — SaucerSwap's largest WETH pool
-    // with $1.8M TVL. Old IDs (0.0.541564, 0.0.1969708) were low-liquidity
-    // tokens risking loss of pair value. This is the canonical high-liquidity WETH.
-    symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.9770617",
-    evmAddress: htsIdToEvmAddress("0.0.9770617"), decimals: 18,
-    logo: getReliableIconUrl("0.0.9770617") || "https://assets.coingecko.com/coins/images/279/standard/ethereum.png",
+    // [WETH-FIX] Reverted to canonical HashPort bridge token 0.0.541564.
+    // 0.0.9770617 was NOT a canonical WETH — it may be a V2 ERC20Wrapper or
+    // alternate token. V1 pools use the canonical ID. Same pattern as WBTC
+    // (0.0.1055483) and LINK (0.0.1055495) — canonical IDs, no aliases.
+    // If V2 pools need 0.0.9770617, the dynamic alias discovery on the server
+    // will handle it automatically (WETH is in BRIDGE_TOKEN_SYMBOLS).
+    symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.541564",
+    evmAddress: htsIdToEvmAddress("0.0.541564"), decimals: 8,
+    logo: getReliableIconUrl("0.0.541564") || getReliableIconUrl("0.0.9770617") || "https://assets.coingecko.com/coins/images/279/standard/ethereum.png",
     rank: 12, isWrapped: true, bridge: "HashPort",
   },
   {
@@ -343,6 +346,16 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
 
 export const TOKEN_BY_SYMBOL = new Map(SAUCERSWAP_TOKENS.map((t) => [t.symbol, t]));
 export const TOKEN_BY_HTS_ID = new Map(SAUCERSWAP_TOKENS.map((t) => [t.htsId, t]));
+
+// [WETH-FIX] Register old WETH IDs as aliases pointing to canonical WETH.
+// The pool graph or SaucerSwap API may reference WETH under these alternate IDs.
+// By registering them here, resolveTokenByHtsId() and graph edge resolution
+// correctly map them back to our canonical WETH entry (0.0.541564).
+const _wethToken = TOKEN_BY_SYMBOL.get("WETH");
+if (_wethToken) {
+  TOKEN_BY_HTS_ID.set("0.0.9770617", _wethToken);  // V2 ERC20Wrapper / alternate
+  TOKEN_BY_HTS_ID.set("0.0.1969708", _wethToken);   // Old WETH variant
+}
 
 // ── [C56] Dynamic Token Registry ─────────────────────────────────────
 // Mutable map populated by fetchDynamicTokens(). Allows resolveToken()

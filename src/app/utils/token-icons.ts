@@ -38,7 +38,8 @@ export const RELIABLE_TOKEN_ICONS: Record<string, string> = {
   "0.0.1055472": `${CG}/325/standard/Tether.png`,            // USDT (HashPort)
   "0.0.1055483": `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`, // WBTC (HashPort)
   "0.0.1055495": `${CG}/877/standard/chainlink-new-logo.png`,    // LINK (HashPort)
-  "0.0.9770617": `${CG}/279/standard/ethereum.png`,          // WETH (HashPort)
+  "0.0.541564":  `${CG}/279/standard/ethereum.png`,          // WETH canonical (HashPort)
+  "0.0.9770617": `${CG}/279/standard/ethereum.png`,          // WETH alternate / V2 wrapper
   "0.0.1055498": `${CG}/12645/standard/aave-token-round.png`,// AAVE (HashPort)
   "0.0.1055477": `${CG}/9956/standard/Badge_Dai.png`,        // DAI (HashPort)
   "0.0.1055459": `${CG}/6319/standard/usdc.png`,             // USDCh (HashPort USDC)

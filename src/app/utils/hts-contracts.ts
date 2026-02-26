@@ -122,10 +122,10 @@ export const BRIDGE_TOKEN_REGISTRY: BridgeToken[] = [
   },
   {
     symbol: "WETH", name: "Wrapped Ether",
-    htsId: "0.0.9770617", evmAddress: htsIdToEvmAddress("0.0.9770617"),
-    decimals: 18, bridge: "HashPort", originalChain: "Ethereum",
+    htsId: "0.0.541564", evmAddress: htsIdToEvmAddress("0.0.541564"),
+    decimals: 8, bridge: "HashPort", originalChain: "Ethereum",
     coingeckoId: "weth",
-    // [LIQUIDITY-FIX] Updated to SaucerSwap's largest WETH pool ($1.8M TVL)
+    // [WETH-FIX] Reverted to canonical HashPort bridge token
   },
   {
     symbol: "LINK", name: "Chainlink",
