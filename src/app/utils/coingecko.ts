@@ -290,7 +290,7 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
   const uniqueIds = [...new Set(ids)];
 
   try {
-    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=24h`;
+    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h`;
     const res = await fetchWithTimeout(url, 8000);
     if (!res.ok) {
       log.debug("CoinGecko", `HTTP ${res.status}`);
@@ -651,6 +651,137 @@ export async function fetchMarketRSI(): Promise<{ rsi: number; prices: number[] 
     log.debug("RSI", "Calculation failed", (err as Error).message);
     return { rsi: 50, prices: [] };
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SPARKLINE PIPELINE — 7-day hourly close prices for mini-charts
+// ══════════════════════════════════════════════════════════════════════
+//
+// IMPLEMENTATION NOTE: Binance-first, CoinCap fallback. Completely
+// decoupled from the price pipeline so prices load fast (sparkline=false
+// on CoinGecko) while sparklines arrive in the background (~200ms from
+// Binance). Module-level cache (5 min TTL) persists across remounts.
+// ══════════════════════════════════════════════════════════════════════
+
+export type SparklineMap = Record<string, number[]>;
+
+interface SparklineCacheEntry {
+  data: SparklineMap;
+  timestamp: number;
+}
+
+const SPARKLINE_CACHE_TTL = 5 * 60_000; // 5 minutes
+let _sparklineCacheEntry: SparklineCacheEntry | null = null;
+
+/**
+ * Fetch 7-day hourly klines from Binance for a single symbol.
+ * Returns close prices only (~168 points). Typically <200ms.
+ */
+async function fetchBinanceSparkline(symbol: string): Promise<number[]> {
+  const pair = BINANCE_PAIR_MAP[symbol];
+  if (!pair) return [];
+
+  try {
+    const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1h&limit=168`;
+    const res = await fetchWithTimeout(url, 4000);
+    if (!res.ok) return [];
+
+    const klines: any[] = await res.json();
+    // Each kline: [openTime, open, high, low, close, volume, ...]
+    return klines
+      .map((k: any) => parseFloat(k[4])) // close price
+      .filter((v: number) => isFinite(v) && v > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch 7-day hourly history from CoinCap as fallback.
+ * Slower than Binance but covers tokens like EURC, XMR.
+ */
+async function fetchCoinCapSparkline(symbol: string): Promise<number[]> {
+  try {
+    const history = await fetchCoinCapHistory(symbol, "h1", 7);
+    return history.map(p => p.priceUsd);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch sparkline data for ALL requested symbols.
+ *
+ * Strategy:
+ *   1. Batch-fetch Binance klines in parallel (covers 18 tokens in ~200ms)
+ *   2. For any symbols without Binance pair or Binance failure, fall back to CoinCap
+ *   3. Stablecoins get flat synthetic lines (sparkline for USDT/USDC is just noise)
+ *
+ * Returns cached data if fresh (5 min TTL).
+ */
+export async function fetchAllSparklines(symbols: string[]): Promise<SparklineMap> {
+  // Return cache if fresh
+  if (_sparklineCacheEntry && Date.now() - _sparklineCacheEntry.timestamp < SPARKLINE_CACHE_TTL) {
+    return _sparklineCacheEntry.data;
+  }
+
+  const result: SparklineMap = {};
+  const STABLECOIN_SYMBOLS = new Set(["USDT", "USDC", "USDCh", "EURC", "DAI"]);
+
+  // Separate symbols into tiers
+  const binanceSymbols: string[] = [];
+  const coinCapFallback: string[] = [];
+
+  for (const sym of symbols) {
+    if (STABLECOIN_SYMBOLS.has(sym)) {
+      // Stablecoins: flat line at $1
+      result[sym] = Array(168).fill(1.0);
+    } else if (BINANCE_PAIR_MAP[sym]) {
+      binanceSymbols.push(sym);
+    } else {
+      coinCapFallback.push(sym);
+    }
+  }
+
+  // Tier 1: Parallel Binance klines (fast, ~200ms for all)
+  const binanceResults = await Promise.all(
+    binanceSymbols.map(async (sym) => {
+      const data = await fetchBinanceSparkline(sym);
+      return { sym, data };
+    })
+  );
+
+  for (const { sym, data } of binanceResults) {
+    if (data.length >= 10) {
+      result[sym] = data;
+    } else {
+      // Binance failed for this symbol — add to CoinCap fallback
+      coinCapFallback.push(sym);
+    }
+  }
+
+  // Tier 2: CoinCap fallback for symbols without Binance coverage
+  if (coinCapFallback.length > 0) {
+    const coinCapResults = await Promise.all(
+      coinCapFallback.map(async (sym) => {
+        const data = await fetchCoinCapSparkline(sym);
+        return { sym, data };
+      })
+    );
+
+    for (const { sym, data } of coinCapResults) {
+      if (data.length >= 10) {
+        result[sym] = data;
+      }
+    }
+  }
+
+  const coveredCount = Object.values(result).filter(v => v.length >= 10).length;
+  log.debug("Sparklines", `${coveredCount}/${symbols.length} covered (Binance: ${binanceResults.filter(r => r.data.length >= 10).length}, CoinCap fallback: ${coinCapFallback.length})`);
+
+  // Cache
+  _sparklineCacheEntry = { data: result, timestamp: Date.now() };
+  return result;
 }
 
 // ── Top 20 Index (CoinGecko) ──────────────────────────────────────

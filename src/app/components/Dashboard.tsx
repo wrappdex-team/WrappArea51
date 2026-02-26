@@ -8,6 +8,7 @@ import { RSIGauge } from "./RSIGauge";
 import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, fetchCoinCapHistory, type CoinPrice } from "../utils/coingecko";
 import type { GlobalMarketData, OracleSource } from "../utils/coingecko";
 import { fetchMarketRSI } from "../utils/coingecko";
+import { fetchAllSparklines, type SparklineMap } from "../utils/coingecko";
 import { CandlestickChart } from "./CandlestickChart";
 import { MarketDetailChart } from "./MarketDetailChart";
 import { fetchRealCandles, generateCandlestickData } from "../utils/chartData";
@@ -54,6 +55,10 @@ const _dashCache: DashboardCache = {
   oracleStats: null,
   timestamp: 0,
 };
+
+// Module-level sparkline cache — persists across Dashboard remounts
+// and 30s price refresh cycles so sparklines don't flash-disappear.
+let _sparklineCache: SparklineMap = {};
 
 /** Fear & Greed with timeout — the bare fetch() had none, could hang forever */
 async function fetchFearGreed(timeoutMs = 6000): Promise<number | null> {
@@ -137,7 +142,9 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
         p?.current_price ?? token.fallbackPrice,
         token.volatility
       ),
-      sparkline7d: p?.sparkline_in_7d?.price || [],
+      // Sparkline priority: CoinGecko inline > module cache > empty
+      // Module cache prevents flash-disappear on 30s price refresh
+      sparkline7d: p?.sparkline_in_7d?.price || _sparklineCache[token.symbol] || [],
       oracleSource: p?.oracle_source,
       oracleUpdatedAt: p?.oracle_updated_at,
       chainlinkFeed: p?.chainlink_feed,
@@ -283,6 +290,23 @@ export function Dashboard() {
       _dashCache.marketData = assets;
       _dashCache.oracleStats = stats;
       _dashCache.timestamp = Date.now();
+
+      // Fetch sparklines from Binance klines in BACKGROUND (non-blocking, ~200ms)
+      // Separate from price pipeline to keep prices fast
+      fetchAllSparklines(ALL_SYMBOLS).then(sparklines => {
+        // Persist to module-level cache so 30s price refreshes don't flash-empty
+        _sparklineCache = { ..._sparklineCache, ...sparklines };
+        setMarketData(prev => {
+          const updated = prev.map(asset => {
+            const spark = sparklines[asset.symbol];
+            return spark && spark.length >= 10
+              ? { ...asset, sparkline7d: spark }
+              : asset;
+          });
+          _dashCache.marketData = updated;
+          return updated;
+        });
+      }).catch(() => {});
 
       // Fetch real chart data in BACKGROUND (non-blocking) for non-stablecoin tokens
       // Throttled in batches of 4 to avoid rate-limiting cascades
