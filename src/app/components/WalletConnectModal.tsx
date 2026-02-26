@@ -26,7 +26,7 @@ import {
 import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
-import { getSignClient } from "../utils/wallet-core";
+import { getSignClient, getWCModal } from "../utils/wallet-core";
 
 // [PERFORMANCE-FIX] Lazy-load QRCodeSVG — only needed when showing QR, not on modal open
 const QRCodeSVG = lazy(() => import("qrcode.react").then(m => ({ default: m.QRCodeSVG })));
@@ -321,6 +321,8 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   useEffect(() => {
     // Pre-warm WC SignClient in background (non-blocking)
     getSignClient().catch(() => { /* non-critical */ });
+    // [CONNECT-PERF] Pre-warm WC Modal package so openWCModal is instant
+    getWCModal().catch(() => { /* non-critical */ });
     // Detect HashPack extension
     if (!isMobileBrowser()) {
       detectHashPackExtension().then(setHashPackDetected);

@@ -22,8 +22,18 @@ import { TermsGate } from "./components/TermsGate";
 // clicks "Connect HashPack". The WC SDK is dynamically imported and the relay
 // WebSocket is connected in the background — by the time the user interacts,
 // the client is already initialized and the relay is warm.
-import { getSignClient } from "./utils/wallet-core";
-const _wcPrewarm = getSignClient().catch(() => {
+//
+// [CONNECT-PERF] Also pre-warm the WC Modal package and start a pre-connect
+// relay keepalive. Without this, the relay WebSocket drops after ~30-60s of
+// inactivity (no keepalive runs before wallet connection), so clicking
+// "Connect" after browsing for a minute triggers a 10s+ reconnection cycle.
+import { getSignClient, getWCModal, startPreConnectKeepalive } from "./utils/wallet-core";
+const _wcPrewarm = getSignClient().then(() => {
+  // SignClient ready — start pre-connect keepalive to prevent relay drop
+  startPreConnectKeepalive();
+  // Also pre-warm the WC Modal package (dynamic import) so it's cached
+  getWCModal().catch(() => { /* non-critical */ });
+}).catch(() => {
   // Non-critical — if it fails here, connectHashPack will retry on demand
 });
 

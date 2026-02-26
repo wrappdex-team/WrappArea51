@@ -108,7 +108,10 @@ async function _initSignClient(): Promise<any> {
   _G[_WC_KEY] = client;
 
   // Wait for the WebSocket relay handshake before sending anything.
-  await _ensureRelayConnected(client);
+  // [CONNECT-PERF] Use a shorter 5s timeout for init — if the relay is slow,
+  // the pre-connect keepalive will handle reconnection in the background.
+  // This prevents the prewarm from blocking for 10s+ on slow networks.
+  await _ensureRelayConnected(client, 5000);
 
   // ── Lifecycle events ─────────────────────────────────────────
   client.on("session_event", (event: any) => {
@@ -191,7 +194,12 @@ export async function proposeSession(network: HederaNetwork): Promise<WCConnectR
   // Ensure relay WebSocket is alive before sending the proposal.
   // Without this, client.connect() throws "send was called before connect"
   // if the relay dropped while the tab was backgrounded. [C15-01]
-  await _ensureRelayConnected(client);
+  //
+  // [CONNECT-PERF] Use a short 3s timeout instead of the default 10s.
+  // The pre-connect keepalive (startPreConnectKeepalive) keeps the relay
+  // warm since page load, so this is just a fast verification check. If the
+  // relay truly dropped, the retry loop below handles it with a force-reset.
+  await _ensureRelayConnected(client, 3000);
 
   // [C96] Retry with force-reset on relay failures.
   // proposeSession doesn't go through _safeRequest, so it needs its own retry.
@@ -1082,6 +1090,8 @@ let _relayKeepaliveId: ReturnType<typeof setInterval> | null = null;
  */
 export function startRelayKeepalive(): void {
   if (_relayKeepaliveId) return;
+  // [CONNECT-PERF] Stop the pre-connect keepalive — this one takes over
+  stopPreConnectKeepalive();
   _relayKeepaliveId = setInterval(async () => {
     try {
       if (!_signClient) return;
@@ -1103,6 +1113,68 @@ export function stopRelayKeepalive(): void {
   if (_relayKeepaliveId) {
     clearInterval(_relayKeepaliveId);
     _relayKeepaliveId = null;
+  }
+}
+
+// ── Pre-Connect Relay Keepalive ────────────────────────────────────────
+
+/** Pre-connect keepalive interval ID */
+let _preConnectKeepaliveId: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * [CONNECT-PERF] Start a relay keepalive that runs BEFORE the wallet connects.
+ *
+ * Problem: The relay WebSocket drops after ~30-60s of inactivity. The post-
+ * connect keepalive (startRelayKeepalive) only runs after a wallet is linked.
+ * Between page load prewarm and the user clicking "Connect" (often 30-120s),
+ * the relay dies. When connectViaHashConnect → proposeSession calls
+ * _ensureRelayConnected, it triggers a multi-phase reconnection cycle that
+ * takes 5-10+ seconds — this is the source of the slow initial connect.
+ *
+ * Fix: Ping the relay every 20s starting immediately after prewarm.
+ * Auto-stops when the post-connect keepalive takes over (startRelayKeepalive).
+ * Safe to call multiple times.
+ */
+export function startPreConnectKeepalive(): void {
+  if (_preConnectKeepaliveId) return;
+  // If the post-connect keepalive is already running, no need for this
+  if (_relayKeepaliveId) return;
+
+  _preConnectKeepaliveId = setInterval(async () => {
+    try {
+      if (!_signClient) return;
+      // If the post-connect keepalive started, this one is no longer needed
+      if (_relayKeepaliveId) {
+        stopPreConnectKeepalive();
+        return;
+      }
+      const relayer = _signClient.core?.relayer;
+      if (!relayer) return;
+
+      // Check raw WS state — relayer.connected can be stale
+      const provider = relayer.provider;
+      const ws = provider?.connection?.socket ?? provider?.socket;
+      const wsState = ws?.readyState ?? -1;
+
+      if (!relayer.connected || wsState !== 1 /* OPEN */) {
+        console.log("[WC] Pre-connect keepalive: relay dropped — reconnecting...");
+        await _ensureRelayConnected(_signClient, 5000);
+      }
+    } catch {
+      // Best effort — don't throw in keepalive
+    }
+  }, 20_000);
+  console.log("[WC] Pre-connect relay keepalive started");
+}
+
+/**
+ * Stop the pre-connect keepalive.
+ */
+export function stopPreConnectKeepalive(): void {
+  if (_preConnectKeepaliveId) {
+    clearInterval(_preConnectKeepaliveId);
+    _preConnectKeepaliveId = null;
+    console.log("[WC] Pre-connect relay keepalive stopped");
   }
 }
 
