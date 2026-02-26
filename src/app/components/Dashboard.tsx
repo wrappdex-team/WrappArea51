@@ -9,6 +9,7 @@ import { fetchCoinPrices, fetchGlobalMarketData, formatMarketCap, formatVolume, 
 import type { GlobalMarketData, OracleSource } from "../utils/coingecko";
 import { fetchMarketRSI } from "../utils/coingecko";
 import { fetchAllSparklines, type SparklineMap } from "../utils/coingecko";
+import { computeApproxGlobalData } from "../utils/coingecko";
 import { CandlestickChart } from "./CandlestickChart";
 import { MarketDetailChart } from "./MarketDetailChart";
 import { fetchRealCandles, generateCandlestickData } from "../utils/chartData";
@@ -251,18 +252,29 @@ export function Dashboard() {
 
   useEffect(() => {
     const loadGlobal = async () => {
-      const [data, rsiData, fngVal] = await Promise.all([
-        fetchGlobalMarketData(),
-        fetchMarketRSI(),
-        fetchFearGreed(),
-      ]);
-      setGlobalData(data);
-      setHeaderRsi(rsiData.rsi);
-      setHeaderFng(fngVal);
-      // Persist to module cache
-      _dashCache.globalData = data;
-      _dashCache.headerRsi = rsiData.rsi;
-      _dashCache.headerFng = fngVal;
+      // IMPLEMENTATION NOTE: Each stat updates INDEPENDENTLY as it arrives.
+      // Previous version used Promise.all which blocked ALL stats until the
+      // slowest one (CoinGecko /global at ~3-5s) completed.
+
+      // CoinGecko /global — enriches with accurate total market cap, BTC dom
+      fetchGlobalMarketData().then(data => {
+        if (data) {
+          setGlobalData(data);
+          _dashCache.globalData = data;
+        }
+      }).catch(() => {});
+
+      // RSI — CoinCap history API (typically ~500ms)
+      fetchMarketRSI().then(rsiData => {
+        setHeaderRsi(rsiData.rsi);
+        _dashCache.headerRsi = rsiData.rsi;
+      }).catch(() => {});
+
+      // Fear & Greed — alternative.me API (has 6s timeout)
+      fetchFearGreed().then(fngVal => {
+        setHeaderFng(fngVal);
+        _dashCache.headerFng = fngVal;
+      }).catch(() => {});
     };
     loadGlobal();
     const iv = setInterval(loadGlobal, 120000);
@@ -285,6 +297,19 @@ export function Dashboard() {
       // Show data immediately — don't wait for chart candles
       setMarketData(assets);
       setLoading(false);
+
+      // FAST APPROXIMATION: Compute global stats from price data we already have.
+      // Shows Market Cap, Volume, BTC Dom instantly (before CoinGecko /global arrives).
+      // CoinGecko /global enriches with accurate numbers when it resolves (~2-5s later).
+      // IMPLEMENTATION NOTE: Check _dashCache (module-level) not React state to avoid
+      // stale closure — loadPrices is defined in useEffect([]) so state vars are stale.
+      if (!_dashCache.globalData || _dashCache.globalData.activeCryptos === 0) {
+        const approx = computeApproxGlobalData(prices);
+        if (approx.totalMarketCap > 0) {
+          setGlobalData(approx);
+          // Don't persist to _dashCache — let CoinGecko /global overwrite with accurate data
+        }
+      }
 
       // Persist to module cache
       _dashCache.marketData = assets;

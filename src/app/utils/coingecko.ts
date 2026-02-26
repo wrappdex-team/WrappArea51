@@ -502,6 +502,48 @@ export interface GlobalMarketData {
 let _globalCache: { data: GlobalMarketData; ts: number } | null = null;
 const GLOBAL_CACHE_TTL = 60_000;
 
+/**
+ * Compute approximate global stats from individual token price data.
+ * Used as instant fast-path while CoinGecko /global loads in background.
+ *
+ * IMPLEMENTATION NOTE: Our token list covers ~22 tokens (top by market cap),
+ * which typically represents 75-85% of total crypto market cap. We apply
+ * a correction factor to estimate the full market. BTC dominance is
+ * computed directly (BTC mcap / sum of our tracked mcaps × correction).
+ */
+export function computeApproxGlobalData(
+  prices: Record<string, CoinPrice>
+): GlobalMarketData {
+  let totalMcap = 0;
+  let totalVol = 0;
+  let btcMcap = 0;
+  let ethMcap = 0;
+
+  for (const [sym, p] of Object.entries(prices)) {
+    const mcap = p.market_cap || 0;
+    const vol = p.total_volume || 0;
+    totalMcap += mcap;
+    totalVol += vol;
+    if (sym === "BTC") btcMcap = mcap;
+    if (sym === "ETH") ethMcap = mcap;
+  }
+
+  // Our ~22 tokens ≈ 80% of total market. Apply correction factor.
+  // This is a rough approximation — CoinGecko /global will replace it.
+  const COVERAGE_FACTOR = 1.25;
+  const estimatedTotalMcap = totalMcap * COVERAGE_FACTOR;
+  const estimatedTotalVol = totalVol * COVERAGE_FACTOR;
+
+  return {
+    totalMarketCap: estimatedTotalMcap,
+    totalVolume24h: estimatedTotalVol,
+    marketCapChange24h: 0, // Can't compute without previous data
+    btcDominance: totalMcap > 0 ? (btcMcap / estimatedTotalMcap) * 100 : 60,
+    ethDominance: totalMcap > 0 ? (ethMcap / estimatedTotalMcap) * 100 : 10,
+    activeCryptos: 0, // Only CoinGecko knows this
+  };
+}
+
 export async function fetchGlobalMarketData(): Promise<GlobalMarketData | null> {
   // Return cache if fresh
   if (_globalCache && Date.now() - _globalCache.ts < GLOBAL_CACHE_TTL) {
