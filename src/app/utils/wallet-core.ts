@@ -1778,12 +1778,11 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
   );
 
   // ── Brief wait ───────────────────────────────────────────────────────
-  // [WALLET-SURGERY Step 9] Reduced from 800ms to 300ms. The relay keepalive
-  // (startRelayKeepalive in SwapPanel) keeps the service worker alive, so we
-  // only need a brief yield for chrome.runtime.sendMessage to fire. The WC
-  // relay delivers the signing request regardless; this wait only affects
-  // whether the wallet auto-pops or the user has to click the extension icon.
-  // 300ms is enough for chrome.runtime to trigger the service worker start.
-  await new Promise<void>((resolve) => setTimeout(resolve, 300));
+  // [WALLET-PERF] Reduced from 300ms to 100ms. The relay keepalive
+  // (startRelayKeepalive in SwapPanel) maintains the WC WebSocket
+  // connection, so the extension's service worker should already be warm.
+  // 100ms is sufficient for chrome.runtime.sendMessage to register.
+  // Previous values: 800ms → 300ms → 100ms.
+  await new Promise<void>((resolve) => setTimeout(resolve, 100));
   console.log(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
 }

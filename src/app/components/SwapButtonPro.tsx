@@ -27,7 +27,7 @@ import {
 import type { AllowedToken } from "../utils/saucerswap";
 
 /** [C108-S13] How long to wait before showing "Open Wallet" button (ms) */
-const WALLET_OPEN_DELAY_MS = 3000;
+const WALLET_OPEN_DELAY_MS = 2000;
 
 interface SwapButtonProProps {
   status: "idle" | "processing" | "success" | "error";
@@ -132,9 +132,17 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   }, [status, swapStep?.step]);
 
   // ── [C108-S13] Build human-friendly step label ──
+  // [WALLET-PERF] Preflight steps use step=0, total=0 — show description directly
+  // without the "Step X of Y:" prefix. Real signing steps (step >= 1) get the prefix.
   const stepLabel = swapStep
-    ? `Step ${swapStep.step} of ${swapStep.total}: ${humanizeDescription(swapStep.description)}`
+    ? swapStep.step === 0 && swapStep.total === 0
+      ? humanizeDescription(swapStep.description)
+      : `Step ${swapStep.step} of ${swapStep.total}: ${humanizeDescription(swapStep.description)}`
     : "Preparing transaction...";
+
+  // [WALLET-PERF] During preflight (step=0), don't show "Sign in your HashPack"
+  // hint — the wallet hasn't received a signing request yet.
+  const isPreflight = swapStep?.step === 0 && swapStep?.total === 0;
 
   return (
     <div className="mt-5 space-y-2">
@@ -182,15 +190,18 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                 )}
 
                 {/* [C108-S13] "Waiting for wallet..." + sub-hint */}
-                <span className="text-xs text-amber-200/70 font-normal">
-                  Sign in your HashPack wallet to continue
-                </span>
+                {!isPreflight && (
+                  <span className="text-xs text-amber-200/70 font-normal">
+                    Sign in your HashPack wallet to continue
+                  </span>
+                )}
               </div>
             </button>
 
-            {/* [C108-S13] "Open Wallet" button — appears after 3s delay */}
+            {/* [C108-S13] "Open Wallet" button — appears after delay, but NOT during preflight
+                since there's no signing request for the wallet to show yet */}
             <AnimatePresence>
-              {showOpenWallet && onOpenWallet && (
+              {showOpenWallet && onOpenWallet && !isPreflight && (
                 <motion.button
                   initial={{ opacity: 0, height: 0, marginTop: 0 }}
                   animate={{ opacity: 1, height: "auto", marginTop: 8 }}

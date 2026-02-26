@@ -2024,6 +2024,13 @@ async function executeSaucerSwapDirect(
       return { success: false, error: "Invalid input amount", executionVenue: "saucerswap-v1" };
     }
 
+    // [WALLET-PERF] Emit preflight step so the UI shows progress immediately
+    // instead of a silent "Preparing transaction..." for 5-10s.
+    window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+      step: 0, total: 0,
+      description: `Finding best route for ${inputToken.symbol} → ${outputToken.symbol}...`,
+    }}));
+
     // Determine swap mode based on native HBAR involvement
     const isInputNative = !!inputToken.isNative;
     const isOutputNative = !!outputToken.isNative;
@@ -2038,13 +2045,6 @@ async function executeSaucerSwapDirect(
     // Use SaucerSwap alias EVM addresses for routing (bridge tokens have different pool IDs)
     // [C27-01] Must be `let` — reassigned when direct pool or multi-hop route overrides the path
     let pathAddresses = logicalPath.map((t) => getSaucerswapRoutingEvmAddress(t));
-
-    // ── Resolve the recipient's REAL EVM address via Mirror Node ──
-    // Critical fix: htsIdToEvmAddress(accountId) creates a synthetic long-zero
-    // address (0x0000...{num}) which may not match what the SaucerSwap router
-    // expects when sending output tokens. We resolve the actual EVM address
-    // from Mirror Node to ensure the router sends tokens to the right place.
-    const recipientEvmAddress = await resolveAccountEvmAddress(accountId, network);
 
     // ══════════════════════════════════════════════════════════════════
     // ── POOL VERSION DETECTION + MULTI-HOP ROUTING [C9-05] [C26-01] ──
@@ -2081,12 +2081,26 @@ async function executeSaucerSwapDirect(
     //
     // Falls back to individual detectPoolVersion() calls only if the
     // graph is empty (API unavailable).
+    //
+    // [WALLET-PERF] EVM address resolution runs IN PARALLEL with graph
+    // routing — saves 1-2s of sequential Mirror Node latency.
     // ═══════════════════════════════════════════════════════════════════
     const inputRoutingId = getSaucerswapRoutingId(isInputNative ? whbar : inputToken);
     const outputRoutingId = getSaucerswapRoutingId(isOutputNative ? whbar : outputToken);
 
+    // [WALLET-PERF] Parallel: resolve EVM address AND graph route simultaneously
+    // EVM address needs a Mirror Node call (cached after first swap), graph
+    // routing uses the in-memory pool cache (instant if pools are loaded).
+    const [recipientEvmAddress, _graphRouteResult] = await Promise.all([
+      resolveAccountEvmAddress(accountId, network),
+      findRouteViaGraph(inputRoutingId, outputRoutingId, network).catch((e: any) => {
+        console.warn(`[HBAR.h] [C82] Graph routing failed: ${e?.message} — will fall back to on-chain detection`);
+        return null;
+      }),
+    ]);
+
     try {
-      const graphRoute = await findRouteViaGraph(inputRoutingId, outputRoutingId, network);
+      const graphRoute = _graphRouteResult;
       if (graphRoute) {
         if (graphRoute.direct) {
           poolVersionInfo = graphRoute.direct;
@@ -2101,8 +2115,8 @@ async function executeSaucerSwapDirect(
           });
         }
       }
-    } catch (graphErr: any) {
-      console.warn(`[HBAR.h] [C82] Graph routing failed: ${graphErr?.message} — falling back to on-chain detection`);
+    } catch {
+      // Error already handled in Promise.all catch above
     }
 
     // ── Fallback: individual pool detection (only if graph didn't find a route) ──
@@ -2133,6 +2147,12 @@ async function executeSaucerSwapDirect(
       }
     }
     } // end fallback if (!poolVersionInfo && !multiHopRoute)
+
+    // [WALLET-PERF] Emit routing-complete step — user sees progress update
+    window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+      step: 0, total: 0,
+      description: `Route found — building transaction...`,
+    }}));
 
     // ┌─────────────────────────────────────────────────────────────────────┐
     // │  [FOT-EARLY] EARLY FEE-ON-TRANSFER DETECTION — SKIP V2            │
@@ -3909,6 +3929,11 @@ export async function executeSaucerSwap(
   // For non-native tokens, check that the user actually holds enough tokens.
   // HBAR balance is checked inside executeSaucerSwapDirect (needs gas calculation).
   if (!inputToken.isNative) {
+    // [WALLET-PERF] Emit step so user sees immediate feedback
+    window.dispatchEvent(new CustomEvent("swap-step", { detail: {
+      step: 0, total: 0,
+      description: `Verifying ${inputToken.symbol} balance...`,
+    }}));
     const rawNeeded = parseTokenAmount(inputAmount, inputToken.decimals);
     if (rawNeeded <= 0) {
       return { success: false, error: "Invalid input amount", executionVenue: "restricted-router" };

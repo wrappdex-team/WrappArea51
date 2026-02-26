@@ -1,25 +1,18 @@
 /**
  * QuickPairGrid — Curated "Quick Select" pair cards for the swap panel.
  *
- * 20 blue-chip pairs (no meme coins). Entire card is interactive:
- *   - Click → instantly sets pair in swap panel
- *   - Hover 2s → auto-selects pair (with visual progress ring)
+ * 20 blue-chip pairs (no meme coins). Click any card to set the pair
+ * in the swap panel. Click-only interaction — no hover auto-select,
+ * so an in-progress swap session is never accidentally disrupted.
  *
  * Replaces the old Pool Routes table with a premium VIP card grid.
  */
 
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { motion } from "motion/react";
-import {
-  Droplets,
-  ExternalLink,
-  RefreshCw,
-  TrendingUp,
-  Zap,
-} from "lucide-react";
+import { ExternalLink, RefreshCw, Zap } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { TokenIcon } from "./TokenIcon";
-import { Tip } from "./Tip";
 import { SAUCERSWAP_LARRY_LOGO } from "../assets/brand";
 import type { AllowedToken, PoolRoute } from "../utils/saucerswap";
 import { formatUsdCompact } from "../utils/saucerswap";
@@ -52,43 +45,11 @@ const CURATED_PAIR_KEYS = [
   "HBAR/WBNB",
 ] as const;
 
-const HOVER_SELECT_MS = 2000;
 const BLUE = "#1D63ED";
 
 /* ── Helper: normalise pair key for matching ── */
 function pairKey(a: string, b: string): string {
   return [a, b].sort().join("/");
-}
-
-/* ── Circular progress ring ── */
-function HoverRing({ progress }: { progress: number }) {
-  const r = 9;
-  const circ = 2 * Math.PI * r;
-  return (
-    <svg
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      className="absolute top-2 right-2 pointer-events-none"
-      style={{ opacity: progress > 0 ? 1 : 0, transition: "opacity 0.2s" }}
-    >
-      <circle cx="12" cy="12" r={r} fill="none" stroke="currentColor" strokeWidth="2" className="text-white/10" />
-      <circle
-        cx="12"
-        cy="12"
-        r={r}
-        fill="none"
-        stroke={BLUE}
-        strokeWidth="2"
-        strokeDasharray={circ}
-        strokeDashoffset={circ * (1 - progress)}
-        strokeLinecap="round"
-        transform="rotate(-90 12 12)"
-        style={{ transition: "stroke-dashoffset 0.1s linear" }}
-      />
-      <circle cx="12" cy="12" r="3" fill={BLUE} style={{ opacity: progress > 0.95 ? 1 : 0, transition: "opacity 0.15s" }} />
-    </svg>
-  );
 }
 
 /* ═══ MAIN COMPONENT ═══ */
@@ -201,7 +162,7 @@ export function QuickPairGrid({
             isDark ? "text-slate-500" : "text-gray-400"
           }`}
         >
-          Top institutional-grade pairs. Hover to preview, click to swap.
+          Top institutional-grade pairs. Click to swap.
         </p>
       </div>
 
@@ -263,40 +224,6 @@ function PairCard({
   isActive: boolean;
   onSelect: (pool: PoolRoute) => void;
 }) {
-  const [hoverProgress, setHoverProgress] = useState(0);
-  const hoverTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const hoverStart = useRef<number>(0);
-  const didAutoSelect = useRef(false);
-
-  const clearHover = useCallback(() => {
-    if (hoverTimer.current) {
-      clearInterval(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-    setHoverProgress(0);
-    didAutoSelect.current = false;
-  }, []);
-
-  const startHover = useCallback(() => {
-    hoverStart.current = Date.now();
-    didAutoSelect.current = false;
-    hoverTimer.current = setInterval(() => {
-      const elapsed = Date.now() - hoverStart.current;
-      const p = Math.min(elapsed / HOVER_SELECT_MS, 1);
-      setHoverProgress(p);
-      if (p >= 1 && !didAutoSelect.current) {
-        didAutoSelect.current = true;
-        onSelect(pool);
-      }
-    }, 50);
-  }, [pool, onSelect]);
-
-  useEffect(() => {
-    return () => {
-      if (hoverTimer.current) clearInterval(hoverTimer.current);
-    };
-  }, []);
-
   /* accent color per token pair category */
   const accent = useMemo(() => {
     const syms = [pool.tokenA.symbol, pool.tokenB.symbol];
@@ -316,8 +243,6 @@ function PairCard({
     <motion.button
       type="button"
       onClick={() => onSelect(pool)}
-      onMouseEnter={startHover}
-      onMouseLeave={clearHover}
       whileTap={{ scale: 0.97 }}
       className={`relative w-full text-left rounded-xl px-3.5 py-3 transition-all duration-300 cursor-pointer group overflow-hidden ${
         isActive
@@ -329,14 +254,11 @@ function PairCard({
           : "bg-gray-50/50 border border-gray-100 hover:bg-gray-50 hover:border-gray-200"
       }`}
     >
-      {/* Hover progress ring */}
-      <HoverRing progress={hoverProgress} />
-
-      {/* Top accent bar on hover */}
+      {/* Top accent bar — shown on active card */}
       <div
         className="absolute top-0 left-0 h-[2px] transition-all duration-500"
         style={{
-          width: hoverProgress > 0 ? `${hoverProgress * 100}%` : isActive ? "100%" : "0%",
+          width: isActive ? "100%" : "0%",
           backgroundColor: accent,
         }}
       />
