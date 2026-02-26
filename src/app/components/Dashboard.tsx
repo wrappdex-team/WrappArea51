@@ -24,6 +24,7 @@ import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
 import { DashboardStatsSkeleton, MarketListSkeleton } from "./Skeletons";
 import { Tip } from "./Tip";
 import { PriceFlash } from "./PriceFlash";
+import { MiniSparkline } from "./MiniSparkline";
 
 // ── Module-level caches ────────────────────────────────────────────
 // Persist across component unmount/remount cycles (tab switches,
@@ -104,6 +105,8 @@ interface MarketAsset {
   logo: string;
   category: "layer1" | "stablecoin" | "defi";
   chartData: CandlestickData[];
+  /** Real 7-day sparkline from CoinGecko (~168 hourly price points) */
+  sparkline7d: number[];
   oracleSource?: OracleSource;
   oracleUpdatedAt?: number;
   chainlinkFeed?: string;
@@ -134,6 +137,7 @@ function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
         p?.current_price ?? token.fallbackPrice,
         token.volatility
       ),
+      sparkline7d: p?.sparkline_in_7d?.price || [],
       oracleSource: p?.oracle_source,
       oracleUpdatedAt: p?.oracle_updated_at,
       chainlinkFeed: p?.chainlink_feed,
@@ -352,6 +356,7 @@ export function Dashboard() {
       logo: isDark ? partnerLogos.hbarDark : partnerLogos.hbarLight,
       category: "defi",
       chartData: generateCandlestickData(hbarhData.priceUsd, 0.18),
+      sparkline7d: hbarhData.priceHistory,
       oracleSource: undefined, // Handled with custom DexScreener badge
     } : null;
 
@@ -883,7 +888,7 @@ export function Dashboard() {
                     </div>
 
                     <div className="hidden md:block w-32 h-10">
-                      <CandlestickChart data={item.chartData} symbol={item.symbol} />
+                      <MiniSparkline data={item.sparkline7d} change24h={item.change} id={`spark-${item.symbol}`} />
                     </div>
 
                     {/* Trade / Bridge — VIP iridescent glow */}

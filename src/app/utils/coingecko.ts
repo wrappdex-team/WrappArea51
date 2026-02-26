@@ -116,6 +116,8 @@ export interface CoinPrice {
   high_24h?: number;
   /** Real 24h low from exchange/aggregator ticker (not chart-derived) */
   low_24h?: number;
+  /** 7-day hourly sparkline from CoinGecko (~168 points) */
+  sparkline_in_7d?: { price: number[] };
 }
 
 // ── Hardcoded Fallback (last resort) ──────────────────────────────
@@ -288,7 +290,7 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
   const uniqueIds = [...new Set(ids)];
 
   try {
-    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h`;
+    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=24h`;
     const res = await fetchWithTimeout(url, 8000);
     if (!res.ok) {
       log.debug("CoinGecko", `HTTP ${res.status}`);
@@ -313,6 +315,7 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
         oracle_updated_at: Math.floor(Date.now() / 1000),
         high_24h: coin.high_24h ?? undefined,
         low_24h: coin.low_24h ?? undefined,
+        sparkline_in_7d: coin.sparkline_in_7d ?? undefined,
       };
       // USDCh shares CoinGecko "usd-coin" with USDC — copy over
       if (sym === "USDC" && !result["USDCh"]) {
@@ -396,13 +399,15 @@ export async function fetchCoinPrices(
         price_change_percentage_24h: binance.price_change_percentage_24h,
         oracle_source: "binance",
         oracle_updated_at: binance.oracle_updated_at,
-        // Keep CoinGecko's market_cap/volume/image if available
+        // Keep CoinGecko's market_cap/volume/image/sparkline if available
         market_cap: merged[sym]?.market_cap || binance.market_cap,
         total_volume: binance.total_volume || merged[sym]?.total_volume || 0,
         change_source: "binance",
         // Binance 24h high/low is more accurate (real-time), fallback to CoinGecko
         high_24h: binance.high_24h || merged[sym]?.high_24h,
         low_24h: binance.low_24h || merged[sym]?.low_24h,
+        // Preserve CoinGecko sparkline (Binance tier doesn't provide sparklines)
+        sparkline_in_7d: merged[sym]?.sparkline_in_7d,
       };
     }
 
