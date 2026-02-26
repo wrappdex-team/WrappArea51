@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import { Link } from "react-router";
 import { motion, useInView } from "motion/react";
+import { log } from "../utils/logger";
 import {
   ArrowLeft,
   Copy,
@@ -307,7 +308,7 @@ export function Branding() {
         }
       })
       .catch((err) => {
-        console.warn("[Branding] Brand logo fetch failed, using SVG fallbacks:", err);
+        log.warn("Branding", "Brand logo fetch failed, using SVG fallbacks", err);
       });
   }, []);
 

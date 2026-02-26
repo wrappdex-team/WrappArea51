@@ -16,8 +16,9 @@
 import { log } from "./logger";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { FORCE_INCLUDE_POOL_CONTRACT_IDS } from "./v2-token-whitelist";
+import { getReliableIconUrl, getReliableIconBySymbol } from "./token-icons";
 
-// ── Types ──────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────���─────────────────
 
 export interface LivePool {
   id: string;
@@ -57,39 +58,61 @@ const FETCH_TIMEOUT_MS = 15_000;
 const MIN_TVL_DISPLAY = 100; // Pools below $100 TVL are hidden (dust/spam)
 
 // ── Token Logo Resolution ─────────────────────────────────────────
+// IMPLEMENTATION NOTE: All URLs use CoinGecko CDN (assets.coingecko.com)
+// which does NOT block hotlinking from Vercel/production domains.
+// CoinMarketCap (s2.coinmarketcap.com) was the previous source but
+// aggressively blocks external referrers, breaking icons on deployment.
+
+const CG = "https://assets.coingecko.com/coins/images";
 
 const TOKEN_LOGOS: Record<string, string> = {
-  HBAR:        "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
-  WHBAR:       "https://assets.coingecko.com/coins/images/3688/large/hbar.png",
-  USDC:        "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
-  USDT:        "https://assets.coingecko.com/coins/images/325/large/Tether.png",
-  WBTC:        "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
-  "WBTC[hts]": "https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",
-  WETH:        "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-  "WETH[hts]": "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-  LINK:        "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
-  "LINK[hts]": "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
-  BNB:         "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
-  "BNB[hts]":  "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
-  QNT:         "https://assets.coingecko.com/coins/images/3370/large/5ZOu7brX_400x400.jpg",
-  "QNT[hts]":  "https://assets.coingecko.com/coins/images/3370/large/5ZOu7brX_400x400.jpg",
-  SAUCE:       "https://www.saucerswap.finance/images/tokens/sauce.svg",
-  HBARX:       "https://www.saucerswap.finance/images/tokens/hbarx.svg",
-  DAI:         "https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",
-  AAVE:        "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png",
-  DOT:         "https://assets.coingecko.com/coins/images/12171/large/polkadot.png",
+  HBAR:        `${CG}/3688/standard/hbar.png`,
+  WHBAR:       `${CG}/3688/standard/hbar.png`,
+  USDC:        `${CG}/6319/standard/usdc.png`,
+  USDT:        `${CG}/325/standard/Tether.png`,
+  WBTC:        `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`,
+  "WBTC[hts]": `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`,
+  WETH:        `${CG}/279/standard/ethereum.png`,
+  "WETH[hts]": `${CG}/279/standard/ethereum.png`,
+  LINK:        `${CG}/877/standard/chainlink-new-logo.png`,
+  "LINK[hts]": `${CG}/877/standard/chainlink-new-logo.png`,
+  BNB:         `${CG}/825/standard/bnb-icon2_2x.png`,
+  "BNB[hts]":  `${CG}/825/standard/bnb-icon2_2x.png`,
+  QNT:         `${CG}/3370/standard/5ZOu7brX_400x400.jpg`,
+  "QNT[hts]":  `${CG}/3370/standard/5ZOu7brX_400x400.jpg`,
+  SAUCE:       `${CG}/28255/standard/SAUCE.png`,
+  HBARX:       `${CG}/28362/standard/Hbarx.png`,
+  KARATE:      `${CG}/30375/standard/karate_200x200.png`,
+  PACK:        `${CG}/28506/standard/hashpack-logo.png`,
+  DOVU:        `${CG}/3455/standard/dovu.png`,
+  HST:         `${CG}/14336/standard/headstarter.png`,
+  DAI:         `${CG}/9956/standard/Badge_Dai.png`,
+  AAVE:        `${CG}/12645/standard/aave-token-round.png`,
+  DOT:         `${CG}/12171/standard/polkadot.png`,
+  WBNB:        `${CG}/825/standard/bnb-icon2_2x.png`,
+  WAVAX:       `${CG}/12559/standard/Avalanche_Circle_RedWhite_Trans.png`,
+  WPOL:        `${CG}/4713/standard/polygon.png`,
+  WMATIC:      `${CG}/4713/standard/polygon.png`,
+  JAM:         `${CG}/2969/standard/JAM_logo200x200.png`,
+  CLXY:        `${CG}/18507/standard/calaxy.png`,
   "HBAR.h":    `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#0a0e1a" stroke="#1D63ED" stroke-width="3"/><text x="50" y="70" text-anchor="middle" font-family="system-ui,sans-serif" font-size="58" font-weight="700" fill="#1D63ED">' + "\u0127" + '</text></svg>')}`,
   "HBAR.\u0127":  `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#0a0e1a" stroke="#1D63ED" stroke-width="3"/><text x="50" y="70" text-anchor="middle" font-family="system-ui,sans-serif" font-size="58" font-weight="700" fill="#1D63ED">' + "\u0127" + '</text></svg>')}`,
 };
 
 function resolveTokenLogo(symbol: string, apiIcon?: string): string {
   const cleaned = symbol.replace("[hts]", "").replace("[HTS]", "");
+  // 1. Check hardcoded CoinGecko URLs (most reliable)
   if (TOKEN_LOGOS[symbol]) return TOKEN_LOGOS[symbol];
   if (TOKEN_LOGOS[cleaned]) return TOKEN_LOGOS[cleaned];
+  // 2. Check centralized reliable icon map by symbol
+  const reliable = getReliableIconBySymbol(symbol) || getReliableIconBySymbol(cleaned);
+  if (reliable) return reliable;
+  // 3. Use API-provided icon URL
   if (apiIcon) {
     if (apiIcon.startsWith("http")) return apiIcon;
     return `https://www.saucerswap.finance${apiIcon}`;
   }
+  // 4. SaucerSwap CDN fallback by symbol
   return `https://www.saucerswap.finance/images/tokens/${cleaned.toLowerCase()}.svg`;
 }
 

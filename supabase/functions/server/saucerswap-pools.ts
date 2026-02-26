@@ -161,24 +161,38 @@ function extractArray(data: any): any[] {
 }
 
 // ── Token logo resolution ───────────────────────────────────────────
-// [C79-01] Migrated from CoinGecko (broken /large/ paths) to
-// CoinMarketCap static CDN (stable, no auth required, 64x64 PNG).
-// SaucerSwap-native tokens use SaucerSwap CDN (SVG).
+// IMPLEMENTATION NOTE: All URLs use CoinGecko CDN (assets.coingecko.com)
+// which has an open referrer policy — works on Vercel, localhost, everywhere.
+// CoinMarketCap (s2.coinmarketcap.com) was the previous source but
+// aggressively blocks hotlinking from production domains.
+// SaucerSwap-native tokens use CoinGecko where listed, SaucerSwap CDN otherwise.
+
+const CG = "https://assets.coingecko.com/coins/images";
 
 const KNOWN_LOGOS: Record<string, string> = {
-  HBAR:    "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
-  WHBAR:   "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
-  USDC:    "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png",
-  USDT:    "https://s2.coinmarketcap.com/static/img/coins/64x64/825.png",
-  WBTC:    "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png",
-  WETH:    "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
-  LINK:    "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png",
-  BNB:     "https://s2.coinmarketcap.com/static/img/coins/64x64/1839.png",
-  QNT:     "https://s2.coinmarketcap.com/static/img/coins/64x64/3155.png",
-  SAUCE:   "https://www.saucerswap.finance/images/tokens/sauce.svg",
-  HBARX:   "https://www.saucerswap.finance/images/tokens/hbarx.svg",
-  DAI:     "https://s2.coinmarketcap.com/static/img/coins/64x64/4943.png",
-  AAVE:    "https://s2.coinmarketcap.com/static/img/coins/64x64/7278.png",
+  HBAR:    `${CG}/3688/standard/hbar.png`,
+  WHBAR:   `${CG}/3688/standard/hbar.png`,
+  USDC:    `${CG}/6319/standard/usdc.png`,
+  USDT:    `${CG}/325/standard/Tether.png`,
+  WBTC:    `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`,
+  WETH:    `${CG}/279/standard/ethereum.png`,
+  LINK:    `${CG}/877/standard/chainlink-new-logo.png`,
+  BNB:     `${CG}/825/standard/bnb-icon2_2x.png`,
+  QNT:     `${CG}/3370/standard/5ZOu7brX_400x400.jpg`,
+  SAUCE:   `${CG}/28255/standard/SAUCE.png`,
+  HBARX:   `${CG}/28362/standard/Hbarx.png`,
+  DAI:     `${CG}/9956/standard/Badge_Dai.png`,
+  AAVE:    `${CG}/12645/standard/aave-token-round.png`,
+  KARATE:  `${CG}/30375/standard/karate_200x200.png`,
+  PACK:    `${CG}/28506/standard/hashpack-logo.png`,
+  DOVU:    `${CG}/3455/standard/dovu.png`,
+  HST:     `${CG}/14336/standard/headstarter.png`,
+  WBNB:    `${CG}/825/standard/bnb-icon2_2x.png`,
+  WAVAX:   `${CG}/12559/standard/Avalanche_Circle_RedWhite_Trans.png`,
+  WPOL:    `${CG}/4713/standard/polygon.png`,
+  WMATIC:  `${CG}/4713/standard/polygon.png`,
+  JAM:     `${CG}/2969/standard/JAM_logo200x200.png`,
+  CLXY:    `${CG}/18507/standard/calaxy.png`,
   // [C36-04] HBAR.ħ protocol token — SaucerSwap API may use various symbol names
   "HBAR.ħ": "https://www.saucerswap.finance/images/tokens/hbar.h.svg",
   "HBAR.h": "https://www.saucerswap.finance/images/tokens/hbar.h.svg",

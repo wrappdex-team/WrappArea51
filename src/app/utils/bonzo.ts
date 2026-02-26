@@ -254,7 +254,7 @@ const BONZO_SUPPORTED_TOKENS: BonzoTokenDef[] = [
     name: "Bonzo",
     hederaTokenId: "0.0.1540481",
     decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/31229.png",
+    logo: "https://assets.coingecko.com/coins/images/35498/standard/bonzo.png",
     canBeCollateral: false,
     borrowEnabled: false,
     defaultMaxLTV: 0,

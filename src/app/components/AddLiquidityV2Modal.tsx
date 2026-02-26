@@ -39,6 +39,8 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useEscapeKey } from "../hooks/useEscapeKey";
+import { log } from "../utils/logger";
 import {
   X,
   Droplets,
@@ -207,6 +209,7 @@ function formatPriceDisplay(n: number, fullRange: boolean, position: "low" | "hi
 }
 
 export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2ModalProps) {
+  useEscapeKey(onClose);
   const { isDark } = useTheme();
   const { primaryWallet, hederaAccount, hederaNetwork, hbarPrice, refreshHederaBalance } = useWallet();
   const accountId = hederaAccount?.accountId || primaryWallet?.accountId || "";
@@ -278,7 +281,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
     // 20s timeout to prevent hanging forever if RPC relay is down
     const timeout = setTimeout(() => {
       if (!cancelled) {
-        console.warn("[LP-13] Pool fetch timed out after 20s for", pool.contractId);
+        log.warn("LP-Pool", "Pool fetch timed out after 20s", pool.contractId);
         setLoadingState(false);
       }
     }, 20_000);
@@ -578,13 +581,13 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
   const { tickLower, tickUpper, priceLower, priceUpper } = useMemo(() => {
     const ZERO = { tickLower: 0, tickUpper: 0, priceLower: 0, priceUpper: 0 };
     if (!currentPrice || currentPrice <= 0) {
-      console.log("[LP-UX-04] Tick range: currentPrice not ready:", currentPrice);
+      log.debug("LP-Range", "currentPrice not ready", currentPrice);
       return ZERO;
     }
 
     const preset = RANGE_PRESETS[selectedPreset];
     if (!preset) {
-      console.warn("[LP-UX-04] Tick range: invalid preset index:", selectedPreset);
+      log.warn("LP-Range", "Invalid preset index", selectedPreset);
       return ZERO;
     }
 
@@ -628,7 +631,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
 
       // Ensure tl < tu — if collapsed to same tick, expand by one spacing
       if (tl >= tu) {
-        console.warn("[LP-UX-04] Tick range collapsed, expanding:", { tl, tu, tickSpacing, preset: preset.label });
+        log.warn("LP-Range", "Tick range collapsed, expanding", { tl, tu, tickSpacing, preset: preset.label });
         tu = tl + tickSpacing;
       }
 
@@ -638,7 +641,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
       if (tu > maxTick) tu = maxTick;
       if (tl >= tu) {
         // If clamping broke the range, fallback to full range
-        console.warn("[LP-UX-04] Tick range invalid after clamping, falling back to full range");
+        log.warn("LP-Range", "Tick range invalid after clamping, falling back to full range");
         tl = fullRangeTicks.tl;
         tu = fullRangeTicks.tu;
       }
@@ -646,9 +649,9 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
       const pL = tickToPrice(tl, decimals0, decimals1);
       const pU = tickToPrice(tu, decimals0, decimals1);
 
-      console.log("[LP-UX-04] Tick range computed:", {
+      log.debug("LP-Range", "Tick range computed", {
         preset: preset.label, tl, tu, pL: pL.toFixed(6), pU: pU.toFixed(6),
-        currentPrice: currentPrice.toFixed(6), feeTier, tickSpacing
+        currentPrice: currentPrice.toFixed(6), feeTier, tickSpacing,
       });
 
       return { tickLower: tl, tickUpper: tu, priceLower: pL, priceUpper: pU };
@@ -684,7 +687,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
         rawAmount,
         activeInput === 0,
       );
-      console.log("[LP-UX-04] computeMintAmounts result:", {
+      log.debug("LP-Mint", "computeMintAmounts result", {
         amount0: result.amount0.toString(),
         amount1: result.amount1.toString(),
         liquidity: result.liquidity.toString(),
@@ -716,12 +719,12 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
     if (tickLower >= tickUpper) {
       // Custom mode with no input is expected — show a gentle prompt
       if (selectedPreset === PRESET_CUSTOM_IDX) return "Enter a custom range percentage";
-      console.warn("[LP-UX-04] Validation: tickLower >= tickUpper", { tickLower, tickUpper, selectedPreset });
+      log.warn("LP-Validate", "tickLower >= tickUpper", { tickLower, tickUpper, selectedPreset });
       return "Invalid price range";
     }
     const rangeErr = validateTickRange(tickLower, tickUpper, feeTier);
     if (rangeErr) {
-      console.warn("[LP-UX-04] validateTickRange failed:", rangeErr, { tickLower, tickUpper, feeTier });
+      log.warn("LP-Validate", "validateTickRange failed", { rangeErr, tickLower, tickUpper, feeTier });
       return rangeErr;
     }
     if (!amount0Input && !amount1Input) return "Enter an amount";
@@ -760,10 +763,12 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
     setMintStep(null);
 
     try {
-      console.log("[LP-05] ═══ LIVE MINT EXECUTION STARTING ═══");
-      console.log(`[LP-05] Pool: ${displaySymbol0}/${displaySymbol1} fee=${feeTier}`);
-      console.log(`[LP-05] Amounts: token0=${mintResult.amount0.toString()}, token1=${mintResult.amount1.toString()}`);
-      console.log(`[LP-05] Range: [${tickLower}, ${tickUpper}]`);
+      log.info("LP-Mint", `Mint starting: ${displaySymbol0}/${displaySymbol1} fee=${feeTier}`, {
+        amount0: mintResult.amount0.toString(),
+        amount1: mintResult.amount1.toString(),
+        tickLower,
+        tickUpper,
+      });
 
       // [LP-05] Call the real V2 liquidity engine — no simulation
       const result = await mintPosition({
@@ -783,7 +788,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
         mintFee,
         onStep: (step, total, desc) => {
           setMintStep({ step, total, desc });
-          console.log(`[LP-05] UI Step ${step}/${total}: ${desc}`);
+          log.debug("LP-Mint", `Step ${step}/${total}: ${desc}`);
         },
       });
 
@@ -820,7 +825,7 @@ export function AddLiquidityV2Modal({ pool, onClose, onSuccess }: AddLiquidityV2
       try {
         const { invalidatePositionCacheForAccount } = await import("../utils/saucerswap/positions");
         invalidatePositionCacheForAccount(accountId, (hederaNetwork || "mainnet") as any);
-        console.log("[LP-05] Position cache invalidated post-mint for", accountId);
+        log.debug("LP-Mint", "Position cache invalidated post-mint", accountId);
       } catch {}
 
       // [LP-15] Log the operation for history tracking

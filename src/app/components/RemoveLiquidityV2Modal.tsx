@@ -27,6 +27,8 @@ import {
   Info,
   Fuel,
 } from "lucide-react";
+import { useEscapeKey } from "../hooks/useEscapeKey";
+import { log } from "../utils/logger";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { useWallet } from "../contexts/WalletContext";
@@ -80,6 +82,7 @@ export function RemoveLiquidityV2Modal({
   onSuccess,
   collectOnly = false,
 }: RemoveLiquidityV2ModalProps) {
+  useEscapeKey(onClose);
   const { isDark } = useTheme();
   const { hederaNetwork, primaryWallet, hederaAccount, refreshHederaBalance } = useWallet();
   const accountId = hederaAccount?.accountId || primaryWallet?.accountId || "";
@@ -139,8 +142,7 @@ export function RemoveLiquidityV2Modal({
     try {
       if (isCollectMode) {
         // ── COLLECT FEES ONLY ─────────────────────────────────────
-        console.log("[LP-08] ═══ COLLECT FEES EXECUTION STARTING ═══");
-        console.log(`[LP-08] NFT #${pos.tokenSN} — ${pos.token0.symbol}/${pos.token1.symbol}`);
+        log.info("LP-Collect", `Collect fees starting: NFT #${pos.tokenSN} — ${pos.token0.symbol}/${pos.token1.symbol}`);
 
         const result = await collectFees({
           accountId,
@@ -209,10 +211,11 @@ export function RemoveLiquidityV2Modal({
           return;
         }
 
-        console.log("[LP-08] ═══ REMOVE LIQUIDITY EXECUTION STARTING ═══");
-        console.log(`[LP-08] NFT #${pos.tokenSN} — ${pos.token0.symbol}/${pos.token1.symbol}`);
-        console.log(`[LP-08] Percent: ${percent}% | Burn: ${burnNFT && percent === 100}`);
-        console.log(`[LP-08] Liquidity: ${burnResult.liquidityToRemove.toString()}`);
+        log.info("LP-Remove", `Remove starting: NFT #${pos.tokenSN} — ${pos.token0.symbol}/${pos.token1.symbol}`, {
+          percent,
+          burn: burnNFT && percent === 100,
+          liquidity: burnResult.liquidityToRemove.toString(),
+        });
 
         const result = await removeLiquidity({
           accountId,

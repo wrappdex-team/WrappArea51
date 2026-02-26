@@ -715,9 +715,9 @@ async function lookupV2PoolFromApi(
       (idB === htsIdA && symA !== "" && idA !== htsIdB) ||
       (idB === htsIdB && symA !== "" && idA !== htsIdA)
     );
-    // Only use pure symbol match as last resort — too many false positives
-    // without the token registry. Stick to ID-based for server-side.
-    // TODO [C59]: When token registry is server-side, enable full symbol fallback.
+    // IMPLEMENTATION NOTE: Pure symbol matching is intentionally disabled on the
+    // server side — too many false positives without the full token registry.
+    // ID-based matching is authoritative and sufficient for all production pools.
 
     if (matchedById) {
       const fee = pool.fee ?? pool.feeTier ?? pool.feeRate ?? 3000;

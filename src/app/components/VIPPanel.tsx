@@ -23,6 +23,7 @@ import {
 } from "../utils/vip";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
 import { playVipUnlock, playVipConfirm, playVipFeatureBass } from "../utils/sounds";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const FEATURE_ICONS: Record<VipFeatureId, React.ReactNode> = {
   vip_theme: <Palette className="w-5 h-5" />,
@@ -38,6 +39,9 @@ interface VIPPanelProps {
 
 export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
   const { hederaAccount, hederaNetwork, hashPackSession } = useWallet();
+
+  // ---- Escape key dismissal (WCAG 2.1 SC 2.1.2) ----
+  useEscapeKey(onClose, !open);
 
   const [prefs, setPrefs] = useState<VipPrefs>(loadVipPrefs);
 
@@ -254,6 +258,16 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
               </div>
               <div className="text-sm text-slate-400">Wallet not connected</div>
             </div>
+          ) : verifyError ? (
+            <div className="flex items-center gap-3 p-3.5 bg-red-500/5 rounded-xl border border-red-500/15">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-red-500/10 text-red-400">
+                <ShieldCheck className="w-4.5 h-4.5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-red-300">Verification failed</div>
+                <div className="text-xs text-slate-500 mt-0.5">{verifyError}</div>
+              </div>
+            </div>
           ) : !eligible ? (
             <div className="flex items-center gap-3 p-3.5 bg-amber-500/5 rounded-xl border border-amber-500/15">
               <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-amber-500/10 text-amber-400">
@@ -285,7 +299,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
               </div>
               <div className="flex-1 min-w-0">
                 <div className={`text-sm font-medium transition-colors duration-500 ${
-                  isActive ? "text-emerald-300" : "text-emerald-300"
+                  isActive ? "text-emerald-300" : "text-emerald-400/80"
                 }`}>
                   {isActive ? "VIP Active" : "VIP Eligible"}
                 </div>

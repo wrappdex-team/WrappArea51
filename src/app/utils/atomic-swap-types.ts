@@ -61,7 +61,7 @@ export interface PoolAccountDef {
   tokenA: string;
   /** Token B symbol (alphabetically second) */
   tokenB: string;
-  /** Hedera account ID holding pool reserves (e.g., "0.0.XXXXXX") */
+  /** Hedera account ID holding pool reserves (e.g., "0.0.1456986") */
   accountId: string;
   /** HTS token ID of the LP share token for this pool */
   lpTokenId: string;

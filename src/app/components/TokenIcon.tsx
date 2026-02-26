@@ -2,21 +2,21 @@
  * TokenIcon — Production-ready token icon with multi-source fallback.
  *
  * Builds a deduplicated URL chain on each render, indexed by failCount:
- *   [0] Primary `src` prop (from token.logo — static or API-patched)
- *   [1] Icon registry URL (populated from SaucerSwap API via server proxy)
- *   [2] SaucerSwap CDN by symbol:  /images/tokens/{symbol_lower}.svg
- *   [3] SaucerSwap CDN by symbol:  /images/tokens/{symbol_lower}.png
- *   [4] SaucerSwap CDN by HTS ID:  /images/tokens/{htsId}.png
- *   [5] SaucerSwap CDN by HTS ID:  /images/tokens/{htsId}.svg
- *   [6] Icon proxy fallback (primary src routed through our server)
- *   [7] Icon proxy fallback (registry URL routed through our server)
+ *   [0] Reliable static URL (CoinGecko CDN — works on all deploy targets)
+ *   [1] Primary `src` prop (from token.logo — static or API-patched)
+ *   [2] Icon registry URL (populated from SaucerSwap API via server proxy)
+ *   [3] SaucerSwap CDN by symbol:  /images/tokens/{symbol_lower}.svg
+ *   [4] SaucerSwap CDN by symbol:  /images/tokens/{symbol_lower}.png
+ *   [5] SaucerSwap CDN by HTS ID:  /images/tokens/{htsId}.png
+ *   [6] SaucerSwap CDN by HTS ID:  /images/tokens/{htsId}.svg
+ *   [7] Icon proxy fallback (primary src routed through our server)
+ *   [8] Icon proxy fallback (registry URL routed through our server)
  *   [∞] Letter avatar (deterministic color)
  *
- * On Vercel deployments, external CDN URLs (s2.coinmarketcap.com,
- * saucerswap.finance) often fail due to referrer/hotlink protection.
- * The icon proxy fallbacks route these URLs through our own server,
- * bypassing CDN restrictions. The proxy is only tried AFTER direct
- * URLs fail — zero server load when CDNs work (localhost, Figma Make).
+ * Phase 0 uses CoinGecko CDN URLs from the centralized token-icons.ts
+ * registry — these have an open referrer policy and work on Vercel,
+ * localhost, and all other deployment targets. For known tokens, this
+ * resolves on the first try with zero fallback overhead.
  *
  * Duplicates are stripped so the chain never re-tries a URL that
  * already failed. The icon registry is a global Map populated once
@@ -27,6 +27,7 @@
  */
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import { projectId } from "/utils/supabase/info";
+import { getReliableIconUrl } from "../utils/token-icons";
 
 // ═══════════════════════════════════════════════════════════════════════
 // ── ICON PROXY URL BUILDER ──────────────────────────────────────────
@@ -108,8 +109,8 @@ const SS_CDN = "https://www.saucerswap.finance";
  * Build a deduplicated array of URLs to try, in priority order.
  * No URL appears twice — if src === registryUrl, it's only tried once.
  *
- * Strategy: Try direct CDN URLs first (fast, free). If all direct
- * URLs fail, fall back to our icon proxy (slower, uses server resources).
+ * Strategy: Try reliable static URLs first (CoinGecko CDN — works everywhere),
+ * then direct CDN URLs, then our icon proxy as last resort.
  */
 function buildUrlChain(src: string, symbol: string, htsId?: string): string[] {
   const seen = new Set<string>();
@@ -121,6 +122,12 @@ function buildUrlChain(src: string, symbol: string, htsId?: string): string[] {
       chain.push(url);
     }
   };
+
+  // ── Phase 0: Reliable static URLs (CoinGecko CDN — works on Vercel) ──
+  // These bypass all CDN hotlink issues. Checked first for known tokens.
+  if (htsId) {
+    add(getReliableIconUrl(htsId));
+  }
 
   // ── Phase 1: Direct CDN URLs (zero server load) ──
   // 1. Primary src

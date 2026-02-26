@@ -33,6 +33,8 @@ import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { toast } from "sonner";
 import { Tip } from "./Tip";
+import { useEscapeKey } from "../hooks/useEscapeKey";
+import { log } from "../utils/logger";
 import { motion } from "motion/react";
 import {
   HBARH_TOKEN_ID,
@@ -1528,6 +1530,7 @@ function CreateProposalModal({
   accountId: string;
   onClose: () => void;
   onCreate: (
+
     title: string,
     desc: string,
     cat: ProposalCategory,
@@ -1536,6 +1539,8 @@ function CreateProposalModal({
   ) => void;
   actionLoading: boolean;
 }) {
+  useEscapeKey(onClose);
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<ProposalCategory>("Features");
@@ -1547,6 +1552,9 @@ function CreateProposalModal({
   return (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create proposal"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-slate-900 border border-pink-500/20 rounded-xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto">
@@ -1668,6 +1676,8 @@ function EditProposalModal({
   onSave: (updates: { title?: string; description?: string; category?: ProposalCategory }) => void;
   actionLoading: boolean;
 }) {
+  useEscapeKey(onClose);
+
   const { hashPackSession } = useWallet();
   const editAccountId = hashPackSession?.accountId ?? "";
   const editIsAdmin = isDAOAdmin(editAccountId);
@@ -1686,6 +1696,9 @@ function EditProposalModal({
   return (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Edit proposal"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-slate-900 border border-amber-500/20 rounded-xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto">
@@ -1822,7 +1835,7 @@ function AdminManagementPanel({
     setError(null);
     setActionLoading(true);
     try {
-      console.log(`[DAO-Admin] Adding admin ${newAdminId.trim()} via owner ${accountId}`);
+      log.info("DAO-Admin", `Adding admin ${newAdminId.trim()} via owner ${accountId}`);
       const result = await addDaoAdmin(accountId, newAdminId.trim());
       if (result.error) {
         console.error(`[DAO-Admin] addDaoAdmin error: code=${result.code} msg=${result.error}`);
@@ -1853,7 +1866,7 @@ function AdminManagementPanel({
     setError(null);
     setActionLoading(true);
     try {
-      console.log(`[DAO-Admin] Removing admin ${removeTarget} via owner ${accountId}`);
+      log.info("DAO-Admin", `Removing admin ${removeTarget} via owner ${accountId}`);
       const result = await removeDaoAdmin(accountId, removeTarget);
       if (result.error) {
         console.error(`[DAO-Admin] removeDaoAdmin error: code=${result.code} msg=${result.error}`);

@@ -497,7 +497,7 @@ async function validateSwapTransactionContents(
     }
     const tokenInId = defIn.tokenId;     // e.g., "0.0.456858"
     const tokenOutId = defOut.tokenId;    // e.g., "0.0.1456986"
-    const poolAccountId = pool.accountId; // e.g., "0.0.XXXXXXX"
+    const poolAccountId = pool.accountId; // e.g., "0.0.1456986"
     const expectedAmountIn = BigInt(amountInRaw);
     const expectedAmountOut = BigInt(amountOutRaw);
 

@@ -50,6 +50,7 @@ import { log } from "../logger";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import type { HederaNetwork } from "./tokens";
 import { htsIdToEvmAddress } from "./tokens";
+import { getReliableIconUrl } from "../token-icons";
 import {
   MIRROR_NODES,
   JSON_RPC_RELAY,
@@ -660,13 +661,21 @@ export async function fetchMintFeeInfo(
 /**
  * Resolve a SaucerSwap token icon URL.
  * SaucerSwap API returns relative paths — we prefix with their base URL.
+ * Checks the centralized reliable icon map first for CoinGecko CDN URLs
+ * that work on all deployment targets (including Vercel).
  */
-function resolveTokenIcon(apiIcon?: string, symbol?: string): string {
+function resolveTokenIcon(apiIcon?: string, symbol?: string, htsId?: string): string {
+  // 1. Check centralized reliable icon map (CoinGecko CDN — no hotlink blocking)
+  if (htsId) {
+    const reliable = getReliableIconUrl(htsId);
+    if (reliable) return reliable;
+  }
+  // 2. Use API-provided icon
   if (apiIcon) {
     if (apiIcon.startsWith("http")) return apiIcon;
     return `https://www.saucerswap.finance${apiIcon}`;
   }
-  // Fallback: SaucerSwap's standard icon path
+  // 3. Fallback: SaucerSwap's standard icon path
   const cleanSymbol = (symbol || "unknown").replace("[hts]", "").replace("[HTS]", "").toLowerCase();
   return `https://www.saucerswap.finance/images/tokens/${cleanSymbol}.svg`;
 }
@@ -899,7 +908,7 @@ function enrichPosition(
         name: displayNameForLP(t0.name, t0.symbol, t0.id),
         decimals: decimals0,
         priceUsd: priceUsd0,
-        logo: resolveTokenIcon(t0.icon, t0.symbol),
+        logo: resolveTokenIcon(t0.icon, t0.symbol, t0.id),
       },
       token1: {
         htsId: t1.id,
@@ -907,7 +916,7 @@ function enrichPosition(
         name: displayNameForLP(t1.name, t1.symbol, t1.id),
         decimals: decimals1,
         priceUsd: priceUsd1,
-        logo: resolveTokenIcon(t1.icon, t1.symbol),
+        logo: resolveTokenIcon(t1.icon, t1.symbol, t1.id),
       },
 
       feeTier: position.fee,

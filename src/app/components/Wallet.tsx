@@ -26,6 +26,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { copyToClipboard as copyText } from "../utils/clipboard";
 import { isVipEligible, loadVipPrefs } from "../utils/vip";
 import { playPortfolioReveal, playTokenHover, playRefreshWhoosh } from "../utils/sounds";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import {
   formatAddress,
   getExplorerAddressUrl,
@@ -311,6 +312,7 @@ function ChartLegend({
 export function Wallet() {
   const [copied, setCopied] = useState<string | null>(null);
   const [showDeposit, setShowDeposit] = useState(false);
+  useEscapeKey(useCallback(() => setShowDeposit(false), []), !showDeposit);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingMM, setIsRefreshingMM] = useState(false);
   const [recentTxns, setRecentTxns] = useState<HederaTransaction[]>([]);
@@ -1641,7 +1643,7 @@ export function Wallet() {
 
       {/* ═══ DEPOSIT MODAL (VIP-enhanced) ═══ */}
       {showDeposit && hederaAccount && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDeposit(false)}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-label="Deposit" onClick={() => setShowDeposit(false)}>
           <div className={`rounded-xl p-6 max-w-sm w-full ${isDark
             ? isVip ? "bg-slate-900 border border-emerald-500/30" : "bg-slate-900 border border-cyan-500/30"
             : "bg-white border border-gray-200 shadow-2xl"

@@ -1,11 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { HASHPACK_LOGO, METAMASK_LOGO } from "../assets/brand";
 import { Link, useLocation } from "react-router";
 import { TrendingUp, Wallet, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, Volume2, VolumeOff, Volume1, Droplets, Crown, AlertTriangle, Shield, Globe } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { WalletConnectModal } from "./WalletConnectModal";
-import { formatHbar } from "../utils/hedera";
 import { formatAddress } from "../utils/metamask";
 import { NewsTicker } from "./NewsTicker";
 import { playTabChime, getSoundVolume, cycleSoundVolume, playVipNavNote, playVipWalletWave } from "../utils/sounds";
@@ -158,7 +156,7 @@ export function Layout() {
   }, []);
 
   return (
-    <div className={`min-h-screen flex flex-col ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`} style={{ border: 'none', outline: 'none' }}>
+    <div className={`min-h-screen flex flex-col ${isDark ? "bg-[#080a12] text-white" : "bg-[#f8fafc] text-slate-900"}`}>
       {/* Dynamic SEO Head */}
       <SEOHead {...currentSEO} />
 
@@ -225,7 +223,6 @@ export function Layout() {
                 const Icon = item.icon;
                 const active = isActive(item.path);
                 const isFlashing = flashingTab === item.path;
-                const navIdx = navItems.indexOf(item);
                 return (
                   <Link
                     key={item.path}
@@ -243,14 +240,7 @@ export function Layout() {
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5 hidden xl:block" />
-                    {item.shortLabel ? (
-                      <>
-                        <span className="xl:hidden">{item.shortLabel}</span>
-                        <span className="hidden xl:inline">{item.label}</span>
-                      </>
-                    ) : (
-                      <span>{item.label}</span>
-                    )}
+                    <span>{item.label}</span>
                   </Link>
                 );
               })}
@@ -266,7 +256,7 @@ export function Layout() {
                   ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                   : isDark
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                  : "bg-emerald-5 text-emerald-700 border-emerald-200"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
               }`} role="status" aria-label={`Network: ${hederaNetwork}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${
                   hederaNetwork === "testnet" ? "bg-amber-400 animate-pulse" : "bg-emerald-400"
@@ -593,7 +583,7 @@ export function Layout() {
       </header>
 
       {/* Main Content — wrapped in PullToRefresh for mobile DeFi UX */}
-      <main className="flex-1 container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content" style={{ border: 'none', outline: 'none', boxShadow: 'none' }}>
+      <main className="flex-1 container mx-auto px-3 md:px-4 py-4 md:py-6 pb-20 lg:pb-6" id="main-content">
         <PullToRefresh>
           <AnimatedOutlet />
         </PullToRefresh>
@@ -604,7 +594,7 @@ export function Layout() {
         isDark
           ? "bg-[#080a12]"
           : "bg-[#f8fafc]"
-      }`} style={{ border: 'none', borderTop: 'none', outline: 'none', boxShadow: 'none' }}>
+      }`}>
         <div className="container mx-auto flex items-center justify-between">
           <p className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
             &copy; 2026 WRAPpDEX

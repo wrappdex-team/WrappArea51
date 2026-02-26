@@ -7,6 +7,7 @@
  */
 
 import { log } from "../logger";
+import { getReliableIconUrl } from "../token-icons";
 
 // ── Shared Types ────────────────────────────────────────────────────
 
@@ -47,23 +48,31 @@ export function evmAddressToHtsId(evmAddr: string): string {
 
 // ── Token List ──────────────────────────────────────────────────────
 
+// IMPLEMENTATION NOTE: Icon URLs use getReliableIconUrl() which returns
+// CoinGecko CDN URLs for known tokens. CoinGecko's CDN does NOT block
+// hotlinking from Vercel/production domains, unlike CoinMarketCap's
+// s2.coinmarketcap.com which aggressively blocks external referrers.
+// Tokens without a CoinGecko entry fall back to SaucerSwap CDN, with
+// the TokenIcon component's multi-source chain (including our icon proxy)
+// providing further fallbacks.
+
 export const SAUCERSWAP_TOKENS: AllowedToken[] = [
   {
     symbol: "HBAR", name: "HBAR", htsId: "native",
     evmAddress: "0x0000000000000000000000000000000000000000", decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
+    logo: getReliableIconUrl("native") || "https://assets.coingecko.com/coins/images/3688/standard/hbar.png",
     rank: 0, isWrapped: false, isNative: true,
   },
   {
     symbol: "WHBAR", name: "Wrapped HBAR", htsId: "0.0.1456986",
     evmAddress: htsIdToEvmAddress("0.0.1456986"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png",
+    logo: getReliableIconUrl("0.0.1456986") || "https://assets.coingecko.com/coins/images/3688/standard/hbar.png",
     rank: 1, isWrapped: false,
   },
   {
     symbol: "USDC", name: "USD Coin", htsId: "0.0.456858",
     evmAddress: htsIdToEvmAddress("0.0.456858"), decimals: 6,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png",
+    logo: getReliableIconUrl("0.0.456858") || "https://assets.coingecko.com/coins/images/6319/standard/usdc.png",
     rank: 2, isWrapped: false,
   },
   {
@@ -72,7 +81,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // SaucerSwap.finance lists this as their primary USDT.
     symbol: "USDT", name: "Tether USD", htsId: "0.0.1055472",
     evmAddress: htsIdToEvmAddress("0.0.1055472"), decimals: 6,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/825.png",
+    logo: getReliableIconUrl("0.0.1055472") || "https://assets.coingecko.com/coins/images/325/standard/Tether.png",
     rank: 3, isWrapped: true, bridge: "HashPort",
   },
   {
@@ -83,7 +92,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // and caused users to receive worthless scam tokens instead of real WBTC.
     symbol: "WBTC", name: "Wrapped Bitcoin", htsId: "0.0.1055483",
     evmAddress: htsIdToEvmAddress("0.0.1055483"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3717.png",
+    logo: getReliableIconUrl("0.0.1055483") || "https://assets.coingecko.com/coins/images/7598/standard/wrapped_bitcoin_wbtc.png",
     rank: 4, isWrapped: true, bridge: "HashPort",
     // saucerswapAliasId removed — use canonical ID for routing
   },
@@ -95,26 +104,26 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // INCORRECT and caused users to receive worthless scam tokens instead of real LINK.
     symbol: "LINK", name: "Chainlink", htsId: "0.0.1055495",
     evmAddress: htsIdToEvmAddress("0.0.1055495"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1975.png",
+    logo: getReliableIconUrl("0.0.1055495") || "https://assets.coingecko.com/coins/images/877/standard/chainlink-new-logo.png",
     rank: 5, isWrapped: true, bridge: "HashPort",
     // saucerswapAliasId removed — use canonical ID for routing
   },
   {
     symbol: "SAUCE", name: "SaucerSwap", htsId: "0.0.731861",
     evmAddress: htsIdToEvmAddress("0.0.731861"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/sauce.svg",
+    logo: getReliableIconUrl("0.0.731861") || "https://www.saucerswap.finance/images/tokens/sauce.svg",
     rank: 6, isWrapped: false,
   },
   {
     symbol: "HBARX", name: "Stader HBAR", htsId: "0.0.834116",
     evmAddress: htsIdToEvmAddress("0.0.834116"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/hbarx.svg",
+    logo: getReliableIconUrl("0.0.834116") || "https://www.saucerswap.finance/images/tokens/hbarx.svg",
     rank: 7, isWrapped: false,
   },
   {
     symbol: "KARATE", name: "Karate Combat", htsId: "0.0.2283230",
     evmAddress: htsIdToEvmAddress("0.0.2283230"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/karate.svg",
+    logo: getReliableIconUrl("0.0.2283230") || "https://www.saucerswap.finance/images/tokens/karate.svg",
     rank: 8, isWrapped: false,
   },
   {
@@ -124,13 +133,13 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // real ID, our registry had the wrong one).
     symbol: "PACK", name: "HashPack", htsId: "0.0.4794920",
     evmAddress: htsIdToEvmAddress("0.0.4794920"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/pack.svg",
+    logo: getReliableIconUrl("0.0.4794920") || "https://www.saucerswap.finance/images/tokens/pack.svg",
     rank: 9, isWrapped: false,
   },
   {
     symbol: "DOVU", name: "DOVU", htsId: "0.0.3716059",
     evmAddress: htsIdToEvmAddress("0.0.3716059"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/dovu.svg",
+    logo: getReliableIconUrl("0.0.3716059") || "https://www.saucerswap.finance/images/tokens/dovu.svg",
     rank: 10, isWrapped: false,
   },
   {
@@ -138,7 +147,7 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // with SaucerSwap API — the old ID was a deprecated HST token).
     symbol: "HST", name: "HeadStarter", htsId: "0.0.968069",
     evmAddress: htsIdToEvmAddress("0.0.968069"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/hst.svg",
+    logo: getReliableIconUrl("0.0.968069") || "https://www.saucerswap.finance/images/tokens/hst.svg",
     rank: 11, isWrapped: false,
   },
   {
@@ -147,188 +156,187 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     // tokens risking loss of pair value. This is the canonical high-liquidity WETH.
     symbol: "WETH", name: "Wrapped Ether", htsId: "0.0.9770617",
     evmAddress: htsIdToEvmAddress("0.0.9770617"), decimals: 18,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1027.png",
+    logo: getReliableIconUrl("0.0.9770617") || "https://assets.coingecko.com/coins/images/279/standard/ethereum.png",
     rank: 12, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "AAVE", name: "Aave", htsId: "0.0.1055498",
     evmAddress: htsIdToEvmAddress("0.0.1055498"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/7278.png",
+    logo: getReliableIconUrl("0.0.1055498") || "https://assets.coingecko.com/coins/images/12645/standard/aave-token-round.png",
     rank: 13, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "DAI", name: "Dai Stablecoin", htsId: "0.0.1055477",
     evmAddress: htsIdToEvmAddress("0.0.1055477"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/4943.png",
+    logo: getReliableIconUrl("0.0.1055477") || "https://assets.coingecko.com/coins/images/9956/standard/Badge_Dai.png",
     rank: 14, isWrapped: true, bridge: "HashPort",
   },
   {
     symbol: "HBAR.\u0127", name: "HBAR.\u0127 Protocol", htsId: HBARH_TOKEN_ID,
     evmAddress: htsIdToEvmAddress(HBARH_TOKEN_ID), decimals: 8,
-    // [C36-04] SaucerSwap icon via HTS ID-based CDN path
-    logo: `https://www.saucerswap.finance/images/tokens/${HBARH_TOKEN_ID}.svg`,
+    logo: getReliableIconUrl(HBARH_TOKEN_ID) || `https://www.saucerswap.finance/images/tokens/${HBARH_TOKEN_ID}.svg`,
     rank: 15, isWrapped: false,
   },
   {
     symbol: "WPOL", name: "Wrapped POL (Polygon)", htsId: "0.0.3306241",
     evmAddress: htsIdToEvmAddress("0.0.3306241"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
+    logo: getReliableIconUrl("0.0.3306241") || "https://assets.coingecko.com/coins/images/4713/standard/polygon.png",
     rank: 16, isWrapped: true, bridge: "HashPort",
   },
   // ── HashPort / LayerZero Bridge Stablecoins ─
   {
     symbol: "USDCh", name: "USDC (HashPort)", htsId: "0.0.1055459",
     evmAddress: htsIdToEvmAddress("0.0.1055459"), decimals: 6,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3408.png",
+    logo: getReliableIconUrl("0.0.1055459") || "https://assets.coingecko.com/coins/images/6319/standard/usdc.png",
     rank: 20, isWrapped: true, bridge: "HashPort",
   },
   // [C36-04] USDTh (0.0.1055472) removed — merged into USDT above.
   {
     symbol: "WBNB", name: "Wrapped BNB", htsId: "0.0.1157005",
     evmAddress: htsIdToEvmAddress("0.0.1157005"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/1839.png",
+    logo: getReliableIconUrl("0.0.1157005") || "https://assets.coingecko.com/coins/images/825/standard/bnb-icon2_2x.png",
     rank: 22, isWrapped: true, bridge: "LayerZero",
   },
   {
     symbol: "WAVAX", name: "Wrapped AVAX", htsId: "0.0.1157020",
     evmAddress: htsIdToEvmAddress("0.0.1157020"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/5805.png",
+    logo: getReliableIconUrl("0.0.1157020") || "https://assets.coingecko.com/coins/images/12559/standard/Avalanche_Circle_RedWhite_Trans.png",
     rank: 23, isWrapped: true, bridge: "LayerZero",
   },
   {
     symbol: "WMATIC", name: "Wrapped MATIC", htsId: "0.0.540318",
     evmAddress: htsIdToEvmAddress("0.0.540318"), decimals: 8,
-    logo: "https://s2.coinmarketcap.com/static/img/coins/64x64/3890.png",
+    logo: getReliableIconUrl("0.0.540318") || "https://assets.coingecko.com/coins/images/4713/standard/polygon.png",
     rank: 24, isWrapped: true, bridge: "HashPort",
   },
   // ── Whitelisted Top Tokens by Market Cap ──────────────────────────
   {
     symbol: "XSGD", name: "XSGD", htsId: "0.0.1985922",
     evmAddress: htsIdToEvmAddress("0.0.1985922"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.1985922.svg",
+    logo: getReliableIconUrl("0.0.1985922") || "https://www.saucerswap.finance/images/tokens/0.0.1985922.svg",
     rank: 30, isWrapped: false,
   },
   {
     symbol: "AUDD", name: "Australian Digital Dollar", htsId: "0.0.8317071",
     evmAddress: htsIdToEvmAddress("0.0.8317071"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.8317071.svg",
+    logo: getReliableIconUrl("0.0.8317071") || "https://www.saucerswap.finance/images/tokens/0.0.8317071.svg",
     rank: 31, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.7245006 → 0.0.7243470 (SaucerSwap API canonical ID)
     symbol: "XPACK", name: "xPACK", htsId: "0.0.7243470",
     evmAddress: htsIdToEvmAddress("0.0.7243470"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7243470.svg",
+    logo: getReliableIconUrl("0.0.7243470") || "https://www.saucerswap.finance/images/tokens/0.0.7243470.svg",
     rank: 32, isWrapped: false,
   },
   {
     symbol: "HSUITE", name: "HubSuite", htsId: "0.0.786931",
     evmAddress: htsIdToEvmAddress("0.0.786931"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/hsuite.svg",
+    logo: getReliableIconUrl("0.0.786931") || "https://www.saucerswap.finance/images/tokens/hsuite.svg",
     rank: 33, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.4873177 → 0.0.9370957 (SaucerSwap API canonical ID)
     symbol: "BTC.\u210F", name: "Bitcoin.\u210F", htsId: "0.0.9370957",
     evmAddress: htsIdToEvmAddress("0.0.9370957"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.9370957.svg",
+    logo: getReliableIconUrl("0.0.9370957") || "https://www.saucerswap.finance/images/tokens/0.0.9370957.svg",
     rank: 34, isWrapped: false,
   },
   {
     symbol: "GIB", name: "\u0F3C \u3064 \u25D5_\u25D5 \u0F3D\u3064 GIB", htsId: "0.0.7893707",
     evmAddress: htsIdToEvmAddress("0.0.7893707"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7893707.svg",
+    logo: getReliableIconUrl("0.0.7893707") || "https://www.saucerswap.finance/images/tokens/0.0.7893707.svg",
     rank: 35, isWrapped: false,
   },
   {
     symbol: "JAM", name: "Tune.Fm", htsId: "0.0.127877",
     evmAddress: htsIdToEvmAddress("0.0.127877"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/jam.svg",
+    logo: getReliableIconUrl("0.0.127877") || "https://www.saucerswap.finance/images/tokens/jam.svg",
     rank: 36, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.5733578 → 0.0.3210123 (SaucerSwap API canonical ID)
     symbol: "STEAM", name: "STEAM", htsId: "0.0.3210123",
     evmAddress: htsIdToEvmAddress("0.0.3210123"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.3210123.svg",
+    logo: getReliableIconUrl("0.0.3210123") || "https://www.saucerswap.finance/images/tokens/0.0.3210123.svg",
     rank: 37, isWrapped: false,
   },
   {
     symbol: "GRELF", name: "GRELF", htsId: "0.0.1159074",
     evmAddress: htsIdToEvmAddress("0.0.1159074"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/grelf.svg",
+    logo: getReliableIconUrl("0.0.1159074") || "https://www.saucerswap.finance/images/tokens/grelf.svg",
     rank: 38, isWrapped: false,
   },
   {
     symbol: "KBL", name: "Kabila", htsId: "0.0.5989978",
     evmAddress: htsIdToEvmAddress("0.0.5989978"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.5989978.svg",
+    logo: getReliableIconUrl("0.0.5989978") || "https://www.saucerswap.finance/images/tokens/0.0.5989978.svg",
     rank: 39, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.3241481 → 0.0.5185941 (SaucerSwap API canonical ID)
     symbol: "GC", name: "GCoin", htsId: "0.0.5185941",
     evmAddress: htsIdToEvmAddress("0.0.5185941"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.5185941.svg",
+    logo: getReliableIconUrl("0.0.5185941") || "https://www.saucerswap.finance/images/tokens/0.0.5185941.svg",
     rank: 40, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.6070123 → 0.0.5892321 (SaucerSwap API canonical ID)
     symbol: "HCHF", name: "Hedera Swiss Franc", htsId: "0.0.5892321",
     evmAddress: htsIdToEvmAddress("0.0.5892321"), decimals: 6,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.5892321.svg",
+    logo: getReliableIconUrl("0.0.5892321") || "https://www.saucerswap.finance/images/tokens/0.0.5892321.svg",
     rank: 41, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.7892591 → 0.0.7894159 (SaucerSwap API canonical ID)
     symbol: "DOSA", name: "Dosa the Demon", htsId: "0.0.7894159",
     evmAddress: htsIdToEvmAddress("0.0.7894159"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7894159.svg",
+    logo: getReliableIconUrl("0.0.7894159") || "https://www.saucerswap.finance/images/tokens/0.0.7894159.svg",
     rank: 42, isWrapped: false,
   },
   {
     symbol: "MFM", name: "Meme Millionaires", htsId: "0.0.4599983",
     evmAddress: htsIdToEvmAddress("0.0.4599983"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.4599983.svg",
+    logo: getReliableIconUrl("0.0.4599983") || "https://www.saucerswap.finance/images/tokens/0.0.4599983.svg",
     rank: 43, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.8041571 → 0.0.10096415 (SaucerSwap API canonical ID)
     symbol: "SMACKM", name: "SMACKM", htsId: "0.0.10096415",
     evmAddress: htsIdToEvmAddress("0.0.10096415"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.10096415.svg",
+    logo: getReliableIconUrl("0.0.10096415") || "https://www.saucerswap.finance/images/tokens/0.0.10096415.svg",
     rank: 44, isWrapped: false,
   },
   {
     symbol: "CLXY", name: "Calaxy", htsId: "0.0.859814",
     evmAddress: htsIdToEvmAddress("0.0.859814"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/clxy.svg",
+    logo: getReliableIconUrl("0.0.859814") || "https://www.saucerswap.finance/images/tokens/clxy.svg",
     rank: 45, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.7907968 → 0.0.7570117 (SaucerSwap API canonical ID)
     symbol: "DINO", name: "DINO", htsId: "0.0.7570117",
     evmAddress: htsIdToEvmAddress("0.0.7570117"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.7570117.svg",
+    logo: getReliableIconUrl("0.0.7570117") || "https://www.saucerswap.finance/images/tokens/0.0.7570117.svg",
     rank: 46, isWrapped: false,
   },
   {
     // [C-RECONCILE] Updated from 0.0.7974354 → 0.0.4381245 (SaucerSwap API canonical ID)
     symbol: "LEEMON", name: "LeemonHead", htsId: "0.0.4381245",
     evmAddress: htsIdToEvmAddress("0.0.4381245"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.4381245.svg",
+    logo: getReliableIconUrl("0.0.4381245") || "https://www.saucerswap.finance/images/tokens/0.0.4381245.svg",
     rank: 47, isWrapped: false,
   },
   {
     symbol: "HBARBARIAN", name: "HBARbarian", htsId: "0.0.4816828",
     evmAddress: htsIdToEvmAddress("0.0.4816828"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.4816828.svg",
+    logo: getReliableIconUrl("0.0.4816828") || "https://www.saucerswap.finance/images/tokens/0.0.4816828.svg",
     rank: 48, isWrapped: false,
   },
   {
     symbol: "JEET", name: "Jeeteroo", htsId: "0.0.9632905",
     evmAddress: htsIdToEvmAddress("0.0.9632905"), decimals: 8,
-    logo: "https://www.saucerswap.finance/images/tokens/0.0.9632905.svg",
+    logo: getReliableIconUrl("0.0.9632905") || "https://www.saucerswap.finance/images/tokens/0.0.9632905.svg",
     rank: 49, isWrapped: false,
   },
 ];
@@ -522,8 +530,8 @@ export async function fetchAndApplyTokenIcons(): Promise<void> {
     // 2. Populate icon registry for TokenIcon fallback chain
     const registered = registerTokenIcons(registryEntries);
 
-    // 3. Also register HBAR native with a known-good icon
-    const hbarIcon = "https://s2.coinmarketcap.com/static/img/coins/64x64/4642.png";
+    // 3. Also register HBAR native with a known-good icon (CoinGecko — no hotlink blocking)
+    const hbarIcon = "https://assets.coingecko.com/coins/images/3688/standard/hbar.png";
     registerTokenIcons([{ htsId: "native", iconUrl: hbarIcon }]);
 
     log.info("TokenIcons", `Patched ${updated} static logos, registered ${registered} in icon registry (${registryEntries.length} total from API)`);

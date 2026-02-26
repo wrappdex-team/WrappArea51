@@ -23,7 +23,6 @@ import {
   ArrowRight,
   ExternalLink,
   Zap,
-  ExternalLink as OpenIcon,
 } from "lucide-react";
 import type { AllowedToken } from "../utils/saucerswap";
 
@@ -205,7 +204,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                 >
                   <Wallet className="w-4 h-4" />
                   Open Wallet
-                  <OpenIcon className="w-3.5 h-3.5 opacity-60" />
+                  <ExternalLink className="w-3.5 h-3.5 opacity-60" />
                 </motion.button>
               )}
             </AnimatePresence>

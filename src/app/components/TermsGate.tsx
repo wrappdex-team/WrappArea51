@@ -24,6 +24,7 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { log } from "../utils/logger";
 
 // IMPLEMENTATION NOTE: Bump this version to force all users to re-accept.
 // Format: YYYY.MM.DD.revision
@@ -156,15 +157,13 @@ async function logAcceptanceToServer(version: string): Promise<void> {
 
     if (res.ok) {
       const data = await res.json();
-      console.log(
-        `[BetaTerms] Acceptance logged to server — total: ${data.totalAcceptances}`
-      );
+      log.info("BetaTerms", `Acceptance logged to server — total: ${data.totalAcceptances}`);
     } else {
       const err = await res.text().catch(() => "unknown");
-      console.warn(`[BetaTerms] Server log failed (${res.status}): ${err}`);
+      log.warn("BetaTerms", `Server log failed (${res.status}): ${err}`);
     }
   } catch (err) {
-    console.warn("[BetaTerms] Server audit log unavailable:", err);
+    log.warn("BetaTerms", "Server audit log unavailable", err);
   }
 }
 
@@ -195,7 +194,7 @@ function cleanupOldStorageKeys() {
     keysToRemove.forEach((k) => localStorage.removeItem(k));
 
     if (keysToRemove.length > 0) {
-      console.log(`[BetaTerms] Cleaned up ${keysToRemove.length} stale storage key(s)`);
+      log.debug("BetaTerms", `Cleaned up ${keysToRemove.length} stale storage key(s)`);
     }
   } catch {
     // localStorage access can throw in private/restricted contexts
@@ -245,10 +244,7 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
       .then((data) => {
         clearTimeout(timeout);
         if (data?.requiredVersion && data.requiredVersion !== TERMS_VERSION) {
-          console.log(
-            `[BetaTerms] Server requires version ${data.requiredVersion}, ` +
-            `client has ${TERMS_VERSION} — forcing re-acceptance`
-          );
+          log.info("BetaTerms", `Server requires v${data.requiredVersion}, client has v${TERMS_VERSION} — forcing re-acceptance`);
           try {
             localStorage.removeItem(STORAGE_KEY);
             localStorage.removeItem("wrappdex_beta_tos_meta");
@@ -261,7 +257,7 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
       })
       .catch(() => {
         clearTimeout(timeout);
-        console.warn("[BetaTerms] Version check unavailable — trusting localStorage");
+        log.warn("BetaTerms", "Version check unavailable — trusting localStorage");
         setAccepted(true);
       });
 

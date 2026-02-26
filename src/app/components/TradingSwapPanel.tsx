@@ -39,6 +39,7 @@ import {
   type SwapQuote,
 } from "../utils/smart-liquidity";
 import { useTheme } from "../contexts/ThemeContext";
+import { log } from "../utils/logger";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT } from "../assets/brand";
 import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
@@ -198,7 +199,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
         // Fail-closed: if we can't verify AMM status, show halted state
         // to prevent swaps against a potentially halted AMM.
         if (!cancelled) {
-          console.log("[TradingSwap] Status check failed — failing closed");
+          log.warn("TradingSwap", "Status check failed — failing closed");
           setAmmHalted(true);
           setOracleStale(true);
         }

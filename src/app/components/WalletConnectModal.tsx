@@ -27,11 +27,12 @@ import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
 import { getSignClient, getWCModal } from "../utils/wallet-core";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 // [PERFORMANCE-FIX] Lazy-load QRCodeSVG — only needed when showing QR, not on modal open
 const QRCodeSVG = lazy(() => import("qrcode.react").then(m => ({ default: m.QRCodeSVG })));
 
-// ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ──────────────
+// ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ───���──────────
 // Fire getSignClient() the moment the modal opens, so by the time the user
 // clicks "HashPack" the WC SDK is already initialized and relay is connected.
 // ── [WALLET-SURGERY Step 3] Detect HashPack extension ──────────────
@@ -290,6 +291,9 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
 
   const partnerLogos = usePartneredLogos();
 
+  // Escape key dismissal (WCAG 2.1 SC 2.1.2)
+  useEscapeKey(onClose);
+
   // Dynamic Labs — programmatic auth flow trigger.
   // DynamicHooksBridge is a child component that only mounts when the SDK is
   // available, keeping all hook calls unconditional (Rules of Hooks compliant).
@@ -531,7 +535,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
 
   // ════════════════════════════════════════════════════════════
   // METAMASK SUCCESS
-  // ═════════════════════════════════════════════════════════════
+  // ══════════════════════════════════��══════════════════════════
   if (step === "metamask-success" && metaMaskAccount) {
     return (
       <>{dynamicBridge}
