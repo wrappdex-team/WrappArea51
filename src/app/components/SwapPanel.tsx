@@ -50,6 +50,7 @@ import {
   getSaucerSwapRouter,
   getSaucerswapRoutingId,
   getWhbarToken,
+  getTokenPriceUsd,
   htsIdToEvmAddress,
   SAUCERSWAP_WHBAR_CONTRACT,
   type AllowedToken,
@@ -315,8 +316,11 @@ export function SwapPanel() {
     return () => { cancelled = true; clearInterval(iv); };
   }, []);
   const effectiveSlippage = customSlippage ? parseFloat(customSlippage) || 3 : slippage;
-  const inputPrice = livePrices[inputToken.symbol] || (inputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
-  const outputPrice = livePrices[outputToken.symbol] || (outputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
+  // [V2-EVM-FIX] Fall back to getTokenPriceUsd() which checks live cache → fallback
+  // prices. livePrices alone may be missing tokens whose SaucerSwap API ID differs
+  // from our registry (e.g., WETH), causing "Quote Unavailable" for valid pairs.
+  const inputPrice = livePrices[inputToken.symbol] || getTokenPriceUsd(inputToken.symbol) || (inputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
+  const outputPrice = livePrices[outputToken.symbol] || getTokenPriceUsd(outputToken.symbol) || (outputToken.symbol === "HBAR" ? ctxHbarPrice : 0);
   const inputUsd = inputAmount ? parseFloat(inputAmount) * inputPrice : 0;
   const outputUsd = outputAmount ? parseFloat(outputAmount) * outputPrice : 0;
 

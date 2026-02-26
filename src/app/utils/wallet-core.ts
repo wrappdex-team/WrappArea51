@@ -527,7 +527,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   if (isMobile) {
     const onVis = async () => {
       if (document.visibilityState === "visible") {
-        console.log("[WC] [MOB-FIX-v3] Tab resumed from background — FORCED relay reconnection...");
+        console.log("[WC] [MOB-FIX-v5] Tab resumed from background — FORCED relay reconnection...");
         try {
           // [MOB-FIX-v3] Don't use _ensureRelayConnected here — it trusts
           // relayer.connected which is stale after mobile backgrounding.
@@ -608,7 +608,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     // sending a signing request. This guarantees a fresh, verified WebSocket.
     // Sessions persist in localStorage — only the transport is recycled.
     if (isMobile) {
-      console.log("[WC] [MOB-FIX-v4] Mobile detected — checking relay connection before signing...");
+      console.log("[WC] [MOB-FIX-v5] Mobile detected — checking relay connection before signing...");
       try {
         const relayer = client.core?.relayer;
         const provider = relayer?.provider;
@@ -616,30 +616,44 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
         // 1. Check raw WS state
         const ws = provider?.connection?.socket ?? provider?.socket;
         const wsState = ws?.readyState ?? -1;
-        console.log("[WC] [MOB-FIX-v4] Pre-check WS state:",
+        console.log("[WC] [MOB-FIX-v5] Pre-check WS state:",
           "relayer.connected=", relayer?.connected,
           "ws.readyState=", wsState,
           "(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)");
 
-        // [MOB-FIX-v4] FAST PATH: If WS is already OPEN and buffer is empty,
-        // skip the expensive disconnect→reconnect cycle entirely. The v3 code
-        // always forced a full cycle (3-10s), even when the connection was healthy.
-        // This wasted time and risked losing topic subscriptions.
+        // [MOB-FIX-v5] SMART PATH: If WS appears OPEN, verify with a session
+        // ping before deciding whether to skip the full reconnect cycle.
+        //
+        // CRITICAL: On mobile, ws.readyState === 1 can be STALE (half-open).
+        // The OS killed the TCP connection while the tab was backgrounded, but
+        // the browser's WebSocket object still reports OPEN because the `close`
+        // event hasn't fired. The v4 code proceeded on stale connections, causing
+        // client.request() to send data into a dead socket. The relay never
+        // received the signing request, so the wallet opened with nothing to sign.
+        //
+        // Fix: If the session ping FAILS, fall through to the full disconnect→
+        // reconnect cycle (v3 behavior). Only skip the cycle when the ping
+        // SUCCEEDS, confirming true end-to-end relay connectivity.
+        let needsFullCycle = true; // Default: assume we need a full cycle
+
         if (ws && wsState === 1 /* OPEN */ && (ws.bufferedAmount ?? 0) === 0) {
-          console.log("[WC] [MOB-FIX-v4] WS already OPEN with empty buffer — skipping forced cycle (fast path)");
-          // Just do a quick session ping to verify end-to-end relay connectivity
+          console.log("[WC] [MOB-FIX-v5] WS appears OPEN with empty buffer — verifying with session ping...");
           try {
             await Promise.race([
               client.ping({ topic: params.topic }),
-              new Promise(r => setTimeout(r, 2000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("ping timeout")), 3000)),
             ]);
-            console.log("[WC] [MOB-FIX-v4] Session ping OK — relay is healthy");
-          } catch {
-            console.log("[WC] [MOB-FIX-v4] Session ping failed — but WS is OPEN, proceeding anyway");
+            console.log("[WC] [MOB-FIX-v5] Session ping OK — relay is truly healthy, skipping forced cycle");
+            needsFullCycle = false;
+          } catch (pingErr: any) {
+            console.warn("[WC] [MOB-FIX-v5] Session ping FAILED:", pingErr?.message,
+              "— WS is likely half-open (stale). Falling through to full disconnect→reconnect cycle.");
+            // needsFullCycle stays true — fall through to rebuild WS
           }
-        } else {
-          // WS is NOT open — do the full disconnect→reconnect cycle
-          console.log("[WC] [MOB-FIX-v4] WS not healthy (state=", wsState, ") — forcing fresh relay connection...");
+        }
+
+        if (needsFullCycle) {
+          console.log("[WC] [MOB-FIX-v5] Forcing fresh relay connection (state=", wsState, ")...");
 
           // 2. Force disconnect the provider (tears down the WebSocket)
           if (provider && typeof provider.disconnect === "function") {
@@ -670,25 +684,32 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           // 5. Verify the new connection
           const ws2 = provider?.connection?.socket ?? provider?.socket;
           const ws2State = ws2?.readyState ?? -1;
-          console.log("[WC] [MOB-FIX-v4] Post-cycle WS state:",
+          console.log("[WC] [MOB-FIX-v5] Post-cycle WS state:",
             "relayer.connected=", relayer?.connected,
             "ws.readyState=", ws2State);
 
           if (ws2State !== 1 /* OPEN */) {
-            console.warn("[WC] [MOB-FIX-v4] Fresh WS still not OPEN — polling for up to 5s...");
+            console.warn("[WC] [MOB-FIX-v5] Fresh WS still not OPEN — polling for up to 5s...");
             const pollStart = Date.now();
             while (Date.now() - pollStart < 5000) {
               const wsNow = provider?.connection?.socket ?? provider?.socket;
               if (wsNow?.readyState === 1) {
-                console.log("[WC] [MOB-FIX-v4] WS became OPEN after", Date.now() - pollStart, "ms");
+                console.log("[WC] [MOB-FIX-v5] WS became OPEN after", Date.now() - pollStart, "ms");
                 break;
               }
               await new Promise(r => setTimeout(r, 200));
             }
           }
+
+          // 6. [MOB-FIX-v5] Wait for topic re-subscription after reconnect.
+          // The WC SDK re-subscribes to session topics when the transport
+          // reconnects, but this happens asynchronously. Give it 500ms to
+          // complete so the relay knows where to route the wallet's response.
+          await new Promise(r => setTimeout(r, 500));
+          console.log("[WC] [MOB-FIX-v5] Post-reconnect stabilization complete — ready to send request");
         }
       } catch (e: any) {
-        console.warn("[WC] [MOB-FIX-v4] Relay check failed:", e?.message,
+        console.warn("[WC] [MOB-FIX-v5] Relay check failed:", e?.message,
           "— proceeding with existing connection (may fail)");
       }
     }
@@ -718,15 +739,17 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       // redirecting would background the tab and freeze the retry logic.
 
       // Log relay state for mobile debugging
+      // [MOB-FIX-v5] Capture WS reference BEFORE request to detect stale socket usage
+      let preRequestWs: any = null;
       if (isMobile) {
         try {
           const relayer = client.core?.relayer;
           const provider = relayer?.provider;
-          const ws = provider?.connection?.socket ?? provider?.socket;
-          console.log("[WC] [MOB-FIX-v3] Pre-request relay state:",
+          preRequestWs = provider?.connection?.socket ?? provider?.socket;
+          console.log("[WC] [MOB-FIX-v5] Pre-request relay state:",
             "relayer.connected=", relayer?.connected,
-            "ws.readyState=", ws?.readyState,
-            "ws.bufferedAmount=", ws?.bufferedAmount);
+            "ws.readyState=", preRequestWs?.readyState,
+            "ws.bufferedAmount=", preRequestWs?.bufferedAmount);
         } catch { /* diagnostic only */ }
       }
 
@@ -767,7 +790,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             await new Promise(r => setTimeout(r, 300));
 
             if (publishFailed) {
-              console.warn("[WC] [MOB-FIX-v3] Request FAILED early — NOT opening wallet.",
+              console.warn("[WC] [MOB-FIX-v5] Request FAILED early — NOT opening wallet.",
                 "Reason:", publishFailReason);
               return;
             }
@@ -780,6 +803,14 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             const flushStart = Date.now();
             const maxFlushWait = 2200; // max 2.2s for buffer flush
 
+            // [MOB-FIX-v5] Detect if the WS object changed since pre-request.
+            // If the SDK silently replaced the socket (reconnection), the
+            // request may have been sent to the OLD (dead) socket.
+            if (preRequestWs && ws !== preRequestWs) {
+              console.warn("[WC] [MOB-FIX-v5] WS object CHANGED after request — signing request may have gone to stale socket!",
+                "old.readyState=", preRequestWs?.readyState, "new.readyState=", ws?.readyState);
+            }
+
             if (ws && ws.readyState === 1 /* OPEN */) {
               let flushLoops = 0;
               while (ws.bufferedAmount > 0 && Date.now() - flushStart < maxFlushWait) {
@@ -787,12 +818,12 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
                 flushLoops++;
               }
               if (flushLoops > 0) {
-                console.log("[WC] [MOB-FIX-v3] WS buffer flushed after",
+                console.log("[WC] [MOB-FIX-v5] WS buffer flushed after",
                   Date.now() - flushStart, "ms,", flushLoops, "polls");
               }
             } else {
               // WS not open — wait longer and hope for the best
-              console.warn("[WC] [MOB-FIX-v3] WS not OPEN at redirect time:",
+              console.warn("[WC] [MOB-FIX-v5] WS not OPEN at redirect time:",
                 "readyState=", ws?.readyState, "— waiting 2s fallback");
               await new Promise(r => setTimeout(r, 2000));
             }
@@ -801,25 +832,25 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             await new Promise(r => setTimeout(r, 200));
 
             if (publishFailed) {
-              console.warn("[WC] [MOB-FIX-v3] Request failed during flush wait — NOT opening wallet.",
+              console.warn("[WC] [MOB-FIX-v5] Request failed during flush wait — NOT opening wallet.",
                 "Reason:", publishFailReason);
               return;
             }
 
             // Phase 4: Final relay state check and redirect
             const ws2 = provider?.connection?.socket ?? provider?.socket;
-            console.log("[WC] [MOB-FIX-v3] Pre-redirect state:",
+            console.log("[WC] [MOB-FIX-v5] Pre-redirect state:",
               "relayer.connected=", relayer?.connected,
               "ws.readyState=", ws2?.readyState,
               "bufferedAmount=", ws2?.bufferedAmount,
               "totalWait=", Date.now() - flushStart, "ms");
-            console.log("[WC] [MOB-FIX-v3] Relay publish confirmed — opening wallet app...");
+            console.log("[WC] [MOB-FIX-v5] Relay publish confirmed — opening wallet app...");
             fireMobileRedirect();
           } catch (e: any) {
-            console.warn("[WC] [MOB-FIX-v3] Redirect helper error:", e?.message);
+            console.warn("[WC] [MOB-FIX-v5] Redirect helper error:", e?.message);
             // Fallback: redirect anyway if publish didn't fail
             if (!publishFailed) {
-              console.log("[WC] [MOB-FIX-v3] Fallback redirect despite error");
+              console.log("[WC] [MOB-FIX-v5] Fallback redirect despite error");
               fireMobileRedirect();
             }
           }
@@ -870,7 +901,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
                   }
                   await new Promise(r => setTimeout(r, 200));
                   if (!freshFailed) {
-                    console.log("[WC] [MOB-FIX-v3] Force-reset publish confirmed — opening wallet...");
+                    console.log("[WC] [MOB-FIX-v5] Force-reset publish confirmed — opening wallet...");
                     fireMobileRedirect();
                   }
                 } catch {

@@ -592,17 +592,24 @@ async function executeSaucerSwapV2Direct(
     const v2RouterId = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
     let fee = poolInfo.feeTier || 3000;
 
-    // Token EVM addresses for the V2 pool (use SaucerSwap alias for bridge tokens)
+    // Token EVM addresses for the V2 pool
     // [V2-WHBAR-FIX] V2 pools pair with WHBAR CONTRACT (0.0.1456985), not TOKEN (0.0.1456986).
-    // The V2 SwapRouter's WETH9 and all V2 pool Factory registrations use the contract address.
-    // Without this fix, exactInputSingle passes the wrong WHBAR address → Factory.getPool
-    // returns address(0) → CONTRACT_REVERT_EXECUTED on every V2 swap involving HBAR/WHBAR.
-    const tokenInEvm = ensureWhbarContractForV2(
-      getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken), network
-    );
-    const tokenOutEvm = ensureWhbarContractForV2(
-      getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken), network
-    );
+    // [V2-EVM-FIX] For V2 pools, resolve the ACTUAL EVM address from the Mirror Node
+    // instead of computing the synthetic long-zero address. Bridge-deployed tokens
+    // (WETH, WBTC, etc.) may have a contract EVM address that differs from the
+    // long-zero. SaucerSwap V2 Factory registers pools using the token's real EVM
+    // address, so passing the long-zero causes Factory.getPool() to return
+    // address(0) → QuoterV2 returns 0 → "Quote Unavailable".
+    // resolveContractEvmAddress() checks /contracts/ + /accounts/ endpoints and
+    // caches the result; falls back to long-zero for pure HTS tokens.
+    const inputRoutingId = getSaucerswapRoutingId(isInputNative ? whbar : inputToken);
+    const outputRoutingId = getSaucerswapRoutingId(isOutputNative ? whbar : outputToken);
+    const [tokenInEvmRaw, tokenOutEvmRaw] = await Promise.all([
+      resolveContractEvmAddress(inputRoutingId, network),
+      resolveContractEvmAddress(outputRoutingId, network),
+    ]);
+    const tokenInEvm = ensureWhbarContractForV2(tokenInEvmRaw, network);
+    const tokenOutEvm = ensureWhbarContractForV2(tokenOutEvmRaw, network);
 
     // ── V2 Quote: try V2 QuoterV2 first, then fall back to price estimation ──
     // V1 getAmountsOut does NOT work for V2-only pools, so we use the V2 QuoterV2
