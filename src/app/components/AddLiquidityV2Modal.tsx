@@ -143,10 +143,11 @@ function formatBalance(n: number): string {
 }
 
 // ── [LP-UX-01] HBAR Reserve for Gas ──────────────────────────────────
-// We reserve 2 HBAR for gas and transaction overhead (association fees,
+// We reserve 3 HBAR for gas and transaction overhead (association fees,
 // ContractExecuteTransaction gas, etc.) to prevent users from draining
 // their account to zero and failing subsequent transactions.
-const HBAR_GAS_RESERVE = 2;
+// IMPLEMENTATION NOTE: Aligned with SwapPanel's HBAR_GAS_RESERVE = 3.
+const HBAR_GAS_RESERVE = 3;
 
 // ── [LP-UX-02] Quick-Fill Percentage Presets ─────────────────────────
 // Bank-grade quick-fill buttons let users set deposit amounts as a

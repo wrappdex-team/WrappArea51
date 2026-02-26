@@ -83,7 +83,11 @@ import { SlippageSettingsPro } from "./SlippageSettingsPro";
 import { QuickPairGrid } from "./QuickPairGrid";
 
 const SLIPPAGE_OPTIONS = [1.0, 3.0];
-const GAS_RESERVE = 1; // HBAR reserved for gas — Hedera fees are sub-cent, 1 HBAR covers dozens of txns
+const HBAR_GAS_RESERVE = 3; // HBAR reserved for gas to prevent gas-locking the wallet.
+// IMPLEMENTATION NOTE: Hedera fees are sub-cent but users need a buffer for future
+// transactions. 3 HBAR covers hundreds of operations and prevents accidental lockout.
+// Applied to: (1) MAX button handler, (2) insufficientBalance validation,
+// (3) gasLockWarning UI hint when manually entering near-max amounts.
 const QUOTE_REFRESH_INTERVAL = 30; // seconds
 
 function isUserCancelled(r: SwapResult | null): boolean {
@@ -333,9 +337,22 @@ export function SwapPanel() {
     const amt = parseFloat(inputAmount);
     if (amt <= 0) return false;
     // Allow 0.001 tolerance for rounding precision
-    if (inputToken.isNative) return inputBalance + BALANCE_TOLERANCE < (amt + GAS_RESERVE);
+    if (inputToken.isNative) return inputBalance + BALANCE_TOLERANCE < (amt + HBAR_GAS_RESERVE);
     return inputBalance + BALANCE_TOLERANCE < amt;
   }, [isWalletConnected, inputAmount, inputBalance, inputToken.isNative]);
+
+  // Gas reserve shortfall detection — user has enough for the swap itself
+  // but not enough to also keep 3 HBAR for future transactions.
+  // Distinct from insufficientBalance so the UI can show a helpful message
+  // like "3 HBAR reserved for gas" instead of just "Insufficient balance".
+  const gasReserveShortfall = useMemo(() => {
+    if (!insufficientBalance || !inputToken.isNative) return false;
+    if (inputBalance === null || !inputAmount) return false;
+    const amt = parseFloat(inputAmount);
+    if (amt <= 0) return false;
+    // User has enough for the swap itself, but not enough to keep gas reserve
+    return inputBalance + BALANCE_TOLERANCE >= amt && inputBalance + BALANCE_TOLERANCE < amt + HBAR_GAS_RESERVE;
+  }, [insufficientBalance, inputToken.isNative, inputBalance, inputAmount]);
 
   // [C93] Block swap when quote output is 0 — prevents CONTRACT_REVERT_EXECUTED
   // from attempting swaps where the on-chain quote failed and minOutput would be 1.
@@ -856,7 +873,7 @@ export function SwapPanel() {
 
   const handleMaxInput = useCallback(() => {
     if (inputBalance === null || inputBalance <= 0) return;
-    const max = inputToken.isNative ? Math.max(0, inputBalance - GAS_RESERVE) : inputBalance;
+    const max = inputToken.isNative ? Math.max(0, inputBalance - HBAR_GAS_RESERVE) : inputBalance;
     if (max > 0) setInputAmount(max.toString());
   }, [inputBalance, inputToken.isNative]);
 
@@ -990,6 +1007,7 @@ export function SwapPanel() {
               hasRoute={!!route}
               routeSearching={routeSearching}
               insufficientBalance={insufficientBalance}
+              gasReserveShortfall={gasReserveShortfall}
               hasValidOutput={!!hasValidOutput}
               swapStep={swapStep}
               swapError={swapError}

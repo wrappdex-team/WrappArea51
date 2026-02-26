@@ -154,7 +154,13 @@ export const TokenInputPro = memo(function TokenInputPro({
         {isWalletConnected && balance !== null && (
           <div className="flex items-center gap-1">
             {isPay && onMaxClick && balance > 0 && (
-              <Tip content="Use max balance" side="top">
+              <Tip
+                content={token.isNative
+                  ? "Use max balance (3 HBAR reserved for gas)"
+                  : "Use max balance"
+                }
+                side="top"
+              >
                 <button
                   onClick={(e) => { e.stopPropagation(); onMaxClick(); }}
                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md transition-colors ${

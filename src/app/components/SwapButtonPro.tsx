@@ -41,6 +41,8 @@ interface SwapButtonProProps {
   hasRoute: boolean;
   routeSearching: boolean;
   insufficientBalance: boolean;
+  /** True when the user has enough HBAR for the swap but not enough to keep 3 HBAR gas reserve */
+  gasReserveShortfall?: boolean;
   // [C93] Quote validation
   hasValidOutput: boolean;
   // Swap step tracking
@@ -87,6 +89,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   hasRoute,
   routeSearching,
   insufficientBalance,
+  gasReserveShortfall,
   hasValidOutput,
   swapStep,
   swapError,
@@ -338,6 +341,30 @@ export const SwapButtonPro = memo(function SwapButtonPro({
                   <span>No Route Available</span>
                 </>
               )}
+            </div>
+          </motion.button>
+        ) : gasReserveShortfall ? (
+          <motion.button
+            key="gasreserve"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            disabled
+            className={`w-full py-4 rounded-2xl font-bold cursor-not-allowed ${
+              isDark
+                ? "bg-amber-900/25 text-amber-400 border border-amber-500/20"
+                : "bg-amber-50 text-amber-600 border border-amber-200"
+            }`}
+          >
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                <span>3 HBAR Reserved for Gas</span>
+              </div>
+              <span className={`text-[11px] font-normal ${
+                isDark ? "text-amber-400/60" : "text-amber-500/80"
+              }`}>
+                Keeps your wallet active for future transactions
+              </span>
             </div>
           </motion.button>
         ) : insufficientBalance ? (

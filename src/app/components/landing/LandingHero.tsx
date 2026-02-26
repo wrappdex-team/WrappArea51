@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence, useScroll, useTransform } from "motion/react";
 import {
   TrendingUp,
@@ -12,7 +12,6 @@ import {
 import { useScreenshotUrls } from "./useScreenshotUrls";
 
 const BLUE = "#1D63ED";
-const CYAN = "#06b6d4";
 
 /* ── simple animation presets ── */
 const fade = {
@@ -145,35 +144,8 @@ export function LandingHero() {
   const { scrollY } = useScroll();
   const deviceY = useTransform(scrollY, [0, 800], [0, -60]);
 
-  /* animated volume counter */
-  const [fee, setFee] = useState("$0.0000");
-  useEffect(() => {
-    const target = 0.0001;
-    const dur = 1800;
-    const t0 = performance.now();
-    let raf: number;
-    const tick = (now: number) => {
-      const p = Math.min((now - t0) / dur, 1);
-      const eased = 1 - Math.pow(1 - p, 4);
-      setFee(`$${(eased * target).toFixed(4)}`);
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
   return (
-    <section className="relative bg-white">
-      {/* ── BG: subtle dot grid ── */}
-      <div
-        className="absolute inset-0 z-0 opacity-20"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle, #cbd5e1 0.6px, transparent 0.6px)",
-          backgroundSize: "32px 32px",
-        }}
-      />
-
+    <section className="relative bg-transparent">
       {/* ── BG: gradient orbs ── */}
       <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
         <div
@@ -297,62 +269,8 @@ export function LandingHero() {
               </button>
             </a>
           </motion.div>
-
-          {/* trust metrics — with themed accent borders */}
-          <motion.div
-            custom={0.65}
-            variants={fade}
-            className="flex justify-center gap-6 sm:gap-10 mb-8"
-          >
-            {[
-              { label: "Avg Transaction Fee", value: fee, accent: BLUE },
-              { label: "Finality", value: "< 3 sec", accent: CYAN },
-              { label: "Hedera-native", value: "100%", accent: "#10b981" },
-            ].map((s) => (
-              <div
-                key={s.label}
-                className="text-center px-5 sm:px-8 py-4 rounded-xl relative group"
-                style={{
-                  background: "rgba(255,255,255,0.7)",
-                  backdropFilter: "blur(8px)",
-                  border: `1px solid ${s.accent}20`,
-                  boxShadow: `0 4px 20px -4px ${s.accent}10`,
-                }}
-              >
-                {/* top accent line */}
-                <div
-                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] rounded-full"
-                  style={{ backgroundColor: s.accent }}
-                />
-                <div className="text-xl sm:text-2xl font-black text-slate-900 tabular-nums">
-                  {s.value}
-                </div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mt-1.5">
-                  {s.label}
-                </div>
-              </div>
-            ))}
-          </motion.div>
         </motion.div>
 
-        {/* scroll hint */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1.5, duration: 1 }}
-          className="absolute bottom-6 left-1/2 -translate-x-1/2"
-        >
-          <motion.div
-            animate={{ y: [0, 8, 0] }}
-            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-            className="flex flex-col items-center gap-2"
-          >
-            <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-slate-300">
-              Scroll
-            </span>
-            <div className="w-[1px] h-6 bg-gradient-to-b from-slate-300 to-transparent" />
-          </motion.div>
-        </motion.div>
       </div>
 
       {/* ══════════════════════════════════════════
@@ -471,27 +389,18 @@ export function LandingHero() {
               </div>
 
               {/* screen */}
-              <div className="relative aspect-[16/9.5] bg-[#0b1120]">
+              <div className="relative aspect-[16/10] bg-[#0b1120]">
                 <img
                   src={desktopDark}
                   alt="Wrappdex PC Dashboard Dark"
-                  className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+                  className="absolute inset-0 w-full h-full object-contain object-center transition-opacity duration-700"
                   style={{ opacity: hovered ? 0 : 1 }}
                 />
                 <img
                   src={desktopLight}
                   alt="Wrappdex PC Dashboard Light"
-                  className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+                  className="absolute inset-0 w-full h-full object-contain object-center transition-opacity duration-700"
                   style={{ opacity: hovered ? 1 : 0 }}
-                />
-
-                {/* scan line */}
-                <div
-                  className="absolute left-0 right-0 h-[1px] z-20 pointer-events-none animate-scan"
-                  style={{
-                    background: `linear-gradient(90deg, transparent 0%, ${BLUE}30 30%, ${CYAN}30 70%, transparent 100%)`,
-                    boxShadow: `0 0 12px 3px ${BLUE}10`,
-                  }}
                 />
 
                 {/* subtle glare */}
@@ -602,18 +511,6 @@ export function LandingHero() {
 
       {/* bottom fade */}
       <div className="absolute bottom-0 inset-x-0 h-32 bg-gradient-to-t from-white to-transparent z-[5]" />
-
-      {/* scan-line keyframes */}
-      <style>{`
-        @keyframes scan {
-          0% { top: -5%; }
-          100% { top: 105%; }
-        }
-        .animate-scan {
-          animation: scan 5s linear infinite;
-          animation-delay: 2s;
-        }
-      `}</style>
     </section>
   );
 }

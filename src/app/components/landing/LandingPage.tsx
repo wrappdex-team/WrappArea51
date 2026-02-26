@@ -11,6 +11,7 @@ import { LandingPartners } from "./LandingPartners";
 import { LandingTeam } from "./LandingTeam";
 import { LandingCTA } from "./LandingCTA";
 import { LandingFooter } from "./LandingFooter";
+import { BlueDotBackground } from "./BlueDotBackground";
 
 const BLUE = "#1D63ED";
 
@@ -74,6 +75,9 @@ export function LandingPage() {
         className="fixed top-0 left-0 right-0 h-1 z-[60] origin-left"
         style={{ scaleX, backgroundColor: BLUE }}
       />
+
+      {/* Animated blue dot grid — spans full page */}
+      <BlueDotBackground />
 
       <LandingNavbar />
 
