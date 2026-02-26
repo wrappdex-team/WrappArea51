@@ -658,8 +658,10 @@ export function SwapPanel() {
         // [C53] Pass infinite approval preference — skips approve popup if allowance sufficient
         // [C100-S11] Pass maxAutoAssociations — skips association popups if account has auto-association
         // [STEP-15] infiniteApproval removed — always exact-amount approval
+        // [WALLET-PERF] skipBalanceCheck: UI already validated via insufficientBalance flag
         const swapOpts: SwapOptions = {
           maxAutoAssociations: hederaAccount?.maxAutoAssociations,
+          skipBalanceCheck: true,
         };
         result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork, swapOpts);
       }

@@ -608,7 +608,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     // sending a signing request. This guarantees a fresh, verified WebSocket.
     // Sessions persist in localStorage — only the transport is recycled.
     if (isMobile) {
-      console.log("[WC] [MOB-FIX-v3] Mobile detected — forcing fresh relay connection before signing...");
+      console.log("[WC] [MOB-FIX-v4] Mobile detected — checking relay connection before signing...");
       try {
         const relayer = client.core?.relayer;
         const provider = relayer?.provider;
@@ -616,58 +616,79 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
         // 1. Check raw WS state
         const ws = provider?.connection?.socket ?? provider?.socket;
         const wsState = ws?.readyState ?? -1;
-        console.log("[WC] [MOB-FIX-v3] Pre-cycle WS state:",
+        console.log("[WC] [MOB-FIX-v4] Pre-check WS state:",
           "relayer.connected=", relayer?.connected,
           "ws.readyState=", wsState,
           "(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)");
 
-        // 2. Force disconnect the provider (tears down the WebSocket)
-        if (provider && typeof provider.disconnect === "function") {
+        // [MOB-FIX-v4] FAST PATH: If WS is already OPEN and buffer is empty,
+        // skip the expensive disconnect→reconnect cycle entirely. The v3 code
+        // always forced a full cycle (3-10s), even when the connection was healthy.
+        // This wasted time and risked losing topic subscriptions.
+        if (ws && wsState === 1 /* OPEN */ && (ws.bufferedAmount ?? 0) === 0) {
+          console.log("[WC] [MOB-FIX-v4] WS already OPEN with empty buffer — skipping forced cycle (fast path)");
+          // Just do a quick session ping to verify end-to-end relay connectivity
           try {
             await Promise.race([
-              provider.disconnect(),
+              client.ping({ topic: params.topic }),
               new Promise(r => setTimeout(r, 2000)),
             ]);
-          } catch { /* disconnect can throw if already closed */ }
-        }
+            console.log("[WC] [MOB-FIX-v4] Session ping OK — relay is healthy");
+          } catch {
+            console.log("[WC] [MOB-FIX-v4] Session ping failed — but WS is OPEN, proceeding anyway");
+          }
+        } else {
+          // WS is NOT open — do the full disconnect→reconnect cycle
+          console.log("[WC] [MOB-FIX-v4] WS not healthy (state=", wsState, ") — forcing fresh relay connection...");
 
-        // 3. Brief pause for WebSocket to fully close
-        await new Promise(r => setTimeout(r, 300));
+          // 2. Force disconnect the provider (tears down the WebSocket)
+          if (provider && typeof provider.disconnect === "function") {
+            try {
+              await Promise.race([
+                provider.disconnect(),
+                new Promise(r => setTimeout(r, 2000)),
+              ]);
+            } catch { /* disconnect can throw if already closed */ }
+          }
 
-        // 4. Reconnect with a fresh WebSocket
-        if (provider && typeof provider.connect === "function") {
-          await Promise.race([
-            provider.connect(),
-            new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay reconnect timeout")), 8000)),
-          ]);
-        } else if (typeof relayer?.restartTransport === "function") {
-          await Promise.race([
-            relayer.restartTransport(),
-            new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay restart timeout")), 8000)),
-          ]);
-        }
+          // 3. Brief pause for WebSocket to fully close
+          await new Promise(r => setTimeout(r, 300));
 
-        // 5. Verify the new connection
-        const ws2 = provider?.connection?.socket ?? provider?.socket;
-        const ws2State = ws2?.readyState ?? -1;
-        console.log("[WC] [MOB-FIX-v3] Post-cycle WS state:",
-          "relayer.connected=", relayer?.connected,
-          "ws.readyState=", ws2State);
+          // 4. Reconnect with a fresh WebSocket
+          if (provider && typeof provider.connect === "function") {
+            await Promise.race([
+              provider.connect(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay reconnect timeout")), 8000)),
+            ]);
+          } else if (typeof relayer?.restartTransport === "function") {
+            await Promise.race([
+              relayer.restartTransport(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay restart timeout")), 8000)),
+            ]);
+          }
 
-        if (ws2State !== 1 /* OPEN */) {
-          console.warn("[WC] [MOB-FIX-v3] Fresh WS still not OPEN — polling for up to 5s...");
-          const pollStart = Date.now();
-          while (Date.now() - pollStart < 5000) {
-            const wsNow = provider?.connection?.socket ?? provider?.socket;
-            if (wsNow?.readyState === 1) {
-              console.log("[WC] [MOB-FIX-v3] WS became OPEN after", Date.now() - pollStart, "ms");
-              break;
+          // 5. Verify the new connection
+          const ws2 = provider?.connection?.socket ?? provider?.socket;
+          const ws2State = ws2?.readyState ?? -1;
+          console.log("[WC] [MOB-FIX-v4] Post-cycle WS state:",
+            "relayer.connected=", relayer?.connected,
+            "ws.readyState=", ws2State);
+
+          if (ws2State !== 1 /* OPEN */) {
+            console.warn("[WC] [MOB-FIX-v4] Fresh WS still not OPEN — polling for up to 5s...");
+            const pollStart = Date.now();
+            while (Date.now() - pollStart < 5000) {
+              const wsNow = provider?.connection?.socket ?? provider?.socket;
+              if (wsNow?.readyState === 1) {
+                console.log("[WC] [MOB-FIX-v4] WS became OPEN after", Date.now() - pollStart, "ms");
+                break;
+              }
+              await new Promise(r => setTimeout(r, 200));
             }
-            await new Promise(r => setTimeout(r, 200));
           }
         }
       } catch (e: any) {
-        console.warn("[WC] [MOB-FIX-v3] Forced relay cycle failed:", e?.message,
+        console.warn("[WC] [MOB-FIX-v4] Relay check failed:", e?.message,
           "— proceeding with existing connection (may fail)");
       }
     }

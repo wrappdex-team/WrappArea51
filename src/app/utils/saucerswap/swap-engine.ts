@@ -3897,6 +3897,13 @@ export interface SwapOptions {
    * When -1 or >0, association popups are skipped entirely (Hedera auto-associates).
    */
   maxAutoAssociations?: number;
+  /**
+   * [WALLET-PERF] Skip the pre-flight balance check in executeSaucerSwap.
+   * Set to true when the UI has already validated the user's balance
+   * (e.g., SwapPanel checks insufficientBalance before enabling the swap button).
+   * Saves 1-3s of Mirror Node latency before the wallet signing request fires.
+   */
+  skipBalanceCheck?: boolean;
 }
 
 export async function executeSaucerSwap(
@@ -3928,7 +3935,8 @@ export async function executeSaucerSwap(
   // [C53] Pre-flight token balance validation — abort BEFORE any wallet popup
   // For non-native tokens, check that the user actually holds enough tokens.
   // HBAR balance is checked inside executeSaucerSwapDirect (needs gas calculation).
-  if (!inputToken.isNative) {
+  // [WALLET-PERF] Skip if UI already validated balance — saves 1-3s Mirror Node latency.
+  if (!inputToken.isNative && !options?.skipBalanceCheck) {
     // [WALLET-PERF] Emit step so user sees immediate feedback
     window.dispatchEvent(new CustomEvent("swap-step", { detail: {
       step: 0, total: 0,
