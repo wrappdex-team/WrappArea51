@@ -107,8 +107,8 @@ export function registerVipChatRoutes(app: Hono): void {
       // Server-side Mirror Node VIP verification (the real authorization gate)
       const vipCheck = await verifyVipEligibilityFull(accountId);
       if (!vipCheck.eligible) {
-        console.log(`[VIP-CHAT] Rejected non-VIP: ${accountId} balance=${vipCheck.tokenBalance} nfts=${vipCheck.nftCount}`);
-        return c.json({ error: "VIP access requires 100M+ HBAR.ħ tokens or a VIP NFT" }, 403);
+        console.log(`[VIP-CHAT] Rejected non-VIP: ${accountId} balance=${vipCheck.tokenBalance} nfts=${vipCheck.nftCount} lp=${vipCheck.lpBalance ?? 0}`);
+        return c.json({ error: "VIP access requires 100M+ HBAR.ħ tokens, a VIP NFT, or 156,250+ LP tokens" }, 403);
       }
 
       // Input validation

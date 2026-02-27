@@ -76,15 +76,15 @@ export function registerSpinRoutes(app: Hono): void {
         console.log(`[Spin] No session — verifying VIP via Mirror Node for ${accountId}`);
         const vipStatus = await verifyVipEligibilityFull(accountId);
         if (!vipStatus.eligible) {
-          console.log(`[Spin] VIP FAILED: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
+          console.log(`[Spin] VIP FAILED: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance ?? 0}`);
           return c.json({
-            error: "VIP access required — hold 100M+ HBAR.ħ tokens or a VIP NFT to spin",
+            error: "VIP access required — hold 100M+ HBAR.ħ tokens, a VIP NFT, or 156,250+ LP tokens to spin",
             code: "VIP_REQUIRED",
             tokenBalance: vipStatus.tokenBalance,
             nftCount: vipStatus.nftCount,
           }, 403);
         }
-        console.log(`[Spin] VIP verified: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
+        console.log(`[Spin] VIP verified: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance ?? 0}`);
       }
 
       const now = Date.now();

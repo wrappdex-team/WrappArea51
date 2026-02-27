@@ -7,8 +7,10 @@
  * performing any authenticated action (vote, comment, create proposal).
  * OWNER-ONLY operations (admin add/remove) require ED25519 session tokens
  * (security review SEC-01 — X-Account-Id fallback removed from requireOwner).
- * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT (Mirror Node verified server-side).
- * Vote weight: 1 per 100M tokens (max 10) + 1 per 3 NFTs (max 1) = max 11.
+ * Eligibility: ≥100M HBAR.ħ tokens OR 1+ VIP NFT OR ≥156,250 ssLP-HBAR-HBAR.ħ
+ *              (Mirror Node verified server-side).
+ * Vote weight: 1 per 100M HBAR.ħ (max 10) + 1 per 3 NFTs (max 1)
+ *            + 1 per 156,250 LP tokens (max 10) = max 21.
  * Admin CRUD restricted to 0.0.518487 + dynamic admin list.
  */
 
@@ -63,6 +65,15 @@ export const NFTS_PER_VOTE = 3;
 export const MAX_TOKEN_VOTES = 10;
 export const MAX_NFT_VOTES = 1;
 
+// ── LP Token Configuration ────────────────────────────────────────────
+// IMPLEMENTATION NOTE: ssLP-HBAR-HBAR.ħ liquidity pool token.
+// Provides DAO voting rights to liquidity providers.
+// 156,250 LP tokens (display units) = 1 vote, capped at 10 votes (1,562,500).
+
+export const LP_TOKEN_ID = "0.0.9356724";
+export const LP_TOKENS_PER_VOTE = 156_250;
+export const MAX_LP_VOTES = 10;
+
 // ── Balance & Voting Power (client-side for UI display) ─────────────
 // NOTE: These are used for fast UI rendering. Authoritative voting power
 // is ALWAYS calculated server-side from Mirror Node data.
@@ -90,15 +101,24 @@ export function getNftCount(tokens: HederaTokenBalance[]): number {
   return entry?.rawBalance ?? 0;
 }
 
+export function getLpTokenCount(tokens: HederaTokenBalance[]): number {
+  const entry = tokens.find((t) => t.tokenId === LP_TOKEN_ID);
+  // IMPLEMENTATION NOTE: Uses display-unit balance (post-decimal adjustment),
+  // consistent with how HBAR.ħ thresholds use getWrappBalance().
+  // 156,250 display units = 1 vote.
+  return entry?.balance ?? 0;
+}
+
 export function isEligible(tokens: HederaTokenBalance[], network: string): boolean {
-  return getWrappBalance(tokens, network) >= GATE_THRESHOLD || getNftCount(tokens) >= 1;
+  return getWrappBalance(tokens, network) >= GATE_THRESHOLD || getNftCount(tokens) >= 1 || getLpTokenCount(tokens) >= LP_TOKENS_PER_VOTE;
 }
 
 export function maxVotesForBalance(tokens: HederaTokenBalance[], network: string): number {
   const balance = getWrappBalance(tokens, network);
   const tokenVotes = Math.min(Math.floor(balance / TOKENS_PER_VOTE), MAX_TOKEN_VOTES);
   const nftVotes = Math.min(Math.floor(getNftCount(tokens) / NFTS_PER_VOTE), MAX_NFT_VOTES);
-  return tokenVotes + nftVotes;
+  const lpVotes = Math.min(Math.floor(getLpTokenCount(tokens) / LP_TOKENS_PER_VOTE), MAX_LP_VOTES);
+  return tokenVotes + nftVotes + lpVotes;
 }
 
 // ── Comment Type ─────────────────────────────────────────────────────

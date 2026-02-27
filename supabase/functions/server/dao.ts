@@ -108,10 +108,15 @@ const DAO_TOKENS_PER_VOTE = 100_000_000;
 const DAO_MAX_TOKEN_VOTES = 10;
 const DAO_NFTS_PER_VOTE = 3;
 const DAO_MAX_NFT_VOTES = 1;
+// LP token voting: ssLP-HBAR-HBAR.ħ (0.0.9356724)
+// IMPLEMENTATION NOTE: 156,250 LP tokens (display units) = 1 vote, max 10.
+const DAO_LP_TOKENS_PER_VOTE = 156_250;
+const DAO_MAX_LP_VOTES = 10;
 
-function calculateVotingPower(tokenBalance: number, nftCount: number): number {
+function calculateVotingPower(tokenBalance: number, nftCount: number, lpBalance: number = 0): number {
   return Math.min(Math.floor(tokenBalance / DAO_TOKENS_PER_VOTE), DAO_MAX_TOKEN_VOTES)
-       + Math.min(Math.floor(nftCount / DAO_NFTS_PER_VOTE), DAO_MAX_NFT_VOTES);
+       + Math.min(Math.floor(nftCount / DAO_NFTS_PER_VOTE), DAO_MAX_NFT_VOTES)
+       + Math.min(Math.floor(lpBalance / DAO_LP_TOKENS_PER_VOTE), DAO_MAX_LP_VOTES);
 }
 
 // ── Proposal Types ──────────────────────────────────────────────────
@@ -407,10 +412,10 @@ export function registerDaoRoutes(app: Hono): void {
       // Pre-lock: VIP eligibility check (Mirror Node call — keep outside lock to minimize hold time)
       const vipStatus = await verifyVipEligibilityFull(accountId);
       if (!vipStatus.eligible) {
-        console.log(`[DAO] Ineligible vote attempt: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount}`);
-        return c.json({ error: "Insufficient holdings. Need 100M HBAR.ħ or 1 VIP NFT to vote.", code: "DAO_INELIGIBLE" }, 403);
+        console.log(`[DAO] Ineligible vote attempt: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance}`);
+        return c.json({ error: "Insufficient holdings. Need 100M HBAR.ħ, 1 VIP NFT, or 156,250 LP tokens to vote.", code: "DAO_INELIGIBLE" }, 403);
       }
-      const weight = calculateVotingPower(vipStatus.tokenBalance, vipStatus.nftCount);
+      const weight = calculateVotingPower(vipStatus.tokenBalance, vipStatus.nftCount, vipStatus.lpBalance);
       if (weight <= 0) return c.json({ error: "Insufficient balance for any voting power" }, 403);
 
       // Per-proposal lock — votes on different proposals don't block each other
@@ -430,7 +435,7 @@ export function registerDaoRoutes(app: Hono): void {
         };
         await saveDaoProposal(voted);
         console.log(`[DAO] Vote: ${accountId} voted ${direction} (weight=${weight}) on ${proposalId}`);
-        return c.json({ success: true, proposal: voted, votingPower: weight, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount });
+        return c.json({ success: true, proposal: voted, votingPower: weight, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount, lpBalance: vipStatus.lpBalance });
       });
       return result;
     } catch (err: any) {
@@ -453,7 +458,7 @@ export function registerDaoRoutes(app: Hono): void {
 
       // Pre-lock: VIP eligibility + input validation
       const vipStatus = await verifyVipEligibilityFull(accountId);
-      if (!vipStatus.eligible) return c.json({ error: "Hold HBAR.ħ tokens or VIP NFTs to comment", code: "DAO_INELIGIBLE" }, 403);
+      if (!vipStatus.eligible) return c.json({ error: "Hold HBAR.ħ tokens, VIP NFTs, or LP tokens to comment", code: "DAO_INELIGIBLE" }, 403);
       const body = await c.req.json();
       const { text } = body;
       if (!text || typeof text !== "string" || !text.trim()) return c.json({ error: "Comment text is required" }, 400);
@@ -492,9 +497,9 @@ export function registerDaoRoutes(app: Hono): void {
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
       const vipStatus = await verifyVipEligibilityFull(accountId);
-      const votingPower = calculateVotingPower(vipStatus.tokenBalance, vipStatus.nftCount);
+      const votingPower = calculateVotingPower(vipStatus.tokenBalance, vipStatus.nftCount, vipStatus.lpBalance);
       const isAdmin = await isDaoAdminAsync(accountId);
-      return c.json({ accountId, eligible: vipStatus.eligible, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount, votingPower, isAdmin, verifiedAt: vipStatus.verifiedAt, cached: vipStatus.cached });
+      return c.json({ accountId, eligible: vipStatus.eligible, tokenBalance: vipStatus.tokenBalance, nftCount: vipStatus.nftCount, lpBalance: vipStatus.lpBalance, votingPower, isAdmin, verifiedAt: vipStatus.verifiedAt, cached: vipStatus.cached });
     } catch (err) {
       console.error(`[DAO] Error fetching voting power: ${err}`);
       return c.json({ error: "Failed to fetch voting power" }, 500);

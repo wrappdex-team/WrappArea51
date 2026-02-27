@@ -44,8 +44,12 @@ import {
   NFTS_PER_VOTE,
   MAX_TOKEN_VOTES,
   MAX_NFT_VOTES,
+  LP_TOKEN_ID,
+  LP_TOKENS_PER_VOTE,
+  MAX_LP_VOTES,
   getWrappBalance,
   getNftCount,
+  getLpTokenCount,
   isEligible,
   maxVotesForBalance,
   loadProposals,
@@ -165,6 +169,7 @@ export function DAO() {
   const tokens = hederaAccount?.tokens ?? [];
   const wrappBalance = getWrappBalance(tokens, hederaNetwork);
   const nftCount = getNftCount(tokens);
+  const lpBalance = getLpTokenCount(tokens);
   const eligible = isEligible(tokens, hederaNetwork);
   const maxVotes = maxVotesForBalance(tokens, hederaNetwork);
   const connected = !!hashPackSession?.accountId;
@@ -585,6 +590,7 @@ export function DAO() {
         <EligibilityCard
           wrappBalance={wrappBalance}
           nftCount={nftCount}
+          lpBalance={lpBalance}
           network={hederaNetwork}
           accountId={accountId}
           onRefresh={handleRefreshBalance}
@@ -599,8 +605,9 @@ export function DAO() {
             You hold{" "}
             <span className={isDark ? "text-white" : "text-gray-900"}>{formatTokenCount(wrappBalance)}</span>{" "}
             HBAR.ħ and <span className={isDark ? "text-white" : "text-gray-900"}>{nftCount}</span> VIP NFTs. You need at least{" "}
-            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
-            or <span className={isSky ? "text-sky-400" : "text-pink-400"}>1 VIP NFT</span>.
+            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>,{" "}
+            <span className={isSky ? "text-sky-400" : "text-pink-400"}>1 VIP NFT</span>, or{" "}
+            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(LP_TOKENS_PER_VOTE)} LP tokens</span>.
             Acquire more on the{" "}
             <a href="/swap" className={`underline underline-offset-2 ${isSky ? "text-sky-400 hover:text-sky-300" : "text-pink-400 hover:text-pink-300"}`}>
               Swap
@@ -688,6 +695,7 @@ export function DAO() {
       <EligibilityCard
         wrappBalance={wrappBalance}
         nftCount={nftCount}
+        lpBalance={lpBalance}
         network={hederaNetwork}
         accountId={accountId}
         onRefresh={handleRefreshBalance}
@@ -796,6 +804,7 @@ export function DAO() {
 function EligibilityCard({
   wrappBalance,
   nftCount,
+  lpBalance = 0,
   network,
   accountId,
   onRefresh,
@@ -808,6 +817,7 @@ function EligibilityCard({
 }: {
   wrappBalance: number;
   nftCount: number;
+  lpBalance?: number;
   network: string;
   accountId: string;
   onRefresh: () => void;
@@ -818,11 +828,12 @@ function EligibilityCard({
   isAuthenticating?: boolean;
   onSignIn?: () => void;
 }) {
-  const { isDark } = useTheme();
-  const eligible = wrappBalance >= GATE_THRESHOLD || nftCount >= 1;
+  const { isDark, isSky } = useTheme();
+  const eligible = wrappBalance >= GATE_THRESHOLD || nftCount >= 1 || lpBalance >= LP_TOKENS_PER_VOTE;
   const tokenId = HBARH_TOKEN_ID[network] ?? "\u2014";
   const tokenVotes = Math.floor(wrappBalance / TOKENS_PER_VOTE);
   const nftVotes = Math.floor(nftCount / NFTS_PER_VOTE);
+  const lpVotes = Math.floor(lpBalance / LP_TOKENS_PER_VOTE);
 
   return (
     <div
@@ -864,7 +875,7 @@ function EligibilityCard({
         </Tip>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div>
           <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>HBAR.ħ Balance</div>
           <div className={`text-lg ${isDark ? "text-white" : "text-gray-900"}`}>{formatTokenCount(wrappBalance)}</div>
@@ -878,10 +889,15 @@ function EligibilityCard({
           </div>
           <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(nftVotes, MAX_NFT_VOTES)} vote{Math.min(nftVotes, MAX_NFT_VOTES) !== 1 ? "s" : ""} from NFTs{nftVotes > MAX_NFT_VOTES ? ` (capped from ${nftVotes})` : ""}</div>
         </div>
+        <div>
+          <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>LP Tokens</div>
+          <div className={`text-lg ${isDark ? "text-white" : "text-gray-900"}`}>{formatTokenCount(lpBalance)}</div>
+          <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(lpVotes, MAX_LP_VOTES)} vote{Math.min(lpVotes, MAX_LP_VOTES) !== 1 ? "s" : ""} from LP{lpVotes > MAX_LP_VOTES ? ` (capped from ${lpVotes})` : ""}</div>
+        </div>
         {maxVotes !== undefined && (
           <div>
             <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>Voting Power</div>
-            <div className="text-lg text-pink-400">{maxVotes}x</div>
+            <div className={`text-lg ${isSky ? "text-sky-400" : "text-pink-400"}`}>{maxVotes}x</div>
             <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>per proposal</div>
           </div>
         )}
@@ -894,6 +910,23 @@ function EligibilityCard({
           <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>Votes verified on-chain</div>
         </div>
       </div>
+
+      {/* ── LP Token Benefits Banner ── */}
+      {lpBalance >= LP_TOKENS_PER_VOTE && (
+        <div className={`mt-4 rounded-lg p-3 border ${isDark ? "bg-blue-500/5 border-blue-500/20" : "bg-blue-50 border-blue-200"}`}>
+          <div className="flex items-start gap-2">
+            <Gift className={`w-4 h-4 mt-0.5 shrink-0 ${isSky ? "text-sky-400" : "text-blue-400"}`} />
+            <div>
+              <div className={`text-xs font-semibold mb-0.5 ${isDark ? "text-blue-300" : "text-blue-700"}`}>
+                Liquidity Provider Benefits Active
+              </div>
+              <div className={`text-[10px] leading-relaxed ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                Your ssLP-HBAR-HBAR.ħ position grants full VIP/DAO membership: governance voting ({Math.min(lpVotes, MAX_LP_VOTES)} LP vote{Math.min(lpVotes, MAX_LP_VOTES) !== 1 ? "s" : ""}), proposal commenting, VIP chat access, and spin wheel eligibility &mdash; identical to HBAR.ħ token holders.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Session Status Indicator (security review SEC-02) ── */}
       {eligible && onSignIn && (

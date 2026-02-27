@@ -98,7 +98,7 @@ export function LandingTeam() {
             style={{ fontFamily: "'Inter', sans-serif" }}
           >
             WRAPpDEX is a Wyoming DUNA — a legally registered, non-anonymous
-            entity. You know who we are and where to find us.
+            entity. Doxxed founders, always here building and ready to support.
           </p>
         </motion.div>
 

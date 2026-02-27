@@ -781,7 +781,7 @@ export function WhitePaper() {
               {
                 icon: Vote,
                 title: "DAO Governance",
-                desc: "Create and vote on proposals. Voting power is token-weighted and verified on-chain via Mirror Node.",
+                desc: "Create and vote on proposals. Voting power from HBAR.ħ tokens, VIP NFTs, and LP positions — verified on-chain via Mirror Node.",
                 color: "from-violet-500 to-indigo-500",
               },
               {
