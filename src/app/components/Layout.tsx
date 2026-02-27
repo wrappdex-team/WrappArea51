@@ -191,7 +191,7 @@ export function Layout() {
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
             {/* HBAR.ħ Logo — compact on lg to free nav space */}
-            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1 max-w-[140px] lg:max-w-[120px] xl:max-w-[160px] 2xl:max-w-none">
+            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1 max-w-[140px] lg:max-w-[110px] xl:max-w-[145px] 2xl:max-w-none overflow-hidden">
               <HolidayLogo
                 defaultDarkSrc={brandLogos.dark}
                 defaultLightSrc={brandLogos.light}
@@ -231,7 +231,7 @@ export function Layout() {
                     onMouseEnter={() => { preloadRoute(item.path); }}
                     role="menuitem"
                     aria-current={active ? "page" : undefined}
-                    className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-lg transition-all duration-300 text-xs xl:text-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
+                    className={`flex items-center gap-1.5 lg:px-1.5 xl:px-2.5 2xl:px-3 py-1.5 rounded-lg transition-all duration-300 lg:text-[11px] xl:text-xs 2xl:text-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
                       active
                         ? `text-white shadow-lg shadow-pink-500/30 active-nav nav-iridescent ${isFlashing ? "tab-click-flash" : ""}`
                         : isDark
@@ -274,7 +274,7 @@ export function Layout() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(0); }}
-                className={`hidden sm:inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`hidden xl:inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-white border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 border border-gray-200"
