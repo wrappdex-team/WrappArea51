@@ -761,6 +761,13 @@ export function SwapPanel() {
           rawError.toLowerCase().includes("insufficient output")
         );
 
+        // IMPLEMENTATION NOTE: WalletConnect relay timeouts do NOT mean the
+        // transaction failed — the TX may have been signed, submitted, and
+        // confirmed on Hedera, but the relay failed to deliver the response
+        // back to the dApp within the timeout window. Treat these as
+        // "uncertain" rather than "failed" to avoid confusing users.
+        const isWcTimeout = rawError.toLowerCase().includes("timed out");
+
         // [DIAG-02] Classify error for user-friendly display
         const classified = classifySwapError(rawError, {
           inputSymbol: inputToken.symbol,
@@ -769,30 +776,42 @@ export function SwapPanel() {
           slippagePct: effectiveSlippage,
           isV2Fallback: rawError.toLowerCase().includes("v2") && rawError.toLowerCase().includes("v1"),
         });
-        console.log(`[DIAG-02] Error classified: category=${classified.category}, suggestion=${classified.suggestion}`);
+        console.log(`[DIAG-02] Error classified: category=${classified.category}, suggestion=${classified.suggestion}${isWcTimeout ? " [WC-TIMEOUT]" : ""}`);
 
-        const displayError = isFotError
-          ? `${classified.userMessage}\n\nThis token may have a custom transfer fee. The swap has been marked for automatic fee-tolerant routing — please try again.`
-          : `${classified.userMessage}${classified.category !== "unknown" ? `\n\n💡 ${classified.suggestion}` : ""}`;
-        setSwapError(displayError);
-        toast.error(isFotError
-          ? "Token has a transfer fee — retry will use fee-tolerant router automatically"
-          : classified.category !== "unknown" ? classified.userMessage : rawError
-        );
+        if (isWcTimeout) {
+          // WalletConnect timeout — transaction likely succeeded on-chain
+          const timeoutMsg = "Wallet response timed out — your swap may have succeeded. Check your wallet balance and HashScan.";
+          setSwapError(timeoutMsg);
+          toast.warning("Swap may have succeeded — check your wallet", { duration: 8000 });
+          // Refresh balances — if the swap went through, user will see updated amounts
+          fetchBalances();
+        } else {
+          const displayError = isFotError
+            ? `${classified.userMessage}\n\nThis token may have a custom transfer fee. The swap has been marked for automatic fee-tolerant routing — please try again.`
+            : `${classified.userMessage}${classified.category !== "unknown" ? `\n\n💡 ${classified.suggestion}` : ""}`;
+          setSwapError(displayError);
+          toast.error(isFotError
+            ? "Token has a transfer fee — retry will use fee-tolerant router automatically"
+            : classified.category !== "unknown" ? classified.userMessage : rawError
+          );
+        }
 
-        // Save failed swap to history
+        // Save to history — tag timeouts distinctly from hard failures
         const entry: SwapHistoryEntry = {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
           timestamp: Date.now(),
           inputSymbol: inputToken.symbol, outputSymbol: outputToken.symbol,
-          inputAmount, outputAmount: "0",
+          inputAmount, outputAmount: isWcTimeout ? "pending" : "0",
           route: result.route || [inputToken.symbol, outputToken.symbol],
           priceImpact: 0, slippage: effectiveSlippage,
           // C25: Coerce transactionId to string — SDK may return TransactionId object
           transactionId: result.transactionId ? String(result.transactionId) : null,
           executionVenue: result.executionVenue, success: false,
           isSimulated: false, network: hederaNetwork,
-          errorMessage: result.error,
+          errorMessage: isWcTimeout
+            ? "Wallet response timed out — transaction may have succeeded on-chain. Check HashScan."
+            : result.error,
+          timedOut: isWcTimeout,
         };
         saveSwapToHistory(entry);
         setSwapHistory(loadSwapHistory());

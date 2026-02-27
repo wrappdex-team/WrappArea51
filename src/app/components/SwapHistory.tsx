@@ -51,6 +51,8 @@ export interface SwapHistoryEntry {
   outputUsd?: number;
   /** Error message for failed swaps */
   errorMessage?: string;
+  /** [STEP4-FIX] WalletConnect timeout — transaction may have succeeded on-chain */
+  timedOut?: boolean;
 }
 
 const STORAGE_KEY = "hbarh-swap-history";
@@ -216,6 +218,7 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
   };
 
   const fmtAmt = (val: string | number) => {
+    if (val === "pending") return "pending";
     const n = typeof val === "string" ? parseFloat(val) : val;
     if (isNaN(n)) return "0";
     return n >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 4 })
@@ -361,6 +364,8 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
                     <div className="flex items-center gap-2">
                       {entry.success ? (
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : entry.timedOut ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
                       ) : (
                         <XCircle className="w-3.5 h-3.5 text-red-400" />
                       )}
@@ -439,7 +444,9 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
                   {/* Inline error reason for failed swaps */}
                   {!entry.success && entry.errorMessage && (
                     <div className={`mt-1.5 flex items-start gap-1.5 text-[10px] p-1.5 rounded-lg ${
-                      isDark ? "bg-red-900/10 border border-red-500/10 text-red-400/80" : "bg-red-50 border border-red-100 text-red-500"
+                      entry.timedOut
+                        ? isDark ? "bg-amber-900/10 border border-amber-500/10 text-amber-400/80" : "bg-amber-50 border border-amber-100 text-amber-600"
+                        : isDark ? "bg-red-900/10 border border-red-500/10 text-red-400/80" : "bg-red-50 border border-red-100 text-red-500"
                     }`}>
                       <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
                       <span className="break-all leading-relaxed">{entry.errorMessage.length > 200 ? entry.errorMessage.substring(0, 200) + "..." : entry.errorMessage}</span>
