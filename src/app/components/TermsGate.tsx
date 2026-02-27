@@ -287,9 +287,9 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  // Landing page bypass — institutional landing page is always accessible
-  const isLandingPage =
-    typeof window !== "undefined" && window.location.pathname === "/";
+  // IMPLEMENTATION NOTE: Landing page bypass is no longer needed here —
+  // TermsGate now lives inside the router tree and only wraps DEX routes.
+  // The landing page route is outside this component's subtree entirely.
 
   // Scroll handler — tracks progress and detects bottom
   const handleScroll = useCallback(() => {
@@ -316,7 +316,7 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
 
   // Check on mount if content fits without scrolling
   useEffect(() => {
-    if (accepted || isLandingPage) return;
+    if (accepted) return;
     const el = scrollRef.current;
     if (!el) return;
     // Small delay to let content render
@@ -327,9 +327,9 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [accepted, isLandingPage]);
+  }, [accepted]);
 
-  // Accept handler — with double-click protection via `entering` guard
+  // Accept handler ��� with double-click protection via `entering` guard
   const handleAccept = useCallback(() => {
     if (!toggleChecked || entering) return;
     setEntering(true);
@@ -359,8 +359,8 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
   // Loading state
   if (accepted === null) return null;
 
-  // Accepted or landing page — render children
-  if (accepted || isLandingPage) return <>{children}</>;
+  // Accepted — render children
+  if (accepted) return <>{children}</>;
 
   // ── Gate UI ────────────────────────────────────────────────────────
   return (

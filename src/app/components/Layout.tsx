@@ -191,7 +191,7 @@ export function Layout() {
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
             {/* HBAR.ħ Logo — compact on lg to free nav space */}
-            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1">
+            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1 max-w-[140px] lg:max-w-[120px] xl:max-w-[160px] 2xl:max-w-none">
               <HolidayLogo
                 defaultDarkSrc={brandLogos.dark}
                 defaultLightSrc={brandLogos.light}
@@ -200,25 +200,25 @@ export function Layout() {
                 vipPulse={vipActive}
                 wrapperClassName={`flex-shrink-0 transition-transform duration-300 flex items-center ${
                   isDark
-                    ? "h-[117px] md:h-[137px] lg:h-[117px] xl:h-[137px]"
-                    : "h-[137px] md:h-[166px] lg:h-[137px] xl:h-[156px]"
+                    ? "h-[117px] md:h-[137px] lg:h-[88px] xl:h-[105px] 2xl:h-[125px]"
+                    : "h-[137px] md:h-[166px] lg:h-[100px] xl:h-[120px] 2xl:h-[145px]"
                 }`}
                 imgClassName={
                   isDark
-                    ? "h-[105px] md:h-[125px] lg:h-[105px] xl:h-[125px] w-auto object-contain"
-                    : "h-[125px] md:h-[152px] lg:h-[125px] xl:h-[144px] w-auto object-contain"
+                    ? "h-[105px] md:h-[125px] lg:h-[78px] xl:h-[95px] 2xl:h-[115px] w-auto object-contain"
+                    : "h-[125px] md:h-[152px] lg:h-[90px] xl:h-[110px] 2xl:h-[132px] w-auto object-contain"
                 }
                 holidayImgClassName={
                   isDark
-                    ? "h-[52px] md:h-[62px] lg:h-[52px] xl:h-[62px] w-auto object-contain"
-                    : "h-[62px] md:h-[73px] lg:h-[62px] xl:h-[73px] w-auto object-contain"
+                    ? "h-[52px] md:h-[62px] lg:h-[40px] xl:h-[48px] 2xl:h-[58px] w-auto object-contain"
+                    : "h-[62px] md:h-[73px] lg:h-[48px] xl:h-[56px] 2xl:h-[68px] w-auto object-contain"
                 }
               />
             </Link>
 
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3" aria-label="Main navigation">
-              <div className="flex items-center gap-1 xl:gap-1.5" role="menubar">
+            <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3 overflow-hidden" aria-label="Main navigation">
+              <div className="flex items-center gap-0.5 lg:gap-0.5 xl:gap-1.5" role="menubar">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.path);

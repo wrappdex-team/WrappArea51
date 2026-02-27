@@ -15,7 +15,6 @@ import { initPerformanceMonitoring } from "./utils/performance";
 import { runHealthChecks } from "./utils/health";
 import { preloadCriticalRoutes } from "./utils/preload";
 import { log } from "./utils/logger";
-import { TermsGate } from "./components/TermsGate";
 
 // [WALLET-SURGERY Step 1] Pre-warm the WalletConnect SignClient at page load.
 // This eliminates the 3-4s "Initializing WalletConnect..." spinner when the user
@@ -102,20 +101,18 @@ export default function App() {
 
   return (
     <AppErrorBoundary>
-      <TermsGate>
-        <DynamicSDKWrapper>
-          <ThemeProvider>
-            <WalletProvider>
-              <SigningProvider>
-                <PartneredLogosProvider>
-                  <LazyDynamicBridge />
-                  <RouterProvider router={router} />
-                </PartneredLogosProvider>
-              </SigningProvider>
-            </WalletProvider>
-          </ThemeProvider>
-        </DynamicSDKWrapper>
-      </TermsGate>
+      <DynamicSDKWrapper>
+        <ThemeProvider>
+          <WalletProvider>
+            <SigningProvider>
+              <PartneredLogosProvider>
+                <LazyDynamicBridge />
+                <RouterProvider router={router} />
+              </PartneredLogosProvider>
+            </SigningProvider>
+          </WalletProvider>
+        </ThemeProvider>
+      </DynamicSDKWrapper>
     </AppErrorBoundary>
   );
 }

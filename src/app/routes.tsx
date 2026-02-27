@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate, Outlet } from "react-router";
 import { Layout } from "./components/Layout";
+import { TermsGate } from "./components/TermsGate";
 
 /**
  * Retry wrapper for dynamic imports.
@@ -63,6 +64,23 @@ const Branding = lazy(() => retryImport(() => import("./components/Branding")).t
 const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).then(m => ({ default: m.NotFound })));
 
 /**
+ * TermsGateLayout — wraps the DEX Layout with the Beta Terms gate.
+ *
+ * IMPLEMENTATION NOTE: TermsGate must live INSIDE the router tree (not above
+ * RouterProvider) so it mounts fresh when the user navigates from the landing
+ * page (/) to any DEX route (/markets, /swap, etc.). When it was above the
+ * router, client-side navigation never triggered a re-render and the gate
+ * only appeared on full page refresh.
+ */
+function TermsGateLayout() {
+  return (
+    <TermsGate>
+      <Layout />
+    </TermsGate>
+  );
+}
+
+/**
  * Route Architecture — wrappdex.io
  *
  * /                → Institutional landing page (no DEX chrome)
@@ -105,12 +123,12 @@ export const router = createBrowserRouter([
     path: "/",
     Component: RootShell,
     children: [
-      // Landing page — clean institutional site, no DEX layout
+      // Landing page — clean institutional site, no DEX layout, no terms gate
       { index: true, Component: LandingPage },
 
-      // DEX application — all routes share the Layout chrome
+      // DEX application — TermsGate blocks access until beta terms accepted
       {
-        Component: Layout,
+        Component: TermsGateLayout,
         children: [
           { path: "markets", Component: Dashboard },
           { path: "trading", Component: Trading },
