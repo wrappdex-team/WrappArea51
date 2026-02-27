@@ -92,10 +92,43 @@ export interface ScoredRouteInfo {
   priceImpact: number;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ── [STEP1] VALIDATED ROUTE PASSTHROUGH ─────────────────────────────
+//
+// Carries the server's winning route details from quote → execution.
+// When present, executeSaucerSwap() skips ALL route re-discovery
+// (findRouteViaGraph, _preValidateV2MultiHop)
+// and uses the pre-validated data directly. This eliminates 4-15s of
+// redundant RPC calls between "Swap clicked" and "wallet opens".
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface ValidatedRoute {
+  /** Pool version that produced the winning quote */
+  version: "v1" | "v2";
+  /** Fee tiers per hop (1 element for direct, 2 for 2-hop multi-hop) */
+  feeTiers: number[];
+  /** HTS IDs in order: [input, ...intermediaries, output] */
+  routeHtsIds: string[];
+  /** EVM addresses in order (V2-alias-resolved for V2 routes) */
+  pathEvmAddresses: string[];
+  /** Hex-encoded V2 packed path (null for V1 routes — Step 2 will populate) */
+  packedPathHex: string | null;
+  /** Pool address (for single-hop routes) */
+  poolAddress?: string;
+  /** Source strategy that won (e.g., "v2-quoter", "v1-via-USDC") */
+  source: string;
+  /** Raw output amount from the winning strategy (string for BigInt safety) */
+  rawAmountOut: string;
+  /** Timestamp when this route was validated on the server */
+  validatedAt: number;
+}
+
 // [C51+C52] Combined result from fetchServerQuote
 export interface ServerQuoteResult {
   quote: SwapQuote;
   scoredRoutes: ScoredRouteInfo[];
+  /** [STEP1] Pre-validated route from server — pass to executeSaucerSwap() to skip re-discovery */
+  validatedRoute: ValidatedRoute | null;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -758,6 +791,18 @@ export async function fetchServerQuote(
         intermediary: string;
         hops: number;
       }>;
+      // [STEP1] Server-side validated route details for execution passthrough
+      routeDetails?: {
+        version: "v1" | "v2";
+        feeTiers: number[];
+        routeHtsIds: string[];
+        pathEvmAddresses: string[];
+        packedPathHex: string | null;
+        poolAddress?: string;
+        source: string;
+        rawAmountOut: string;
+        validatedAt: number;
+      };
     }>("/quote", {
       inputToken: inputHtsId,
       outputToken: outputHtsId,
@@ -876,6 +921,7 @@ export async function fetchServerQuote(
         serverDurationMs: proxyData.durationMs || durationMs,
       },
       scoredRoutes: scoredRoutes,
+      validatedRoute: proxyData.routeDetails || null,
     };
   } catch (err: any) {
     console.warn(`[C51] fetchServerQuote failed (${Date.now() - startMs}ms):`, err?.message || err);

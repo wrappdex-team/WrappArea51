@@ -35,7 +35,7 @@ import {
   MIRROR_NODES, JSON_RPC_RELAY,
 } from "./contracts";
 import {
-  bytesToHex,
+  bytesToHex, hexToBytes,
   encodeExactInputSingle, encodeUnwrapWHBAR, encodeMulticall,
   encodeSaucerSwapETHForTokens, encodeSaucerSwapTokensForETH,
   encodeSaucerSwapCall, encodeSwapPath, encodeExactInput,
@@ -47,7 +47,7 @@ import {
 import { makeAbort, estimateOutputFromPrices } from "./prices";
 import type { PoolVersionInfo } from "./pools";
 import { detectPoolVersion, resolveAccountEvmAddress, resolveContractEvmAddress } from "./pools";
-import { buildSwapPath, getIntermediaryTokens, findBestMultiHopRoute, findRouteViaGraph } from "./routing";
+import { buildSwapPath, findRouteViaGraph } from "./routing";
 import type { RawQuote } from "./quotes";
 import { fetchSaucerSwapQuote, fetchV2RouterQuote, fetchV2MultiHopQuote, fetchRouterQuote } from "./quotes";
 import { isTokenAssociated, getNativeHbarBalance, getTokenBalance, fetchTokenAllowance, fetchMaxAutoAssociations, fetchTokenFeeSchedule, markTokenAsFOT, type TokenFeeInfo } from "./balances";
@@ -610,6 +610,30 @@ async function executeSaucerSwapV2Direct(
     // liquidity pool and returns accurate output amounts.
     let quote: RawQuote | null = null;
 
+    // ── [STEP3] Server-validated route bypass for quoting ──
+    // When the server already ran QuoterV2 and returned a valid quote,
+    // skip ALL client-side fee probing + fallback strategies. The server's
+    // rawAmountOut is the on-chain QuoterV2 result — same contract, same data.
+    if (options?.validatedRoute?.rawAmountOut) {
+      const serverOut = Number(BigInt(options.validatedRoute.rawAmountOut));
+      if (serverOut > 0) {
+        const serverFee = options.validatedRoute.feeTiers?.[0] || fee;
+        fee = serverFee;
+        (poolInfo as any).feeTier = serverFee;
+        quote = {
+          amountOut: serverOut,
+          priceImpact: 0,
+          route: [inputToken.htsId, outputToken.htsId],
+          source: "router",
+          confidence: "high",
+          poolVersion: "v2",
+          feeTier: serverFee,
+        };
+        console.log(`[STEP3] ✓ V2 Direct: using server-validated quote (amountOut=${serverOut}, fee=${serverFee}, ` +
+          `age=${Date.now() - (options.validatedRoute.validatedAt || 0)}ms) — skipping SWAP-FIX-4 + fallback`);
+      }
+    }
+
     // Strategy 1: V2 QuoterV2 contract (most accurate for V2 pools)
     // [SWAP-FIX-4] Try the detected fee tier first, then try other common
     // tiers if it fails. Many pools exist at unexpected fee tiers (e.g.,
@@ -720,6 +744,10 @@ async function executeSaucerSwapV2Direct(
     // confirm the pool exists BEFORE sending a real transaction.
     // If the pool doesn't exist for the detected fee tier, try other
     // common tiers. This prevents wasted gas on doomed transactions.
+    // [STEP3] Gated: server QuoterV2 implicitly validates pool existence.
+    if (options?.validatedRoute) {
+      console.log(`[STEP3] Skipping SWAP-FIX-3 pool existence check (server already validated via QuoterV2)`);
+    } else
     try {
       const v2FactoryId = SAUCERSWAP_V2_FACTORY[network] || SAUCERSWAP_V2_FACTORY.mainnet;
       const factoryEvm = await resolveContractEvmAddress(v2FactoryId, network);
@@ -905,7 +933,10 @@ async function executeSaucerSwapV2Direct(
     // so the dry run always reverts with "STF" / "execution reverted"
     // (insufficient allowance). This false-positive revert was blocking
     // all Token → HBAR and Token → Token swaps at the dry-run gate.
-    if (isInputNative) {
+    // [STEP3] Gated: server QuoterV2 already confirmed the path works.
+    if (options?.validatedRoute) {
+      console.log(`[STEP3] Skipping V2 dry run (server already validated route via QuoterV2)`);
+    } else if (isInputNative) {
     try {
       const dryCallData = encodeExactInputSingle(
         tokenInEvm, tokenOutEvm, fee,
@@ -1481,8 +1512,8 @@ async function executeSaucerSwapV2MultiHop(
     // │  The packed path for exactInput MUST encode these alias addresses,  │
     // │  not canonical bridge token addresses.                              │
     // │                                                                     │
-    // │  Safety net: even if the route source (findRouteViaGraph or         │
-    // │  findBestMultiHopRoute) already provided alias addresses, this      │
+    // │  Safety net: even if the route source (findRouteViaGraph)            │
+    // │  already provided alias addresses, this                             │
     // │  step re-validates each token to guarantee correctness.             │
     // │  Cost: negligible (in-memory registry lookups, no network calls).   │
     // └─────────────────────────────────────────────────────────────────────┘
@@ -1503,6 +1534,30 @@ async function executeSaucerSwapV2MultiHop(
       return ensureWhbarContractForV2(resolvedEvm, network);
     });
 
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │  [STEP2] SERVER-VALIDATED PACKED PATH BYPASS                        │
+    // │                                                                     │
+    // │  When the server quote engine already built and validated the V2    │
+    // │  packed path via QuoterV2, skip ALL client-side fee probing and    │
+    // │  re-validation. The server's packedPathHex is the EXACT bytes      │
+    // │  that SwapRouter.exactInput() needs. Saves 3-8s of RPC calls.     │
+    // └─────────────────────────────────────────────────────────────────────┘
+    let packedPath: Uint8Array;
+    let estimatedOutput = 0;
+    let isOnChainQuote = false;
+    let effectiveSlippage: number;
+
+    const _serverPackedHex = options?.validatedRoute?.packedPathHex;
+    if (_serverPackedHex && options?.validatedRoute?.rawAmountOut) {
+      // [STEP2] Fast path: use server-validated packed path directly
+      packedPath = hexToBytes(_serverPackedHex);
+      estimatedOutput = Number(BigInt(options.validatedRoute.rawAmountOut));
+      isOnChainQuote = true;
+      effectiveSlippage = Math.max(slippagePct, 2); // on-chain quote: respect user, 2% floor
+      console.log(`[STEP2] ✓ Using server-validated V2 packed path: ${packedPath.length}B, ` +
+        `estimatedOutput=${estimatedOutput}, fees=[${options.validatedRoute.feeTiers.join(",")}], ` +
+        `age=${Date.now() - (options.validatedRoute.validatedAt || 0)}ms`);
+    } else {
     // ┌─────────────────────────────────────────────────────────────────────┐
     // │  [SWAP-FIX-5] PER-HOP FEE TIER VALIDATION & PROBING               │
     // │                                                                     │
@@ -1613,7 +1668,7 @@ async function executeSaucerSwapV2MultiHop(
         fee: i < correctedFees.length ? correctedFees[i] : 0,
       });
     }
-    const packedPath = encodeSwapPath(pathHops);
+    packedPath = encodeSwapPath(pathHops);
     console.log(`[SWAP-FIX-5] V2 Multi-hop packed path: ${packedPath.length} bytes, ${v2PathTokens.length} tokens, ` +
       `fees: [${correctedFees.join(", ")}], addrs: ${v2PathTokens.map(a => evmAddressToHtsId(a)).join(" → ")}`);
 
@@ -1623,7 +1678,7 @@ async function executeSaucerSwapV2MultiHop(
     // (e.g., liquidity shifted between per-hop probing and full-path call).
     // We require this validation — no price-estimate fallback. If QuoterV2
     // says the path doesn't work, the swap WILL also fail.
-    let estimatedOutput = 0;
+    estimatedOutput = 0;
     const inTok = isInputNative ? whbar : inputToken;
     const outTok = isOutputNative ? whbar : outputToken;
 
@@ -1682,12 +1737,13 @@ async function executeSaucerSwapV2MultiHop(
     // [C77-04] Slippage: when QuoterV2 gave us an on-chain quote, use the
     // user's requested slippage (more accurate → tighter protection).
     // When falling back to price estimate, enforce 5% minimum.
-    const isOnChainQuote = estimatedOutput > 0 && estimatedOutput !== Number(
+    isOnChainQuote = estimatedOutput > 0 && estimatedOutput !== Number(
       estimateOutputFromPrices(rawInput, inTok, outTok, 1) ?? 0
     );
-    const effectiveSlippage = isOnChainQuote
+    effectiveSlippage = isOnChainQuote
       ? Math.max(slippagePct, 2)  // on-chain quote: respect user setting, 2% floor
       : Math.max(slippagePct, 5); // price estimate: 5% minimum
+    } // [STEP2] end of else block (server packed path bypass)
 
     // [SEC-14] HARD ABORT when no quote available — minOutput=1 is unsafe
     if (estimatedOutput <= 0) {
@@ -2072,6 +2128,67 @@ async function executeSaucerSwapDirect(
     const directOutEvm = getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken);
 
     // ═══════════════════════════════════════════════════════════════════
+    // ── [STEP1] VALIDATED ROUTE PASSTHROUGH ─────────────────────────────
+    //
+    // When the server quote engine has already validated a route, use it
+    // directly — skip ALL route re-discovery (findRouteViaGraph,
+    // detectPoolVersion, _preValidateV2MultiHop).
+    // This eliminates 4-15s of redundant RPC calls per swap.
+    //
+    // Staleness guard: routes older than 30s are ignored (pool state may
+    // have changed). The execution engine falls back to normal discovery.
+    // ═══════════════════════════════════════════════════════════════════
+    const vr = options?.validatedRoute;
+    const VALIDATED_ROUTE_MAX_AGE_MS = 30_000; // 30 seconds
+
+    // [STEP1] Safety: verify validated route matches current token pair
+    const vrInputId = isInputNative ? "0.0.1456986" : inputToken.htsId;
+    const vrOutputId = isOutputNative ? "0.0.1456986" : outputToken.htsId;
+    const vrPairMatch = vr && vr.routeHtsIds.length >= 2 &&
+      vr.routeHtsIds[0] === vrInputId &&
+      vr.routeHtsIds[vr.routeHtsIds.length - 1] === vrOutputId;
+
+    if (vr && vrPairMatch && vr.validatedAt && (Date.now() - vr.validatedAt < VALIDATED_ROUTE_MAX_AGE_MS)) {
+      console.log(`[STEP1] ✓ Using server-validated route: ${vr.source} (${vr.version}, ` +
+        `${vr.routeHtsIds.length - 1} hops, fees=[${vr.feeTiers.join(",")}], ` +
+        `age=${Date.now() - vr.validatedAt}ms)`);
+
+      if (vr.routeHtsIds.length === 2) {
+        // Direct pool (single-hop)
+        poolVersionInfo = {
+          version: vr.version,
+          feeTier: vr.feeTiers[0] || 3000,
+          poolAddress: vr.poolAddress,
+        };
+        pathAddresses = vr.pathEvmAddresses.length >= 2
+          ? vr.pathEvmAddresses
+          : [directInEvm, directOutEvm];
+      } else if (vr.routeHtsIds.length >= 3) {
+        // Multi-hop route
+        const hops: PoolVersionInfo[] = vr.feeTiers.map((fee, i) => ({
+          version: vr.version,
+          feeTier: fee,
+          poolAddress: undefined,
+        }));
+        multiHopRoute = {
+          hops,
+          tokens: vr.pathEvmAddresses.length >= 3
+            ? vr.pathEvmAddresses
+            : vr.routeHtsIds.map(id => htsIdToEvmAddress(id)),
+        };
+        pathAddresses = multiHopRoute.tokens;
+      }
+
+      // [WALLET-PERF] Still need recipientEvmAddress for the swap TX
+      // but skip ALL graph/pool discovery — go straight to routing-complete
+    } else if (vr) {
+      // Validated route skipped — log reason for debugging
+      const age = vr.validatedAt ? Date.now() - vr.validatedAt : -1;
+      console.log(`[STEP1] Validated route SKIPPED: pairMatch=${!!vrPairMatch}, age=${age}ms (max=${VALIDATED_ROUTE_MAX_AGE_MS}ms), ` +
+        `expected=${vrInputId}→${vrOutputId}, got=${vr.routeHtsIds[0]}→${vr.routeHtsIds[vr.routeHtsIds.length - 1]}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // ── [C82] GRAPH-FIRST ROUTING ─────────────────────────────────────
     //
     // Try the API-based pool graph FIRST (instant, no network calls).
@@ -2088,15 +2205,22 @@ async function executeSaucerSwapDirect(
     const inputRoutingId = getSaucerswapRoutingId(isInputNative ? whbar : inputToken);
     const outputRoutingId = getSaucerswapRoutingId(isOutputNative ? whbar : outputToken);
 
+    // [STEP1] When validated route already set poolVersionInfo or multiHopRoute,
+    // only resolve EVM address (still needed for swap TX recipient).
+    // Skip graph routing entirely — saves 1-3s.
+    const _skipDiscovery = !!(poolVersionInfo || multiHopRoute);
+
     // [WALLET-PERF] Parallel: resolve EVM address AND graph route simultaneously
     // EVM address needs a Mirror Node call (cached after first swap), graph
     // routing uses the in-memory pool cache (instant if pools are loaded).
     const [recipientEvmAddress, _graphRouteResult] = await Promise.all([
       resolveAccountEvmAddress(accountId, network),
-      findRouteViaGraph(inputRoutingId, outputRoutingId, network).catch((e: any) => {
-        console.warn(`[HBAR.h] [C82] Graph routing failed: ${e?.message} — will fall back to on-chain detection`);
-        return null;
-      }),
+      _skipDiscovery
+        ? Promise.resolve(null)
+        : findRouteViaGraph(inputRoutingId, outputRoutingId, network).catch((e: any) => {
+            console.warn(`[HBAR.h] [C82] Graph routing failed: ${e?.message} — will fall back to on-chain detection`);
+            return null;
+          }),
     ]);
 
     try {
@@ -2131,19 +2255,31 @@ async function executeSaucerSwapDirect(
       console.log(`[HBAR.h] Direct pool found: ${poolVersionInfo.version} (fee=${poolVersionInfo.feeTier || "N/A"})`);
       pathAddresses = [directInEvm, directOutEvm];
     } else {
-      // ── Step 2: No direct pool — search multi-hop routes through intermediaries ──
-      console.log(`[HBAR.h] No direct pool — searching multi-hop routes`);
-      const intermediaries = getIntermediaryTokens(inputToken, outputToken);
-      multiHopRoute = await findBestMultiHopRoute(
-        directInEvm, directOutEvm, intermediaries, network
-      );
-      if (multiHopRoute) {
-        console.log(`[HBAR.h] ═══ MULTI-HOP ROUTE FOUND ═══ ${multiHopRoute.tokens.map(t => evmAddressToHtsId(t)).join(" → ")}`);
-        multiHopRoute.hops.forEach((h, i) => {
-          console.log(`[HBAR.h]   Hop ${i}: ${h.version} fee=${h.feeTier} pool=${h.poolAddress || "?"}`);
-        });
-        // Update pathAddresses for V1 fallback compatibility
-        pathAddresses = multiHopRoute.tokens;
+      // ── Step 2: No direct pool — search multi-hop routes ──
+      // [STEP4] Use graph with forced refresh instead of legacy findBestMultiHopRoute()
+      // (which made 32-48 sequential detectPoolVersion() RPCs).
+      // The force-refresh ensures we rebuild the graph from SaucerSwap API
+      // even if the first graph call used stale/empty cache data.
+      console.log(`[HBAR.h] No direct pool — searching multi-hop via graph (forceRefresh=true)`);
+      try {
+        const graphRetry = await findRouteViaGraph(inputRoutingId, outputRoutingId, network, true);
+        if (graphRetry?.multiHop) {
+          multiHopRoute = graphRetry.multiHop;
+          console.log(`[STEP4] ✓ Graph retry found multi-hop: ${multiHopRoute.tokens.map(t => evmAddressToHtsId(t)).join(" → ")}`);
+          multiHopRoute.hops.forEach((h, i) => {
+            console.log(`[STEP4]   Hop ${i}: ${h.version} fee=${h.feeTier} pool=${h.poolAddress || "?"}`);
+          });
+          pathAddresses = multiHopRoute.tokens;
+        } else if (graphRetry?.direct) {
+          // Graph retry found a direct pool we missed — use it
+          poolVersionInfo = graphRetry.direct;
+          pathAddresses = [directInEvm, directOutEvm];
+          console.log(`[STEP4] ✓ Graph retry found direct pool: ${poolVersionInfo.version} fee=${poolVersionInfo.feeTier}`);
+        } else {
+          console.log(`[STEP4] Graph retry returned no route — no multi-hop available`);
+        }
+      } catch (graphRetryErr: any) {
+        console.warn(`[STEP4] Graph retry failed: ${graphRetryErr?.message} — no multi-hop fallback`);
       }
     }
     } // end fallback if (!poolVersionInfo && !multiHopRoute)
@@ -2221,7 +2357,8 @@ async function executeSaucerSwapDirect(
 
     if (isOutputNative && !isInputNative) {
       // [V2-SKIP] Check failure cache for Token→HBAR
-      const v2CacheHitTH = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+      // [STEP3] Gated: server just validated V2 works — don't let stale cache override
+      const v2CacheHitTH = options?.validatedRoute ? false : isV2FailureCached(inputToken.htsId, outputToken.htsId);
       if (v2CacheHitTH && poolVersionInfo?.version === "v2") {
         console.log(`[V2-SKIP] Token→HBAR: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
         poolVersionInfo = { version: "v1", poolAddress: undefined };
@@ -2286,7 +2423,8 @@ async function executeSaucerSwapDirect(
 
         // [STEP-6] Conditional V2 for Token→HBAR multi-hop
         if (allHopsV2) {
-          const v2CacheHitTH = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+          // [STEP3] Gated: server validated V2 → skip stale failure cache
+          const v2CacheHitTH = options?.validatedRoute ? false : isV2FailureCached(inputToken.htsId, outputToken.htsId);
           if (v2CacheHitTH) {
             console.log(`[STEP-6] Token→HBAR multi-hop: V2 failure cached — using V1`);
             poolVersionInfo = { version: "v1", poolAddress: undefined };
@@ -2297,6 +2435,9 @@ async function executeSaucerSwapDirect(
               isOutputNative ? whbar : outputToken,
             );
             pathAddresses = v1ThPath.map(t => htsIdToEvmAddress(t.htsId));
+          } else if (options?.validatedRoute?.packedPathHex) {
+            // [STEP2] Server already validated V2 — skip pre-validation
+            console.log(`[STEP2] Token→HBAR: skipping _preValidateV2MultiHop (server packed path present)`);
           } else {
             console.log(`[STEP-6] Token→HBAR multi-hop: pre-validating V2...`);
             const v2PreVal = await _preValidateV2MultiHop(
@@ -2407,7 +2548,8 @@ async function executeSaucerSwapDirect(
       const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
 
       if (allHopsV2) {
-        const v2CacheHit = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+        // [STEP3] Gated: server validated V2 → skip stale failure cache
+        const v2CacheHit = options?.validatedRoute ? false : isV2FailureCached(inputToken.htsId, outputToken.htsId);
 
         if (v2CacheHit) {
           // Soft hint: V2 failed recently — skip validation, go V1
@@ -2420,6 +2562,10 @@ async function executeSaucerSwapDirect(
             isOutputNative ? whbar : outputToken,
           );
           pathAddresses = v1DirectPath.map(t => htsIdToEvmAddress(t.htsId));
+        } else if (options?.validatedRoute?.packedPathHex) {
+          // [STEP2] Server already validated V2 — skip pre-validation
+          console.log(`[STEP2] Token→Token: skipping _preValidateV2MultiHop (server packed path present)`);
+          // multiHopRoute stays intact → V2 execution block fires below
         } else {
           // Pre-validate V2 path: per-hop fee probing + full QuoterV2 validation
           console.log(`[STEP-6] Token→Token multi-hop: pre-validating V2 path (${multiHopRoute.hops.length} hops)...`);
@@ -2530,7 +2676,8 @@ async function executeSaucerSwapDirect(
     // Previously, HBAR→Token V2 failures had NO fallback — the error
     // went straight to the user. Now: try V2 → if revert → try V1.
     // [V2-SKIP] Check failure cache for single-hop V2
-    if (poolVersionInfo?.version === "v2" && !multiHopRoute && isV2FailureCached(inputToken.htsId, outputToken.htsId)) {
+    // [STEP3] Gated: server validated V2 → skip stale failure cache
+    if (poolVersionInfo?.version === "v2" && !multiHopRoute && !options?.validatedRoute && isV2FailureCached(inputToken.htsId, outputToken.htsId)) {
       console.log(`[V2-SKIP] V2 single-hop: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
       poolVersionInfo = { version: "v1", poolAddress: undefined };
       const v1BypassSingle = buildSwapPath(
@@ -2589,7 +2736,8 @@ async function executeSaucerSwapDirect(
     // is V1 AMM, the V2 router fails to find a pool and reverts.
     // [STEP-6] Conditional V2 for HBAR→Token multi-hop
     if (multiHopRoute && multiHopRoute.hops.every(h => h.version === "v2")) {
-      const v2CacheHitGen = isV2FailureCached(inputToken.htsId, outputToken.htsId);
+      // [STEP3] Gated: server validated V2 → skip stale failure cache
+      const v2CacheHitGen = options?.validatedRoute ? false : isV2FailureCached(inputToken.htsId, outputToken.htsId);
       if (v2CacheHitGen) {
         console.log(`[STEP-6] HBAR→Token multi-hop: V2 failure cached — using V1`);
         poolVersionInfo = { version: "v1", poolAddress: undefined };
@@ -2600,6 +2748,9 @@ async function executeSaucerSwapDirect(
           isOutputNative ? whbar : outputToken,
         );
         pathAddresses = v1MhGenPath.map(t => htsIdToEvmAddress(t.htsId));
+      } else if (options?.validatedRoute?.packedPathHex) {
+        // [STEP2] Server already validated V2 — skip pre-validation
+        console.log(`[STEP2] HBAR→Token: skipping _preValidateV2MultiHop (server packed path present)`);
       } else {
         console.log(`[STEP-6] HBAR→Token multi-hop: pre-validating V2...`);
         const v2PreVal = await _preValidateV2MultiHop(
@@ -3904,6 +4055,13 @@ export interface SwapOptions {
    * Saves 1-3s of Mirror Node latency before the wallet signing request fires.
    */
   skipBalanceCheck?: boolean;
+  /**
+   * [STEP1] Pre-validated route from server quote engine.
+   * When present, executeSaucerSwapDirect() skips route re-discovery
+   * (findRouteViaGraph, _preValidateV2MultiHop)
+   * and uses the server-validated path directly. Saves 4-15s per swap.
+   */
+  validatedRoute?: import("./quotes").ValidatedRoute;
 }
 
 export async function executeSaucerSwap(

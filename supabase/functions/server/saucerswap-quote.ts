@@ -451,6 +451,10 @@ export interface QuoteResult {
   route: string[];           // HTS IDs in the route
   poolVersion?: "v1" | "v2";
   feeTier?: number;
+  // [STEP2] Per-hop fee tiers (replaces single feeTier for multi-hop)
+  feeTiers?: number[];
+  // [STEP2] Hex-encoded V2 packed path — the EXACT bytes that exactInput() needs
+  packedPathHex?: string;
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -734,9 +738,15 @@ async function strategyV2Quoter(
       const cleanHex = result.startsWith("0x") ? result.slice(2) : result;
       const out = BigInt("0x" + cleanHex.slice(0, 64));
       if (out > 0n) {
+        // [STEP2] Build single-hop packed path for execution passthrough
+        const singleHopPath = encodePackedPath([
+          { tokenEvm: v2InEvm, fee },
+          { tokenEvm: v2OutEvm, fee: 0 },
+        ]);
         return {
           amountOut: out.toString(), source: "v2-quoter", confidence: "high",
           priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v2", feeTier: fee,
+          feeTiers: [fee], packedPathHex: bytesToHex(singleHopPath),
         };
       }
     }
@@ -755,9 +765,15 @@ async function strategyV2Quoter(
           const cleanHex = result.startsWith("0x") ? result.slice(2) : result;
           const out = BigInt("0x" + cleanHex.slice(0, 64));
           if (out > 0n) {
+            // [STEP2] Build single-hop packed path (canonical addresses)
+            const canonPath = encodePackedPath([
+              { tokenEvm: tokenInEvm, fee },
+              { tokenEvm: tokenOutEvm, fee: 0 },
+            ]);
             return {
               amountOut: out.toString(), source: "v2-quoter", confidence: "high",
               priceImpact: 0, route: [inputHtsId, outputHtsId], poolVersion: "v2", feeTier: fee,
+              feeTiers: [fee], packedPathHex: bytesToHex(canonPath),
             };
           }
         }
@@ -837,6 +853,7 @@ async function strategyV2MultiHop(
         return {
           amountOut: out.toString(), source: "v2-multihop", confidence: "high" as const, priceImpact: 0,
           route: [inputHtsId, WHBAR_HTS_ID, outputHtsId], poolVersion: "v2" as const, feeTier: fee1,
+          feeTiers: [fee1, fee2], packedPathHex: bytesToHex(packedPath),
         };
       }
     }
@@ -861,6 +878,7 @@ async function strategyV2MultiHop(
             return {
               amountOut: out.toString(), source: "v2-multihop", confidence: "high" as const, priceImpact: 0,
               route: [inputHtsId, WHBAR_HTS_ID, outputHtsId], poolVersion: "v2" as const, feeTier: fee1,
+              feeTiers: [fee1, fee2], packedPathHex: bytesToHex(packedPath),
             };
           }
         }
@@ -1062,6 +1080,7 @@ async function probeAllIntermediaries(
               return {
                 amountOut: out.toString(), source: `v2-via-${mid.symbol}`, confidence: "high",
                 priceImpact: 0, route: [inputHtsId, mid.htsId, outputHtsId], poolVersion: "v2", feeTier: fee1,
+                feeTiers: [fee1, fee2], packedPathHex: bytesToHex(packedPath),
               };
             }
           }
@@ -1398,6 +1417,33 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
       const slippageBps = Math.floor(slippage * 100); // 0.5% → 50 bps
       const amountOutMin = amountOutBig - (amountOutBig * BigInt(slippageBps)) / 10000n;
 
+      // ── [STEP1] Build routeDetails for execution passthrough ──────────
+      // Carries the server's winning route metadata to the client so
+      // executeSaucerSwap() can skip ALL route re-discovery (4-15s saved).
+      const bestVersion = (best.poolVersion || poolInfo?.version || "v1") as "v1" | "v2";
+      const bestFeeTier = best.feeTier || poolInfo?.feeTier || 3000;
+      const bestRoute = best.route || [inputHtsId, outputHtsId];
+      const routeEvmAddresses = bestRoute.map((id: string) => {
+        return bestVersion === "v2"
+          ? htsIdToEvmAddress(resolveV2AliasId(id))
+          : htsIdToEvmAddress(id);
+      });
+      const routeDetails = {
+        version: bestVersion,
+        // [STEP2] Use per-hop fee tiers from winning quote when available
+        feeTiers: best.feeTiers || (bestRoute.length === 2
+          ? [bestFeeTier]
+          : [bestFeeTier, bestFeeTier]),
+        routeHtsIds: bestRoute,
+        pathEvmAddresses: routeEvmAddresses,
+        // [STEP2] Packed path from QuoterV2 — the EXACT bytes for exactInput()
+        packedPathHex: best.packedPathHex || null,
+        poolAddress: poolInfo?.poolAddress,
+        source: best.source,
+        rawAmountOut: best.amountOut,
+        validatedAt: Date.now(),
+      };
+
       return c.json({
         amountOut: best.amountOut,
         amountOutMin: amountOutMin.toString(),
@@ -1414,6 +1460,8 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
         durationMs,
         // [C100 Step 4] Diagnostics: how many dynamic aliases are active
         dynamicAliases: _dynamicAliasMap?.size ?? 0,
+        // [STEP1] Validated route for client execution passthrough
+        routeDetails,
       });
     } catch (err: any) {
       console.log(`[SS-Quote] /quote error: ${err?.message || err}`);

@@ -45,7 +45,32 @@
   - Support for ED25519 and ECDSA_SECP256K1 key types
   - tweetnacl primary verification with Web Crypto fallback
 
-#### 4. Previous Milestones (All Mainnet-Tested)
+#### 4. SaucerSwap V3 Master Plan (Steps 1-3 Complete)
+- **Goal:** Fix slow wallet opens, suboptimal routing, quote competitiveness
+- **Step 1 — ValidatedRoute Passthrough** ✅ Complete (4 files)
+  - Server `saucerswap-quote.ts`, client `quotes.ts`, `SwapPanel.tsx`, `swap-engine.ts`
+  - Server-validated route carried from quote → execution, skipping all route re-discovery
+  - Staleness guard: routes older than 30s fall back to normal discovery
+- **Step 2 — Server Returns V2 Packed Path** ✅ Complete (2 files)
+  - Server builds exact packed path bytes via QuoterV2, client uses them directly
+  - Eliminates 3-8s of SWAP-FIX-5 per-hop fee probing + full-path re-validation
+  - Three `_preValidateV2MultiHop` call sites gated behind `packedPathHex` presence
+- **Step 3 — Gate Redundant Checks** ✅ Complete (1 file, 11 touchpoints)
+  - SWAP-FIX-4 (fee re-probing): bypassed via server-provided quote
+  - SWAP-FIX-3 (pool existence): skipped entirely when server validated
+  - Dry run: skipped when server already confirmed path via QuoterV2
+  - V2 failure cache: all 5 check sites gated to prevent stale cache overriding server
+  - Expected impact: 4-12s eliminated for server-validated swaps
+- **Step 4 — Retire Legacy findBestMultiHopRoute()** ✅ Complete (2 files, 3 touchpoints)
+  - Replaced call site in `swap-engine.ts` with `findRouteViaGraph(... , true)` (force-refresh)
+  - Replaced call site in `routing.ts` `findSwapRouteAsync()` with graph retry
+  - Added `forceRefresh` param to `buildPoolGraph` and `findRouteViaGraph`
+  - `findBestMultiHopRoute()` preserved behind `LEGACY_MULTIHOP_ENABLED` flag (delete after Mar 13, 2026)
+  - Removed unused imports (`findBestMultiHopRoute`, `getIntermediaryTokens`) from swap-engine
+  - Expected impact: eliminates 32-48 RPC calls from fallback routing path
+- **Steps 5-20:** Pending (optimize V1, improve price impact, etc.)
+
+#### 5. Previous Milestones (All Mainnet-Tested)
 - ✅ 16-Step V2 Liquidity Master Plan
 - ✅ 5-Step AddLiquidityV2Modal UX Overhaul
 - ✅ 3-Step Price Range Overhaul

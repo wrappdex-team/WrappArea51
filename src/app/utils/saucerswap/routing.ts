@@ -9,7 +9,7 @@
  * buildSwapPath()           -- Build the on-chain token path for a swap
  * findSwapRoute()           -- Find the best route between two tokens
  * getIntermediaryTokens()   -- Get candidate intermediary tokens for multi-hop
- * findBestMultiHopRoute()   -- Try multi-hop via intermediary tokens
+ * findBestMultiHopRoute()   -- [DEPRECATED] Try multi-hop via intermediary tokens (behind feature flag)
  * getPoolRoutes()           -- Static fallback pool routes
  * fetchPoolRoutes()         -- Live pool routes from backend proxy
  */
@@ -64,9 +64,10 @@ const POOL_GRAPH_TTL_MS = 300_000; // 5 min (matches API cache TTL)
  * [C82] Build a routing graph from SaucerSwap V2 + V1 pool API caches.
  * The graph maps each token HTS ID to its connected pools.
  * Returns a cached graph if fresh (5-min TTL).
+ * [STEP4] forceRefresh: invalidate cache and rebuild from API.
  */
-async function buildPoolGraph(network: HederaNetwork): Promise<PoolGraph> {
-  if (_poolGraph && Date.now() - _poolGraphTs < POOL_GRAPH_TTL_MS) {
+async function buildPoolGraph(network: HederaNetwork, forceRefresh = false): Promise<PoolGraph> {
+  if (!forceRefresh && _poolGraph && Date.now() - _poolGraphTs < POOL_GRAPH_TTL_MS) {
     return _poolGraph;
   }
 
@@ -330,11 +331,12 @@ export async function findRouteViaGraph(
   inputHtsId: string,
   outputHtsId: string,
   network: HederaNetwork,
+  forceRefresh = false,
 ): Promise<{
   direct: PoolVersionInfo | null;
   multiHop: { hops: PoolVersionInfo[]; tokens: string[] } | null;
 } | null> {
-  const graph = await buildPoolGraph(network);
+  const graph = await buildPoolGraph(network, forceRefresh);
   if (graph.size === 0) return null;
 
   const inKey = resolveGraphKey(inputHtsId, graph);
@@ -531,7 +533,22 @@ export function getIntermediaryTokens(
     });
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// [STEP4] FEATURE FLAG: Legacy multi-hop routing via sequential RPC calls.
+// Set to true ONLY if graph-based routing (findRouteViaGraph) produces
+// incorrect results for a specific pair. This flag re-enables the old
+// detectPoolVersion()-per-intermediary approach (32-48 RPC calls).
+// SCHEDULED FOR REMOVAL: 2 weeks after Step 4 deployment (≈ March 13, 2026).
+// ═══════════════════════════════════════════════════════════════════════
+const LEGACY_MULTIHOP_ENABLED = false;
+
 /**
+ * @deprecated [STEP4] Replaced by findRouteViaGraph() which uses the
+ * in-memory pool graph (BFS, zero network calls) instead of sequential
+ * detectPoolVersion() calls (32-48 RPCs, 8-16s latency).
+ * Retained behind LEGACY_MULTIHOP_ENABLED feature flag for safety.
+ * Delete after March 13, 2026 if no issues reported.
+ *
  * Find the best multi-hop route through intermediary tokens.
  * Tries each intermediary and returns the first valid route (V2 preferred).
  *
@@ -928,9 +945,9 @@ export function clearAsyncRouteCache(): void {
  * [C56] Async route finding with on-chain pool detection fallback.
  *
  * When `findSwapRoute()` (static pool list) returns null, this function
- * does REAL on-chain pool detection via `detectPoolVersion()` and
- * `findBestMultiHopRoute()`. This is the same logic the execution engine
- * uses, ensuring the UI never blocks a swap that the engine can execute.
+ * uses graph-based routing with forced refresh, falling back to direct
+ * on-chain pool detection via `detectPoolVersion()`. [STEP4] The legacy
+ * `findBestMultiHopRoute()` (32-48 RPCs) has been replaced by graph retry.
  *
  * Results (including negative "no route" results) are cached for 2 minutes
  * to avoid redundant JSON-RPC calls when the user toggles token pairs.
@@ -1066,48 +1083,74 @@ export async function findSwapRouteAsync(
     return result;
   }
 
-  // Step 2: Multi-hop through intermediaries
-  const intermediaries = getIntermediaryTokens(input, output);
-  const multiHop = await findBestMultiHopRoute(directInEvm, directOutEvm, intermediaries, network);
-  if (multiHop) {
-    // Resolve intermediary tokens for display
-    const midEvm = multiHop.tokens[1]; // The intermediary
-    const midHtsId = evmAddressToHtsId(midEvm);
-    const midToken = TOKEN_BY_SYMBOL.get("HBAR")?.htsId === "native" && midEvm.toLowerCase() === getSaucerswapRoutingEvmAddress(whbar).toLowerCase()
-      ? TOKEN_BY_SYMBOL.get("HBAR")!
-      : (TOKEN_BY_HTS_ID.get(midHtsId) || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken);
+  // [STEP4] Step 2: Multi-hop via graph retry with forced refresh.
+  // Replaces legacy findBestMultiHopRoute() (32-48 sequential RPCs).
+  // Force-refresh rebuilds the graph from SaucerSwap API in case the
+  // initial graph call (Step 0) used stale/empty cached data.
+  try {
+    const inputRoutingId = getSaucerswapRoutingId(input.isNative ? whbar : input);
+    const outputRoutingId = getSaucerswapRoutingId(output.isNative ? whbar : output);
+    const graphRetry = await findRouteViaGraph(inputRoutingId, outputRoutingId, network, true);
+    if (graphRetry?.multiHop) {
+      const multiHop = graphRetry.multiHop;
+      const midEvm = multiHop.tokens[1];
+      const midHtsId = evmAddressToHtsId(midEvm);
+      const midToken = TOKEN_BY_SYMBOL.get("HBAR")?.htsId === "native" && midEvm.toLowerCase() === getSaucerswapRoutingEvmAddress(whbar).toLowerCase()
+        ? TOKEN_BY_SYMBOL.get("HBAR")!
+        : (TOKEN_BY_HTS_ID.get(midHtsId) || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === midHtsId)
+          || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken);
 
-    console.log(`[C56] Multi-hop on-chain route found: ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
+      console.log(`[STEP4] [C56] Graph retry multi-hop: ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
 
-    const pool1: PoolRoute = {
-      id: `onchain-hop1-${input.symbol}-${midToken.symbol}`,
-      tokenA: input,
-      tokenB: midToken,
-      fee: multiHop.hops[0].feeTier ? multiHop.hops[0].feeTier / 10000 : 0.3,
-      tvlUsd: 0, volume24hUsd: 0, apr: 0,
-      poolAddress: multiHop.hops[0].poolAddress || "on-chain-detected",
-      source: multiHop.hops[0].version,
-    };
-    const pool2: PoolRoute = {
-      id: `onchain-hop2-${midToken.symbol}-${output.symbol}`,
-      tokenA: midToken,
-      tokenB: output,
-      fee: multiHop.hops[1].feeTier ? multiHop.hops[1].feeTier / 10000 : 0.3,
-      tvlUsd: 0, volume24hUsd: 0, apr: 0,
-      poolAddress: multiHop.hops[1].poolAddress || "on-chain-detected",
-      source: multiHop.hops[1].version,
-    };
+      const pool1: PoolRoute = {
+        id: `graph-retry-hop1-${input.symbol}-${midToken.symbol}`,
+        tokenA: input,
+        tokenB: midToken,
+        fee: multiHop.hops[0].feeTier ? multiHop.hops[0].feeTier / 10000 : 0.3,
+        tvlUsd: 0, volume24hUsd: 0, apr: 0,
+        poolAddress: multiHop.hops[0].poolAddress || "graph-retry-detected",
+        source: multiHop.hops[0].version,
+      };
+      const pool2: PoolRoute = {
+        id: `graph-retry-hop2-${midToken.symbol}-${output.symbol}`,
+        tokenA: midToken,
+        tokenB: output,
+        fee: multiHop.hops[1].feeTier ? multiHop.hops[1].feeTier / 10000 : 0.3,
+        tvlUsd: 0, volume24hUsd: 0, apr: 0,
+        poolAddress: multiHop.hops[1].poolAddress || "graph-retry-detected",
+        source: multiHop.hops[1].version,
+      };
 
-    const result: AsyncRouteResult = {
-      path: [input, midToken, output],
-      pools: [pool1, pool2],
-      totalFee: pool1.fee + pool2.fee,
-      onChain: true,
-    };
-    // Cache the positive result
-    _routeCacheEvict();
-    _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
-    return result;
+      const result: AsyncRouteResult = {
+        path: [input, midToken, output],
+        pools: [pool1, pool2],
+        totalFee: pool1.fee + pool2.fee,
+        onChain: true,
+      };
+      _routeCacheEvict();
+      _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
+      return result;
+    } else if (graphRetry?.direct) {
+      // Graph retry found a direct pool missed on first pass
+      const syntheticPool: PoolRoute = {
+        id: `graph-retry-${input.symbol}-${output.symbol}`,
+        tokenA: input, tokenB: output,
+        fee: graphRetry.direct.feeTier ? graphRetry.direct.feeTier / 10000 : 0.3,
+        tvlUsd: 0, volume24hUsd: 0, apr: 0,
+        poolAddress: graphRetry.direct.poolAddress || "graph-retry-detected",
+        source: graphRetry.direct.version,
+      };
+      const result: AsyncRouteResult = {
+        path: [input, output], pools: [syntheticPool],
+        totalFee: syntheticPool.fee, onChain: true,
+      };
+      _routeCacheEvict();
+      _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
+      console.log(`[STEP4] [C56] Graph retry found direct pool: ${graphRetry.direct.version} fee=${graphRetry.direct.feeTier}`);
+      return result;
+    }
+  } catch (graphRetryErr: any) {
+    console.warn(`[STEP4] [C56] Graph retry failed: ${graphRetryErr?.message}`);
   }
 
   // Cache negative result (no route) to avoid re-checking

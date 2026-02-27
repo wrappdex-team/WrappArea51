@@ -60,6 +60,7 @@ import {
   type SwapResult,
   type SwapOptions,
   type SwapPrerequisites,
+  type ValidatedRoute,
 } from "../utils/saucerswap";
 import { classifySwapError } from "../utils/saucerswap/diagnostics";
 import { prewarmRelay, startRelayKeepalive, tryOpenWalletExtension } from "../utils/hashpack";
@@ -410,6 +411,8 @@ export function SwapPanel() {
   // ── Calculate quote ──
   const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const serverQuoteAbortRef = useRef<AbortController | null>(null);
+  // [STEP1] Store server-validated route for execution passthrough
+  const validatedRouteRef = useRef<ValidatedRoute | null>(null);
 
   // [C51] Phase 1: Instant client-side estimate (confidence: "low")
   useEffect(() => {
@@ -419,6 +422,8 @@ export function SwapPanel() {
       serverQuoteAbortRef.current.abort();
       serverQuoteAbortRef.current = null;
     }
+    // [STEP1] Clear stale validated route — prevents wrong-pair passthrough
+    validatedRouteRef.current = null;
     const amt = parseFloat(inputAmount);
     if (!amt || amt <= 0) { setQuote(null); setScoredRoutes([]); setOutputAmount(""); return; }
 
@@ -481,6 +486,10 @@ export function SwapPanel() {
             `[C51] Quote upgraded: ${result.quote.confidence} (${result.quote.quoteSource}, ${result.quote.serverDurationMs}ms)` +
             (result.scoredRoutes.length > 1 ? ` [C52] ${result.scoredRoutes.length} routes scored` : "")
           );
+          // [STEP1] Store validated route for execution
+          if (result.validatedRoute) {
+            validatedRouteRef.current = result.validatedRoute;
+          }
         }
       } catch (err: any) {
         if (!abortCtrl.signal.aborted) {
@@ -684,6 +693,10 @@ export function SwapPanel() {
           maxAutoAssociations: hederaAccount?.maxAutoAssociations,
           skipBalanceCheck: true,
         };
+        // [STEP1] Pass validated route for execution
+        if (validatedRouteRef.current) {
+          swapOpts.validatedRoute = validatedRouteRef.current;
+        }
         result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork, swapOpts);
       }
 
