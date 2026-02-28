@@ -41,6 +41,14 @@ export const SCAM_TOKEN_BLOCKLIST: BlockedToken[] = [
     reason: "Fake Wrapped Bitcoin with astronomical balances (51k+) and $0.000004 price. Real WBTC is 0.0.1055483 at ~$65k-$104k.",
     discoveredDate: "2025-02-25",
   },
+  {
+    htsId: "0.0.10096415",
+    fakeSymbol: "SMACKM",
+    realTokenId: "0.0.8041571",
+    realSymbol: "SMACKM",
+    reason: "Fake SMACKM imposter token. Auto-reconciliation wrongly picked this as canonical. Real SMACKM is 0.0.8041571. Guardrails blocked the swap — token now hard-blocked.",
+    discoveredDate: "2026-02-28",
+  },
 ];
 
 /** Fast lookup set for O(1) blocking */

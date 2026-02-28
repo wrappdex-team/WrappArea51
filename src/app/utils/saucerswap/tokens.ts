@@ -304,10 +304,12 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 43, isWrapped: false,
   },
   {
-    // [C-RECONCILE] Updated from 0.0.8041571 → 0.0.10096415 (SaucerSwap API canonical ID)
-    symbol: "SMACKM", name: "SMACKM", htsId: "0.0.10096415",
-    evmAddress: htsIdToEvmAddress("0.0.10096415"), decimals: 8,
-    logo: getReliableIconUrl("0.0.10096415") || "https://www.saucerswap.finance/images/tokens/0.0.10096415.svg",
+    // [SECURITY-FIX-3] REVERTED to correct 0.0.8041571. Previous C-RECONCILE wrongly
+    // changed to 0.0.10096415 which is a FAKE/SCAM imposter SMACKM token.
+    // The real SMACKM is 0.0.8041571. Scam token added to blocklist.
+    symbol: "SMACKM", name: "SMACKM", htsId: "0.0.8041571",
+    evmAddress: htsIdToEvmAddress("0.0.8041571"), decimals: 8,
+    logo: getReliableIconUrl("0.0.8041571") || "https://www.saucerswap.finance/images/tokens/0.0.8041571.svg",
     rank: 44, isWrapped: false,
   },
   {
