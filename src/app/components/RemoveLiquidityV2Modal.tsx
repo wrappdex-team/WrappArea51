@@ -88,7 +88,9 @@ export function RemoveLiquidityV2Modal({
   const accountId = hederaAccount?.accountId || primaryWallet?.accountId || "";
 
   const [percent, setPercent] = useState(collectOnly ? 0 : 100);
-  const [burnNFT, setBurnNFT] = useState(false);
+  // IMPLEMENTATION NOTE: Default burn to true at 100% — removing all liquidity
+  // should clean up the NFT by default to avoid ghost positions.
+  const [burnNFT, setBurnNFT] = useState(!collectOnly);
   const [slippageBps, setSlippageBps] = useState(100);
   const [modalState, setModalState] = useState<ModalState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -342,7 +344,7 @@ export function RemoveLiquidityV2Modal({
             {/* Mode Toggle */}
             <div className="flex gap-2">
               <button
-                onClick={() => { setIsCollectMode(false); setPercent(100); }}
+                onClick={() => { setIsCollectMode(false); setPercent(100); setBurnNFT(true); }}
                 className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
                   !isCollectMode
                     ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
@@ -378,7 +380,14 @@ export function RemoveLiquidityV2Modal({
                   min={1}
                   max={100}
                   value={percent}
-                  onChange={(e) => setPercent(parseInt(e.target.value))}
+                  onChange={(e) => {
+                    const newPct = parseInt(e.target.value);
+                    setPercent(newPct);
+                    // IMPLEMENTATION NOTE: Auto-toggle burn when slider hits/leaves 100%.
+                    // Prevents ghost NFT positions when users remove all liquidity.
+                    if (newPct === 100) setBurnNFT(true);
+                    else setBurnNFT(false);
+                  }}
                   className="w-full h-2 rounded-full appearance-none cursor-pointer bg-slate-700/30
                     [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
                     [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gradient-to-r
@@ -391,7 +400,7 @@ export function RemoveLiquidityV2Modal({
                   {PERCENT_PRESETS.map((p) => (
                     <button
                       key={p}
-                      onClick={() => setPercent(p)}
+                      onClick={() => { setPercent(p); setBurnNFT(p === 100); }}
                       className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
                         percent === p
                           ? "bg-pink-600 text-white"

@@ -123,6 +123,8 @@ export function DeFi() {
   const [addLiquidityPool, setAddLiquidityPool] = useState<LivePool | null>(null);
   const [removeLiquidityPosition, setRemoveLiquidityPosition] = useState<V2PositionEnriched | null>(null);
   const [collectFeesPosition, setCollectFeesPosition] = useState<V2PositionEnriched | null>(null);
+  // IMPLEMENTATION NOTE: Bumped after remove/collect to trigger immediate position re-fetch
+  const [positionRefreshTrigger, setPositionRefreshTrigger] = useState(0);
 
   // ── Bonzo lending markets state ──
   const [bonzoMarkets, setBonzoMarkets] = useState<BonzoMarket[]>([]);
@@ -845,6 +847,7 @@ export function DeFi() {
             }}
             onRemoveLiquidity={(pos) => setRemoveLiquidityPosition(pos)}
             onCollectFees={(pos) => setCollectFeesPosition(pos)}
+            refreshTrigger={positionRefreshTrigger}
           />
         </div>
       )}
@@ -858,7 +861,7 @@ export function DeFi() {
           <AddLiquidityV2Modal
             pool={addLiquidityPool}
             onClose={() => setAddLiquidityPool(null)}
-            onSuccess={() => setAddLiquidityPool(null)}
+            onSuccess={() => { setAddLiquidityPool(null); setPositionRefreshTrigger(n => n + 1); }}
           />
         )}
       </AnimatePresence>
@@ -867,7 +870,7 @@ export function DeFi() {
           <RemoveLiquidityV2Modal
             position={removeLiquidityPosition}
             onClose={() => setRemoveLiquidityPosition(null)}
-            onSuccess={() => setRemoveLiquidityPosition(null)}
+            onSuccess={() => { setRemoveLiquidityPosition(null); setPositionRefreshTrigger(n => n + 1); }}
           />
         )}
       </AnimatePresence>
@@ -877,7 +880,7 @@ export function DeFi() {
             position={collectFeesPosition}
             collectOnly
             onClose={() => setCollectFeesPosition(null)}
-            onSuccess={() => setCollectFeesPosition(null)}
+            onSuccess={() => { setCollectFeesPosition(null); setPositionRefreshTrigger(n => n + 1); }}
           />
         )}
       </AnimatePresence>

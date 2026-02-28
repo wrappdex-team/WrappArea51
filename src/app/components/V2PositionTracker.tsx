@@ -82,12 +82,15 @@ interface V2PositionTrackerProps {
   onRemoveLiquidity?: (position: V2PositionEnriched) => void;
   /** Called when user clicks "Collect Fees" on a position */
   onCollectFees?: (position: V2PositionEnriched) => void;
+  /** Increment to trigger an immediate position refresh (e.g. after remove/collect) */
+  refreshTrigger?: number;
 }
 
 export function V2PositionTracker({
   onAddLiquidity,
   onRemoveLiquidity,
   onCollectFees,
+  refreshTrigger = 0,
 }: V2PositionTrackerProps) {
   const { isDark } = useTheme();
   const { primaryWallet, hederaAccount, hederaNetwork } = useWallet();
@@ -122,11 +125,25 @@ export function V2PositionTracker({
     return () => { if (refreshRef.current) clearInterval(refreshRef.current); };
   }, [accountId, fetchPositions]);
 
+  // IMPLEMENTATION NOTE: When parent bumps refreshTrigger (after remove/collect),
+  // do an immediate refetch + a delayed one (Mirror Node can lag 3-5s).
+  useEffect(() => {
+    if (refreshTrigger === 0 || !accountId) return;
+    invalidatePositionCacheForAccount(accountId, hederaNetwork as any);
+    fetchPositions(true);
+    // Second fetch after Mirror Node has had time to reflect the change
+    const delayed = setTimeout(() => {
+      invalidatePositionCacheForAccount(accountId, hederaNetwork as any);
+      fetchPositions(false);
+    }, 5000);
+    return () => clearTimeout(delayed);
+  }, [refreshTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fetch recent LP activity
   useEffect(() => {
     if (!accountId) { setRecentActivity([]); return; }
     fetchLpHistory(accountId, 10).then(setRecentActivity).catch(() => {});
-  }, [accountId]);
+  }, [accountId, refreshTrigger]);
 
   const handleRefresh = () => {
     invalidatePositionCacheForAccount(accountId, hederaNetwork as any);
