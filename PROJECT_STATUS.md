@@ -138,7 +138,25 @@
   - Auto-discovers new liquidity hubs when SaucerSwap adds pools — no code changes needed
   - Expected impact: better routing for emerging tokens, reduced maintenance, adaptive to pool landscape changes
   - **Deployment required:** `supabase functions deploy` to activate server changes
-- **Steps 13-20:** Pending (optimize V1, improve price impact, etc.)
+- **Step 13 — Quote Stability + 3-Hop Routing** ✅ Complete (3 files: `SwapPanel.tsx`, `routing.ts`, `prices.ts`, `tokens.ts`, `scam-blocklist.ts`)
+  - **QUOTE-FIX:** Eliminated quote oscillation where Phase 1 (price estimate) overwrote Phase 2 (server quote) on every price feed update
+    - Added `serverQuoteActiveRef` lock: once server quote arrives, price-based estimate cannot overwrite
+    - Removed `inputPrice`/`outputPrice` from Phase 2 dependency array — server quotes don't need client prices
+    - Lock resets when pair or amount changes, ensuring fresh estimates for new inputs
+  - **ROUTING-FIX (SMACKM):** Fixed SMACKM routing by correcting the ERC20Wrapper alias handling
+    - `0.0.10096415` is SMACKM's SaucerSwap ERC20Wrapper, NOT a scam — removed from blocklist
+    - Added `saucerswapAliasId` on SMACKM + registered alias in `TOKEN_BY_HTS_ID`
+    - Bidirectional `resolveGraphKey` — checks canonical→graph AND alias→graph
+    - Edge mirroring in `buildPoolGraph` — copies alias node edges to canonical node
+    - Price overwrite protection — canonical token price wins over alias price
+    - Added SMACKM/GRELF/CLXY to static pool list as safety net
+  - **3-HOP BFS:** Extended `findRouteViaGraph` BFS to explore 3-hop routes (A → B → C → D)
+    - Explores top 15 intermediary nodes × their edges, capped at 30 candidates
+    - Prefers 2-hop (lower fees) unless 3-hop is all-V2 while 2-hop isn't
+    - Generic N-hop route resolution in `findSwapRouteAsync` (handles 2-hop and 3-hop uniformly)
+    - Enables routes like SMACKM → WHBAR → USDC → SAUCE when direct 2-hop has worse output
+  - Expected impact: stable quotes, SMACKM routing fixed, 3-hop routes for better output on exotic pairs
+- **Steps 14-20:** Pending (optimize V1, improve price impact, etc.)
 
 #### 5. Previous Milestones (All Mainnet-Tested)
 - ✅ 16-Step V2 Liquidity Master Plan

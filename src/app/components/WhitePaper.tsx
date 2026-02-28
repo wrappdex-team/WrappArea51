@@ -2109,26 +2109,26 @@ export function WhitePaper() {
             <GlassCard className="p-5 md:p-6 cursor-pointer">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold">
-                  E
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>
                 </div>
                 <div>
                   <h4
                     className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}
                   >
-                    Emrak
+                    Technical Schematics
                   </h4>
                   <p
                     className={`text-xs bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent font-semibold`}
                   >
-                    Team Advisor
+                    Protocol Architecture
                   </p>
                 </div>
               </div>
               <p
                 className={`text-xs md:text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}
               >
-                Provides strategic advisory on protocol direction, ecosystem
-                development, and partnership opportunities.
+                Detailed architecture diagrams covering the swap pipeline,
+                smart router, security model, oracle system, and fee structure.
               </p>
             </GlassCard>
           </button>
@@ -2267,7 +2267,7 @@ export function WhitePaper() {
       {/* Community Message Modal — triggered by clicking Carlos's TeamCard */}
       <CommunityMessage open={communityMessageOpen} onClose={() => setCommunityMessageOpen(false)} />
 
-      {/* Emrak Architecture Diagrams — triggered by clicking Emrak's card */}
+      {/* Technical Schematics — triggered by clicking the architecture card */}
       <EmrakDiagrams open={emrakDiagramsOpen} onClose={() => setEmrakDiagramsOpen(false)} />
 
       {/* Executive Briefcase — VIP-only strategic guidance */}

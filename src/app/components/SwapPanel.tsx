@@ -412,6 +412,11 @@ export function SwapPanel() {
   // ── Calculate quote ──
   const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const serverQuoteAbortRef = useRef<AbortController | null>(null);
+  // [QUOTE-FIX] Track whether a server/on-chain quote has been received for the
+  // current pair+amount. Prevents the price-based Phase 1 estimate from overwriting
+  // a more accurate Phase 2/3 quote when live prices refresh in the background.
+  const serverQuoteActiveRef = useRef(false);
+  const quoteKeyRef = useRef("");  // "SMACKM:USDC:100" — resets when pair/amount changes
   // [STEP1] Store server-validated route for execution passthrough
   const validatedRouteRef = useRef<ValidatedRoute | null>(null);
   // [STEP6] Store pre-checked approval status from quote-time parallel fetch
@@ -444,8 +449,25 @@ export function SwapPanel() {
       return;
     }
 
+    // [QUOTE-FIX] Check if pair+amount changed — if so, reset server quote lock
+    const newKey = `${inputToken.symbol}:${outputToken.symbol}:${amt}`;
+    if (quoteKeyRef.current !== newKey) {
+      serverQuoteActiveRef.current = false;
+      quoteKeyRef.current = newKey;
+    }
+
+    // [QUOTE-FIX] If a server quote is already active for this exact pair+amount,
+    // don't overwrite it with a less accurate price-based estimate. This prevents
+    // the output from "bouncing" when the live price feed refreshes.
+    if (serverQuoteActiveRef.current) {
+      setQuoteLoading(false);
+      return;
+    }
+
     setQuoteLoading(true);
     quoteTimerRef.current = setTimeout(() => {
+      // [QUOTE-FIX] Double-check — server quote may have arrived during the 300ms debounce
+      if (serverQuoteActiveRef.current) { setQuoteLoading(false); return; }
       const q = estimateSwapQuote(inputToken.symbol, outputToken.symbol, amt, inputPrice, outputPrice, effectiveSlippage);
       setQuote(q);
       setOutputAmount(q.outputAmount >= 1 ? q.outputAmount.toFixed(4) : q.outputAmount.toFixed(8));
@@ -457,15 +479,19 @@ export function SwapPanel() {
 
   // [C51] Phase 2: Async server-side quote upgrade (confidence: "high"/"medium")
   // Fires after the client estimate is displayed, upgrades the quote in-place.
-  // Debounced by 600ms to avoid hammering the server on rapid typing.
+  // [QUOTE-FIX] Removed inputPrice/outputPrice from dependencies — server quote
+  // doesn't use client prices, and including them caused re-fetches on every
+  // price cache update, creating the oscillation loop (Phase 1 → Phase 2 → Phase 1...).
   useEffect(() => {
     if (isWrapUnwrap) return;
     const amt = parseFloat(inputAmount);
     if (!amt || amt <= 0) return;
-    if (inputPrice <= 0 && outputPrice <= 0) return; // No prices yet
 
     const abortCtrl = new AbortController();
     serverQuoteAbortRef.current = abortCtrl;
+
+    // [QUOTE-FIX] Reset server quote lock when Phase 2 starts a new fetch
+    serverQuoteActiveRef.current = false;
 
     const timer = setTimeout(async () => {
       if (abortCtrl.signal.aborted) return;
@@ -500,6 +526,10 @@ export function SwapPanel() {
           if (result.approvalStatus) {
             approvalStatusRef.current = result.approvalStatus;
           }
+          // [QUOTE-FIX] Mark server quote as active
+          serverQuoteActiveRef.current = true;
+          // [QUOTE-FIX] Update quote key to current pair+amount
+          quoteKeyRef.current = `${inputToken.symbol}:${outputToken.symbol}:${amt}`;
         }
       } catch (err: any) {
         if (!abortCtrl.signal.aborted) {
@@ -512,7 +542,7 @@ export function SwapPanel() {
       clearTimeout(timer);
       abortCtrl.abort();
     };
-  }, [inputAmount, inputToken, outputToken, effectiveSlippage, hederaNetwork, isWrapUnwrap, inputPrice, outputPrice]);
+  }, [inputAmount, inputToken, outputToken, effectiveSlippage, hederaNetwork, isWrapUnwrap, hashPackSession?.accountId]);
 
   // ── [STEP-5/6] Phase 3: V2 pre-validation + V1 cross-check for multi-hop ──
   // When the route is multi-hop with V2 legs:

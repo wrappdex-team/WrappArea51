@@ -27,7 +27,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { AmmBlueprintDiagram } from "./AmmBlueprintDiagram";
 
 /* ═══════════════════════════════════════════════════════════════════════
-   EMRAK'S TECHNICAL DOODLES — Architecture Diagrams
+   TECHNICAL SCHEMATICS — Architecture Diagrams
    "You opened this expecting something techy... here are some doodles."
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -1106,7 +1106,7 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                       background: "linear-gradient(135deg, #f59e0b, #f97316)",
                     }}
                   >
-                    E
+                    <Cpu className="w-7 h-7" />
                   </div>
                 </div>
 
@@ -1115,10 +1115,10 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                     isDark ? "text-white" : "text-slate-900"
                   }`}
                 >
-                  Emrak's Technical Doodles
+                  Technical Schematics
                 </h2>
                 <p className={`text-center text-sm mt-1.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                  Team Advisor &mdash; Protocol Architecture
+                  Protocol Architecture
                 </p>
 
                 {/* The Joke */}
@@ -1154,6 +1154,7 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                   className={`flex gap-0.5 overflow-x-auto rounded-xl p-1 ${
                     isDark ? "bg-white/[0.03]" : "bg-gray-100"
                   }`}
+                  style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
                 >
                   {TABS.map((t) => {
                     const active = tab === t.id;
@@ -1161,7 +1162,7 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                       <button
                         key={t.id}
                         onClick={() => setTab(t.id)}
-                        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-colors ${
+                        className={`relative flex items-center gap-1 px-2 sm:px-2.5 py-2 rounded-lg text-[10px] sm:text-[11px] font-semibold whitespace-nowrap transition-colors flex-shrink-0 ${
                           active
                             ? isDark
                               ? "text-white"
@@ -1173,7 +1174,7 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                       >
                         {active && (
                           <motion.div
-                            layoutId="emrak-tab"
+                            layoutId="schematics-tab"
                             className={`absolute inset-0 rounded-lg ${
                               isDark
                                 ? "bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-white/[0.08]"
@@ -1230,14 +1231,14 @@ export function EmrakDiagrams({ open, onClose }: EmrakDiagramsProps) {
                         background: "linear-gradient(135deg, #f59e0b, #f97316)",
                       }}
                     >
-                      E
+                      <Cpu className="w-4 h-4" />
                     </div>
                     <div>
                       <p className={`text-xs font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
-                        Emrak
+                        WRAPpDEX
                       </p>
                       <p className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                        Team Advisor · Architecture & Protocol Direction
+                        Architecture & Protocol Direction
                       </p>
                     </div>
                   </div>

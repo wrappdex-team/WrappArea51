@@ -442,20 +442,106 @@ export async function findRouteViaGraph(
     }
   }
 
-  if (candidates.length === 0) {
+  // ── Step 3: BFS for 3-hop routes (A → mid1 → mid2 → B) ──
+  // [STEP13] SaucerSwap often finds better output through 3-hop paths
+  // (e.g., SMACKM → WHBAR → USDC → SAUCE yields more than SMACKM → WHBAR → SAUCE).
+  // Only explore 3-hop if no 2-hop found, OR if we want to compare output.
+  // Limit exploration to avoid combinatorial explosion.
+  type ThreeHopRoute = {
+    mid1: string; mid2: string;
+    hop1: PoolEdge; hop2: PoolEdge; hop3: PoolEdge;
+    score: number;
+  };
+  const threeHopCandidates: ThreeHopRoute[] = [];
+
+  // Explore 3-hop routes through the top intermediaries from 2-hop search
+  // (these are the most connected/liquid nodes in the graph)
+  const mid1Set = new Set(candidates.map(c => c.mid));
+  // Also try WHBAR, USDC, SAUCE as guaranteed high-liquidity intermediaries
+  const WHBAR_IDS = ["0.0.1456986", "0.0.1456985"];
+  const PRIORITY_MIDS = [...WHBAR_IDS, "0.0.456858" /* USDC */, "0.0.731861" /* SAUCE */];
+  for (const pm of PRIORITY_MIDS) { if (graph.has(pm)) mid1Set.add(pm); }
+
+  // Cap exploration: max 15 mid1 nodes × their edges
+  const mid1Array = [...mid1Set].slice(0, 15);
+  for (const mid1Key of mid1Array) {
+    if (inKeys.has(mid1Key) || outKeys.has(mid1Key)) continue;
+    const mid1AllKeys = getAllGraphKeys(mid1Key, graph);
+
+    // Get edges from input → mid1 (reuse from 2-hop if available)
+    const hop1Edge = inEdges.find(e => mid1AllKeys.has(e.otherToken) || e.otherToken === mid1Key);
+    if (!hop1Edge) continue;
+
+    const mid1Edges = getAllEdges(mid1Key, graph);
+    for (const hop2 of mid1Edges) {
+      const mid2Key = hop2.otherToken;
+      // Skip if mid2 is input, output, or same as mid1
+      if (inKeys.has(mid2Key) || outKeys.has(mid2Key) || mid1AllKeys.has(mid2Key)) continue;
+
+      const mid2Edges = getAllEdges(mid2Key, graph);
+      for (const hop3 of mid2Edges) {
+        if (outKeys.has(hop3.otherToken)) {
+          const score = (hop1Edge.version === "v1" ? 1 : 0)
+            + (hop2.version === "v1" ? 1 : 0)
+            + (hop3.version === "v1" ? 1 : 0);
+          threeHopCandidates.push({ mid1: mid1Key, mid2: mid2Key, hop1: hop1Edge, hop2, hop3, score });
+        }
+      }
+      // Cap 3-hop candidates to prevent explosion
+      if (threeHopCandidates.length >= 30) break;
+    }
+    if (threeHopCandidates.length >= 30) break;
+  }
+
+  if (threeHopCandidates.length > 0) {
+    threeHopCandidates.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      return (a.hop1.fee + a.hop2.fee + a.hop3.fee) - (b.hop1.fee + b.hop2.fee + b.hop3.fee);
+    });
+    log.info("PoolGraph", `Found ${threeHopCandidates.length} 3-hop candidates (best via ${threeHopCandidates[0].mid1} → ${threeHopCandidates[0].mid2})`);
+  }
+
+  // If no 2-hop candidates but 3-hop exists, use 3-hop
+  if (candidates.length === 0 && threeHopCandidates.length === 0) {
     log.info("PoolGraph", `No route found in graph (${graph.size} nodes)`);
     return null;
   }
 
-  // Sort by score (prefer all-V2), then by lowest total fees
-  candidates.sort((a, b) => {
-    if (a.score !== b.score) return a.score - b.score;
-    return (a.hop1.fee + a.hop2.fee) - (b.hop1.fee + b.hop2.fee);
-  });
+  // ── Select best route: compare 2-hop and 3-hop candidates ──
+  // [STEP13] Prefer 2-hop (lower fees, simpler execution) unless 3-hop
+  // uses all-V2 and 2-hop doesn't, or 3-hop has significantly lower fees.
+  // Real output comparison happens in findSwapRouteAsync via on-chain quoting.
+  const best2 = candidates.length > 0 ? candidates[0] : null;
+  const best3 = threeHopCandidates.length > 0 ? threeHopCandidates[0] : null;
 
-  const best = candidates[0];
+  // Use 3-hop only if: no 2-hop exists, OR 3-hop is all-V2 while 2-hop isn't
+  const use3Hop = !best2 || (best3 && best3.score === 0 && best2.score > 0);
+
+  if (use3Hop && best3) {
+    const routeVersion3: "v1" | "v2" = best3.score === 0 ? "v2" : "v1";
+    const in3Evm = resolveEvmForVersion(inKey, best3.hop1.version);
+    const mid1Evm = resolveEvmForVersion(best3.mid1, routeVersion3);
+    const mid2Evm = resolveEvmForVersion(best3.mid2, routeVersion3);
+    const out3Evm = resolveEvmForVersion(outKey, best3.hop3.version);
+
+    log.info("PoolGraph", `[STEP13] Selected 3-hop route: ${inKey} → ${best3.mid1} → ${best3.mid2} → ${outKey} (score=${best3.score})`);
+
+    return {
+      direct: null,
+      multiHop: {
+        hops: [
+          { version: best3.hop1.version, feeTier: best3.hop1.fee, poolAddress: best3.hop1.poolAddress },
+          { version: best3.hop2.version, feeTier: best3.hop2.fee, poolAddress: best3.hop2.poolAddress },
+          { version: best3.hop3.version, feeTier: best3.hop3.fee, poolAddress: best3.hop3.poolAddress },
+        ],
+        tokens: [in3Evm, mid1Evm, mid2Evm, out3Evm],
+      },
+    };
+  }
+
+  const best = best2!;
   const category = best.score === 0 ? "all-V2" : best.score === 2 ? "all-V1" : "mixed";
-  log.info("PoolGraph", `Best 2-hop route via ${best.mid}: ${best.hop1.version}(fee=${best.hop1.fee}) → ${best.hop2.version}(fee=${best.hop2.fee}) [${category}] (${candidates.length} total candidates)`);
+  log.info("PoolGraph", `Best 2-hop route via ${best.mid}: ${best.hop1.version}(fee=${best.hop1.fee}) → ${best.hop2.version}(fee=${best.hop2.fee}) [${category}] (${candidates.length} 2-hop, ${threeHopCandidates.length} 3-hop candidates)`);
 
   // [C100-S6] Convert graph HTS IDs to version-appropriate EVM addresses.
   // V2 hops MUST use alias (ERC20Wrapper) addresses in the packed path.
@@ -944,6 +1030,47 @@ export function findSwapRoute(
     }
   }
 
+  // [STEP13] Try 3-hop routes: Input → mid1 → mid2 → Output
+  // Common high-liquidity 3-hop paths on SaucerSwap that often yield
+  // better output than 2-hop for exotic tokens.
+  const THREE_HOP_MIDS: [string, string][] = [
+    ["HBAR", "USDC"],
+    ["HBAR", "SAUCE"],
+    ["HBAR", "USDT"],
+    ["USDC", "HBAR"],
+    ["SAUCE", "HBAR"],
+  ];
+
+  for (const [mid1Sym, mid2Sym] of THREE_HOP_MIDS) {
+    if (lookupInput === mid1Sym || lookupInput === mid2Sym) continue;
+    if (lookupOutput === mid1Sym || lookupOutput === mid2Sym) continue;
+    if (mid1Sym === mid2Sym) continue;
+
+    const mid1 = TOKEN_BY_SYMBOL.get(mid1Sym);
+    const mid2 = TOKEN_BY_SYMBOL.get(mid2Sym);
+    if (!mid1 || !mid2) continue;
+
+    const p1 = routes.find(
+      r => (r.tokenA.symbol === lookupInput && r.tokenB.symbol === mid1Sym) ||
+           (r.tokenB.symbol === lookupInput && r.tokenA.symbol === mid1Sym)
+    );
+    const p2 = routes.find(
+      r => (r.tokenA.symbol === mid1Sym && r.tokenB.symbol === mid2Sym) ||
+           (r.tokenB.symbol === mid1Sym && r.tokenA.symbol === mid2Sym)
+    );
+    const p3 = routes.find(
+      r => (r.tokenA.symbol === mid2Sym && r.tokenB.symbol === lookupOutput) ||
+           (r.tokenB.symbol === mid2Sym && r.tokenA.symbol === lookupOutput)
+    );
+    if (p1 && p2 && p3) {
+      return {
+        path: [input, mid1, mid2, output],
+        pools: [p1, p2, p3],
+        totalFee: p1.fee + p2.fee + p3.fee,
+      };
+    }
+  }
+
   return null;
 }
 
@@ -1071,40 +1198,38 @@ export async function findSwapRouteAsync(
         log.info("Route", `[C82] Graph: direct ${graphRoute.direct.version} fee=${graphRoute.direct.feeTier}`);
         return result;
       } else if (graphRoute.multiHop) {
-        const midEvm = graphRoute.multiHop.tokens[1];
-        const midHtsId = evmAddressToHtsId(midEvm);
-        // Resolve intermediary: check WHBAR special case, then canonical ID, then alias ID
-        let midToken: AllowedToken;
-        if (midEvm.toLowerCase() === getSaucerswapRoutingEvmAddress(whbar).toLowerCase()) {
-          midToken = TOKEN_BY_SYMBOL.get("HBAR")!;
-        } else {
-          midToken = TOKEN_BY_HTS_ID.get(midHtsId)
-            || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === midHtsId)
-            || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken;
-        }
-        const pool1: PoolRoute = {
-          id: `graph-hop1-${input.symbol}-${midToken.symbol}`,
-          tokenA: input, tokenB: midToken,
-          fee: graphRoute.multiHop.hops[0].feeTier ? graphRoute.multiHop.hops[0].feeTier / 10000 : 0.3,
+        // [STEP13] Generic N-hop route handling (supports 2-hop and 3-hop)
+        const mh = graphRoute.multiHop;
+        const whbarEvmLower = getSaucerswapRoutingEvmAddress(whbar).toLowerCase();
+
+        // Resolve all intermediary tokens from EVM addresses
+        const resolveIntermediaryToken = (evm: string): AllowedToken => {
+          if (evm.toLowerCase() === whbarEvmLower) return TOKEN_BY_SYMBOL.get("HBAR")!;
+          const htsId = evmAddressToHtsId(evm);
+          return TOKEN_BY_HTS_ID.get(htsId)
+            || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === htsId)
+            || { symbol: htsId, name: htsId, htsId, evmAddress: evm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken;
+        };
+
+        // Build path: [input, mid1, (mid2,) output]
+        const midTokens = mh.tokens.slice(1, -1).map(resolveIntermediaryToken);
+        const pathTokens = [input, ...midTokens, output];
+
+        // Build pools for each hop
+        const pools: PoolRoute[] = mh.hops.map((hop, i) => ({
+          id: `graph-hop${i + 1}-${pathTokens[i].symbol}-${pathTokens[i + 1].symbol}`,
+          tokenA: pathTokens[i], tokenB: pathTokens[i + 1],
+          fee: hop.feeTier ? hop.feeTier / 10000 : 0.3,
           tvlUsd: 0, volume24hUsd: 0, apr: 0,
-          poolAddress: graphRoute.multiHop.hops[0].poolAddress || "graph-detected",
-          source: graphRoute.multiHop.hops[0].version,
-        };
-        const pool2: PoolRoute = {
-          id: `graph-hop2-${midToken.symbol}-${output.symbol}`,
-          tokenA: midToken, tokenB: output,
-          fee: graphRoute.multiHop.hops[1].feeTier ? graphRoute.multiHop.hops[1].feeTier / 10000 : 0.3,
-          tvlUsd: 0, volume24hUsd: 0, apr: 0,
-          poolAddress: graphRoute.multiHop.hops[1].poolAddress || "graph-detected",
-          source: graphRoute.multiHop.hops[1].version,
-        };
-        const result: AsyncRouteResult = {
-          path: [input, midToken, output], pools: [pool1, pool2],
-          totalFee: pool1.fee + pool2.fee, onChain: true,
-        };
+          poolAddress: hop.poolAddress || "graph-detected",
+          source: hop.version,
+        }));
+
+        const totalFee = pools.reduce((sum, p) => sum + p.fee, 0);
+        const result: AsyncRouteResult = { path: pathTokens, pools, totalFee, onChain: true };
         _routeCacheEvict();
         _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
-        log.info("Route", `[C82] Graph: multi-hop ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
+        log.info("Route", `[C82] Graph: ${mh.hops.length}-hop ${pathTokens.map(t => t.symbol).join(" → ")}`);
         return result;
       }
     }
@@ -1148,41 +1273,29 @@ export async function findSwapRouteAsync(
     const outputRoutingId = getSaucerswapRoutingId(output.isNative ? whbar : output);
     const graphRetry = await findRouteViaGraph(inputRoutingId, outputRoutingId, network, true);
     if (graphRetry?.multiHop) {
-      const multiHop = graphRetry.multiHop;
-      const midEvm = multiHop.tokens[1];
-      const midHtsId = evmAddressToHtsId(midEvm);
-      const midToken = TOKEN_BY_SYMBOL.get("HBAR")?.htsId === "native" && midEvm.toLowerCase() === getSaucerswapRoutingEvmAddress(whbar).toLowerCase()
-        ? TOKEN_BY_SYMBOL.get("HBAR")!
-        : (TOKEN_BY_HTS_ID.get(midHtsId) || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === midHtsId)
-          || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken);
-
-      log.info("Route", `[STEP4] Graph retry multi-hop: ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
-
-      const pool1: PoolRoute = {
-        id: `graph-retry-hop1-${input.symbol}-${midToken.symbol}`,
-        tokenA: input,
-        tokenB: midToken,
-        fee: multiHop.hops[0].feeTier ? multiHop.hops[0].feeTier / 10000 : 0.3,
+      // [STEP13] Generic N-hop route handling (same as Step 0 above)
+      const mh = graphRetry.multiHop;
+      const whbarEvmLower = getSaucerswapRoutingEvmAddress(whbar).toLowerCase();
+      const resolveIntermediaryToken = (evm: string): AllowedToken => {
+        if (evm.toLowerCase() === whbarEvmLower) return TOKEN_BY_SYMBOL.get("HBAR")!;
+        const htsId = evmAddressToHtsId(evm);
+        return TOKEN_BY_HTS_ID.get(htsId)
+          || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === htsId)
+          || { symbol: htsId, name: htsId, htsId, evmAddress: evm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken;
+      };
+      const midTokens = mh.tokens.slice(1, -1).map(resolveIntermediaryToken);
+      const pathTokens = [input, ...midTokens, output];
+      const pools: PoolRoute[] = mh.hops.map((hop, i) => ({
+        id: `graph-retry-hop${i + 1}-${pathTokens[i].symbol}-${pathTokens[i + 1].symbol}`,
+        tokenA: pathTokens[i], tokenB: pathTokens[i + 1],
+        fee: hop.feeTier ? hop.feeTier / 10000 : 0.3,
         tvlUsd: 0, volume24hUsd: 0, apr: 0,
-        poolAddress: multiHop.hops[0].poolAddress || "graph-retry-detected",
-        source: multiHop.hops[0].version,
-      };
-      const pool2: PoolRoute = {
-        id: `graph-retry-hop2-${midToken.symbol}-${output.symbol}`,
-        tokenA: midToken,
-        tokenB: output,
-        fee: multiHop.hops[1].feeTier ? multiHop.hops[1].feeTier / 10000 : 0.3,
-        tvlUsd: 0, volume24hUsd: 0, apr: 0,
-        poolAddress: multiHop.hops[1].poolAddress || "graph-retry-detected",
-        source: multiHop.hops[1].version,
-      };
-
-      const result: AsyncRouteResult = {
-        path: [input, midToken, output],
-        pools: [pool1, pool2],
-        totalFee: pool1.fee + pool2.fee,
-        onChain: true,
-      };
+        poolAddress: hop.poolAddress || "graph-retry-detected",
+        source: hop.version,
+      }));
+      const totalFee = pools.reduce((sum, p) => sum + p.fee, 0);
+      log.info("Route", `[STEP4] Graph retry: ${mh.hops.length}-hop ${pathTokens.map(t => t.symbol).join(" → ")}`);
+      const result: AsyncRouteResult = { path: pathTokens, pools, totalFee, onChain: true };
       _routeCacheEvict();
       _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
       return result;
