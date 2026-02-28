@@ -37,6 +37,7 @@ import {
   restoreSession,
   onStaleSession,
 } from "../utils/hashpack";
+import { prewarmSwapInfrastructure } from "../utils/saucerswap/prewarm";
 
 interface Wallet {
   address: string;
@@ -331,6 +332,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           const filtered = prev.filter((w) => w.type !== "hedera");
           return [{ address: session.accountId, type: "hedera", connector: "WalletConnect" }, ...filtered];
         });
+
+        // [STEP5] Pre-warm swap caches in the background (fire-and-forget)
+        prewarmSwapInfrastructure(session.accountId, session.network, accountInfo.tokens)
+          .catch(() => { /* non-critical */ });
       }
     } catch {
       log.debug("WalletContext", "Failed to restore Hedera account from session");
@@ -449,6 +454,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
               ...filtered,
             ];
           });
+
+          // [STEP5] Pre-warm swap caches in the background (fire-and-forget)
+          prewarmSwapInfrastructure(result.session.accountId, network, accountInfo.tokens)
+            .catch(() => { /* non-critical */ });
         }
         fetchHbarPrice().then(setHbarPrice);
       } else {
@@ -482,6 +491,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             ];
           });
           fetchHbarPrice().then(setHbarPrice);
+
+          // [STEP5] Pre-warm swap caches in the background (fire-and-forget)
+          prewarmSwapInfrastructure(accountId, network, accountInfo.tokens)
+            .catch(() => { /* non-critical */ });
+
           setIsConnectingHedera(false);
           return true;
         } else {

@@ -21,6 +21,7 @@ import {
   TokenAssociateTransaction,
   AccountId,
 } from "../hedera-sdk";
+import { log } from "../logger";
 import type { HederaNetwork, AllowedToken } from "./tokens";
 import {
   resolveToken, getWhbarToken, htsIdToEvmAddress, evmAddressToHtsId,
@@ -121,7 +122,7 @@ function _staleAllowKey(tokenHtsId: string, spenderAccountId: string): string {
 function markAllowanceConsumed(tokenHtsId: string, spenderAccountId: string): void {
   const key = _staleAllowKey(tokenHtsId, spenderAccountId);
   _recentlyConsumedAllowances.set(key, Date.now());
-  console.log(`[STALE-ALLOW] Marked allowance consumed: ${key} (TTL ${STALE_ALLOW_TTL_MS / 1000}s)`);
+  log.debug("SwapEngine", `[STALE-ALLOW] Marked allowance consumed: ${key} (TTL ${STALE_ALLOW_TTL_MS / 1000}s)`);
   // Auto-cleanup after TTL
   setTimeout(() => {
     const currentTs = _recentlyConsumedAllowances.get(key);
@@ -185,7 +186,7 @@ function markV2Failed(tokenAHtsId: string, tokenBHtsId: string): void {
   const key = _v2PairKey(tokenAHtsId, tokenBHtsId);
   _v2FailureCache.set(key, Date.now());
   _saveV2FailureCache();
-  console.log(`[V2-SKIP] Cached V2 failure for ${key} — future swaps will use V1 directly`);
+  log.info("SwapEngine", `[V2-SKIP] Cached V2 failure for ${key} — future swaps will use V1 directly`);
 }
 
 function isV2FailureCached(tokenAHtsId: string, tokenBHtsId: string): boolean {
@@ -198,6 +199,25 @@ function isV2FailureCached(tokenAHtsId: string, tokenBHtsId: string): boolean {
     return false;
   }
   return true;
+}
+
+// [STEP9] Clear V2 failure cache for a pair — called when the server re-validates
+// a V2 route that the client previously cached as failed. The server's fresh
+// QuoterV2 call proves V2 works NOW, so the stale local failure should be purged.
+function clearV2FailureIfCached(tokenAHtsId: string, tokenBHtsId: string): boolean {
+  const key = _v2PairKey(tokenAHtsId, tokenBHtsId);
+  if (_v2FailureCache.has(key)) {
+    const age = Date.now() - (_v2FailureCache.get(key) || 0);
+    _v2FailureCache.delete(key);
+    _saveV2FailureCache();
+    log.warn("SwapEngine",
+      `[STEP9] V2 failure cache CONFLICT: server validated V2 for ${key} ` +
+      `but client had a failure cached (age: ${Math.round(age / 1000)}s). ` +
+      `Cache cleared — server re-validated V2 since the failure.`
+    );
+    return true;
+  }
+  return false;
 }
 
 // Load cache on module init
@@ -236,7 +256,7 @@ function ensureWhbarContractForV2(evmAddress: string, network: HederaNetwork): s
   if (evmAddress.toLowerCase() === whbarTokenEvm) {
     const contractId = SAUCERSWAP_WHBAR_CONTRACT[network] || SAUCERSWAP_WHBAR_CONTRACT.mainnet;
     const contractEvm = htsIdToEvmAddress(contractId);
-    console.log(`[V2-WHBAR-FIX] Correcting WHBAR address for V2: ${evmAddress} (token 0.0.1456986) → ${contractEvm} (contract ${contractId})`);
+    log.debug("SwapEngine", `[V2-WHBAR-FIX] Correcting WHBAR address for V2: ${evmAddress} (token 0.0.1456986) → ${contractEvm} (contract ${contractId})`);
     return contractEvm;
   }
   return evmAddress;
@@ -405,6 +425,9 @@ async function approveIfNeeded(params: {
   totalSteps: number;
   /** [C100-S7] Router version for diagnostics — validates the right router is targeted */
   routerVersion?: "v1" | "v2";
+  /** [STEP6] Pre-checked allowance from quote-time parallel fetch. Skips Mirror Node call if fresh (< 30s). */
+  preCheckedAllowance?: number;
+  preCheckedAt?: number;
 }): Promise<ApproveResult> {
   const {
     tokenHtsId, ownerAccountId, spenderAccountId,
@@ -433,13 +456,27 @@ async function approveIfNeeded(params: {
   // If yes, Mirror Node may report stale (pre-consumption) value — force re-approval.
   const recentlyConsumed = isAllowanceRecentlyConsumed(tokenHtsId, spenderAccountId);
   if (recentlyConsumed) {
-    console.log(`[STALE-ALLOW] Allowance for ${tokenSymbol} → ${spenderAccountId} was consumed within ${STALE_ALLOW_TTL_MS / 1000}s — forcing re-approval (Mirror Node may be stale)`);
+    log.debug("SwapEngine", `[STALE-ALLOW] Allowance for ${tokenSymbol} → ${spenderAccountId} was consumed within ${STALE_ALLOW_TTL_MS / 1000}s — forcing re-approval (Mirror Node may be stale)`);
   }
 
-  // ── Check existing allowance via Mirror Node ──
-  const existingAllowance = recentlyConsumed
-    ? 0  // Don't trust Mirror Node during stale window — treat as zero
-    : await fetchTokenAllowance(ownerAccountId, tokenHtsId, spenderAccountId, network);
+  // ── Check existing allowance ──
+  // [STEP6] Use pre-checked allowance from quote-time parallel fetch if fresh (< 30s).
+  // This eliminates the 1-2s Mirror Node call from the swap execution critical path.
+  const PRECHECK_FRESHNESS_MS = 30_000;
+  const preCheckFresh = !recentlyConsumed
+    && typeof params.preCheckedAllowance === "number"
+    && params.preCheckedAt
+    && (Date.now() - params.preCheckedAt) < PRECHECK_FRESHNESS_MS;
+
+  let existingAllowance: number;
+  if (recentlyConsumed) {
+    existingAllowance = 0;  // Don't trust any cached value during stale window
+  } else if (preCheckFresh) {
+    existingAllowance = params.preCheckedAllowance!;
+    console.log(`[STEP6] Using pre-checked allowance: ${existingAllowance} for ${tokenSymbol} → ${spenderAccountId} (age: ${Date.now() - params.preCheckedAt!}ms)`);
+  } else {
+    existingAllowance = await fetchTokenAllowance(ownerAccountId, tokenHtsId, spenderAccountId, network);
+  }
 
   if (existingAllowance >= rawInput) {
     console.log(
@@ -1113,6 +1150,9 @@ async function executeSaucerSwapV2Direct(
         stepNumber: 1,
         totalSteps: 2,
         routerVersion: "v2",
+        // [STEP6] Pass pre-checked V2 allowance from quote-time parallel fetch
+        preCheckedAllowance: options?.approvalStatus?.v2Allowance,
+        preCheckedAt: options?.approvalStatus?.checkedAt,
       });
 
       if (!v2ApproveResult.success) {
@@ -1157,7 +1197,7 @@ async function executeSaucerSwapV2Direct(
         console.log(`[C100-S9]   ┌ exactInputSingle(${inputToken.symbol}→WHBAR, recipient=ROUTER ${routerEvmAddress})`);
         console.log(`[C100-S9]   └ unwrapWETH9(0, user=${recipientEvmAddress})`);
         console.log(`[C100-S9]   WHBAR: contract=0.0.1456985 (withdraw), token=${whbar.htsId} (ERC-20)`);
-        console.log(`[V2-WHBAR-FIX] tokenOut EVM for V2: ${tokenOutEvm} (should be 0x...163b59 = contract, NOT 0x...163b5a = token)`);
+        log.debug("SwapEngine", `[V2-WHBAR-FIX] tokenOut EVM for V2: ${tokenOutEvm} (should be 0x...163b59 = contract, NOT 0x...163b5a = token)`);
         console.log(`[C100-S9]   tokenOut EVM: ${tokenOutEvm} (should be WHBAR long-zero)`);
 
         console.log(`[HBAR.h] V2 Step ${v2SwapStep}: multicall(exactInputSingle + unwrapWETH9) — Token→HBAR [C34-01/C100-S9]`);
@@ -1928,6 +1968,9 @@ async function executeSaucerSwapV2MultiHop(
         stepNumber: 1,
         totalSteps: 2,
         routerVersion: "v2",
+        // [STEP6] Pass pre-checked V2 allowance from quote-time parallel fetch
+        preCheckedAllowance: options?.approvalStatus?.v2Allowance,
+        preCheckedAt: options?.approvalStatus?.checkedAt,
       });
 
       if (!mhApproveResult.success) {
@@ -2153,6 +2196,16 @@ async function executeSaucerSwapDirect(
         `${vr.routeHtsIds.length - 1} hops, fees=[${vr.feeTiers.join(",")}], ` +
         `age=${Date.now() - vr.validatedAt}ms)`);
 
+      // [STEP9] Server validated V2 for this pair — clear any stale V2 failure
+      // cache entry. The server's fresh QuoterV2 call proves V2 works NOW, so
+      // the local failure record (from a prior revert) is obsolete.
+      if (vr.version === "v2") {
+        clearV2FailureIfCached(
+          isInputNative ? "0.0.1456986" : inputToken.htsId,
+          isOutputNative ? "0.0.1456986" : outputToken.htsId,
+        );
+      }
+
       if (vr.routeHtsIds.length === 2) {
         // Direct pool (single-hop)
         poolVersionInfo = {
@@ -2360,7 +2413,7 @@ async function executeSaucerSwapDirect(
       // [STEP3] Gated: server just validated V2 works — don't let stale cache override
       const v2CacheHitTH = options?.validatedRoute ? false : isV2FailureCached(inputToken.htsId, outputToken.htsId);
       if (v2CacheHitTH && poolVersionInfo?.version === "v2") {
-        console.log(`[V2-SKIP] Token→HBAR: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
+        log.info("SwapEngine", `[V2-SKIP] Token→HBAR: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
         poolVersionInfo = { version: "v1", poolAddress: undefined };
         multiHopRoute = null;
         const v1BypassPath = buildSwapPath(
@@ -2402,6 +2455,10 @@ async function executeSaucerSwapDirect(
         console.log(`[HBAR.h] [C100-S9] Falling back to V1 swapExactTokensForETH...`);
         // [V2-SKIP] Cache this failure
         markV2Failed(inputToken.htsId, outputToken.htsId);
+        // [STEP9] Warn if server had validated this V2 route — indicates stale/transient pool state
+        if (options?.validatedRoute?.version === "v2") {
+          log.warn("SwapEngine", `[STEP9] V2 execution FAILED despite server validation — pool state changed since quote (age: ${Date.now() - (options.validatedRoute.validatedAt || 0)}ms). Failure cached for future swaps.`);
+        }
         {
           const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
           console.log(`[C100-S9] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
@@ -2496,6 +2553,10 @@ async function executeSaucerSwapDirect(
           console.log(`[HBAR.h] [C100-S9] Falling back to V1 routing...`);
           // [V2-SKIP] Cache this failure
           markV2Failed(inputToken.htsId, outputToken.htsId);
+          // [STEP9] Warn if server had validated this V2 route
+          if (options?.validatedRoute?.version === "v2") {
+            log.warn("SwapEngine", `[STEP9] V2 multi-hop execution FAILED despite server validation — pool state changed since quote (age: ${Date.now() - (options.validatedRoute.validatedAt || 0)}ms). Failure cached.`);
+          }
           {
             const v2RouterForLog = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
             console.log(`[C100-S9] Router transition: V2 Router ${v2RouterForLog} → V1 Router (will need separate approval for ${inputToken.symbol})`);
@@ -2628,6 +2689,10 @@ async function executeSaucerSwapDirect(
 
         // [V2-SKIP] Cache this failure so future swaps skip V2 entirely
         markV2Failed(inputToken.htsId, outputToken.htsId);
+        // [STEP9] Warn if server had validated this V2 route
+        if (options?.validatedRoute?.version === "v2") {
+          log.warn("SwapEngine", `[STEP9] V2 multi-hop execution FAILED despite server validation — pool state changed since quote (age: ${Date.now() - (options.validatedRoute.validatedAt || 0)}ms). Failure cached.`);
+        }
 
         // [C100-S7] Router transition: V2 approval was granted but the V2 swap
         // reverted. V1 fallback requires a NEW approval targeting the V1 Router.
@@ -2678,7 +2743,7 @@ async function executeSaucerSwapDirect(
     // [V2-SKIP] Check failure cache for single-hop V2
     // [STEP3] Gated: server validated V2 → skip stale failure cache
     if (poolVersionInfo?.version === "v2" && !multiHopRoute && !options?.validatedRoute && isV2FailureCached(inputToken.htsId, outputToken.htsId)) {
-      console.log(`[V2-SKIP] V2 single-hop: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
+      log.info("SwapEngine", `[V2-SKIP] V2 single-hop: V2 previously failed for ${inputToken.symbol}↔${outputToken.symbol} — routing directly to V1`);
       poolVersionInfo = { version: "v1", poolAddress: undefined };
       const v1BypassSingle = buildSwapPath(
         isInputNative ? whbar : inputToken,
@@ -2711,6 +2776,10 @@ async function executeSaucerSwapDirect(
       console.log(`[HBAR.h] [SWAP-FIX-1] Falling back to V1 routing...`);
       // [V2-SKIP] Cache this failure
       markV2Failed(inputToken.htsId, outputToken.htsId);
+      // [STEP9] Warn if server had validated this V2 route
+      if (options?.validatedRoute?.version === "v2") {
+        log.warn("SwapEngine", `[STEP9] V2 single-hop execution FAILED despite server validation — pool state changed since quote (age: ${Date.now() - (options.validatedRoute.validatedAt || 0)}ms). Failure cached.`);
+      }
       window.dispatchEvent(new CustomEvent("swap-step", { detail: {
         step: 0, total: 2,
         description: `Retrying swap — trying alternate route...`,
@@ -2804,6 +2873,10 @@ async function executeSaucerSwapDirect(
       multiHopRoute = null;
       _forceV1MultiHop = true; // [STEP-6] Mark as V2→V1 degradation for PRICE-IMPACT-GUARD
       markV2Failed(inputToken.htsId, outputToken.htsId); // Cache for future swaps
+      // [STEP9] Warn if server had validated this V2 route
+      if (options?.validatedRoute?.version === "v2") {
+        log.warn("SwapEngine", `[STEP9] V2 multi-hop execution FAILED despite server validation — pool state changed since quote (age: ${Date.now() - (options.validatedRoute.validatedAt || 0)}ms). Failure cached.`);
+      }
       const v1FallbackPathMh = buildSwapPath(
         isInputNative ? whbar : inputToken,
         isOutputNative ? whbar : outputToken,
@@ -3782,6 +3855,9 @@ async function executeSaucerSwapDirect(
         stepNumber: 1,
         totalSteps: 2,
         routerVersion: "v1",
+        // [STEP6] Pass pre-checked V1 allowance from quote-time parallel fetch
+        preCheckedAllowance: options?.approvalStatus?.v1Allowance,
+        preCheckedAt: options?.approvalStatus?.checkedAt,
       });
 
       if (!v1ApproveResult1.success) {
@@ -3890,6 +3966,9 @@ async function executeSaucerSwapDirect(
         stepNumber: 1,
         totalSteps: 2,
         routerVersion: "v1",
+        // [STEP6] Pass pre-checked V1 allowance from quote-time parallel fetch
+        preCheckedAllowance: options?.approvalStatus?.v1Allowance,
+        preCheckedAt: options?.approvalStatus?.checkedAt,
       });
 
       if (!v1ApproveResult2.success) {
@@ -4062,6 +4141,12 @@ export interface SwapOptions {
    * and uses the server-validated path directly. Saves 4-15s per swap.
    */
   validatedRoute?: import("./quotes").ValidatedRoute;
+  /**
+   * [STEP6] Pre-checked approval status from quote-time allowance check.
+   * When present and fresh (< 30s), approveIfNeeded() can skip the
+   * Mirror Node allowance query — saving 1-2s on the critical path.
+   */
+  approvalStatus?: import("./quotes").ServerQuoteResult["approvalStatus"];
 }
 
 export async function executeSaucerSwap(

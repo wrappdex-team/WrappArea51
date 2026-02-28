@@ -45,7 +45,7 @@
   - Support for ED25519 and ECDSA_SECP256K1 key types
   - tweetnacl primary verification with Web Crypto fallback
 
-#### 4. SaucerSwap V3 Master Plan (Steps 1-3 Complete)
+#### 4. SaucerSwap V3 Master Plan (Steps 1-12 Complete)
 - **Goal:** Fix slow wallet opens, suboptimal routing, quote competitiveness
 - **Step 1 — ValidatedRoute Passthrough** ✅ Complete (4 files)
   - Server `saucerswap-quote.ts`, client `quotes.ts`, `SwapPanel.tsx`, `swap-engine.ts`
@@ -68,7 +68,77 @@
   - `findBestMultiHopRoute()` preserved behind `LEGACY_MULTIHOP_ENABLED` flag (delete after Mar 13, 2026)
   - Removed unused imports (`findBestMultiHopRoute`, `getIntermediaryTokens`) from swap-engine
   - Expected impact: eliminates 32-48 RPC calls from fallback routing path
-- **Steps 5-20:** Pending (optimize V1, improve price impact, etc.)
+- **Step 5 — Pre-warm Graph + Allowance at Connect Time** ✅ Complete
+  - Created `/src/app/utils/saucerswap/prewarm.ts` — central pre-warm module
+  - (a) Pool graph: exported `prewarmPoolGraph()` from routing.ts, builds graph at connect
+  - (b) Allowances: pre-fetches up to 8 held tokens × 2 routers (V1+V2) via Mirror Node
+  - (c) Router EVM: pre-resolves V1/V2 router contract EVM addresses via server proxy
+  - Integrated into WalletContext at 3 connect paths: fresh WC connect, session restore, Mirror Node connect
+  - 30s cooldown + dedup guard prevents redundant prewarm runs
+  - All tasks fire-and-forget with individual error handling — never blocks UI
+  - Expected impact: first swap after connect feels instant (no cold-start API calls)
+- **Step 6 — Approval Pre-check Bundled with Quote** ✅ Complete
+  - Extended `fetchServerQuote()` with optional `accountId` param — fires V1+V2 allowance checks IN PARALLEL with server quote proxy call (zero added latency)
+  - Added `approvalStatus` to `ServerQuoteResult` type: `{ approvalNeeded, v1Allowance, v2Allowance, rawInputNeeded, spenderForRoute, routerVersion, checkedAt }`
+  - Added `approvalStatus` to `SwapOptions` — threaded through `executeSaucerSwap()` → `executeSaucerSwapDirect()` → all 4 `approveIfNeeded()` call sites
+  - Modified `approveIfNeeded()` with `preCheckedAllowance` + `preCheckedAt` params — skips Mirror Node call when pre-check is fresh (< 30s)
+  - SwapPanel: passes `hashPackSession.accountId` to `fetchServerQuote`, stores approval status in ref, passes to execution, feeds "1-Click Swap" badge
+  - Badge now prioritizes quote-time STEP6 approval status over separate `checkSwapPrerequisites` (arrives faster)
+  - Stale approval status cleared on token/amount change
+  - Expected impact: 1-2s saved per swap execution (Mirror Node allowance query eliminated for server-validated swaps)
+- **Step 7 — Expand Server Intermediary Coverage** ✅ Complete (1 file: `saucerswap-quote.ts`)
+  - INTERMEDIARY_TOKENS expanded 10 → 17: added DAI, PACK, DOVU, KARATE, GIB, GRELF, HST
+  - Fee combos expanded 7 → 13: added [1500,1500], [500,500], [100,3000], [10000,10000], [500,1500], [1500,500]
+  - Updated in both `tryV2MultiHopViaWhbar()` and `probeAllIntermediaries()`
+  - Added V2-only intermediary skip: V1 probes skip PACK/DOVU/KARATE intermediaries (no V1 pairs exist)
+  - Probe count: ~80 → ~238 parallel probes per quote — latency unchanged (all concurrent)
+  - Expected impact: more routes discovered for exotic pairs, better output amounts
+- **Step 8 — Best-Output Route Selection with Tiebreaking** ✅ Complete (1 file: `saucerswap-quote.ts`)
+  - Enhanced `ssQuote()` sort: when two high-confidence routes have outputs within 0.5%, tiebreak by:
+    - (a) Fewer hops (1-hop preferred over 2-hop — less slippage risk)
+    - (b) V2 over V1 (concentrated liquidity = tighter spreads)
+    - (c) Lower total fees (sum of per-hop fee tiers)
+  - Added `[STEP8]` diagnostic log when tiebreaker overrides raw output winner
+  - Expected impact: safer route selection without sacrificing meaningful output
+- **Step 9 — V2 Failure Cache Sync with Server Route** ✅ Complete (1 file: `swap-engine.ts`, 7 touchpoints)
+  - Added `clearV2FailureIfCached()` — clears stale V2 failure when server re-validates V2
+  - Called at validated route passthrough entry point: if server says V2 works, purge local failure cache
+  - All 5 `markV2Failed()` call sites enhanced: when V2 fails despite server validation, log `[STEP9]` warning with quote age
+  - Bidirectional sync: server validates V2 → clear cache; V2 execution fails → record failure
+  - Prevents "double popup" regression: stale V2 failures don't override fresh server validations
+  - Expected impact: eliminates false V1 fallbacks from stale cache, improves diagnostic visibility
+- **Step 10 — Console.log → Logger Migration** ✅ Complete (3 files: `quotes.ts`, `routing.ts`, `swap-engine.ts`)
+  - Migrated all 36 `console.log/warn` calls in `quotes.ts` to `log.debug/info/warn`
+  - Migrated all 16 `console.log/warn` calls in `routing.ts` to `log.debug/info/warn`
+  - Migrated 11 targeted diagnostic calls in `swap-engine.ts`: `[STALE-ALLOW]`, `[V2-SKIP]`, `[V2-WHBAR-FIX]`, `[STEP9]` warnings
+  - Added `import { log } from "../logger"` to `swap-engine.ts`
+  - Non-functional change: zero behavioral impact, cleans up browser console noise
+  - Production debuggability preserved via structured `log` utility levels
+- **Step 11 — 3-Hop V2 Route Support** ✅ Complete (1 file: server `saucerswap-quote.ts`)
+  - Added `probeThreeHopRoutes()` — probes 3-hop V2 paths: Token → midA → midB → Token
+  - 15 intermediary pairs covering WHBAR↔USDC, SAUCE↔WHBAR, USDT↔WHBAR, HBARX↔WHBAR, USDC↔SAUCE, WETH↔WHBAR, USDC↔USDT, USDCh↔WHBAR
+  - 5 fee combos per pair × 15 pairs = 75 probes, all concurrent with existing 2-hop probes
+  - QuoterV2.quoteExactInput() validates full 4-token packed path (5M gas for 3 cross-contract calls)
+  - Results deduped per pair (best output wins), merged into allQuotes with `v2-3hop-via-X-Y` source labels
+  - Integrated into `ssQuote()` orchestrator — runs in parallel via `threeHopPromise`
+  - Updated `scoreRoutes()`: top 5 (was 3), 3-hop intermediary display as "midA→midB"
+  - Updated routeDetails `feeTiers` fallback to handle 3-hop arrays dynamically
+  - Client-side requires NO changes — `executeSaucerSwapV2MultiHop()` already uses `packedPathHex` directly for `exactInput()`
+  - Expected impact: discovers routes for exotic pairs with no direct or 2-hop path, competitive with SaucerSwap.finance routing
+  - **Deployment required:** `supabase functions deploy` to activate server changes
+- **Step 12 — Dynamic Intermediary Discovery from Pool Graph** ✅ Complete (2 files: server `saucerswap-quote.ts`, `saucerswap-engine.ts`)
+  - Built `ensureServerPoolGraph()` — lightweight connectivity graph from V2+V1 pool APIs (5-min cache)
+  - Counts total edges, V1 edges, V2 edges per token; ranks by connectivity descending
+  - `getDynamicIntermediaries()` — returns top 20 most-connected tokens as intermediary candidates
+  - `getDynamicThreeHopPairs()` — generates top 20 ordered pairs from top 8 tokens for 3-hop routing
+  - `isDynamicV2Only()` — detects tokens with zero V1 edges from live graph (replaces hardcoded set)
+  - Exported `ensureV2PoolList()` and `ensureV1PoolList()` from `saucerswap-engine.ts` for shared cache
+  - Pre-warms pool graph in parallel with dynamic alias map on each quote request (zero added latency)
+  - All hardcoded lists (`INTERMEDIARY_TOKENS`, `THREE_HOP_PAIRS`, `V2_ONLY_TOKENS`) retained as fallback
+  - Auto-discovers new liquidity hubs when SaucerSwap adds pools — no code changes needed
+  - Expected impact: better routing for emerging tokens, reduced maintenance, adaptive to pool landscape changes
+  - **Deployment required:** `supabase functions deploy` to activate server changes
+- **Steps 13-20:** Pending (optimize V1, improve price impact, etc.)
 
 #### 5. Previous Milestones (All Mainnet-Tested)
 - ✅ 16-Step V2 Liquidity Master Plan

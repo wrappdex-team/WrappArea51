@@ -23,6 +23,7 @@
  *   simulation.ts       — Swap/wrap-unwrap simulation for test mode
  *   swap-engine.ts      — Swap execution engine (V1/V2, single/multi-hop)
  *   swap-verification.ts — Post-swap verification, balance checks, association
+ *   prewarm.ts          — Pre-warm caches for improved performance
  *
  * Barrel: ./saucerswap/index.ts re-exports the same set for direct
  * sub-module imports (`import { ... } from "../utils/saucerswap/index"`).
@@ -51,6 +52,7 @@ export * from "./saucerswap/wrapping";
 export * from "./saucerswap/verification";
 export * from "./saucerswap/diagnostics";
 export * from "./saucerswap/simulation";
+export * from "./saucerswap/prewarm";
 export * from "./saucerswap/swap-engine";
 export * from "./saucerswap/swap-verification";
 

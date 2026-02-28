@@ -61,6 +61,7 @@ import {
   type SwapOptions,
   type SwapPrerequisites,
   type ValidatedRoute,
+  type ServerQuoteResult,
 } from "../utils/saucerswap";
 import { classifySwapError } from "../utils/saucerswap/diagnostics";
 import { prewarmRelay, startRelayKeepalive, tryOpenWalletExtension } from "../utils/hashpack";
@@ -413,6 +414,8 @@ export function SwapPanel() {
   const serverQuoteAbortRef = useRef<AbortController | null>(null);
   // [STEP1] Store server-validated route for execution passthrough
   const validatedRouteRef = useRef<ValidatedRoute | null>(null);
+  // [STEP6] Store pre-checked approval status from quote-time parallel fetch
+  const approvalStatusRef = useRef<ServerQuoteResult["approvalStatus"]>(null);
 
   // [C51] Phase 1: Instant client-side estimate (confidence: "low")
   useEffect(() => {
@@ -424,6 +427,8 @@ export function SwapPanel() {
     }
     // [STEP1] Clear stale validated route — prevents wrong-pair passthrough
     validatedRouteRef.current = null;
+    // [STEP6] Clear stale approval status
+    approvalStatusRef.current = null;
     const amt = parseFloat(inputAmount);
     if (!amt || amt <= 0) { setQuote(null); setScoredRoutes([]); setOutputAmount(""); return; }
 
@@ -467,6 +472,7 @@ export function SwapPanel() {
       try {
         const result = await fetchServerQuote(
           inputToken, outputToken, amt, effectiveSlippage, hederaNetwork,
+          hashPackSession?.accountId,  // [STEP6] Pass accountId for parallel allowance check
         );
         if (abortCtrl.signal.aborted) return;
         if (result && result.quote && result.quote.outputAmount > 0) {
@@ -489,6 +495,10 @@ export function SwapPanel() {
           // [STEP1] Store validated route for execution
           if (result.validatedRoute) {
             validatedRouteRef.current = result.validatedRoute;
+          }
+          // [STEP6] Store approval status for execution
+          if (result.approvalStatus) {
+            approvalStatusRef.current = result.approvalStatus;
           }
         }
       } catch (err: any) {
@@ -696,6 +706,10 @@ export function SwapPanel() {
         // [STEP1] Pass validated route for execution
         if (validatedRouteRef.current) {
           swapOpts.validatedRoute = validatedRouteRef.current;
+        }
+        // [STEP6] Pass approval status for execution
+        if (approvalStatusRef.current) {
+          swapOpts.approvalStatus = approvalStatusRef.current;
         }
         result = await executeSaucerSwap(inputToken.symbol, outputToken.symbol, inputAmount, effectiveSlippage, acct, hederaNetwork, swapOpts);
       }
@@ -1050,7 +1064,13 @@ export function SwapPanel() {
               onHover={prewarmRelay}
               onOpenWallet={tryOpenWalletExtension}
               isDark={isDark}
-              approvalNeeded={swapPrereqs?.approvalNeeded ?? null}
+              approvalNeeded={
+                // [STEP6] Prefer quote-time approval status (arrives faster, bundled with quote)
+                // Fall back to separate checkSwapPrerequisites result
+                approvalStatusRef.current != null
+                  ? approvalStatusRef.current.approvalNeeded
+                  : (swapPrereqs?.approvalNeeded ?? null)
+              }
             />
 
             {/* Success Celebration Overlay */}

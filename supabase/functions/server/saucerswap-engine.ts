@@ -566,7 +566,7 @@ async function checkAssociation(
  * Deduplicates concurrent fetches (in-flight guard).
  * [C45] Matches the client-side fetchSaucerSwapV2PoolList() logic.
  */
-async function ensureV2PoolList(): Promise<any[]> {
+export async function ensureV2PoolList(): Promise<any[]> {
   if (_ssV2Pools && Date.now() - _ssV2PoolsTs < SS_POOL_LIST_CACHE_TTL_MS) {
     return _ssV2Pools;
   }
@@ -603,7 +603,7 @@ async function ensureV2PoolList(): Promise<any[]> {
  * Fetch the V1 pool list from the SaucerSwap API with 5-min cache.
  * [C45] Matches the client-side V1 pool fetching logic from C36-04.
  */
-async function ensureV1PoolList(): Promise<any[]> {
+export async function ensureV1PoolList(): Promise<any[]> {
   if (_ssV1Pools && Date.now() - _ssV1PoolsTs < SS_POOL_LIST_CACHE_TTL_MS) {
     return _ssV1Pools;
   }

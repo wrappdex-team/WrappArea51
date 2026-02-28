@@ -168,6 +168,18 @@ async function buildPoolGraph(network: HederaNetwork, forceRefresh = false): Pro
 }
 
 /**
+ * [STEP5] Pre-warm the pool routing graph at connect time.
+ * Exported wrapper around the private buildPoolGraph() so that
+ * WalletContext can kick off the graph build in the background
+ * before the user initiates their first swap.
+ * Returns the node count for diagnostic logging.
+ */
+export async function prewarmPoolGraph(network: HederaNetwork): Promise<number> {
+  const graph = await buildPoolGraph(network);
+  return graph.size;
+}
+
+/**
  * [C82] Resolve a token HTS ID to its graph key.
  *
  * SaucerSwap pools may use alias IDs (e.g. WBTC 0.0.1969769) while our
@@ -587,11 +599,11 @@ export async function findBestMultiHopRoute(
     // prevents self-loop (e.g., WHBAR->WHBAR) when HBAR->Token uses WHBAR as both
     // the effective input (via buildSwapPath) and an intermediary candidate.
     if (midLow === inLow || midLow === outLow) {
-      console.log(`[HBAR.h] Multi-hop: skipping ${midId} -- same as input or output`);
+      log.debug("Route", `Multi-hop: skipping ${midId} -- same as input or output`);
       continue;
     }
 
-    console.log(`[HBAR.h] Multi-hop: trying intermediary ${midId} (${mid.slice(0, 14)}...)`);
+    log.debug("Route", `Multi-hop: trying intermediary ${midId} (${mid.slice(0, 14)}...)`);
 
     // Check both legs concurrently
     const [hop1, hop2] = await Promise.all([
@@ -608,7 +620,7 @@ export async function findBestMultiHopRoute(
       const isAllV1 = hop1.version === "v1" && hop2.version === "v1";
       const isAllV2 = hop1.version === "v2" && hop2.version === "v2";
 
-      console.log(`[HBAR.h] Multi-hop: route found via ${midId} -- hop1=${hop1.version}(fee=${hop1.feeTier}) hop2=${hop2.version}(fee=${hop2.feeTier}) [${isAllV1 ? "all-V1" : isAllV2 ? "all-V2" : "mixed"}]`);
+      log.debug("Route", `Multi-hop: route found via ${midId} -- hop1=${hop1.version}(fee=${hop1.feeTier}) hop2=${hop2.version}(fee=${hop2.feeTier}) [${isAllV1 ? "all-V1" : isAllV2 ? "all-V2" : "mixed"}]`);
 
       if (isAllV1) allV1Routes.push(route);
       else if (isAllV2) allV2Routes.push(route);
@@ -620,7 +632,7 @@ export async function findBestMultiHopRoute(
       // Also early exit if we found an all-V2 route (preferred).
       if (isAllV2) break;
     } else {
-      console.log(`[HBAR.h] Multi-hop: ${midId} -- hop1=${hop1 ? "ok" : "no"} hop2=${hop2 ? "ok" : "no"}`);
+      log.debug("Route", `Multi-hop: ${midId} -- hop1=${hop1 ? "ok" : "no"} hop2=${hop2 ? "ok" : "no"}`);
     }
   }
 
@@ -631,7 +643,7 @@ export async function findBestMultiHopRoute(
   const best = allV2Routes[0] || allV1Routes[0] || mixedRoutes[0] || null;
   if (best) {
     const category = allV1Routes.includes(best) ? "all-V1" : allV2Routes.includes(best) ? "all-V2" : "mixed";
-    console.log(`[HBAR.h] Multi-hop: SELECTED route via ${best.mid} [${category}] (${allV1Routes.length} V1, ${allV2Routes.length} V2, ${mixedRoutes.length} mixed candidates)`);
+    log.debug("Route", `Multi-hop: SELECTED route via ${best.mid} [${category}] (${allV1Routes.length} V1, ${allV2Routes.length} V2, ${mixedRoutes.length} mixed candidates)`);
     return { hops: best.hops, tokens: best.tokens };
   }
 
@@ -938,7 +950,7 @@ function _routeCacheEvict(): void {
 /** Clear the async route cache (useful after dynamic token refresh). */
 export function clearAsyncRouteCache(): void {
   _asyncRouteCache.clear();
-  console.log("[C56] Async route cache cleared");
+  log.debug("Route", "Async route cache cleared");
 }
 
 /**
@@ -978,7 +990,7 @@ export async function findSwapRouteAsync(
   const cacheKey = _routeCacheKey(inputSymbol, outputSymbol, network);
   const cached = _asyncRouteCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < ASYNC_ROUTE_CACHE_TTL) {
-    console.log(`[C56] Route cache hit for ${inputSymbol} → ${outputSymbol} (${cached.result ? "route" : "no-route"})`);
+    log.debug("Route", `Route cache hit for ${inputSymbol} → ${outputSymbol} (${cached.result ? "route" : "no-route"})`);
     return cached.result;
   }
 
@@ -989,7 +1001,7 @@ export async function findSwapRouteAsync(
   const directInEvm = getSaucerswapRoutingEvmAddress(input.isNative ? whbar : input);
   const directOutEvm = getSaucerswapRoutingEvmAddress(output.isNative ? whbar : output);
 
-  console.log(`[C56] Async route search: ${inputSymbol} → ${outputSymbol}`);
+  log.info("Route", `Async route search: ${inputSymbol} → ${outputSymbol}`);
 
   // [C82] Step 0: Try graph-first routing (instant, no network calls)
   try {
@@ -1012,7 +1024,7 @@ export async function findSwapRouteAsync(
         };
         _routeCacheEvict();
         _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
-        console.log(`[C56] [C82] Graph: direct ${graphRoute.direct.version} fee=${graphRoute.direct.feeTier}`);
+        log.info("Route", `[C82] Graph: direct ${graphRoute.direct.version} fee=${graphRoute.direct.feeTier}`);
         return result;
       } else if (graphRoute.multiHop) {
         const midEvm = graphRoute.multiHop.tokens[1];
@@ -1048,18 +1060,18 @@ export async function findSwapRouteAsync(
         };
         _routeCacheEvict();
         _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
-        console.log(`[C56] [C82] Graph: multi-hop ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
+        log.info("Route", `[C82] Graph: multi-hop ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
         return result;
       }
     }
   } catch (graphErr: any) {
-    console.warn(`[C56] [C82] Graph routing failed in UI route finder: ${graphErr?.message}`);
+    log.warn("Route", `[C82] Graph routing failed in UI route finder: ${graphErr?.message}`);
   }
 
   // Step 1: Check for direct on-chain pool
   const directPool = await detectPoolVersion(directInEvm, directOutEvm, network);
   if (directPool) {
-    console.log(`[C56] Direct on-chain pool found: ${directPool.version} (fee=${directPool.feeTier || "N/A"})`);
+    log.info("Route", `Direct on-chain pool found: ${directPool.version} (fee=${directPool.feeTier || "N/A"})`);
     const syntheticPool: PoolRoute = {
       id: `onchain-${input.symbol}-${output.symbol}`,
       tokenA: input,
@@ -1100,7 +1112,7 @@ export async function findSwapRouteAsync(
         : (TOKEN_BY_HTS_ID.get(midHtsId) || Array.from(TOKEN_BY_HTS_ID.values()).find(t => t.saucerswapAliasId === midHtsId)
           || { symbol: midHtsId, name: midHtsId, htsId: midHtsId, evmAddress: midEvm, decimals: 8, logo: "", rank: 999, isWrapped: false } as AllowedToken);
 
-      console.log(`[STEP4] [C56] Graph retry multi-hop: ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
+      log.info("Route", `[STEP4] Graph retry multi-hop: ${input.symbol} → ${midToken.symbol} → ${output.symbol}`);
 
       const pool1: PoolRoute = {
         id: `graph-retry-hop1-${input.symbol}-${midToken.symbol}`,
@@ -1146,15 +1158,15 @@ export async function findSwapRouteAsync(
       };
       _routeCacheEvict();
       _asyncRouteCache.set(cacheKey, { result, ts: Date.now() });
-      console.log(`[STEP4] [C56] Graph retry found direct pool: ${graphRetry.direct.version} fee=${graphRetry.direct.feeTier}`);
+      log.info("Route", `[STEP4] Graph retry found direct pool: ${graphRetry.direct.version} fee=${graphRetry.direct.feeTier}`);
       return result;
     }
   } catch (graphRetryErr: any) {
-    console.warn(`[STEP4] [C56] Graph retry failed: ${graphRetryErr?.message}`);
+    log.warn("Route", `[STEP4] Graph retry failed: ${graphRetryErr?.message}`);
   }
 
   // Cache negative result (no route) to avoid re-checking
-  console.log(`[C56] No route found for ${inputSymbol} → ${outputSymbol} (sync + on-chain)`);
+  log.info("Route", `No route found for ${inputSymbol} → ${outputSymbol} (sync + on-chain)`);
   _routeCacheEvict();
   _asyncRouteCache.set(cacheKey, { result: null, ts: Date.now() });
   return null;

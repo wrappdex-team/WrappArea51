@@ -37,7 +37,7 @@ import {
 import { ssProxy, resolveContractEvmAddress } from "./pools";
 import { buildSwapPath } from "./routing";
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
 // ── [C51] Quote Confidence Levels ────────────────────────────────────
 // high   = on-chain router/quoter (V1 getAmountsOut or V2 QuoterV2)
 // medium = SaucerSwap REST API quote
@@ -129,6 +129,21 @@ export interface ServerQuoteResult {
   scoredRoutes: ScoredRouteInfo[];
   /** [STEP1] Pre-validated route from server — pass to executeSaucerSwap() to skip re-discovery */
   validatedRoute: ValidatedRoute | null;
+  /**
+   * [STEP6] Pre-checked approval status — bundled with quote fetch.
+   * When present, executeSaucerSwap() can skip the Mirror Node allowance
+   * query in approveIfNeeded(), saving 1-2s on the critical path.
+   */
+  approvalStatus?: {
+    approvalNeeded: boolean;
+    v1Allowance: number;
+    v2Allowance: number;
+    rawInputNeeded: number;
+    /** Router HTS ID that matches the winning route's version */
+    spenderForRoute: string;
+    routerVersion: "v1" | "v2";
+    checkedAt: number;
+  } | null;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -238,14 +253,14 @@ export async function fetchRouterQuote(
 
     const amountOut = decodeAmountsOutResult(resultHex);
     if (amountOut !== null && amountOut > 0n) {
-      console.log(`[HBAR.h] Router quote via Mirror Node: amountOut=${amountOut} (result ${resultHex.length} chars)`);
+      log.debug("Quote", `Router quote via Mirror Node: amountOut=${amountOut} (result ${resultHex.length} chars)`);
       return amountOut;
     }
 
-    console.log(`[HBAR.h] Router quote decoded to zero/null from result: ${resultHex.slice(0, 66)}...`);
+    log.debug("Quote", `Router quote decoded to zero/null from result: ${resultHex.slice(0, 66)}...`);
     return null;
   } catch (err: any) {
-    console.log("[HBAR.h] Mirror Node router quote failed:", err?.message || err);
+    log.debug("Quote", `Mirror Node router quote failed: ${err?.message || err}`);
     return null;
   }
 }
@@ -273,7 +288,7 @@ export async function fetchV2RouterQuote(
 
   // Skip if QuoterV2 address is unconfigured
   if (!quoterId || quoterId === "0.0.0") {
-    console.log("[HBAR.h] V2 QuoterV2 address not configured -- skipping V2 on-chain quote");
+    log.warn("Quote", "V2 QuoterV2 address not configured -- skipping V2 on-chain quote");
     return null;
   }
 
@@ -291,7 +306,7 @@ export async function fetchV2RouterQuote(
   const callData = bytesToHex(encodeQuoteExactInputSingle(tokenInEvm, tokenOutEvm, amountIn, fee));
   const gasHex = "0x" + (1_500_000).toString(16);
 
-  console.log(`[HBAR.h] V2 Quote: quoteExactInputSingle(${tokenInEvm.slice(0,10)}..., ${tokenOutEvm.slice(0,10)}..., ${amountIn}, fee=${fee}) -> quoter ${quoterEvm}`);
+  log.debug("Quote", `V2 Quote: quoteExactInputSingle(${tokenInEvm.slice(0,10)}..., ${tokenOutEvm.slice(0,10)}..., ${amountIn}, fee=${fee}) -> quoter ${quoterEvm}`);
 
   // -- Strategy A: JSON-RPC relay eth_call --
   try {
@@ -315,23 +330,23 @@ export async function fetchV2RouterQuote(
         const amountOutHex = data.result.slice(2, 66);
         const amountOut = BigInt("0x" + amountOutHex);
         if (amountOut > 0n) {
-          console.log(`[HBAR.h] V2 Quote via JSON-RPC: amountOut=${amountOut}`);
+          log.debug("Quote", `V2 Quote via JSON-RPC: amountOut=${amountOut}`);
           return amountOut;
         }
       }
       if (data.error) {
-        console.log(`[HBAR.h] V2 Quote RPC error: ${data.error.message || JSON.stringify(data.error).slice(0, 200)}`);
+        log.debug("Quote", `V2 Quote RPC error: ${data.error.message || JSON.stringify(data.error).slice(0, 200)}`);
       } else {
         // [C9-02] Diagnostic: log exactly what the RPC returned
         const resultLen = data.result?.length ?? 0;
         const resultPreview = data.result ? data.result.slice(0, 80) : "null";
-        console.log(`[HBAR.h] V2 Quote RPC: non-parseable -- result=${resultPreview} (${resultLen} chars)`);
+        log.debug("Quote", `V2 Quote RPC: non-parseable -- result=${resultPreview} (${resultLen} chars)`);
       }
     } else {
-      console.log(`[HBAR.h] V2 Quote RPC HTTP ${res.status} ${res.statusText}`);
+      log.debug("Quote", `V2 Quote RPC HTTP ${res.status} ${res.statusText}`);
     }
   } catch (err: any) {
-    console.log("[HBAR.h] V2 Quote via RPC failed:", err?.message || err);
+    log.debug("Quote", `V2 Quote via RPC failed: ${err?.message || err}`);
   }
 
   // -- Strategy B: Mirror Node /api/v1/contracts/call --
@@ -359,22 +374,22 @@ export async function fetchV2RouterQuote(
         const amountOutHex = mnData.result.slice(2, 66);
         const amountOut = BigInt("0x" + amountOutHex);
         if (amountOut > 0n) {
-          console.log(`[HBAR.h] V2 Quote via Mirror Node: amountOut=${amountOut}`);
+          log.debug("Quote", `V2 Quote via Mirror Node: amountOut=${amountOut}`);
           return amountOut;
         }
-        console.log(`[HBAR.h] V2 Quote Mirror: amountOut is 0 -- result: ${mnData.result.slice(0, 80)}`);
+        log.debug("Quote", `V2 Quote Mirror: amountOut is 0 -- result: ${mnData.result.slice(0, 80)}`);
       } else {
         // [C9-02] Mirror Node contract simulation doesn't support cross-contract
         // calls (QuoterV2 -> Pool), so this is expected to return empty.
         const preview = mnData.result ? mnData.result.slice(0, 60) : "null";
         const errMsg = mnData._status?.messages?.[0]?.message || mnData.message || "";
-        console.log(`[HBAR.h] V2 Quote Mirror: empty/short result=${preview}, err=${errMsg.slice(0, 100)}`);
+        log.debug("Quote", `V2 Quote Mirror: empty/short result=${preview}, err=${errMsg.slice(0, 100)}`);
       }
     } else {
-      console.log(`[HBAR.h] V2 Quote Mirror HTTP ${mnRes.status}`);
+      log.debug("Quote", `V2 Quote Mirror HTTP ${mnRes.status}`);
     }
   } catch (err: any) {
-    console.log("[HBAR.h] V2 Quote via Mirror Node failed:", err?.message || err);
+    log.debug("Quote", `V2 Quote via Mirror Node failed: ${err?.message || err}`);
   }
 
   // -- Strategy C: SaucerSwap REST API V2 quote --
@@ -394,16 +409,16 @@ export async function fetchV2RouterQuote(
           if (rawOut !== undefined && rawOut !== null) {
             const out = BigInt(rawOut.toString().replace(/[^0-9]/g, ""));
             if (out > 0n) {
-              console.log(`[HBAR.h] V2 Quote via SaucerSwap API: amountOut=${out}`);
+              log.debug("Quote", `V2 Quote via SaucerSwap API: amountOut=${out}`);
               return out;
             }
           }
-          console.log(`[HBAR.h] V2 Quote API: response keys=${Object.keys(qData).join(",")}, no amountOut`);
+          log.debug("Quote", `V2 Quote API: response keys=${Object.keys(qData).join(",")}, no amountOut`);
         }
       } catch { /* try next */ }
     }
   } catch (e: any) {
-    console.log("[HBAR.h] V2 Quote API fallback error:", e?.message || e);
+    log.debug("Quote", `V2 Quote API fallback error: ${e?.message || e}`);
   }
 
   return null;
@@ -438,7 +453,7 @@ export async function fetchV2MultiHopQuote(
 ): Promise<bigint | null> {
   const quoterId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
   if (!quoterId || quoterId === "0.0.0") {
-    console.log("[STEP-5] V2 QuoterV2 not configured — skipping multi-hop quote");
+    log.warn("Quote", "V2 QuoterV2 not configured — skipping multi-hop quote");
     return null;
   }
 
@@ -457,7 +472,7 @@ export async function fetchV2MultiHopQuote(
   // Higher gas for multi-hop: each hop involves cross-contract Pool.swap simulation
   const gasHex = "0x" + (3_000_000).toString(16);
 
-  console.log(`[STEP-5] V2 multi-hop quote: quoteExactInput(${packedPath.length}B path, ${amountIn}) → quoter ${quoterEvm}`);
+  log.debug("Quote", `V2 multi-hop quote: quoteExactInput(${packedPath.length}B path, ${amountIn}) → quoter ${quoterEvm}`);
 
   try {
     const res = await fetch(rpcUrl, {
@@ -481,18 +496,18 @@ export async function fetchV2MultiHopQuote(
         const amountOutHex = data.result.slice(2, 66);
         const amountOut = BigInt("0x" + amountOutHex);
         if (amountOut > 0n) {
-          console.log(`[STEP-5] V2 multi-hop QuoterV2: amountOut=${amountOut} ✓`);
+          log.debug("Quote", `V2 multi-hop QuoterV2: amountOut=${amountOut} ✓`);
           return amountOut;
         }
       }
       if (data.error) {
-        console.log(`[STEP-5] V2 multi-hop QuoterV2 error: ${data.error.message || JSON.stringify(data.error).slice(0, 200)}`);
+        log.debug("Quote", `V2 multi-hop QuoterV2 error: ${data.error.message || JSON.stringify(data.error).slice(0, 200)}`);
       }
     } else {
-      console.log(`[STEP-5] V2 multi-hop QuoterV2 HTTP ${res.status}`);
+      log.debug("Quote", `V2 multi-hop QuoterV2 HTTP ${res.status}`);
     }
   } catch (err: any) {
-    console.log("[STEP-5] V2 multi-hop QuoterV2 failed:", err?.message || err);
+    log.debug("Quote", `V2 multi-hop QuoterV2 failed: ${err?.message || err}`);
   }
 
   return null;
@@ -500,7 +515,7 @@ export async function fetchV2MultiHopQuote(
 
 // ════════════════════════════════════════════════════════════════════════
 // ── MAIN MULTI-STRATEGY QUOTE FETCHER ─────────────────────────────────
-// ════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 
 /**
  * Multi-strategy quote fetcher. Tries in order:
@@ -563,8 +578,8 @@ export async function fetchSaucerSwapQuote(
       // Any source starting with "v1-via-" or "v2-via-" is a multi-hop route
       const mappedSource = sourceMap[proxyData.source]
         || (proxyData.source.startsWith("v1-via-") || proxyData.source.startsWith("v2-via-") ? "router" : "api");
-      console.log(
-        `[HBAR.h] [C47] Server quote: amountOut=${proxyData.amountOut},` +
+      log.info("Quote",
+        `[C47] Server quote: amountOut=${proxyData.amountOut},` +
         ` source=${proxyData.source} (${proxyData.confidence})`
       );
       return {
@@ -577,9 +592,9 @@ export async function fetchSaucerSwapQuote(
         feeTier: proxyData.feeTier,
       };
     }
-    console.log("[HBAR.h] [C47] Server quote returned no result -- falling through to browser strategies");
+    log.info("Quote", "[C47] Server quote returned no result -- falling through to browser strategies");
   } catch (proxyErr: any) {
-    console.log("[HBAR.h] [C47] Server quote error -- falling through:", proxyErr?.message || proxyErr);
+    log.warn("Quote", `[C47] Server quote error -- falling through: ${proxyErr?.message || proxyErr}`);
   }
 
   // -- Strategy 1 (legacy fallback): Router getAmountsOut via Mirror Node --
@@ -635,7 +650,7 @@ export async function fetchSaucerSwapQuote(
       hops
     );
     if (estimated !== null) {
-      console.log(`[HBAR.h] Using price-based quote estimate: ${estimated} (${hops} hop${hops > 1 ? "s" : ""})`);
+      log.debug("Quote", `Using price-based quote estimate: ${estimated} (${hops} hop${hops > 1 ? "s" : ""})`);
       return {
         amountOut: estimated,
         priceImpact: 0.05,
@@ -644,15 +659,17 @@ export async function fetchSaucerSwapQuote(
         confidence: "low",
       };
     }
-    console.warn(
-      `[HBAR.h] Price-based estimation also failed for ${options.inputToken.symbol} -> ${options.outputToken.symbol}. ` +
+    log.warn(
+      "Quote",
+      `Price-based estimation also failed for ${options.inputToken.symbol} -> ${options.outputToken.symbol}. ` +
       `Prices: ${options.inputToken.symbol}=$${TOKEN_PRICES_USD[options.inputToken.isNative ? "HBAR" : options.inputToken.symbol]}, ` +
       `${options.outputToken.symbol}=$${TOKEN_PRICES_USD[options.outputToken.isNative ? "HBAR" : options.outputToken.symbol]}. ` +
       `Live cache age: ${Math.round(getLivePriceCacheAge() / 1000)}s`
     );
   } else {
-    console.warn(
-      `[HBAR.h] Strategy 3 (price estimation) skipped -- inputToken/outputToken not provided in options`
+    log.warn(
+      "Quote",
+      "Strategy 3 (price estimation) skipped -- inputToken/outputToken not provided in options"
     );
   }
 
@@ -736,6 +753,12 @@ export function estimateSwapQuote(
  *
  * If the server returns confidence="low", the quote is still an upgrade
  * because it was computed server-side with fresher price data.
+ *
+ * [STEP6] When accountId is provided and the input is a non-native token,
+ * the function fires allowance checks for both V1 and V2 routers IN PARALLEL
+ * with the server quote fetch. The result is returned as `approvalStatus`
+ * on the ServerQuoteResult, allowing the swap engine to skip the 1-2s
+ * Mirror Node allowance query during execution.
  */
 export async function fetchServerQuote(
   inputToken: AllowedToken,
@@ -743,6 +766,7 @@ export async function fetchServerQuote(
   inputAmount: number,
   slippagePct: number = 0.5,
   network: HederaNetwork = "mainnet",
+  accountId?: string,
 ): Promise<ServerQuoteResult | null> {
   if (inputAmount <= 0) return null;
 
@@ -755,6 +779,35 @@ export async function fetchServerQuote(
   const outputAliasId = !outputToken.isNative ? getSaucerswapRoutingId(outputToken) : undefined;
 
   const startMs = Date.now();
+
+  // [STEP6] Fire allowance checks in parallel with the quote fetch.
+  // Only for non-native input tokens when accountId is available.
+  // These hit the Mirror Node allowance endpoint (~200-500ms) and
+  // run concurrently with the server quote (~500-2000ms) so they're free.
+  type AllowanceResult = { v1: number; v2: number; rawNeeded: number; v1Router: string; v2Router: string };
+  let allowancePromise: Promise<AllowanceResult | null> | null = null;
+
+  if (accountId && !inputToken.isNative && inputToken.htsId) {
+    allowancePromise = (async (): Promise<AllowanceResult | null> => {
+      try {
+        const { fetchTokenAllowance } = await import("./balances");
+        const { SAUCERSWAP_V1_ROUTER, SAUCERSWAP_V2_ROUTER } = await import("./contracts");
+        const v1Router = SAUCERSWAP_V1_ROUTER[network] || SAUCERSWAP_V1_ROUTER.mainnet;
+        const v2Router = SAUCERSWAP_V2_ROUTER[network] || SAUCERSWAP_V2_ROUTER.mainnet;
+        const rawNeeded = parseInt(rawAmountIn, 10);
+
+        const [v1, v2] = await Promise.all([
+          fetchTokenAllowance(accountId, inputToken.htsId, v1Router, network).catch(() => 0),
+          fetchTokenAllowance(accountId, inputToken.htsId, v2Router, network).catch(() => 0),
+        ]);
+        log.debug("Quote", `[STEP6] Parallel allowance check: V1=${v1} V2=${v2} needed=${rawNeeded} for ${inputToken.symbol}`);
+        return { v1, v2, rawNeeded, v1Router, v2Router };
+      } catch (err: any) {
+        log.debug("Quote", `[STEP6] Allowance check failed (non-blocking): ${err?.message}`);
+        return null;
+      }
+    })();
+  }
 
   try {
     const proxyData = await ssProxy<{
@@ -803,6 +856,17 @@ export async function fetchServerQuote(
         rawAmountOut: string;
         validatedAt: number;
       };
+      // [STEP6] Pre-checked approval status — bundled with quote fetch
+      approvalStatus?: {
+        approvalNeeded: boolean;
+        v1Allowance: number;
+        v2Allowance: number;
+        rawInputNeeded: number;
+        /** Router HTS ID that matches the winning route's version */
+        spenderForRoute: string;
+        routerVersion: "v1" | "v2";
+        checkedAt: number;
+      };
     }>("/quote", {
       inputToken: inputHtsId,
       outputToken: outputHtsId,
@@ -815,12 +879,14 @@ export async function fetchServerQuote(
       // for V2 QuoterV2 calls. Only sent when alias differs from canonical.
       ...(inputAliasId && inputAliasId !== inputHtsId ? { inputAliasId } : {}),
       ...(outputAliasId && outputAliasId !== outputHtsId ? { outputAliasId } : {}),
+      // [STEP6] Account ID for allowance checks
+      ...(accountId ? { accountId } : {}),
     }, 18000);
 
     const durationMs = Date.now() - startMs;
 
     if (!proxyData || !proxyData.amountOut || proxyData.amountOut === "0") {
-      console.log(`[C51] Server quote returned empty (${durationMs}ms)`);
+      log.info("Quote", `[C51] Server quote returned empty (${durationMs}ms)`);
       return null;
     }
 
@@ -845,7 +911,7 @@ export async function fetchServerQuote(
 
     const confidence = proxyData.confidence || "medium";
 
-    console.log(
+    log.info("Quote",
       `[C51] Server quote: ${humanOutput.toFixed(6)} ${outputToken.symbol}` +
       ` (${confidence}, ${proxyData.source}, ${proxyData.durationMs || durationMs}ms)`
     );
@@ -905,6 +971,34 @@ export async function fetchServerQuote(
       }).sort((a, b) => b.score - a.score);
     }
 
+    // [STEP6] Resolve allowance status from parallel check
+    let approvalStatus: ServerQuoteResult["approvalStatus"] = null;
+    if (allowancePromise) {
+      const allowanceResult = await allowancePromise;
+      if (allowanceResult) {
+        const { v1, v2, rawNeeded, v1Router, v2Router } = allowanceResult;
+        // Determine which router has the better allowance
+        const bestAllowance = Math.max(v1, v2);
+        const approvalNeeded = bestAllowance < rawNeeded;
+        // Pick the router with higher allowance (or V2 if tied — preferred for deeper liquidity)
+        const routerVersion: "v1" | "v2" = v2 >= v1 ? "v2" : "v1";
+        const spenderForRoute = routerVersion === "v2" ? v2Router : v1Router;
+        approvalStatus = {
+          approvalNeeded,
+          v1Allowance: v1,
+          v2Allowance: v2,
+          rawInputNeeded: rawNeeded,
+          spenderForRoute,
+          routerVersion,
+          checkedAt: Date.now(),
+        };
+        log.info("Quote",
+          `[STEP6] Approval status: ${approvalNeeded ? "NEEDS APPROVAL" : "PRE-APPROVED"} ` +
+          `(best=${bestAllowance} needed=${rawNeeded} via ${routerVersion.toUpperCase()})`,
+        );
+      }
+    }
+
     return {
       quote: {
         inputToken: inputToken.symbol,
@@ -922,9 +1016,10 @@ export async function fetchServerQuote(
       },
       scoredRoutes: scoredRoutes,
       validatedRoute: proxyData.routeDetails || null,
+      approvalStatus: approvalStatus,
     };
   } catch (err: any) {
-    console.warn(`[C51] fetchServerQuote failed (${Date.now() - startMs}ms):`, err?.message || err);
+    log.warn("Quote", `[C51] fetchServerQuote failed (${Date.now() - startMs}ms): ${err?.message || err}`);
     return null;
   }
 }
