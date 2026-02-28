@@ -108,10 +108,10 @@ async function _initSignClient(): Promise<any> {
   _G[_WC_KEY] = client;
 
   // Wait for the WebSocket relay handshake before sending anything.
-  // [CONNECT-PERF] Use a shorter 5s timeout for init — if the relay is slow,
-  // the pre-connect keepalive will handle reconnection in the background.
-  // This prevents the prewarm from blocking for 10s+ on slow networks.
-  await _ensureRelayConnected(client, 5000);
+  // IMPLEMENTATION NOTE: 8s budget for init prewarm. Previous 5s was too tight —
+  // with deadline-aware phasing, 8s gives Phase 1 ~4.8s transport + ~3.2s poll,
+  // enough for one solid reconnection attempt without blocking page load.
+  await _ensureRelayConnected(client, 8000);
 
   // ── Lifecycle events ─────────────────────────────────────────
   client.on("session_event", (event: any) => {
@@ -195,11 +195,11 @@ export async function proposeSession(network: HederaNetwork): Promise<WCConnectR
   // Without this, client.connect() throws "send was called before connect"
   // if the relay dropped while the tab was backgrounded. [C15-01]
   //
-  // [CONNECT-PERF] Use a short 3s timeout instead of the default 10s.
-  // The pre-connect keepalive (startPreConnectKeepalive) keeps the relay
-  // warm since page load, so this is just a fast verification check. If the
-  // relay truly dropped, the retry loop below handles it with a force-reset.
-  await _ensureRelayConnected(client, 3000);
+  // IMPLEMENTATION NOTE: 8s budget for proposeSession relay check. Previous 3s
+  // was far too tight — a single Phase 1 transport call could exceed it, leaving
+  // zero budget for Phase 2. The retry loop below still handles hard failures
+  // with a force-reset, but 8s gives the deadline-aware phases room to work.
+  await _ensureRelayConnected(client, 8000);
 
   // [C96] Retry with force-reset on relay failures.
   // proposeSession doesn't go through _safeRequest, so it needs its own retry.
@@ -1150,7 +1150,7 @@ export function startRelayKeepalive(): void {
       const relayer = _signClient.core?.relayer;
       if (relayer && !relayer.connected) {
         console.log("[WC] Keepalive: relay disconnected — reconnecting");
-        await _ensureRelayConnected(_signClient, 5000);
+        await _ensureRelayConnected(_signClient, 8000);
       }
     } catch {
       // Best effort — don't throw in keepalive
@@ -1210,7 +1210,7 @@ export function startPreConnectKeepalive(): void {
 
       if (!relayer.connected || wsState !== 1 /* OPEN */) {
         console.log("[WC] Pre-connect keepalive: relay dropped — reconnecting...");
-        await _ensureRelayConnected(_signClient, 5000);
+        await _ensureRelayConnected(_signClient, 8000);
       }
     } catch {
       // Best effort — don't throw in keepalive
@@ -1387,13 +1387,28 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
 
     console.log("[WC] Relay disconnected — triggering reconnection...");
 
-    // [C96] [MOB-SWAP-FIX] Multi-phase reconnection strategy:
-    //   Phase 1: Try restartTransport / transportOpen / provider.connect
-    //   Phase 2: If still disconnected, hard disconnect→connect cycle on the provider
-    //   Phase 3 (mobile only): One more aggressive attempt with extended polling
-    const maxAttempts = timeoutMs >= 15000 ? 3 : 2; // mobile gets 3 attempts
+    // IMPLEMENTATION NOTE: Deadline-aware multi-phase reconnection.
+    // Previous implementation used hardcoded 5s transport timeouts that could
+    // individually exceed the caller's total budget (e.g. 5s timeout with 3s
+    // budget), causing phases to consume all time and leaving nothing for
+    // subsequent attempts. Now we track a global deadline and scale per-phase
+    // transport + poll budgets proportionally to remaining time.
+    const deadline = Date.now() + timeoutMs;
+    const maxAttempts = timeoutMs >= 15000 ? 3 : 2;
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (relayer.connected) { console.log("[WC] Relay connected (attempt", attempt, ")"); return; }
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 500) break; // Not enough time for another attempt
+
+      // IMPLEMENTATION NOTE: Budget split — 60% for transport call, 40% for poll.
+      // Each phase gets an equal share of remaining time, capped at 6s transport
+      // to avoid indefinite blocking on a single call.
+      const phasesLeft = maxAttempts - attempt;
+      const phaseBudget = Math.floor(remaining / phasesLeft);
+      const transportTimeout = Math.min(Math.floor(phaseBudget * 0.6), 6000);
+      const pollBudget = Math.max(Math.floor(phaseBudget * 0.4), 500);
 
       try {
         if (attempt === 0) {
@@ -1401,59 +1416,61 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
           if (typeof relayer.restartTransport === "function") {
             await Promise.race([
               relayer.restartTransport(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport timeout")), 5000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport timeout")), transportTimeout)),
             ]).catch((e: any) => console.warn("[WC] restartTransport error:", e?.message));
           } else if (typeof relayer.transportOpen === "function") {
             await Promise.race([
               relayer.transportOpen(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("transportOpen timeout")), 5000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("transportOpen timeout")), transportTimeout)),
             ]).catch((e: any) => console.warn("[WC] transportOpen error:", e?.message));
           } else if (relayer.provider && typeof relayer.provider.connect === "function") {
             await Promise.race([
               relayer.provider.connect(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), 5000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), transportTimeout)),
             ]).catch((e: any) => console.warn("[WC] provider.connect error:", e?.message));
           }
         } else if (attempt === 1) {
           // Phase 2: Hard disconnect→connect cycle on the WebSocket provider
           console.log("[WC] Phase 2: hard provider disconnect→connect cycle...");
           const provider = relayer.provider;
+          // IMPLEMENTATION NOTE: disconnect timeout is 25% of transport budget
+          // (brief teardown), leaving 75% for the fresh connect call.
+          const disconnectMs = Math.min(Math.floor(transportTimeout * 0.25), 2000);
+          const connectMs = transportTimeout - disconnectMs - 300; // 300ms pause
           if (provider) {
-            // Force-close the existing WebSocket
             if (typeof provider.disconnect === "function") {
-              try { await Promise.race([provider.disconnect(), new Promise(r => setTimeout(r, 2000))]); } catch { /* */ }
+              try { await Promise.race([provider.disconnect(), new Promise(r => setTimeout(r, disconnectMs))]); } catch { /* */ }
             }
-            // Brief pause to allow the WebSocket to fully close
-            await new Promise(r => setTimeout(r, 500));
-            // Open a fresh WebSocket connection
+            await new Promise(r => setTimeout(r, 300));
             if (typeof provider.connect === "function") {
               await Promise.race([
                 provider.connect(),
-                new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase2 timeout")), 5000)),
+                new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase2 timeout")), Math.max(connectMs, 1000))),
               ]).catch((e: any) => console.warn("[WC] Phase 2 provider.connect error:", e?.message));
             }
           } else if (typeof relayer.restartTransport === "function") {
-            // Fallback: restartTransport again as second attempt
             await Promise.race([
               relayer.restartTransport(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase2 timeout")), 5000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase2 timeout")), transportTimeout)),
             ]).catch((e: any) => console.warn("[WC] Phase 2 restartTransport error:", e?.message));
           }
         } else {
           // Phase 3 (mobile only): Extended aggressive reconnection for slow mobile networks
           console.log("[WC] [MOB-SWAP-FIX] Phase 3: Extended mobile reconnection attempt...");
           const provider = relayer.provider;
+          // IMPLEMENTATION NOTE: 500ms stabilization pause (down from 1000ms)
+          // to leave more budget for the actual transport call.
+          await new Promise(r => setTimeout(r, 500));
+          const phase3Transport = Math.max(transportTimeout - 500, 2000);
           if (provider && typeof provider.connect === "function") {
-            // Wait longer for mobile OS to stabilize network after app switch
-            await new Promise(r => setTimeout(r, 1000));
             await Promise.race([
               provider.connect(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase3 timeout")), 8000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase3 timeout")), phase3Transport)),
             ]).catch((e: any) => console.warn("[WC] [MOB-SWAP-FIX] Phase 3 provider.connect error:", e?.message));
           } else if (typeof relayer.restartTransport === "function") {
             await Promise.race([
               relayer.restartTransport(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase3 timeout")), 8000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase3 timeout")), phase3Transport)),
             ]).catch((e: any) => console.warn("[WC] [MOB-SWAP-FIX] Phase 3 restartTransport error:", e?.message));
           }
         }
@@ -1465,8 +1482,7 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
         return;
       }
 
-      // Poll for connection with half the remaining timeout per attempt
-      const pollTimeout = Math.floor(timeoutMs * 0.5);
+      // Poll for connection using the remaining phase budget
       const connected = await new Promise<boolean>((resolve) => {
         let settled = false;
         const done = (success: boolean) => {
@@ -1480,7 +1496,7 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
         const onConnect = () => done(true);
         try { relayer.on("relayer_connect", onConnect); } catch { /* */ }
         const pollInterval = setInterval(() => { if (relayer.connected) done(true); }, 100);
-        const timer = setTimeout(() => done(false), pollTimeout);
+        const timer = setTimeout(() => done(false), pollBudget);
       });
 
       if (connected) {
@@ -1491,7 +1507,7 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
       console.warn(`[WC] Phase ${attempt + 1} reconnection timed out`);
     }
 
-    // Both phases failed — resolve anyway, caller will get "send before connect"
+    // All phases failed — resolve anyway, caller will get "send before connect"
     // and can handle via retry (proposeSession/safeRequest retry logic).
     console.warn("[WC] All relay reconnection attempts failed after", timeoutMs, "ms");
   } catch {
