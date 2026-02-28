@@ -29,6 +29,7 @@ import { recordTrade } from "../utils/orderbook";
 import { fetchCoinPrices } from "../utils/coingecko";
 import { formatHbar } from "../utils/hedera";
 import { WalletConnectModal } from "./WalletConnectModal";
+import { FlashBillboard } from "./FlashBillboard";
 import {
   executeSaucerSwap,
   type SwapResult,
@@ -424,26 +425,32 @@ export function BuySell() {
   return (
     <div className="min-h-[calc(100vh-140px)]">
       <div className="max-w-5xl mx-auto space-y-6">
-        {/* Live Price Widget */}
-        <div className="flex items-center justify-end gap-3">
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl ${cardClass}`}>
-            <img src={HBAR_LOGO} alt="HBAR" className="w-6 h-6 rounded-full" />
-            <div>
-              <div className="font-bold">{formatPrice(livePrice)}</div>
-              <div className={`text-xs flex items-center gap-1 ${priceChange >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                {priceChange >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)}%
+        {/* Live Price Widget + Flash Billboard */}
+        <div className="flex items-stretch gap-0">
+          {/* Retro flash billboard — fills all space up to the price badge */}
+          <FlashBillboard />
+
+          {/* Price badge + refresh */}
+          <div className="flex items-center gap-3 shrink-0 pl-3">
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl ${cardClass}`}>
+              <img src={HBAR_LOGO} alt="HBAR" className="w-6 h-6 rounded-full" />
+              <div>
+                <div className="font-bold">{formatPrice(livePrice)}</div>
+                <div className={`text-xs flex items-center gap-1 ${priceChange >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                  {priceChange >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)}%
+                </div>
               </div>
             </div>
+            <Tip content="Refresh price">
+            <button
+              onClick={refreshPrice}
+              className={`p-2.5 rounded-xl transition-all ${isDark ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20" : "bg-gray-100 hover:bg-gray-200 border border-gray-200"}`}
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""} ${isDark ? "text-slate-400" : "text-gray-500"}`} />
+            </button>
+            </Tip>
           </div>
-          <Tip content="Refresh price">
-          <button
-            onClick={refreshPrice}
-            className={`p-2.5 rounded-xl transition-all ${isDark ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20" : "bg-gray-100 hover:bg-gray-200 border border-gray-200"}`}
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""} ${isDark ? "text-slate-400" : "text-gray-500"}`} />
-          </button>
-          </Tip>
         </div>
 
         {/* Tab Navigation */}
