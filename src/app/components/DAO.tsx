@@ -1108,7 +1108,7 @@ function ProposalList({
           return (
             <div
               key={p.id}
-              className="bg-slate-900/30 border border-white/5 rounded-xl overflow-hidden hover:border-pink-500/20 transition-colors"
+              className={`rounded-xl overflow-hidden transition-colors ${isDark ? "bg-slate-900/30 border border-white/5 hover:border-pink-500/20" : "bg-white border border-gray-200 hover:border-pink-300 shadow-sm"}`}
             >
               {/* Header */}
               <div
@@ -1128,7 +1128,7 @@ function ProposalList({
                       <StatusIcon status={p.status} />
                       {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
                     </span>
-                    <span className="text-xs text-slate-500 bg-slate-800/40 px-2 py-0.5 rounded">
+                    <span className={`text-xs px-2 py-0.5 rounded ${isDark ? "text-slate-500 bg-slate-800/40" : "text-gray-500 bg-gray-100"}`}>
                       {p.category}
                     </span>
                     {voted && (
@@ -1148,8 +1148,8 @@ function ProposalList({
                       </span>
                     )}
                   </div>
-                  <h3 className="text-white truncate">{p.title}</h3>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
+                  <h3 className={`truncate ${isDark ? "text-white" : "text-gray-900"}`}>{p.title}</h3>
+                  <div className={`flex items-center gap-3 mt-1 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                     <span className="font-mono">{p.proposer}</span>
                     <span>{timeRemaining(p.endsAt)}</span>
                   </div>
@@ -1157,11 +1157,11 @@ function ProposalList({
 
                 {/* Mini vote bar */}
                 <div className="shrink-0 w-24 pt-1">
-                  <div className="flex justify-between text-xs text-slate-500 mb-1">
+                  <div className={`flex justify-between text-xs mb-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                     <span>{p.votesFor}</span>
                     <span>{p.votesAgainst}</span>
                   </div>
-                  <div className="h-1.5 rounded-full overflow-hidden bg-slate-800 flex">
+                  <div className={`h-1.5 rounded-full overflow-hidden flex ${isDark ? "bg-slate-800" : "bg-gray-200"}`}>
                     <div
                       className="bg-pink-500 transition-all"
                       style={{ width: `${forPct}%` }}
@@ -1171,7 +1171,7 @@ function ProposalList({
                       style={{ width: `${100 - forPct}%` }}
                     />
                   </div>
-                  <div className="text-xs text-slate-500 text-center mt-1">
+                  <div className={`text-xs text-center mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                     {quorumMet ? (
                       <span className="text-emerald-400">Quorum met</span>
                     ) : (
@@ -1180,7 +1180,7 @@ function ProposalList({
                   </div>
                 </div>
 
-                <div className="shrink-0 pt-2 text-slate-500">
+                <div className={`shrink-0 pt-2 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                   {expanded ? (
                     <ChevronUp className="w-4 h-4" />
                   ) : (
@@ -1191,7 +1191,7 @@ function ProposalList({
 
               {/* Expanded details */}
               {expanded && (
-                <div className="px-5 pb-5 border-t border-white/5">
+                <div className={`px-5 pb-5 border-t ${isDark ? "border-white/5" : "border-gray-100"}`}>
                   {/* Edit / Delete buttons for proposer (before first vote) */}
                   {canModify && (
                     <div className="flex items-center gap-2 mt-4 mb-3">
@@ -1237,7 +1237,7 @@ function ProposalList({
                     </div>
                   )}
 
-                  <p className="text-slate-400 text-sm mt-4 mb-4 whitespace-pre-wrap">
+                  <p className={`text-sm mt-4 mb-4 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
                     {p.description}
                   </p>
 
@@ -1246,14 +1246,14 @@ function ProposalList({
                     <div className="flex justify-between text-sm mb-1">
                       <span>
                         <span className="text-pink-400">{p.votesFor}</span>{" "}
-                        <span className="text-slate-500">For</span>
+                        <span className={isDark ? "text-slate-500" : "text-gray-500"}>For</span>
                       </span>
                       <span>
-                        <span className="text-slate-500">Against</span>{" "}
+                        <span className={isDark ? "text-slate-500" : "text-gray-500"}>Against</span>{" "}
                         <span className="text-red-400">{p.votesAgainst}</span>
                       </span>
                     </div>
-                    <div className="h-2.5 rounded-full overflow-hidden bg-slate-800 flex" role="meter" aria-label="Vote progress" aria-valuenow={Math.round(forPct)} aria-valuemin={0} aria-valuemax={100}>
+                    <div className={`h-2.5 rounded-full overflow-hidden flex ${isDark ? "bg-slate-800" : "bg-gray-200"}`} role="meter" aria-label="Vote progress" aria-valuenow={Math.round(forPct)} aria-valuemin={0} aria-valuemax={100}>
                       <div
                         className="bg-gradient-to-r from-pink-500 to-pink-400 transition-all"
                         style={{ width: `${forPct}%` }}
@@ -1263,7 +1263,7 @@ function ProposalList({
                         style={{ width: `${100 - forPct}%` }}
                       />
                     </div>
-                    <div className="flex justify-between text-xs text-slate-500 mt-1">
+                    <div className={`flex justify-between text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                       <span>{forPct.toFixed(1)}%</span>
                       <span>
                         Quorum: {total}/{p.quorum}{" "}
@@ -1279,10 +1279,10 @@ function ProposalList({
                   {isActive && !voted && canVote && (
                     <>
                       {confirming ? (
-                        <div className="bg-slate-800/50 border border-pink-500/20 rounded-lg p-4">
-                          <p className="text-sm text-slate-300 mb-3">
+                        <div className={`rounded-lg p-4 ${isDark ? "bg-slate-800/50 border border-pink-500/20" : "bg-gray-50 border border-pink-200"}`}>
+                          <p className={`text-sm mb-3 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
                             Cast{" "}
-                            <span className="text-white">{votingPower} vote{votingPower > 1 ? "s" : ""}</span>{" "}
+                            <span className={isDark ? "text-white" : "text-gray-900"}>{votingPower} vote{votingPower > 1 ? "s" : ""}</span>{" "}
                             <span
                               className={
                                 voteConfirm.direction === "for"
@@ -1310,7 +1310,7 @@ function ProposalList({
                             </button>
                             <button
                               onClick={() => setVoteConfirm(null)}
-                              className="px-4 py-2 bg-slate-800 border border-white/5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors"
+                              className={`px-4 py-2 rounded-lg text-sm transition-colors ${isDark ? "bg-slate-800 border border-white/5 text-slate-400 hover:text-white" : "bg-gray-200 border border-gray-300 text-gray-500 hover:text-gray-900"}`}
                             >
                               Cancel
                             </button>
@@ -1352,15 +1352,15 @@ function ProposalList({
                   )}
 
                   {voted && (
-                    <div className="text-sm text-pink-300 bg-pink-500/10 border border-pink-500/20 rounded-lg p-3">
+                    <div className={`text-sm rounded-lg p-3 ${isDark ? "text-pink-300 bg-pink-500/10 border border-pink-500/20" : "text-pink-700 bg-pink-50 border border-pink-200"}`}>
                       You voted{" "}
-                      <span className="text-white">{voted.direction}</span> with{" "}
+                      <span className={isDark ? "text-white" : "text-gray-900"}>{voted.direction}</span> with{" "}
                       {voted.weight} vote{voted.weight > 1 ? "s" : ""}.
                     </div>
                   )}
 
                   {!isActive && (
-                    <div className="text-sm text-slate-500">
+                    <div className={`text-sm ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                       Voting has ended. Final result:{" "}
                       <span
                         className={
@@ -1420,13 +1420,13 @@ function CommentsSection({
   };
 
   return (
-    <div className="mt-5 pt-4 border-t border-white/5">
+    <div className={`mt-5 pt-4 border-t ${isDark ? "border-white/5" : "border-gray-100"}`}>
       <div className="flex items-center gap-2 mb-3">
         <MessageSquare className="w-4 h-4 text-purple-400" />
-        <span className="text-sm text-slate-300">
+        <span className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
           Community Discussion
         </span>
-        <span className="text-xs text-slate-600">
+        <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
           ({comments.length} comment{comments.length !== 1 ? "s" : ""})
         </span>
       </div>
@@ -1445,7 +1445,7 @@ function CommentsSection({
           {displayComments.map((c) => (
             <div
               key={c.id}
-              className="bg-slate-800/30 border border-white/5 rounded-lg px-3 py-2"
+              className={`rounded-lg px-3 py-2 ${isDark ? "bg-slate-800/30 border border-white/5" : "bg-gray-50 border border-gray-200"}`}
             >
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-mono text-pink-400">
@@ -1460,7 +1460,7 @@ function CommentsSection({
                   {formatCommentTime(c.createdAt)}
                 </span>
               </div>
-              <p className="text-sm text-slate-300 whitespace-pre-wrap">{c.text}</p>
+              <p className={`text-sm whitespace-pre-wrap ${isDark ? "text-slate-300" : "text-gray-700"}`}>{c.text}</p>
             </div>
           ))}
           {showAll && comments.length > 5 && (
@@ -1475,7 +1475,7 @@ function CommentsSection({
       )}
 
       {comments.length === 0 && (
-        <div className="text-xs text-slate-600 mb-3 py-3 text-center bg-slate-800/20 rounded-lg">
+        <div className={`text-xs mb-3 py-3 text-center rounded-lg ${isDark ? "text-slate-600 bg-slate-800/20" : "text-gray-400 bg-gray-50"}`}>
           No comments yet. Be the first to share your thoughts.
         </div>
       )}
@@ -1489,7 +1489,7 @@ function CommentsSection({
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
             placeholder="Add a comment or remark..."
             maxLength={500}
-            className="flex-1 bg-slate-800/50 border border-white/5 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-pink-500/50 placeholder:text-slate-600"
+            className={`flex-1 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-pink-500/50 ${isDark ? "bg-slate-800/50 border border-white/5 placeholder:text-slate-600" : "bg-white border border-gray-300 placeholder:text-gray-400 text-gray-900"}`}
           />
           <button
             onClick={handleSubmit}
@@ -1497,14 +1497,14 @@ function CommentsSection({
             className={`px-3 py-2 rounded-lg text-sm transition-all flex items-center gap-1.5 ${
               commentText.trim() && !actionLoading
                 ? "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white"
-                : "bg-slate-800 text-slate-600 cursor-not-allowed"
+                : isDark ? "bg-slate-800 text-slate-600 cursor-not-allowed" : "bg-gray-100 text-gray-400 cursor-not-allowed"
             }`}
           >
             {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         </div>
       ) : !canComment ? (
-        <div className="text-xs text-slate-600 italic">
+        <div className={`text-xs italic ${isDark ? "text-slate-600" : "text-gray-400"}`}>
           Hold HBAR.ħ tokens or VIP NFTs to comment.
         </div>
       ) : null}
