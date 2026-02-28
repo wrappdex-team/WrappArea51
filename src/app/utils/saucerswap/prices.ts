@@ -13,6 +13,7 @@
 import { log } from "../logger";
 import type { AllowedToken } from "./tokens";
 import { TOKEN_BY_HTS_ID, HBARH_TOKEN_ID, resolveTokenByHtsId } from "./tokens";
+import { isTokenBlocked } from "./scam-blocklist";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // ── Shared Constants ────────────────────────────────────────────────
@@ -216,18 +217,30 @@ export async function fetchLiveTokenPrices(): Promise<Record<string, number>> {
       fallbackSymbolLower.set(key.toLowerCase(), key);
     }
 
+    // [SECURITY-FIX-3] Track which symbols were already priced by the authoritative
+    // static registry (TOKEN_BY_HTS_ID). Dynamic/symbol fallback matches must NEVER
+    // overwrite these — scam tokens with identical symbols would corrupt prices.
+    const pricedByStaticRegistry = new Set<string>();
+
     for (const t of tokens) {
       const priceUsd = parseFloat(t.priceUsd || t.price || "0");
       if (!priceUsd || priceUsd <= 0) continue;
 
       // Match by HTS ID (try multiple field names the API might use)
       const htsId = t.id || t.tokenId || t.token_id || "";
+
+      // [SECURITY-FIX-3] Skip tokens on the scam blocklist — their inflated
+      // prices must NEVER leak into the price cache under any symbol.
+      if (htsId && isTokenBlocked(htsId)) continue;
+
       const registeredToken = TOKEN_BY_HTS_ID.get(htsId);
       if (registeredToken) {
         prices[registeredToken.symbol] = priceUsd;
+        pricedByStaticRegistry.add(registeredToken.symbol);
         // WHBAR price = HBAR price
         if (registeredToken.symbol === "WHBAR") {
           prices["HBAR"] = priceUsd;
+          pricedByStaticRegistry.add("HBAR");
         }
         continue;
       }
@@ -235,7 +248,10 @@ export async function fetchLiveTokenPrices(): Promise<Record<string, number>> {
       // [C56] Check dynamic token registry for tokens fetched via SaucerSwap API
       const dynamicToken = resolveTokenByHtsId(htsId);
       if (dynamicToken) {
-        prices[dynamicToken.symbol] = priceUsd;
+        // [SECURITY-FIX-3] Never overwrite a price already set by static registry
+        if (!pricedByStaticRegistry.has(dynamicToken.symbol)) {
+          prices[dynamicToken.symbol] = priceUsd;
+        }
         continue;
       }
 
@@ -243,7 +259,8 @@ export async function fetchLiveTokenPrices(): Promise<Record<string, number>> {
       const rawSym = t.symbol || "";
       const symLower = rawSym.toLowerCase();
       const canonicalKey = fallbackSymbolLower.get(symLower);
-      if (canonicalKey) {
+      // [SECURITY-FIX-3] Never overwrite a price already set by static registry
+      if (canonicalKey && !pricedByStaticRegistry.has(canonicalKey)) {
         prices[canonicalKey] = priceUsd;
       }
     }
@@ -593,6 +610,9 @@ export async function fetchAllTokenPricesById(): Promise<Map<string, SaucerToken
       const priceUsd = parseFloat(t.priceUsd || t.price || "0");
       const htsId = t.id || t.tokenId || t.token_id || "";
       if (!htsId || !htsId.startsWith("0.0.")) continue;
+
+      // [SECURITY-FIX-3] Skip scam tokens — never cache their prices
+      if (isTokenBlocked(htsId)) continue;
 
       const entry: SaucerTokenPriceEntry = {
         htsId,
