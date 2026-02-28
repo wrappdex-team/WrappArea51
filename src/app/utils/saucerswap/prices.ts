@@ -235,6 +235,14 @@ export async function fetchLiveTokenPrices(): Promise<Record<string, number>> {
 
       const registeredToken = TOKEN_BY_HTS_ID.get(htsId);
       if (registeredToken) {
+        // [ROUTING-FIX] When both canonical and alias IDs map to the same token
+        // in TOKEN_BY_HTS_ID, two API entries can match the static registry for
+        // the same symbol. The CANONICAL entry must always win — alias entries
+        // (ERC20Wrappers) may report different/inflated prices from the API.
+        // Skip if already priced AND this is the alias (not the canonical ID).
+        if (pricedByStaticRegistry.has(registeredToken.symbol) && htsId !== registeredToken.htsId) {
+          continue;  // Skip alias — canonical already set the correct price
+        }
         prices[registeredToken.symbol] = priceUsd;
         pricedByStaticRegistry.add(registeredToken.symbol);
         // WHBAR price = HBAR price

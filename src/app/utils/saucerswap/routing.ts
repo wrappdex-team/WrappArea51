@@ -131,6 +131,38 @@ async function buildPoolGraph(network: HederaNetwork, forceRefresh = false): Pro
     log.warn("PoolGraph", `V1 pool fetch failed: ${e?.message}`);
   }
 
+  // ── [ROUTING-FIX] Bidirectional alias resolution ──────────────────────
+  // V2 pools may register tokens under their ALIAS IDs (e.g. SMACKM 0.0.10152778)
+  // while our token registry uses the CANONICAL IDs (0.0.1055495). These
+  // differ by exactly 1 and represent the same asset. Mirror all edges
+  // from one to the other so BFS finds V2 pools regardless of which
+  // ID the lookup starts from.
+  for (const [htsId, token] of TOKEN_BY_HTS_ID.entries()) {
+    // Only process entries where the map key IS the canonical htsId
+    // (skip alias entries like 0.0.10096415 → SMACKM which are just lookup aliases)
+    if (htsId !== token.htsId) continue;
+    if (!token.saucerswapAliasId || !graph.has(token.saucerswapAliasId)) continue;
+    // Skip if canonical is same as alias (shouldn't happen but safety check)
+    if (token.htsId === token.saucerswapAliasId) continue;
+
+    const aliasEdges = graph.get(token.saucerswapAliasId)!;
+    // Check what the CANONICAL node already has (destination dedup)
+    const canonicalEdges = graph.get(token.htsId) || [];
+    const existingOnCanonical = new Set(canonicalEdges.map(e => `${e.otherToken}:${e.version}:${e.fee}`));
+    let mirrored = 0;
+    for (const edge of aliasEdges) {
+      const key = `${edge.otherToken}:${edge.version}:${edge.fee}`;
+      if (!existingOnCanonical.has(key)) {
+        addEdge(token.htsId, edge.otherToken, edge.version, edge.fee, edge.poolAddress);
+        existingOnCanonical.add(key);
+        mirrored++;
+      }
+    }
+    if (mirrored > 0) {
+      log.info("PoolGraph", `[ROUTING-FIX] Mirrored ${mirrored} edges from alias ${token.saucerswapAliasId} → canonical ${token.htsId} (${token.symbol})`);
+    }
+  }
+
   // ── [SWAP-FIX-2] WHBAR ID normalization ──────────────────────────────
   // V2 pools may register WHBAR under its CONTRACT ID (0.0.1456985)
   // while our token registry uses the TOKEN ID (0.0.1456986). These
@@ -192,6 +224,12 @@ function resolveGraphKey(htsId: string, graph: PoolGraph): string {
   const token = TOKEN_BY_HTS_ID.get(htsId);
   if (token?.saucerswapAliasId && graph.has(token.saucerswapAliasId)) {
     return token.saucerswapAliasId;
+  }
+  // [ROUTING-FIX] Bidirectional: if we were given the ALIAS ID, check the
+  // CANONICAL htsId in the graph. This handles tokens like SMACKM where
+  // V1 pools use the canonical ID but routing passes the alias.
+  if (token && token.htsId !== htsId && graph.has(token.htsId)) {
+    return token.htsId;
   }
   // [SWAP-FIX-2] Also handle WHBAR contract ↔ token ID mapping.
   // V2 pools may register under 0.0.1456985 (contract) while routing
@@ -793,6 +831,12 @@ export function getPoolRoutes(): PoolRoute[] {
     { id: "ss-sauce-usdc",  tokenA: tok("SAUCE"), tokenB: tok("USDC"),   fee: 0.3,  tvlUsd: 0, volume24hUsd: 0, apr: 0, poolAddress: FR },
     { id: "ss-wbtc-usdc",   tokenA: tok("WBTC"),  tokenB: tok("USDC"),   fee: 0.3,  tvlUsd: 0, volume24hUsd: 0, apr: 0, poolAddress: FR },
     { id: "ss-weth-usdc",   tokenA: tok("WETH"),  tokenB: tok("USDC"),   fee: 0.3,  tvlUsd: 0, volume24hUsd: 0, apr: 0, poolAddress: FR },
+    // [ROUTING-FIX] Community tokens that need multi-hop via HBAR. Without
+    // these static entries, multi-hop only works if the pool graph API returns
+    // their pools — which may use ERC20Wrapper IDs not in our registry.
+    { id: "ss-hbar-smackm", tokenA: tok("HBAR"),  tokenB: tok("SMACKM"), fee: 0.3, tvlUsd: 0, volume24hUsd: 0, apr: 0, poolAddress: FR },
+    { id: "ss-hbar-grelf",  tokenA: tok("HBAR"),  tokenB: tok("GRELF"),  fee: 0.3, tvlUsd: 0, volume24hUsd: 0, apr: 0, poolAddress: FR },
+    { id: "ss-hbar-clxy",   tokenA: tok("HBAR"),  tokenB: tok("CLXY"),   fee: 0.3, tvlUsd: 0, volume24hUsd: 0, apr: 0, poolAddress: FR },
   ].filter(r => r.tokenA && r.tokenB); // Safety filter
 
   // [C36-04] Merge live API data with hardcoded fallbacks.
