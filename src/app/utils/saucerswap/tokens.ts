@@ -304,13 +304,16 @@ export const SAUCERSWAP_TOKENS: AllowedToken[] = [
     rank: 43, isWrapped: false,
   },
   {
-    // [SECURITY-FIX-3] REVERTED to correct 0.0.8041571. Previous C-RECONCILE wrongly
-    // changed to 0.0.10096415 which is a FAKE/SCAM imposter SMACKM token.
-    // The real SMACKM is 0.0.8041571. Scam token added to blocklist.
+    // [SECURITY-FIX-3] Canonical token is 0.0.8041571 (what users hold/associate).
+    // [ROUTING-FIX] 0.0.10096415 is the SaucerSwap ERC20Wrapper of SMACKM —
+    // NOT a scam, but the V2-wrapped version used in SaucerSwap pool contracts.
+    // It must be the saucerswapAliasId so pool graph routing can find SMACKM
+    // pools (which are listed under the wrapper ID in API responses).
     symbol: "SMACKM", name: "SMACKM", htsId: "0.0.8041571",
     evmAddress: htsIdToEvmAddress("0.0.8041571"), decimals: 8,
     logo: getReliableIconUrl("0.0.8041571") || "https://www.saucerswap.finance/images/tokens/0.0.8041571.svg",
     rank: 44, isWrapped: false,
+    saucerswapAliasId: "0.0.10096415",
   },
   {
     symbol: "CLXY", name: "Calaxy", htsId: "0.0.859814",
@@ -357,6 +360,14 @@ const _wethToken = TOKEN_BY_SYMBOL.get("WETH");
 if (_wethToken) {
   TOKEN_BY_HTS_ID.set("0.0.9770617", _wethToken);  // V2 ERC20Wrapper / alternate
   TOKEN_BY_HTS_ID.set("0.0.1969708", _wethToken);   // Old WETH variant
+}
+
+// [ROUTING-FIX] Register SMACKM's ERC20Wrapper ID as alias pointing to canonical SMACKM.
+// SaucerSwap pool APIs and /tokens endpoint list SMACKM under this wrapper ID.
+// Same pattern as WETH aliases above.
+const _smackmToken = TOKEN_BY_SYMBOL.get("SMACKM");
+if (_smackmToken) {
+  TOKEN_BY_HTS_ID.set("0.0.10096415", _smackmToken);  // SaucerSwap ERC20Wrapper
 }
 
 // ── [C56] Dynamic Token Registry ─────────────────────────────────────
