@@ -1392,9 +1392,11 @@ async function strategyPriceEstimate(
 ): Promise<QuoteResult | null> {
   const prices = await ensureTokenPrices();
 
-  // For native HBAR, look up WHBAR price
-  const inPrice = prices.get(inputHtsId) ?? prices.get(WHBAR_HTS_ID) ?? 0;
-  const outPrice = prices.get(outputHtsId) ?? 0;
+  // For native HBAR, look up WHBAR price.
+  // [ALIAS-FIX] Also try V2 alias IDs when canonical price is missing — SaucerSwap
+  // API may list prices under the ERC20Wrapper ID instead of the canonical ID.
+  const inPrice = prices.get(inputHtsId) ?? prices.get(WHBAR_HTS_ID) ?? prices.get(resolveV2AliasId(inputHtsId)) ?? 0;
+  const outPrice = prices.get(outputHtsId) ?? prices.get(resolveV2AliasId(outputHtsId)) ?? 0;
 
   if (inPrice <= 0 || outPrice <= 0) {
     console.log(`[SS-Quote] Price estimate failed: inPrice=${inPrice} outPrice=${outPrice} for ${inputHtsId}/${outputHtsId}`);

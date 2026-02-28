@@ -440,12 +440,25 @@ export function getSaucerswapRoutingId(token: AllowedToken): string {
 
 /**
  * Get the EVM address for SaucerSwap routing (uses alias if available).
+ * Use for V2 QuoterV2/SwapRouter calls where pools are registered under wrapper IDs.
  */
 export function getSaucerswapRoutingEvmAddress(token: AllowedToken): string {
   const routingId = getSaucerswapRoutingId(token);
   return routingId === "native"
     ? "0x0000000000000000000000000000000000000000"
     : htsIdToEvmAddress(routingId);
+}
+
+/**
+ * [ALIAS-FIX] Get the CANONICAL EVM address for V1 Router calls.
+ * V1 Factory pairs are registered under canonical HTS IDs (not ERC20Wrapper aliases).
+ * Use this for V1 Router getAmountsOut, swapExactETHForTokens, etc.
+ * For V2 calls, use getSaucerswapRoutingEvmAddress() instead.
+ */
+export function getCanonicalEvmAddress(token: AllowedToken): string {
+  return token.htsId === "native"
+    ? "0x0000000000000000000000000000000000000000"
+    : htsIdToEvmAddress(token.htsId);
 }
 
 export function resolveToken(symbol: string): AllowedToken | undefined {

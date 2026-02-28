@@ -546,6 +546,38 @@ export async function fetchSaucerSwapQuote(
     const network = options?.network || "mainnet";
     const inputDecimals = options?.inputToken?.decimals?.toString() || "8";
     const outputDecimals = options?.outputToken?.decimals?.toString() || "8";
+    // [ALIAS-FIX] Send CANONICAL HTS IDs to server, with wrapper aliases as hints.
+    // V1 Router getAmountsOut needs canonical addresses (V1 Factory pairs are
+    // registered under canonical IDs). V2 QuoterV2 resolves aliases server-side.
+    // Previously the wrapper ID was sent as inputToken/outputToken, causing V1
+    // strategies to miss the pool — the price-estimate fallback then returned
+    // an inflated amount, triggering the PRICE-IMPACT-GUARD false positive.
+    const canonicalInputId = options?.inputToken?.htsId
+      ? (options.inputToken.htsId === "native" ? inputTokenId : options.inputToken.htsId)
+      : inputTokenId;
+    const canonicalOutputId = options?.outputToken?.htsId
+      ? (options.outputToken.htsId === "native" ? outputTokenId : options.outputToken.htsId)
+      : outputTokenId;
+    const _inputAlias = options?.inputToken?.saucerswapAliasId || "";
+    const _outputAlias = options?.outputToken?.saucerswapAliasId || "";
+
+    const proxyParams: Record<string, string> = {
+      inputToken: canonicalInputId,
+      outputToken: canonicalOutputId,
+      amountIn,
+      inputDecimals,
+      outputDecimals,
+      network,
+    };
+    // Only include alias hints when they differ from canonical
+    if (_inputAlias && _inputAlias !== canonicalInputId) {
+      proxyParams.inputAliasId = _inputAlias;
+    }
+    if (_outputAlias && _outputAlias !== canonicalOutputId) {
+      proxyParams.outputAliasId = _outputAlias;
+    }
+    log.debug("Quote", `[ALIAS-FIX] Server proxy: inputToken=${canonicalInputId}${_inputAlias ? ` alias=${_inputAlias}` : ""}, outputToken=${canonicalOutputId}${_outputAlias ? ` alias=${_outputAlias}` : ""}`);
+
     const proxyData = await ssProxy<{
       amountOut: number;
       source: string;
@@ -554,14 +586,7 @@ export async function fetchSaucerSwapQuote(
       route?: string[];
       poolVersion?: string;
       feeTier?: number;
-    }>("/quote", {
-      inputToken: inputTokenId,
-      outputToken: outputTokenId,
-      amountIn,
-      inputDecimals,
-      outputDecimals,
-      network,
-    }, 12000); // [PERF-01] 12s (reduced from 18s) — fail faster, fall through to browser strategies
+    }>("/quote", proxyParams, 12000); // [PERF-01] 12s (reduced from 18s) — fail faster, fall through to browser strategies
 
     if (proxyData && proxyData.amountOut > 0) {
       const sourceMap: Record<string, RawQuote["source"]> = {
@@ -810,64 +835,7 @@ export async function fetchServerQuote(
   }
 
   try {
-    const proxyData = await ssProxy<{
-      amountOut: string;
-      amountOutMin?: string;
-      source: string;
-      confidence: "high" | "medium" | "low";
-      priceImpact: number;
-      route: string[];
-      poolVersion?: "v1" | "v2";
-      feeTier?: number;
-      durationMs?: number;
-      allQuotes?: Array<{
-        amountOut: string;
-        source: string;
-        confidence: "high" | "medium" | "low";
-        priceImpact?: number;
-        route?: string[];
-        poolVersion?: string;
-        feeTier?: number;
-      }>;
-      scoredRoutes?: Array<{
-        quote: {
-          amountOut: string;
-          source: string;
-          confidence: "high" | "medium" | "low";
-          priceImpact: number;
-          route: string[];
-          poolVersion?: string;
-          feeTier?: number;
-        };
-        score: number;
-        label: string;
-        intermediary: string;
-        hops: number;
-      }>;
-      // [STEP1] Server-side validated route details for execution passthrough
-      routeDetails?: {
-        version: "v1" | "v2";
-        feeTiers: number[];
-        routeHtsIds: string[];
-        pathEvmAddresses: string[];
-        packedPathHex: string | null;
-        poolAddress?: string;
-        source: string;
-        rawAmountOut: string;
-        validatedAt: number;
-      };
-      // [STEP6] Pre-checked approval status — bundled with quote fetch
-      approvalStatus?: {
-        approvalNeeded: boolean;
-        v1Allowance: number;
-        v2Allowance: number;
-        rawInputNeeded: number;
-        /** Router HTS ID that matches the winning route's version */
-        spenderForRoute: string;
-        routerVersion: "v1" | "v2";
-        checkedAt: number;
-      };
-    }>("/quote", {
+    const proxyParams: Record<string, string> = {
       inputToken: inputHtsId,
       outputToken: outputHtsId,
       amountIn: rawAmountIn,
@@ -881,7 +849,16 @@ export async function fetchServerQuote(
       ...(outputAliasId && outputAliasId !== outputHtsId ? { outputAliasId } : {}),
       // [STEP6] Account ID for allowance checks
       ...(accountId ? { accountId } : {}),
-    }, 18000);
+    };
+    const proxyData = await ssProxy<{
+      amountOut: number;
+      source: string;
+      confidence: string;
+      priceImpact?: number;
+      route?: string[];
+      poolVersion?: string;
+      feeTier?: number;
+    }>("/quote", proxyParams, 12000); // [PERF-01] 12s (reduced from 18s) — fail faster, fall through to browser strategies
 
     const durationMs = Date.now() - startMs;
 

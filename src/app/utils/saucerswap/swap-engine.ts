@@ -26,7 +26,7 @@ import type { HederaNetwork, AllowedToken } from "./tokens";
 import {
   resolveToken, getWhbarToken, htsIdToEvmAddress, evmAddressToHtsId,
   SAUCERSWAP_TOKENS, getSaucerswapRoutingId, getSaucerswapRoutingEvmAddress,
-  resolveTokenByHtsId,
+  getCanonicalEvmAddress, resolveTokenByHtsId,
 } from "./tokens";
 import {
   SAUCERSWAP_V1_ROUTER_CANDIDATES, SAUCERSWAP_V2_ROUTER,
@@ -3242,9 +3242,42 @@ async function executeSaucerSwapDirect(
       if (shouldValidateV1) {
         const v1GuardRouter = useFotRouter ? getRouterWithFee(network) : getSaucerSwapRouter(network, "v1");
         try {
-          const v1GuardQuote = await fetchRouterQuote(
-            BigInt(rawInput), pathAddresses, v1GuardRouter, network
-          );
+          // [ALIAS-FIX] Build canonical path BEFORE querying. When alias ≠ canonical,
+          // try canonical FIRST — V1 Factory pairs are registered under canonical IDs.
+          // The alias address may hit a DIFFERENT V1 pair with tiny liquidity, returning
+          // a positive but wrong value that bypasses the old canonical fallback.
+          const canonInEvm = htsIdToEvmAddress(isInputNative ? whbar.htsId : inputToken.htsId);
+          const canonOutEvm = htsIdToEvmAddress(isOutputNative ? whbar.htsId : outputToken.htsId);
+          const canonicalGuardPath = [canonInEvm, canonOutEvm];
+          const guardHasAlias = canonicalGuardPath[0].toLowerCase() !== pathAddresses[0]?.toLowerCase() ||
+            canonicalGuardPath[1]?.toLowerCase() !== pathAddresses[1]?.toLowerCase();
+
+          let v1GuardQuote: bigint | null = null;
+
+          if (guardHasAlias && pathAddresses.length === 2) {
+            // [ALIAS-FIX] Canonical-first strategy for alias tokens
+            console.log(`[V1-GUARD] [ALIAS-FIX] Alias path detected — trying canonical first: ${canonicalGuardPath.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+            const canonQuote = await fetchRouterQuote(
+              BigInt(rawInput), canonicalGuardPath, v1GuardRouter, network
+            );
+            if (canonQuote && canonQuote > 0n) {
+              console.log(`[V1-GUARD] [ALIAS-FIX] Canonical path works ✓ (getAmountsOut=${canonQuote}) — using canonical for V1`);
+              pathAddresses = canonicalGuardPath;
+              v1GuardQuote = canonQuote;
+            } else {
+              // Canonical failed, try alias as fallback
+              console.log(`[V1-GUARD] [ALIAS-FIX] Canonical failed (${canonQuote}), trying alias path: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+              v1GuardQuote = await fetchRouterQuote(
+                BigInt(rawInput), pathAddresses, v1GuardRouter, network
+              );
+            }
+          } else {
+            // No alias override — standard path validation
+            v1GuardQuote = await fetchRouterQuote(
+              BigInt(rawInput), pathAddresses, v1GuardRouter, network
+            );
+          }
+
           if (!v1GuardQuote || v1GuardQuote <= 0n) {
             const v2Error = _v2TokenHbarError || _v2MultiHopError || _v2SingleHopError;
             if (isV2Fallback) {
@@ -3260,7 +3293,6 @@ async function executeSaucerSwapDirect(
               };
             }
             // [V1-QUOTE-FIX] Abort cleanly for forced V1 multi-hop when no V1 pair exists.
-            // Don't fall through to the 2-element canonical retry (makes no sense for multi-hop).
             if (_forceV1MultiHop && pathAddresses.length > 2) {
               console.error(`[V1-GUARD] V1 multi-hop path has no V1 pair for all hops: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
               return {
@@ -3272,21 +3304,20 @@ async function executeSaucerSwapDirect(
                 executionVenue: "saucerswap-v1",
               };
             }
-            // Non-fallback: alias path failed, try canonical HTS ID addresses
-            console.warn(`[V1-GUARD] V1 getAmountsOut failed for direct path — trying canonical addresses`);
-            const canonInEvm = htsIdToEvmAddress(isInputNative ? whbar.htsId : inputToken.htsId);
-            const canonOutEvm = htsIdToEvmAddress(isOutputNative ? whbar.htsId : outputToken.htsId);
-            const canonicalPath = [canonInEvm, canonOutEvm];
-            if (canonicalPath[0].toLowerCase() !== pathAddresses[0].toLowerCase() ||
-                canonicalPath[1].toLowerCase() !== pathAddresses[1].toLowerCase()) {
-              const canonQuote = await fetchRouterQuote(
-                BigInt(rawInput), canonicalPath, v1GuardRouter, network
-              );
-              if (canonQuote && canonQuote > 0n) {
-                console.log(`[V1-GUARD] Canonical path works ✓ (getAmountsOut=${canonQuote}) — switching from alias to canonical`);
-                pathAddresses = canonicalPath;
-              } else {
-                console.warn(`[V1-GUARD] Canonical path also failed (${canonQuote}) — proceeding with original (may revert)`);
+            // Non-fallback, non-alias: try canonical as last resort
+            if (!guardHasAlias) {
+              console.warn(`[V1-GUARD] V1 getAmountsOut failed for direct path — trying canonical addresses`);
+              if (canonicalGuardPath[0].toLowerCase() !== pathAddresses[0].toLowerCase() ||
+                  canonicalGuardPath[1].toLowerCase() !== pathAddresses[1].toLowerCase()) {
+                const canonQuote = await fetchRouterQuote(
+                  BigInt(rawInput), canonicalGuardPath, v1GuardRouter, network
+                );
+                if (canonQuote && canonQuote > 0n) {
+                  console.log(`[V1-GUARD] Canonical path works ✓ (getAmountsOut=${canonQuote}) — switching to canonical`);
+                  pathAddresses = canonicalGuardPath;
+                } else {
+                  console.warn(`[V1-GUARD] Canonical path also failed (${canonQuote}) — proceeding with original (may revert)`);
+                }
               }
             }
           } else {
@@ -3357,12 +3388,28 @@ async function executeSaucerSwapDirect(
     const _shouldV1CrossCheck = quote && quote.amountOut > 0 && poolVersionInfo?.version === "v1";
     if (_shouldV1CrossCheck) {
       try {
-        // Reuse V1 guard result if available (same V1 Factory → same getAmountsOut)
-        let v1CrossQuote: bigint | null = _v1GuardQuoteResult;
+        // [ALIAS-FIX] Build CANONICAL path addresses for V1 Router getAmountsOut.
+        // V1 Factory pairs are registered under canonical HTS IDs, NOT ERC20Wrapper
+        // aliases. Using alias addresses causes V1 getAmountsOut to return 0 or a
+        // wrong amount from a different pair, triggering false PRICE-IMPACT-GUARD aborts.
+        const v1CanonicalPath = logicalPath.map((t) => getCanonicalEvmAddress(t));
+        const usedCanonical = v1CanonicalPath.some((addr, i) => addr.toLowerCase() !== pathAddresses[i]?.toLowerCase());
+        if (usedCanonical) {
+          console.log(`[ALIAS-FIX] V1 cross-check using canonical addresses: ${v1CanonicalPath.map(a => evmAddressToHtsId(a)).join(" → ")} (alias path: ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")})`);
+        }
+
+        // Reuse V1 guard result ONLY when canonical and alias paths are identical.
+        // [ALIAS-FIX] When paths differ, the guard used alias addresses which may
+        // hit a wrong V1 pair with tiny liquidity — returning a positive but incorrect
+        // amount that bypasses the canonical fallback. Always re-query with canonical.
+        let v1CrossQuote: bigint | null = usedCanonical ? null : _v1GuardQuoteResult;
         if (!v1CrossQuote) {
           v1CrossQuote = await fetchRouterQuote(
-            BigInt(rawInput), pathAddresses, quoteRouter, network
+            BigInt(rawInput), v1CanonicalPath, quoteRouter, network
           );
+          if (usedCanonical) {
+            console.log(`[ALIAS-FIX] V1 cross-check re-queried with canonical path: ${v1CrossQuote}`);
+          }
         } else {
           console.log(`[V1-QUOTE-XCHECK] Reusing V1 guard quote: ${v1CrossQuote}`);
         }
@@ -3556,6 +3603,20 @@ async function executeSaucerSwapDirect(
     // Use the verified contract EVM address (not the synthetic long-zero form)
     // so that ERC-20 approve() sets the allowance for the correct spender address.
     const routerEvmAddress = routerContractInfo.evmAddress || await resolveContractEvmAddress(v1Router, network);
+
+    // [ALIAS-FIX] V1 execution MUST use canonical EVM addresses.
+    // V1 Factory pairs are registered under canonical HTS IDs. Using ERC20Wrapper
+    // alias addresses causes the V1 Router to look up the wrong (or non-existent)
+    // pair, leading to reverts or incorrect output amounts.
+    // Only override when NOT already rebuilt by V1 fallback paths (which use htsId directly).
+    const v1ExecutionPath = logicalPath.map((t) => getCanonicalEvmAddress(t));
+    const hadAliasOverride = v1ExecutionPath.some((addr, i) => addr.toLowerCase() !== pathAddresses[i]?.toLowerCase());
+    if (hadAliasOverride) {
+      console.log(`[ALIAS-FIX] V1 execution: overriding alias pathAddresses with canonical:`);
+      console.log(`[ALIAS-FIX]   alias:     ${pathAddresses.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+      console.log(`[ALIAS-FIX]   canonical: ${v1ExecutionPath.map(a => evmAddressToHtsId(a)).join(" → ")}`);
+      pathAddresses = v1ExecutionPath;
+    }
 
     // ── Log full swap parameters for debugging ──
     console.log("[HBAR.h] ═══════════════════════════════════════════");
