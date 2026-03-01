@@ -455,7 +455,7 @@ export function Dashboard() {
           <div>
             <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
               {globalData
-                ? <><span className="hidden sm:inline">${Math.round(globalData.totalMarketCap).toLocaleString()}</span><span className="sm:hidden">${formatMarketCap(globalData.totalMarketCap)}</span></>
+                ? <><span className="hidden sm:inline">${Math.round(globalData.totalMarketCap).toLocaleString()}</span><span className="sm:hidden">{formatMarketCap(globalData.totalMarketCap)}</span></>
                 : "---"
               }
             </div>
@@ -473,7 +473,7 @@ export function Dashboard() {
           <div className={`sm:border-l ${isDark ? "sm:border-white/[0.06]" : "sm:border-gray-200"} sm:pl-6`}>
             <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
               {globalData
-                ? <><span className="hidden sm:inline">${Math.round(globalData.totalVolume24h).toLocaleString()}</span><span className="sm:hidden">${formatMarketCap(globalData.totalVolume24h)}</span></>
+                ? <><span className="hidden sm:inline">${Math.round(globalData.totalVolume24h).toLocaleString()}</span><span className="sm:hidden">{formatMarketCap(globalData.totalVolume24h)}</span></>
                 : "---"
               }
             </div>
@@ -616,7 +616,7 @@ export function Dashboard() {
                 </span>
                 <span className="text-xs">
                   <span className={isDark ? "text-slate-500" : "text-gray-400"}>MCap </span>
-                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{btcAsset?.marketCap ? `$${btcAsset.marketCap}` : "---"}</span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{btcAsset?.marketCap ? btcAsset.marketCap : "---"}</span>
                 </span>
               </div>
             </Link>
@@ -654,7 +654,7 @@ export function Dashboard() {
                 </span>
                 <span className="text-xs">
                   <span className={isDark ? "text-slate-500" : "text-gray-400"}>MCap </span>
-                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{hbarAsset?.marketCap ? `$${hbarAsset.marketCap}` : "---"}</span>
+                  <span className={`font-medium ${isDark ? "text-slate-300" : "text-gray-600"}`}>{hbarAsset?.marketCap ? hbarAsset.marketCap : "---"}</span>
                 </span>
               </div>
             </Link>
@@ -933,7 +933,7 @@ export function Dashboard() {
                     </div>
 
                     <div className={`hidden lg:block w-24 text-right text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                      ${item.marketCap}
+                      {item.marketCap}
                     </div>
 
                     <div className="hidden md:block w-32 h-10">
