@@ -980,27 +980,67 @@ async function getTokenBalanceViaProvider(
 }
 
 /**
- * Minimal JSON-RPC call helper for direct RPC endpoints.
+ * Plain fetch wrapper for RPC calls — NO Authorization header.
+ *
+ * IMPLEMENTATION NOTE: vtFetch adds `Authorization: Bearer <anonKey>` which
+ * is needed for our Supabase proxy, but causes CORS preflight failures on
+ * public RPC endpoints (eth.llamarpc.com, mainnet.base.org, etc.).
+ * This separate helper keeps RPC calls clean.
+ */
+async function rpcFetch(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Accept": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+    return res;
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new Error(`RPC request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${url}`);
+    }
+    throw new Error(`RPC network error for ${url}: ${err?.message ?? err}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Minimal JSON-RPC call helper for EVM RPC endpoints.
+ *
+ * IMPLEMENTATION NOTE: Many public RPCs reject browser-origin requests due
+ * to CORS (Content-Type: application/json triggers preflight). We route
+ * through our server-side /stargate-vt/rpc proxy which forwards the call
+ * from the Deno edge function (no CORS issues server-to-server).
  */
 async function rpcCall(rpcUrl: string, method: string, params: any[]): Promise<string> {
-  const res = await vtFetch(rpcUrl, {
+  const rpcBody = { jsonrpc: "2.0", id: 1, method, params };
+
+  // Route through server-side proxy to avoid CORS
+  const proxyUrl = `${VT_API_BASE}/rpc`;
+  const res = await vtFetch(proxyUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
+    body: JSON.stringify({ rpcUrl, ...rpcBody }),
   });
 
   if (!res.ok) {
-    throw new Error(`RPC ${method} failed with HTTP ${res.status}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`RPC ${method} failed with HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
 
   const data = await res.json();
   if (data.error) {
-    throw new Error(`RPC ${method} error: ${data.error.message ?? JSON.stringify(data.error)}`);
+    // JSON-RPC level error vs proxy error
+    const errMsg = typeof data.error === "string"
+      ? data.error
+      : data.error.message ?? JSON.stringify(data.error);
+    throw new Error(`RPC ${method} error: ${errMsg}`);
   }
 
   return data.result;

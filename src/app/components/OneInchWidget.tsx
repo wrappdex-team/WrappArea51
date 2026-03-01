@@ -17,13 +17,12 @@
  *   - VIP sound effects, Motion animations, glass-morphism styling
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { log } from "../utils/logger";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowDownUp,
   ChevronDown,
-  Search,
   ExternalLink,
   Loader2,
   AlertCircle,
@@ -31,13 +30,15 @@ import {
   Shield,
   Zap,
   Wallet,
-  RefreshCw,
   Settings2,
   ArrowRight,
   Key,
   Sparkles,
   Globe,
   Lock,
+  Timer,
+  Fuel,
+  Clock,
 } from "lucide-react";
 import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
@@ -48,9 +49,48 @@ import {
   playVipButtonChime,
   playConnectionSuccess,
 } from "../utils/sounds";
-import { METAMASK_LOGO, ONEINCH_LOGO } from "../assets/brand";
+import { ONEINCH_LOGO } from "../assets/brand";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { OneInchTokenSelector } from "./OneInchTokenSelector";
+import {
+  POPULAR_TOKENS as MODULE_POPULAR_TOKENS,
+  fetchTokenList,
+  mergeTokenLists,
+  enrichTokens,
+  getDefaultPair,
+  recordRecentToken,
+  loadCustomTokens,
+  formatBalance as formatTokenAmountNew,
+  toSmallestUnit,
+  formatUsd,
+} from "../utils/oneinch/tokens";
+import type { EnrichedToken, FusionPreset } from "../utils/oneinch/types";
+import { friendlyErrorMessage } from "../utils/oneinch/api-client";
+import {
+  getFusionQuote,
+  buildAndSignFusionOrder,
+  submitFusionOrder,
+  pollFusionStatus,
+  ensureFusionApproval,
+  isFusionSupported,
+  isFusionTerminalStatus,
+  isFusionSuccessStatus,
+  formatFusionAmount,
+  estimateGasSavingsUsd,
+  formatCountdown,
+  FUSION_QUOTE_REFRESH_INTERVAL_MS,
+  FUSION_POLL_INTERVAL_MS,
+  FUSION_POLL_MAX_DURATION_MS,
+  PRESET_LABELS,
+  PRESET_ICONS,
+  PRESET_DESCRIPTIONS,
+  FUSION_STATUS_LABELS,
+  FUSION_STATUS_ICONS,
+  FUSION_STATUS_PROGRESS,
+} from "../utils/oneinch/fusion";
+import type { ParsedFusionQuote, ParsedPreset, FusionSignedOrder } from "../utils/oneinch/fusion";
+import type { FusionOrderStatus, FusionOrderStatusResponse } from "../utils/oneinch/types";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -70,8 +110,10 @@ interface TokenInfo {
   symbol: string;
   name: string;
   decimals: number;
-  logoURI?: string;
+  logoURI?: string | null;
   isNative?: boolean;
+  tags?: readonly string[];
+  isVerified?: boolean;
 }
 
 interface QuoteResult {
@@ -146,55 +188,10 @@ const CHAINS: ChainConfig[] = [
   },
 ];
 
-// ── Popular tokens per chain ─────────────────────────────────────────
+// ── Popular tokens per chain (from oneinch/tokens module) ────────────
 
 const NATIVE_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-
-const POPULAR_TOKENS: Record<number, TokenInfo[]> = {
-  1: [
-    { address: NATIVE_ADDRESS, symbol: "ETH", name: "Ether", decimals: 18, isNative: true, logoURI: "https://tokens.1inch.io/0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png" },
-    { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: "https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png" },
-    { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", name: "Tether USD", decimals: 6, logoURI: "https://tokens.1inch.io/0xdac17f958d2ee523a2206206994597c13d831ec7.png" },
-    { address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", symbol: "DAI", name: "Dai", decimals: 18, logoURI: "https://tokens.1inch.io/0x6b175474e89094c44da98b954eedeac495271d0f.png" },
-    { address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, logoURI: "https://tokens.1inch.io/0x2260fac5e5542a773aa44fbcfedf7c193bc2c599.png" },
-    { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH", name: "Wrapped Ether", decimals: 18, logoURI: "https://tokens.1inch.io/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png" },
-    { address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", symbol: "LINK", name: "Chainlink", decimals: 18, logoURI: "https://tokens.1inch.io/0x514910771af9ca656af840dff83e8264ecf986ca.png" },
-    { address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", symbol: "UNI", name: "Uniswap", decimals: 18, logoURI: "https://tokens.1inch.io/0x1f9840a85d5af5bf1d1762f925bdaddc4201f984.png" },
-    { address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", symbol: "AAVE", name: "Aave", decimals: 18, logoURI: "https://tokens.1inch.io/0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9.png" },
-  ],
-  137: [
-    { address: NATIVE_ADDRESS, symbol: "POL", name: "POL", decimals: 18, isNative: true, logoURI: "https://tokens.1inch.io/0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0.png" },
-    { address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: "https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png" },
-    { address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", symbol: "USDT", name: "Tether USD", decimals: 6, logoURI: "https://tokens.1inch.io/0xdac17f958d2ee523a2206206994597c13d831ec7.png" },
-    { address: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", symbol: "WETH", name: "Wrapped Ether", decimals: 18, logoURI: "https://tokens.1inch.io/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png" },
-    { address: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, logoURI: "https://tokens.1inch.io/0x2260fac5e5542a773aa44fbcfedf7c193bc2c599.png" },
-  ],
-  56: [
-    { address: NATIVE_ADDRESS, symbol: "BNB", name: "BNB", decimals: 18, isNative: true, logoURI: "https://tokens.1inch.io/0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c.png" },
-    { address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", symbol: "USDC", name: "USD Coin", decimals: 18, logoURI: "https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png" },
-    { address: "0x55d398326f99059fF775485246999027B3197955", symbol: "USDT", name: "Tether USD", decimals: 18, logoURI: "https://tokens.1inch.io/0xdac17f958d2ee523a2206206994597c13d831ec7.png" },
-    { address: "0x2170Ed0880ac9A755fd29B2688956BD959F933F8", symbol: "ETH", name: "Ethereum", decimals: 18, logoURI: "https://tokens.1inch.io/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png" },
-  ],
-  42161: [
-    { address: NATIVE_ADDRESS, symbol: "ETH", name: "Ether", decimals: 18, isNative: true, logoURI: "https://tokens.1inch.io/0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png" },
-    { address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: "https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png" },
-    { address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", symbol: "USDT", name: "Tether USD", decimals: 6, logoURI: "https://tokens.1inch.io/0xdac17f958d2ee523a2206206994597c13d831ec7.png" },
-    { address: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", symbol: "WBTC", name: "Wrapped Bitcoin", decimals: 8, logoURI: "https://tokens.1inch.io/0x2260fac5e5542a773aa44fbcfedf7c193bc2c599.png" },
-    { address: "0x912CE59144191C1204E64559FE8253a0e49E6548", symbol: "ARB", name: "Arbitrum", decimals: 18, logoURI: "https://tokens.1inch.io/0x912ce59144191c1204e64559fe8253a0e49e6548.png" },
-  ],
-  10: [
-    { address: NATIVE_ADDRESS, symbol: "ETH", name: "Ether", decimals: 18, isNative: true, logoURI: "https://tokens.1inch.io/0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png" },
-    { address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: "https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png" },
-    { address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", symbol: "USDT", name: "Tether USD", decimals: 6, logoURI: "https://tokens.1inch.io/0xdac17f958d2ee523a2206206994597c13d831ec7.png" },
-    { address: "0x4200000000000000000000000000000000000042", symbol: "OP", name: "Optimism", decimals: 18, logoURI: "https://tokens.1inch.io/0x4200000000000000000000000000000000000042_1.png" },
-  ],
-  8453: [
-    { address: NATIVE_ADDRESS, symbol: "ETH", name: "Ether", decimals: 18, isNative: true, logoURI: "https://tokens.1inch.io/0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png" },
-    { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: "https://tokens.1inch.io/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png" },
-    { address: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", symbol: "DAI", name: "Dai", decimals: 18, logoURI: "https://tokens.1inch.io/0x6b175474e89094c44da98b954eedeac495271d0f.png" },
-    { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", name: "Wrapped Ether", decimals: 18, logoURI: "https://tokens.1inch.io/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png" },
-  ],
-};
+const POPULAR_TOKENS = MODULE_POPULAR_TOKENS as Record<number, TokenInfo[]>;
 
 // ── API helpers ──────────────────────────────────────────────────────
 
@@ -233,96 +230,7 @@ function toWei(amount: string, decimals: number): string {
 
 // ── Component ────────────────────────────────────────────────────────
 
-// ── Extracted Token Selector (stable identity — prevents scroll reset) ──
-
-interface TokenSelectorProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSelect: (t: TokenInfo) => void;
-  excludeAddr: string;
-  tokenSearch: string;
-  setTokenSearch: (v: string) => void;
-  tokens: TokenInfo[];
-  mergedTokens: TokenInfo[];
-  allTokensCount: number;
-  tokensLoading: boolean;
-  isDark: boolean;
-  inputClass: string;
-}
-
-const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
-  isOpen, onClose, onSelect, excludeAddr,
-  tokenSearch, setTokenSearch, tokens, mergedTokens,
-  allTokensCount, tokensLoading, isDark, inputClass,
-}: TokenSelectorProps) {
-  if (!isOpen) return null;
-  const search = tokenSearch.toLowerCase().trim();
-  const isAddrSearch = search.startsWith("0x") && search.length > 6;
-  const source = search ? mergedTokens : tokens;
-  const filtered = source
-    .filter(t => t.address !== excludeAddr)
-    .filter(t => !search ||
-      t.symbol.toLowerCase().includes(search) ||
-      t.name.toLowerCase().includes(search) ||
-      (isAddrSearch && t.address.toLowerCase().includes(search))
-    )
-    .slice(0, 50);
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div
-        className={`absolute top-full right-0 mt-2 w-72 rounded-2xl shadow-2xl overflow-hidden z-50 ${
-          isDark
-            ? "bg-slate-900 border border-pink-500/20 shadow-pink-500/5"
-            : "bg-white border border-gray-200 shadow-lg"
-        }`}
-      >
-        <div className="p-3">
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl ${inputClass}`}>
-            <Search className={`w-4 h-4 ${isDark ? "text-slate-500" : "text-gray-400"}`} />
-            <input type="text" placeholder={allTokensCount ? `Search ${allTokensCount.toLocaleString()} tokens...` : "Search tokens..."} autoFocus
-              className="bg-transparent flex-1 outline-none text-sm"
-              value={tokenSearch} onChange={e => setTokenSearch(e.target.value)} />
-          </div>
-        </div>
-        <div className="max-h-56 overflow-y-auto px-2 pb-2">
-          {filtered.map(t => (
-            <button key={t.address} onClick={() => onSelect(t)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
-                isDark ? "hover:bg-pink-500/10" : "hover:bg-pink-50"
-              }`}>
-              {t.logoURI ? (
-                <img src={t.logoURI} alt={t.symbol} className="w-7 h-7 rounded-full ring-2 ring-transparent group-hover:ring-pink-500/30 transition-all"
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-              ) : (
-                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-xs text-white font-bold">
-                  {t.symbol[0]}
-                </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm">{t.symbol}</div>
-                <div className={`text-xs truncate ${isDark ? "text-slate-500" : "text-gray-400"}`}>{t.name}</div>
-              </div>
-              {t.isNative && (
-                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                  isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
-                }`}>
-                  Native
-                </span>
-              )}
-            </button>
-          ))}
-          {filtered.length === 0 && (
-            <div className={`text-center py-6 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              {tokensLoading ? "Loading tokens..." : search ? "No tokens found" : "Type to search all tokens"}
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  );
-});
+// ── Token Selector is now in OneInchTokenSelector.tsx ──
 
 export function OneInchWidget() {
   const { isDark } = useTheme();
@@ -361,9 +269,18 @@ export function OneInchWidget() {
   const [apiConfigured, setApiConfigured] = useState<boolean | null>(null);
 
   // ── Swap state ──
-  const [swapStatus, setSwapStatus] = useState<"idle" | "approving" | "swapping" | "success" | "error">("idle");
+  // Classic:  idle → approving → swapping → success/error
+  // Fusion:   idle → approving → building → signing → submitting → polling → success/error
+  const [swapStatus, setSwapStatus] = useState<
+    "idle" | "approving" | "swapping" | "building" | "signing" | "submitting" | "polling" | "success" | "error"
+  >("idle");
   const [swapError, setSwapError] = useState<string | null>(null);
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+  const [lastSignedOrder, setLastSignedOrder] = useState<FusionSignedOrder | null>(null);
+  // Fusion Step 7: order lifecycle tracking
+  const [fusionOrderStatus, setFusionOrderStatus] = useState<FusionOrderStatus | null>(null);
+  const [fusionFillTxHash, setFusionFillTxHash] = useState<string | null>(null);
+  const fusionPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Settings ──
   const [slippage, setSlippage] = useState(1);
@@ -372,16 +289,34 @@ export function OneInchWidget() {
   // ── Balance state ──
   const [fromBalance, setFromBalance] = useState<string | null>(null);
 
+  // ── Enriched token state (balances + prices from module) ──
+  const [enrichedTokens, setEnrichedTokens] = useState<EnrichedToken[] | null>(null);
+  const [fromPriceUsd, setFromPriceUsd] = useState<number | null>(null);
+  const [toPriceUsd, setToPriceUsd] = useState<number | null>(null);
+
+  // ── Swap mode: "classic" (on-chain) vs "fusion" (gasless) ──
+  type WidgetSwapMode = "classic" | "fusion";
+  const [swapMode, setSwapMode] = useState<WidgetSwapMode>("fusion");
+  const chainSupportsFusion = isFusionSupported(selectedChainId);
+
+  // ── Fusion quote state ──
+  const [fusionQuote, setFusionQuote] = useState<ParsedFusionQuote | null>(null);
+  const [fusionQuoteLoading, setFusionQuoteLoading] = useState(false);
+  const [fusionQuoteError, setFusionQuoteError] = useState<string | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState<FusionPreset>("medium");
+  const [fusionCountdown, setFusionCountdown] = useState(FUSION_QUOTE_REFRESH_INTERVAL_MS);
+  const fusionRefreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fusionCountdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const quoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chain = useMemo(() => CHAINS.find(c => c.id === selectedChainId) || CHAINS[0], [selectedChainId]);
   const tokens = useMemo(() => POPULAR_TOKENS[selectedChainId] || POPULAR_TOKENS[1], [selectedChainId]);
 
   // Merged token list: popular first, then all fetched tokens (de-duped)
   const mergedTokens = useMemo(() => {
-    const popularAddrs = new Set(tokens.map(t => t.address.toLowerCase()));
-    const extra = allTokens.filter(t => !popularAddrs.has(t.address.toLowerCase()));
-    return [...tokens, ...extra];
-  }, [tokens, allTokens]);
+    const customTokens = loadCustomTokens()[selectedChainId] || [];
+    return mergeTokenLists(selectedChainId, allTokens, customTokens);
+  }, [selectedChainId, allTokens]);
 
   // ── Style tokens (matching SaucerSwap section) ──
   const cardClass = isDark
@@ -518,48 +453,62 @@ export function OneInchWidget() {
     else setFromBalance(null);
   }, [evmAccount, evmChainId, selectedChainId, fromToken, fetchBalance]);
 
-  // ── Fetch full token list for current chain ─────────────────────────
+  // ── Fetch full token list for current chain (via module) ────────────
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setAllTokens([]);
     setTokensLoading(true);
-    apiGet(`/1inch/tokens/${selectedChainId}`)
-      .then((data) => {
-        if (cancelled || !data?.tokens) return;
-        const list: TokenInfo[] = Object.values(data.tokens).map((t: any) => ({
-          address: t.address,
-          symbol: t.symbol,
-          name: t.name,
-          decimals: t.decimals,
-          logoURI: t.logoURI,
-          isNative: t.address?.toLowerCase() === NATIVE_ADDRESS.toLowerCase(),
-        }));
-        // Sort alphabetically by symbol
-        list.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    setEnrichedTokens(null);
+    fetchTokenList(selectedChainId, controller.signal)
+      .then((list) => {
+        if (controller.signal.aborted) return;
         setAllTokens(list);
       })
       .catch((err) => {
-        log.warn("1inch", "Token list fetch failed", err);
+        if (!controller.signal.aborted) log.warn("1inch", "Token list fetch failed", err);
       })
       .finally(() => {
-        if (!cancelled) setTokensLoading(false);
+        if (!controller.signal.aborted) setTokensLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [selectedChainId]);
+
+  // ── Enrich tokens with balances + prices ──────────────────────────
+
+  useEffect(() => {
+    if (mergedTokens.length === 0) return;
+    const controller = new AbortController();
+    const wallet = evmAccount && evmChainId === selectedChainId ? evmAccount : null;
+    enrichTokens(mergedTokens, selectedChainId, wallet, controller.signal)
+      .then((enriched) => {
+        if (controller.signal.aborted) return;
+        setEnrichedTokens(enriched);
+        // Extract prices for selected tokens
+        const fromE = enriched.find(e => e.address.toLowerCase() === fromToken.address.toLowerCase());
+        const toE = enriched.find(e => e.address.toLowerCase() === toToken.address.toLowerCase());
+        setFromPriceUsd(fromE?.priceUsd ?? null);
+        setToPriceUsd(toE?.priceUsd ?? null);
+      })
+      .catch(() => {}); // Non-critical — UI works without enrichment
+    return () => controller.abort();
+  }, [mergedTokens, selectedChainId, evmAccount, evmChainId, fromToken.address, toToken.address]);
 
   // ── Chain selection ────────────────────────────────────────────────
 
   const handleChainSelect = useCallback((c: ChainConfig) => {
     setSelectedChainId(c.id);
     setShowChainMenu(false);
-    const chainTokens = POPULAR_TOKENS[c.id] || POPULAR_TOKENS[1];
-    setFromToken(chainTokens[0]);
-    setToToken(chainTokens[1] || chainTokens[0]);
+    const [defaultFrom, defaultTo] = getDefaultPair(c.id);
+    setFromToken(defaultFrom);
+    setToToken(defaultTo);
     setFromAmount("");
     setToAmount("");
     setLastQuote(null);
     setQuoteError(null);
+    setFusionQuote(null);
+    setFusionQuoteError(null);
+    setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
     setSwapStatus("idle");
     setSwapError(null);
     playVipButtonChime();
@@ -581,8 +530,12 @@ export function OneInchWidget() {
     setTokenSearch("");
     setToAmount("");
     setLastQuote(null);
+    setFusionQuote(null);
+    setFusionQuoteError(null);
+    // Record as recently used for the token selector
+    recordRecentToken(selectedChainId, token.address, token.symbol);
     playVipButtonChime();
-  }, [fromToken, toToken]);
+  }, [fromToken, toToken, selectedChainId]);
 
   const flipTokens = useCallback(() => {
     setFromToken(toToken);
@@ -590,6 +543,7 @@ export function OneInchWidget() {
     setFromAmount(toAmount);
     setToAmount(fromAmount);
     setLastQuote(null);
+    setFusionQuote(null);
     setFromBalance(null);
     playVipButtonChime();
   }, [fromToken, toToken, fromAmount, toAmount]);
@@ -630,28 +584,144 @@ export function OneInchWidget() {
         setQuoteError(data.details || data.error);
       }
     } catch (err: any) {
-      const msg = err?.message || "Quote failed";
-      if (msg.includes("not configured")) setApiConfigured(false);
+      const msg = friendlyErrorMessage(err);
+      if (msg.includes("not configured") || msg.includes("API key")) setApiConfigured(false);
       else setQuoteError(msg);
     }
     setQuoteLoading(false);
   }, [fromToken, toToken, selectedChainId]);
 
-  // Debounced quote
+  // Debounced classic quote (only when in classic mode)
   useEffect(() => {
+    if (swapMode !== "classic") return;
     if (quoteTimer.current) clearTimeout(quoteTimer.current);
     if (!fromAmount || parseFloat(fromAmount) <= 0) {
       setToAmount(""); setLastQuote(null); return;
     }
     quoteTimer.current = setTimeout(() => fetchQuote(fromAmount), 500);
     return () => { if (quoteTimer.current) clearTimeout(quoteTimer.current); };
-  }, [fromAmount, fromToken.address, toToken.address, selectedChainId, fetchQuote]);
+  }, [swapMode, fromAmount, fromToken.address, toToken.address, selectedChainId, fetchQuote]);
 
-  // ── Execute swap ───────────────────────────────────────────────────
+  // ── Fusion quote fetching + auto-refresh ────────────────────────────
 
-  const handleSwap = useCallback(async () => {
+  const fetchFusionQuote = useCallback(async (amount: string, signal?: AbortSignal) => {
+    if (!amount || parseFloat(amount) <= 0 || !evmAccount) {
+      setFusionQuote(null);
+      setFusionQuoteError(null);
+      return;
+    }
+    setFusionQuoteLoading(true);
+    setFusionQuoteError(null);
+    try {
+      const amountWei = toWei(amount, fromToken.decimals);
+      if (amountWei === "0") { setFusionQuote(null); setFusionQuoteLoading(false); return; }
+
+      const parsed = await getFusionQuote(
+        selectedChainId,
+        fromToken.address,
+        toToken.address,
+        amountWei,
+        evmAccount,
+        signal,
+      );
+      setFusionQuote(parsed);
+      setApiConfigured(true);
+
+      // Update toAmount display from the selected preset
+      const activePreset = parsed.presets.find(p => p.preset === selectedPreset) ?? parsed.presets[0];
+      if (activePreset) {
+        setToAmount(formatFusionAmount(activePreset.dstAmount, toToken.decimals));
+      }
+
+      // Reset countdown
+      setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      // Use friendlyErrorMessage for better user-facing error descriptions
+      const msg = friendlyErrorMessage(err);
+      if (msg.includes("not configured") || msg.includes("API key")) {
+        setApiConfigured(false);
+      } else {
+        setFusionQuoteError(msg);
+      }
+      log.warn("1inch", "Fusion quote error", err);
+    }
+    setFusionQuoteLoading(false);
+  }, [evmAccount, fromToken, toToken, selectedChainId, selectedPreset]);
+
+  // Debounced fusion quote (when in fusion mode)
+  useEffect(() => {
+    if (swapMode !== "fusion" || !chainSupportsFusion) return;
+    if (!fromAmount || parseFloat(fromAmount) <= 0 || !evmAccount) {
+      setFusionQuote(null);
+      setFusionQuoteError(null);
+      setToAmount("");
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => fetchFusionQuote(fromAmount, controller.signal), 600);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [swapMode, chainSupportsFusion, fromAmount, fromToken.address, toToken.address, selectedChainId, evmAccount, fetchFusionQuote]);
+
+  // Auto-refresh fusion quote every 15 seconds
+  useEffect(() => {
+    if (fusionRefreshTimer.current) clearInterval(fusionRefreshTimer.current);
+    if (fusionCountdownTimer.current) clearInterval(fusionCountdownTimer.current);
+
+    if (swapMode !== "fusion" || !fusionQuote || !fromAmount || !evmAccount || swapStatus !== "idle") return;
+
+    // Countdown ticker (every second)
+    fusionCountdownTimer.current = setInterval(() => {
+      setFusionCountdown(prev => {
+        if (prev <= 1000) return 0;
+        return prev - 1000;
+      });
+    }, 1000);
+
+    // Actual refresh
+    fusionRefreshTimer.current = setInterval(() => {
+      fetchFusionQuote(fromAmount);
+      setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
+    }, FUSION_QUOTE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      if (fusionRefreshTimer.current) clearInterval(fusionRefreshTimer.current);
+      if (fusionCountdownTimer.current) clearInterval(fusionCountdownTimer.current);
+    };
+  }, [swapMode, fusionQuote, fromAmount, evmAccount, swapStatus, fetchFusionQuote]);
+
+  // When preset changes, update the displayed toAmount from the current fusion quote
+  useEffect(() => {
+    if (swapMode !== "fusion" || !fusionQuote) return;
+    const activePreset = fusionQuote.presets.find(p => p.preset === selectedPreset) ?? fusionQuote.presets[0];
+    if (activePreset) {
+      setToAmount(formatFusionAmount(activePreset.dstAmount, toToken.decimals));
+    }
+  }, [selectedPreset, fusionQuote, toToken.decimals, swapMode]);
+
+  // Reset fusion state when switching modes
+  useEffect(() => {
+    if (swapMode === "classic") {
+      setFusionQuote(null);
+      setFusionQuoteError(null);
+      setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
+    } else {
+      setLastQuote(null);
+      setQuoteError(null);
+    }
+    setToAmount("");
+  }, [swapMode]);
+
+  // Auto-fallback to classic if chain doesn't support Fusion
+  useEffect(() => {
+    if (!chainSupportsFusion && swapMode === "fusion") {
+      setSwapMode("classic");
+    }
+  }, [chainSupportsFusion, swapMode]);
+
+  // ── Execute CLASSIC swap ────────────────────────────────────────────
+  const handleClassicSwap = useCallback(async () => {
     if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
-    if (evmChainId !== selectedChainId) { await switchChain(chain); return; }
 
     playVipCashRegister();
     setSwapStatus("swapping");
@@ -661,7 +731,6 @@ export function OneInchWidget() {
     try {
       const amountWei = toWei(fromAmount, fromToken.decimals);
 
-      // For non-native tokens, check approval first
       if (!fromToken.isNative) {
         setSwapStatus("approving");
         const allowanceData = await apiGet(
@@ -678,7 +747,6 @@ export function OneInchWidget() {
             method: "eth_sendTransaction",
             params: [{ from: evmAccount, to: approveData.to, data: approveData.data, value: approveData.value || "0x0" }],
           });
-          // Wait for approval tx to be mined (poll receipt, up to 30 s)
           log.info("1inch", "Waiting for approval tx", approveTxHash);
           for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 1000));
@@ -727,7 +795,141 @@ export function OneInchWidget() {
         setSwapError(msg);
       }
     }
-  }, [evmAccount, evmChainId, selectedChainId, fromAmount, fromToken, toToken, slippage, chain, switchChain, fetchBalance]);
+  }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, slippage, fetchBalance]);
+
+  // ── Fusion polling cleanup ──────────────────────────────────────────
+  const stopFusionPolling = useCallback(() => {
+    if (fusionPollTimer.current) {
+      clearInterval(fusionPollTimer.current);
+      fusionPollTimer.current = null;
+    }
+  }, []);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => { stopFusionPolling(); };
+  }, [stopFusionPolling]);
+
+  // ── Execute FUSION swap (gasless — full lifecycle) ─────────────────
+  const handleFusionSwap = useCallback(async () => {
+    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0 || !fusionQuote) return;
+
+    playVipCashRegister();
+    setSwapError(null);
+    setLastTxHash(null);
+    setLastSignedOrder(null);
+    setFusionOrderStatus(null);
+    setFusionFillTxHash(null);
+    stopFusionPolling();
+
+    try {
+      const amountWei = toWei(fromAmount, fromToken.decimals);
+
+      // Step A: For non-native ERC-20 tokens, ensure 1inch router approval.
+      // This is the ONLY place in Fusion where gas is paid — a one-time approve().
+      if (!fromToken.isNative) {
+        setSwapStatus("approving");
+        await ensureFusionApproval(
+          selectedChainId, fromToken.address, evmAccount, amountWei,
+          (status) => {
+            if (status === "checking" || status === "approving" || status === "waiting")
+              setSwapStatus("approving");
+          },
+        );
+      }
+
+      // Step B: Build the order — gets EIP-712 typed data with unique nonce
+      setSwapStatus("building");
+      log.info("1inch", `Building Fusion order: quoteId=${fusionQuote.quoteId} preset=${selectedPreset}`);
+
+      // Step C: Sign the typed data — eth_signTypedData_v4 (NO gas!)
+      setSwapStatus("signing");
+
+      const signedOrder = await buildAndSignFusionOrder(
+        selectedChainId, fusionQuote.quoteId, evmAccount, selectedPreset,
+      );
+
+      log.info("1inch", `Fusion order signed: orderHash=${signedOrder.orderHash} sig=${signedOrder.signature.slice(0, 12)}...`);
+      setLastSignedOrder(signedOrder);
+
+      // Step D: Submit the signed order to resolvers
+      setSwapStatus("submitting");
+      log.info("1inch", `Submitting Fusion order: orderHash=${signedOrder.orderHash}`);
+
+      const submitRes = await submitFusionOrder(
+        selectedChainId,
+        signedOrder.orderHash,
+        signedOrder.signature,
+        signedOrder.quoteId,
+      );
+
+      log.info("1inch", `Fusion order submitted: status=${submitRes.status}`);
+      setFusionOrderStatus(submitRes.status);
+
+      // Step E: Poll for status until terminal (filled/expired/failed)
+      setSwapStatus("polling");
+      const pollDeadline = Date.now() + FUSION_POLL_MAX_DURATION_MS;
+
+      // Start interval-based polling
+      fusionPollTimer.current = setInterval(async () => {
+        try {
+          if (Date.now() > pollDeadline) {
+            stopFusionPolling();
+            setSwapStatus("error");
+            setSwapError("Fusion order timed out after 10 minutes. Check your active orders.");
+            return;
+          }
+
+          const statusRes = await pollFusionStatus(selectedChainId, signedOrder.orderHash);
+          setFusionOrderStatus(statusRes.status);
+
+          if (statusRes.txHash) {
+            setFusionFillTxHash(statusRes.txHash);
+          }
+
+          if (isFusionTerminalStatus(statusRes.status)) {
+            stopFusionPolling();
+
+            if (isFusionSuccessStatus(statusRes.status)) {
+              setLastTxHash(statusRes.txHash || null);
+              setSwapStatus("success");
+              playVipConfirm();
+              fetchBalance();
+            } else {
+              setSwapStatus("error");
+              setSwapError(FUSION_STATUS_LABELS[statusRes.status]);
+            }
+          }
+        } catch (pollErr: any) {
+          // Don't kill polling on transient errors — just log and retry
+          log.warn("1inch", "Fusion poll error (will retry)", pollErr?.message);
+        }
+      }, FUSION_POLL_INTERVAL_MS);
+
+    } catch (err: any) {
+      const msg = err?.message || "Fusion swap failed";
+      if (msg.includes("User rejected") || msg.includes("user rejected") || msg.includes("denied")) {
+        setSwapStatus("idle");
+      } else {
+        setSwapStatus("error");
+        setSwapError(msg);
+      }
+      log.warn("1inch", "Fusion swap error", err);
+      stopFusionPolling();
+    }
+  }, [evmAccount, selectedChainId, fromAmount, fromToken, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);
+
+  // ── Unified swap handler — dispatches to Classic or Fusion ─────────
+  const handleSwap = useCallback(async () => {
+    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
+    if (evmChainId !== selectedChainId) { await switchChain(chain); return; }
+
+    if (swapMode === "fusion" && fusionQuote) {
+      await handleFusionSwap();
+    } else {
+      await handleClassicSwap();
+    }
+  }, [evmAccount, evmChainId, selectedChainId, fromAmount, swapMode, fusionQuote, chain, switchChain, handleClassicSwap, handleFusionSwap]);
 
   // ── Rate calculation ───────────────────────────────────────────────
 
@@ -739,14 +941,26 @@ export function OneInchWidget() {
     return outNum / inNum;
   }, [lastQuote, fromAmount, toToken.decimals]);
 
-  const isCorrectChain = evmChainId === selectedChainId;
-  const canSwap = evmAccount && fromAmount && parseFloat(fromAmount) > 0 && lastQuote && apiConfigured && swapStatus === "idle";
+  // Fusion rate calculation
+  const fusionRate = useMemo(() => {
+    if (!fusionQuote || !fromAmount || parseFloat(fromAmount) <= 0) return null;
+    const activePreset = fusionQuote.presets.find(p => p.preset === selectedPreset) ?? fusionQuote.presets[0];
+    if (!activePreset) return null;
+    const outStr = formatFusionAmount(activePreset.dstAmount, toToken.decimals).replace(/,/g, "");
+    const outNum = parseFloat(outStr);
+    const inNum = parseFloat(fromAmount);
+    if (!outNum || !inNum) return null;
+    return outNum / inNum;
+  }, [fusionQuote, fromAmount, toToken.decimals, selectedPreset]);
 
-  // ── Shared props for extracted TokenSelector ────────────────────────
-  const tokenSelectorShared = useMemo(() => ({
-    tokenSearch, setTokenSearch, tokens, mergedTokens,
-    allTokensCount: allTokens.length, tokensLoading, isDark, inputClass,
-  }), [tokenSearch, setTokenSearch, tokens, mergedTokens, allTokens.length, tokensLoading, isDark, inputClass]);
+  const isCorrectChain = evmChainId === selectedChainId;
+  const activeRate = swapMode === "fusion" ? fusionRate : rate;
+  const canSwap = evmAccount && fromAmount && parseFloat(fromAmount) > 0
+    && ((swapMode === "classic" && lastQuote) || (swapMode === "fusion" && fusionQuote))
+    && apiConfigured !== false && swapStatus === "idle";
+
+  // ── Shared props for new OneInchTokenSelector ───────────────────────
+  // (tokenSearch state is still used as a flag to clear on close)
 
   // ── Render ─────────────────────────────────────────────────────────
 
@@ -988,6 +1202,45 @@ export function OneInchWidget() {
         )}
       </AnimatePresence>
 
+      {/* ═══ SWAP MODE TOGGLE — Classic vs Fusion ═══ */}
+      {chainSupportsFusion && (
+        <div className={`flex items-center gap-1 p-1 rounded-xl mb-3 ${inputClass}`}>
+          <button
+            onClick={() => { setSwapMode("fusion"); playVipButtonChime(); }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+              swapMode === "fusion"
+                ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/20"
+                : isDark
+                  ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            <Zap className="w-3 h-3" />
+            Fusion
+            <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
+              swapMode === "fusion"
+                ? "bg-white/20 text-white"
+                : isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600"
+            }`}>
+              GASLESS
+            </span>
+          </button>
+          <button
+            onClick={() => { setSwapMode("classic"); playVipButtonChime(); }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+              swapMode === "classic"
+                ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
+                : isDark
+                  ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            <Fuel className="w-3 h-3" />
+            Classic
+          </button>
+        </div>
+      )}
+
       {/* ═══ INPUT TOKEN ═══ */}
       <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
         <div className="flex items-center justify-between mb-2">
@@ -996,9 +1249,14 @@ export function OneInchWidget() {
             <Tip content="Use max balance">
             <button
               onClick={() => {
-                const bal = parseFloat(fromBalance.replace(/,/g, ""));
+                const balStr = fromBalance.replace(/,/g, "");
+                const bal = parseFloat(balStr);
                 if (bal > 0) {
-                  setFromAmount(fromToken.isNative ? Math.max(0, bal - 0.005).toString() : fromBalance.replace(/,/g, ""));
+                  // IMPLEMENTATION NOTE: For native tokens, reserve 0.005 for gas.
+                  // Use toFixed to avoid JS floating-point artifacts (e.g., 0.048605 - 0.005 → 0.043605000000000005)
+                  const maxDecimals = Math.min(fromToken.decimals, 8);
+                  const amt = fromToken.isNative ? Math.max(0, bal - 0.005).toFixed(maxDecimals).replace(/\.?0+$/, "") : balStr;
+                  setFromAmount(amt);
                   playVipButtonChime();
                 }
               }}
@@ -1033,13 +1291,28 @@ export function OneInchWidget() {
               <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
             </button>
             {showFromSelector && (
-              <TokenSelectorDropdown isOpen={showFromSelector} onClose={() => { setShowFromSelector(false); setTokenSearch(""); }}
-                onSelect={t => handleSelectToken(t, true)} excludeAddr={toToken.address} {...tokenSelectorShared} />
+              <OneInchTokenSelector
+                isOpen={showFromSelector}
+                onClose={() => { setShowFromSelector(false); setTokenSearch(""); }}
+                onSelect={t => handleSelectToken(t, true)}
+                excludeAddress={toToken.address}
+                chainId={selectedChainId}
+                allTokens={mergedTokens}
+                enrichedTokens={enrichedTokens}
+                isLoading={tokensLoading}
+              />
             )}
           </div>
         </div>
-        <div className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-          {chain.name} network
+        <div className={`flex items-center justify-between mt-1`}>
+          <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+            {chain.name} network
+          </span>
+          {fromAmount && parseFloat(fromAmount) > 0 && fromPriceUsd !== null && fromPriceUsd > 0 && (
+            <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              {formatUsd(parseFloat(fromAmount) * fromPriceUsd)}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1064,18 +1337,20 @@ export function OneInchWidget() {
       <div className={`rounded-xl p-4 mt-2 ${inputClass}`}>
         <div className="flex items-center justify-between mb-2">
           <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Receive</span>
-          {rate && (
+          {activeRate && (
             <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              1 {fromToken.symbol} = {rate >= 1 ? rate.toFixed(4) : rate.toFixed(8)} {toToken.symbol}
+              1 {fromToken.symbol} = {activeRate >= 1 ? activeRate.toFixed(4) : activeRate.toFixed(8)} {toToken.symbol}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className={`flex-1 text-2xl min-w-0 ${quoteLoading ? "animate-pulse" : ""} ${!toAmount ? (isDark ? "text-slate-600" : "text-gray-300") : ""}`}>
-            {quoteLoading ? (
+          <div className={`flex-1 text-2xl min-w-0 ${(quoteLoading || fusionQuoteLoading) ? "animate-pulse" : ""} ${!toAmount ? (isDark ? "text-slate-600" : "text-gray-300") : ""}`}>
+            {(quoteLoading || fusionQuoteLoading) ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="w-5 h-5 animate-spin text-pink-400" />
-                <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-400"}`}>Routing...</span>
+                <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-400"}`}>
+                  {swapMode === "fusion" ? "Finding resolvers..." : "Routing..."}
+                </span>
               </span>
             ) : toAmount || "0.0"}
           </div>
@@ -1094,19 +1369,34 @@ export function OneInchWidget() {
               <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
             </button>
             {showToSelector && (
-              <TokenSelectorDropdown isOpen={showToSelector} onClose={() => { setShowToSelector(false); setTokenSearch(""); }}
-                onSelect={t => handleSelectToken(t, false)} excludeAddr={fromToken.address} {...tokenSelectorShared} />
+              <OneInchTokenSelector
+                isOpen={showToSelector}
+                onClose={() => { setShowToSelector(false); setTokenSearch(""); }}
+                onSelect={t => handleSelectToken(t, false)}
+                excludeAddress={fromToken.address}
+                chainId={selectedChainId}
+                allTokens={mergedTokens}
+                enrichedTokens={enrichedTokens}
+                isLoading={tokensLoading}
+              />
             )}
           </div>
         </div>
-        <div className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-          {chain.name} network
+        <div className={`flex items-center justify-between mt-1`}>
+          <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+            {chain.name} network
+          </span>
+          {toAmount && parseFloat(toAmount.replace(/,/g, "")) > 0 && toPriceUsd !== null && toPriceUsd > 0 && (
+            <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              {formatUsd(parseFloat(toAmount.replace(/,/g, "")) * toPriceUsd)}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Quote Error */}
+      {/* Quote Error (classic or fusion) */}
       <AnimatePresence>
-        {quoteError && (
+        {(quoteError || fusionQuoteError) && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -1116,14 +1406,133 @@ export function OneInchWidget() {
             }`}
           >
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="break-all">{quoteError}</span>
+            <span className="break-all">{quoteError || fusionQuoteError}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ═══ ROUTE + QUOTE DETAILS ═══ */}
+      {/* ═══ FUSION QUOTE DETAILS — Preset Selector + Gasless Badge ═══ */}
       <AnimatePresence>
-        {lastQuote && !quoteLoading && fromAmount && parseFloat(fromAmount) > 0 && (
+        {swapMode === "fusion" && fusionQuote && !fusionQuoteLoading && fromAmount && parseFloat(fromAmount) > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className={`mt-4 p-3 rounded-xl ${isDark ? "bg-slate-800/30 border border-emerald-500/10" : "bg-gray-50 border border-emerald-100"}`}
+          >
+            {/* Header: Gasless badge + countdown */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-1.5">
+                <Zap className={`w-3.5 h-3.5 ${isDark ? "text-emerald-400" : "text-emerald-600"}`} />
+                <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                  Fusion Swap
+                </span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                  isDark
+                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
+                    : "bg-emerald-50 text-emerald-600 border border-emerald-200"
+                }`}>
+                  GASLESS
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Tip content="Quote auto-refreshes">
+                  <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full ${
+                    isDark ? "bg-slate-700/50 text-slate-400" : "bg-gray-100 text-gray-500"
+                  }`}>
+                    <Timer className="w-2.5 h-2.5" />
+                    <span className="font-mono tabular-nums">{formatCountdown(fusionCountdown)}</span>
+                  </div>
+                </Tip>
+              </div>
+            </div>
+
+            {/* Preset selector (fast / medium / slow) */}
+            <div className="flex gap-1.5 mb-3">
+              {fusionQuote.presets.map((preset) => (
+                <button
+                  key={preset.preset}
+                  onClick={() => { setSelectedPreset(preset.preset); playVipButtonChime(); }}
+                  className={`flex-1 p-2 rounded-lg text-center transition-all border ${
+                    selectedPreset === preset.preset
+                      ? isDark
+                        ? "bg-gradient-to-b from-emerald-500/15 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/5"
+                        : "bg-gradient-to-b from-emerald-50 to-teal-50 border-emerald-300 shadow-sm"
+                      : isDark
+                        ? "bg-slate-800/30 border-slate-700/30 hover:border-slate-600/50"
+                        : "bg-white border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-sm mb-0.5">{PRESET_ICONS[preset.preset]}</div>
+                  <div className={`text-[10px] font-bold ${
+                    selectedPreset === preset.preset
+                      ? isDark ? "text-emerald-400" : "text-emerald-700"
+                      : isDark ? "text-slate-300" : "text-gray-600"
+                  }`}>
+                    {PRESET_LABELS[preset.preset]}
+                  </div>
+                  <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    {preset.timeLabel}
+                  </div>
+                  <div className={`text-[10px] font-mono mt-0.5 ${
+                    selectedPreset === preset.preset
+                      ? isDark ? "text-white" : "text-gray-900"
+                      : isDark ? "text-slate-400" : "text-gray-500"
+                  }`}>
+                    {formatFusionAmount(preset.dstAmount, toToken.decimals)}
+                  </div>
+                  {preset.isRecommended && (
+                    <div className={`text-[8px] mt-0.5 font-bold ${
+                      isDark ? "text-emerald-500" : "text-emerald-600"
+                    }`}>
+                      BEST
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Quote summary details */}
+            <div className="space-y-1.5 text-sm">
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Rate</span>
+                <span>1 {fromToken.symbol} = {fusionRate ? (fusionRate >= 1 ? fusionRate.toFixed(6) : fusionRate.toFixed(8)) : "—"} {toToken.symbol}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Gas Cost</span>
+                <span className={`flex items-center gap-1 ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>
+                  <Zap className="w-3 h-3" />
+                  FREE — Resolver pays
+                </span>
+              </div>
+              {fusionQuote.estimatedGasSaved && (
+                <div className="flex justify-between">
+                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>You Save</span>
+                  <span className={isDark ? "text-emerald-400" : "text-emerald-600"}>
+                    {estimateGasSavingsUsd(fusionQuote.estimatedGasSaved, selectedChainId)} in gas
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Fill Time</span>
+                <span>{fusionQuote.presets.find(p => p.preset === selectedPreset)?.timeLabel ?? "—"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Mode</span>
+                <span className="flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-emerald-400" />
+                  Intent-based (EIP-712 signature)
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ CLASSIC ROUTE + QUOTE DETAILS ═══ */}
+      <AnimatePresence>
+        {swapMode === "classic" && lastQuote && !quoteLoading && fromAmount && parseFloat(fromAmount) > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1246,16 +1655,113 @@ export function OneInchWidget() {
               Awaiting wallet signature...
             </div>
           </button>
+        ) : swapStatus === "building" ? (
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Building Fusion order...
+            </div>
+          </button>
+        ) : swapStatus === "signing" ? (
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Sign in wallet (no gas!)...
+            </div>
+          </button>
+        ) : swapStatus === "submitting" ? (
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Submitting to resolvers...
+            </div>
+          </button>
+        ) : swapStatus === "polling" ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+          >
+            {/* Progress bar */}
+            <div className={`w-full h-1.5 rounded-full overflow-hidden mb-3 ${
+              isDark ? "bg-slate-700" : "bg-gray-200"
+            }`}>
+              <motion.div
+                className={`h-full rounded-full ${
+                  fusionOrderStatus === "assigned" || fusionOrderStatus === "executing"
+                    ? "bg-gradient-to-r from-emerald-500 to-teal-400"
+                    : "bg-gradient-to-r from-emerald-600 to-teal-500"
+                }`}
+                initial={{ width: "10%" }}
+                animate={{ width: `${(FUSION_STATUS_PROGRESS[fusionOrderStatus || "pending"] ?? 0.2) * 100}%` }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
+              />
+            </div>
+
+            <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+              <div className="flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {FUSION_STATUS_ICONS[fusionOrderStatus || "pending"]}{" "}
+                {FUSION_STATUS_LABELS[fusionOrderStatus || "pending"]}
+              </div>
+            </button>
+
+            {/* Order details panel */}
+            {lastSignedOrder && (
+              <div className={`mt-2 p-2.5 rounded-lg text-xs space-y-1.5 ${
+                isDark ? "bg-emerald-900/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"
+              }`}>
+                <div className="flex justify-between">
+                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>Order Hash</span>
+                  <span className="font-mono">{lastSignedOrder.orderHash.slice(0, 10)}...{lastSignedOrder.orderHash.slice(-6)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>Status</span>
+                  <span className={`font-medium ${
+                    fusionOrderStatus === "assigned" || fusionOrderStatus === "executing"
+                      ? isDark ? "text-emerald-400" : "text-emerald-600"
+                      : isDark ? "text-slate-300" : "text-gray-600"
+                  }`}>
+                    {fusionOrderStatus ? fusionOrderStatus.charAt(0).toUpperCase() + fusionOrderStatus.slice(1) : "Pending"}
+                  </span>
+                </div>
+                {fusionFillTxHash && (
+                  <div className="flex justify-between">
+                    <span className={isDark ? "text-slate-400" : "text-gray-500"}>Fill Tx</span>
+                    <a href={`${chain.explorerUrl}/tx/${fusionFillTxHash}`} target="_blank" rel="noopener noreferrer"
+                      className={`flex items-center gap-1 font-mono ${isDark ? "text-pink-400 hover:text-pink-300" : "text-pink-600 hover:text-pink-500"}`}>
+                      {fusionFillTxHash.slice(0, 10)}...
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                )}
+                <div className={`flex items-center gap-1.5 mt-1 pt-1.5 border-t ${
+                  isDark ? "border-emerald-500/10 text-emerald-400" : "border-emerald-200 text-emerald-600"
+                }`}>
+                  <Zap className="w-3 h-3" />
+                  <span className="text-[10px]">Gasless — resolvers pay all gas fees</span>
+                </div>
+              </div>
+            )}
+          </motion.div>
         ) : swapStatus === "success" ? (
           <motion.div
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
           >
-            <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-green-500 text-white">
+            <button disabled className={`w-full py-3.5 rounded-xl font-bold text-white ${
+              fusionOrderStatus === "filled"
+                ? "bg-gradient-to-r from-emerald-600 to-teal-500"
+                : "bg-gradient-to-r from-emerald-600 to-green-500"
+            }`}>
               <div className="flex items-center justify-center gap-2">
                 <CheckCircle2 className="w-4 h-4" />
-                Swap Complete!
+                {fusionOrderStatus === "filled" ? (
+                  <><Zap className="w-3.5 h-3.5" /> Gasless Swap Complete!</>
+                ) : (
+                  "Swap Complete!"
+                )}
               </div>
             </button>
             {lastTxHash && (
@@ -1267,7 +1773,15 @@ export function OneInchWidget() {
                 View on {chain.name} Explorer
               </a>
             )}
-            <button onClick={() => { setSwapStatus("idle"); setFromAmount(""); setToAmount(""); setLastQuote(null); }}
+            {fusionOrderStatus === "filled" && (
+              <div className={`flex items-center justify-center gap-1.5 mt-1.5 text-[10px] ${
+                isDark ? "text-emerald-400/70" : "text-emerald-600/70"
+              }`}>
+                <Zap className="w-2.5 h-2.5" />
+                You paid zero gas — resolver covered all fees
+              </div>
+            )}
+            <button onClick={() => { setSwapStatus("idle"); setFromAmount(""); setToAmount(""); setLastQuote(null); setLastSignedOrder(null); setFusionQuote(null); setFusionOrderStatus(null); setFusionFillTxHash(null); stopFusionPolling(); }}
               className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${
                 isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
               }`}>
@@ -1288,7 +1802,7 @@ export function OneInchWidget() {
                 <span className="break-all">{swapError}</span>
               </div>
             )}
-            <button onClick={() => { setSwapStatus("idle"); setSwapError(null); }}
+            <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); stopFusionPolling(); }}
               className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${
                 isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
               }`}>
@@ -1304,14 +1818,22 @@ export function OneInchWidget() {
             className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
               !canSwap
                 ? isDark ? "bg-slate-700 text-slate-500 shadow-none cursor-not-allowed" : "bg-gray-300 text-gray-500 shadow-none cursor-not-allowed"
-                : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
+                : swapMode === "fusion"
+                  ? "bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-emerald-500/30"
+                  : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
             }`}
           >
             {!fromAmount || parseFloat(fromAmount) <= 0
               ? "Enter an amount"
-              : !lastQuote
-                ? "Fetching quote..."
-                : `Swap ${fromToken.symbol} → ${toToken.symbol}`
+              : swapMode === "fusion" && !evmAccount
+                ? "Connect wallet for Fusion"
+                : swapMode === "fusion" && !fusionQuote
+                  ? fusionQuoteLoading ? "Finding resolvers..." : "Enter amount for quote"
+                  : swapMode === "classic" && !lastQuote
+                    ? "Fetching quote..."
+                    : swapMode === "fusion"
+                      ? `⚡ Gasless Swap ${fromToken.symbol} → ${toToken.symbol}`
+                      : `Swap ${fromToken.symbol} → ${toToken.symbol}`
             }
           </motion.button>
         )}
@@ -1327,7 +1849,7 @@ export function OneInchWidget() {
                 : "bg-emerald-50 text-emerald-700 border border-emerald-200"
             }`}>
               <Zap className="w-2.5 h-2.5" />
-              1inch Fusion · {chain.name}
+              1inch {swapMode === "fusion" ? "Fusion" : "Classic"} · {chain.name}
             </span>
             <span className="flex items-center gap-1">
               <span className={`font-mono text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
