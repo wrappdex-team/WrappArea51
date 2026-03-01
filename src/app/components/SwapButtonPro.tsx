@@ -28,6 +28,8 @@ import type { AllowedToken } from "../utils/saucerswap";
 
 /** [C108-S13] How long to wait before showing "Open Wallet" button (ms) */
 const WALLET_OPEN_DELAY_MS = 2000;
+/** [MOB-WEB3-04] On mobile, show "Open Wallet" almost immediately since user must switch apps */
+const WALLET_OPEN_DELAY_MOBILE_MS = 800;
 
 interface SwapButtonProProps {
   status: "idle" | "processing" | "success" | "error";
@@ -107,6 +109,8 @@ export const SwapButtonPro = memo(function SwapButtonPro({
   const [showOpenWallet, setShowOpenWallet] = useState(false);
   const walletTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStepRef = useRef<number | null>(null);
+  // [MOB-WEB3-04] Use shorter delay on mobile — user must manually switch apps
+  const isMobileRef = useRef(typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
 
   useEffect(() => {
     if (status === "processing") {
@@ -116,9 +120,10 @@ export const SwapButtonPro = memo(function SwapButtonPro({
         lastStepRef.current = currentStep;
         setShowOpenWallet(false);
         if (walletTimerRef.current) clearTimeout(walletTimerRef.current);
+        const delay = isMobileRef.current ? WALLET_OPEN_DELAY_MOBILE_MS : WALLET_OPEN_DELAY_MS;
         walletTimerRef.current = setTimeout(() => {
           setShowOpenWallet(true);
-        }, WALLET_OPEN_DELAY_MS);
+        }, delay);
       }
     } else {
       // Not processing — clear everything

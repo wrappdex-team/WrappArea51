@@ -355,10 +355,38 @@ async function _validateSessionBeforeRequest(client: any, topic: string): Promis
  * Desktop is unaffected — the interceptor only activates for iframe
  * or mobile user agents.
  */
+// ── [MOB-WEB3-01] Relay health cache ─────────────────────────────────
+// After a successful relay verification (ping or full cycle), cache the
+// timestamp. Subsequent _safeRequest calls within the window skip the
+// expensive forced relay cycle. Critical for sequential TX flows like
+// liquidity provision (approve → approve → mint = 3 relay cycles).
+let _relayLastVerifiedAt = 0;
+const RELAY_VERIFIED_WINDOW_MS = 25_000; // 25s — covers multi-popup flows
+
+// ── [MOB-WEB3-02] DApp Browser Detection ──────────────────────────────
+// When running inside a wallet's in-app browser (e.g., HashPack DApp
+// browser), the WalletConnect relay is managed by the host app — the
+// WebSocket is never truly "backgrounded" because the browser and wallet
+// share the same process. Forced disconnect→reconnect cycles BREAK
+// this internal relay, causing signing requests to never reach the wallet.
+function _isInWalletDAppBrowser(): boolean {
+  try {
+    const ua = navigator.userAgent;
+    if (/HashPack|Blade|Kabila/i.test(ua)) return true;
+    if (typeof (window as any).hashconnect !== "undefined") return true;
+    const isWebView =
+      (/Android/i.test(ua) && /wv/i.test(ua)) ||
+      (/iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua));
+    if (isWebView && _G[_WC_KEY]) return true;
+  } catch { /* non-critical */ }
+  return false;
+}
+
 async function _safeRequest(client: any, params: Record<string, any>): Promise<any> {
   const origOpen = window.open;
   const isIframe = (() => { try { return window !== window.top; } catch { return true; } })();
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isDAppBrowser = _isInWalletDAppBrowser();
 
   // ── [MOB-FIX] Resolve wallet redirect URL for mobile ────────────────
   //
@@ -524,7 +552,9 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
   // we must reconnect the WS FAST or the 120s client.request() timeout
   // will expire before we retrieve it. Give the relay 15s to reconnect.
   let _visCleanup: (() => void) | null = null;
-  if (isMobile) {
+  if (isMobile && !isDAppBrowser) {
+    // [MOB-WEB3-02] In DApp browsers, skip the visibilitychange handler.
+    // The wallet app manages its own relay — forced reconnection is harmful.
     const onVis = async () => {
       if (document.visibilityState === "visible") {
         console.log("[WC] [MOB-FIX-v5] Tab resumed from background — FORCED relay reconnection...");
@@ -608,6 +638,29 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     // sending a signing request. This guarantees a fresh, verified WebSocket.
     // Sessions persist in localStorage — only the transport is recycled.
     if (isMobile) {
+      // ── [MOB-WEB3-02] DApp Browser Fast Path ───────────────────────
+      // In a wallet DApp browser, the relay is managed by the host app
+      // and never goes stale. Skip ALL forced relay cycling — it breaks
+      // the internal WC transport and prevents signing requests from
+      // reaching the wallet (root cause of liquidity mint failures).
+      if (isDAppBrowser) {
+        console.log("[WC] [MOB-WEB3-02] DApp browser detected — skipping forced relay cycle (relay is managed by host app)");
+        // Just verify the relay is connected, no forced cycling
+        try {
+          await _ensureRelayConnected(client, 5000);
+          _relayLastVerifiedAt = Date.now();
+        } catch { /* proceed anyway — DApp browser relay is likely fine */ }
+      }
+      // ── [MOB-WEB3-01] Recently Verified Fast Path ─────────────────
+      // If relay was verified within the cache window (e.g., during a
+      // prior approval TX in the same liquidity flow), skip the expensive
+      // forced cycle. This prevents the second/third TX from killing a
+      // relay that was just confirmed healthy.
+      else if (Date.now() - _relayLastVerifiedAt < RELAY_VERIFIED_WINDOW_MS) {
+        console.log("[WC] [MOB-WEB3-01] Relay recently verified",
+          Math.round((Date.now() - _relayLastVerifiedAt) / 1000), "s ago — skipping forced cycle");
+      }
+      else {
       console.log("[WC] [MOB-FIX-v5] Mobile detected — checking relay connection before signing...");
       try {
         const relayer = client.core?.relayer;
@@ -641,10 +694,11 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           try {
             await Promise.race([
               client.ping({ topic: params.topic }),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("ping timeout")), 3000)),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("ping timeout")), 5000)),
             ]);
             console.log("[WC] [MOB-FIX-v5] Session ping OK — relay is truly healthy, skipping forced cycle");
             needsFullCycle = false;
+            _relayLastVerifiedAt = Date.now();
           } catch (pingErr: any) {
             console.warn("[WC] [MOB-FIX-v5] Session ping FAILED:", pingErr?.message,
               "— WS is likely half-open (stale). Falling through to full disconnect→reconnect cycle.");
@@ -712,6 +766,9 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
         console.warn("[WC] [MOB-FIX-v5] Relay check failed:", e?.message,
           "— proceeding with existing connection (may fail)");
       }
+      // [MOB-WEB3-01] Mark relay as verified after successful cycle
+      _relayLastVerifiedAt = Date.now();
+      } // close else (non-DApp-browser, non-cached mobile path)
     }
 
     const doRequest = async () => {
@@ -768,7 +825,10 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
         publishFailReason = err?.message || "unknown";
       });
 
-      if (isMobile && walletRedirect) {
+      if (isMobile && walletRedirect && !isDAppBrowser) {
+        // [MOB-WEB3-02] Skip redirect in DApp browser — the wallet IS the
+        // browser. Redirecting would navigate away from the dApp page.
+        //
         // [MOB-FIX-v3] Smart publish confirmation before redirect.
         //
         // Old approach: 600ms fixed timer → wallet redirect. BROKEN because
@@ -881,7 +941,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             // Rebuild request with fresh client
             const freshRequestPromise = freshClient.request(params);
             // [MOB-FIX-v3] Smart redirect for force-reset path too
-            if (isMobile && walletRedirect) {
+            if (isMobile && walletRedirect && !isDAppBrowser) {
               let freshFailed = false;
               freshRequestPromise.catch(() => { freshFailed = true; });
               (async () => {
@@ -1764,7 +1824,49 @@ const KNOWN_WALLET_EXTENSION_IDS = [
  * without any URL tab opening.
  */
 export async function tryOpenWalletExtension(): Promise<void> {
-  // Try chrome.runtime first
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  // [MOB-WEB3-03] On mobile, open the wallet app via native deep link.
+  // chrome.runtime is not available on mobile browsers. Instead, detect
+  // the connected wallet from the WC session peer metadata and open its
+  // native URL scheme (e.g., "hashpack://") to bring it to foreground.
+  if (isMobile && !_isInWalletDAppBrowser()) {
+    try {
+      const client = await getSignClient();
+      const sessions = client?.session?.getAll?.() ?? [];
+      for (const s of sessions) {
+        const redirect = s?.peer?.metadata?.redirect;
+        const peerName = (s?.peer?.metadata?.name || "").toLowerCase();
+        const peerUrl = (s?.peer?.metadata?.url || "").toLowerCase();
+
+        let nativeUrl: string | null = redirect?.native || null;
+        if (!nativeUrl) {
+          if (peerName.includes("hashpack") || peerUrl.includes("hashpack")) {
+            nativeUrl = "hashpack://";
+          } else if (peerName.includes("blade") || peerUrl.includes("blade")) {
+            nativeUrl = "blade://";
+          }
+        }
+
+        if (nativeUrl) {
+          console.log("[WC] [MOB-WEB3-03] Opening wallet via native scheme:", nativeUrl);
+          try { window.location.href = nativeUrl; } catch {
+            try { window.open(nativeUrl, "_blank"); } catch { /* */ }
+          }
+          return;
+        }
+        if (redirect?.universal) {
+          console.log("[WC] [MOB-WEB3-03] Opening wallet via universal link:", redirect.universal);
+          window.location.href = redirect.universal;
+          return;
+        }
+      }
+    } catch { /* non-fatal */ }
+    console.warn("[WC] [MOB-WEB3-03] No wallet redirect URL found — cannot open wallet app");
+    return;
+  }
+
+  // Desktop: Try chrome.runtime first
   const chromeApi = (globalThis as any).chrome;
   if (chromeApi?.runtime?.sendMessage) {
     for (const extId of KNOWN_WALLET_EXTENSION_IDS) {

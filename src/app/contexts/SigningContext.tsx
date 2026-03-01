@@ -258,6 +258,7 @@ function PendingContent({
   onCancel: () => void;
 }) {
   const [elapsed, setElapsed] = useState(0);
+  const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   useEffect(() => {
     if (!state.startedAt) return;
@@ -296,7 +297,18 @@ function PendingContent({
 
       {/* Label */}
       <p className="text-white/90 text-lg font-medium mb-1">{state.label}</p>
-      <p className="text-white/40 text-sm mb-6">{state.detail}</p>
+      <p className="text-white/40 text-sm mb-2">{state.detail}</p>
+
+      {/* [MOB-WEB3-04] Mobile-specific helper text */}
+      {isMobile && elapsed >= 1 && (
+        <motion.p
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-purple-300/60 text-xs mb-4 px-4 leading-relaxed"
+        >
+          Tap "Open Wallet" below to switch to your wallet app. Approve the request, then return to this browser.
+        </motion.p>
+      )}
 
       {/* Countdown */}
       <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs mb-6 ${
@@ -329,9 +341,23 @@ function PendingContent({
         ))}
       </div>
 
-      {/* [C85] Open Wallet + Cancel buttons */}
+      {/* [MOB-WEB3-04] On mobile, show "Open Wallet" immediately and prominently */}
+      {isMobile && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.3 }}
+          onClick={() => tryOpenWalletExtension()}
+          className="w-full mb-3 px-5 py-3.5 rounded-xl bg-gradient-to-r from-purple-600/30 to-pink-600/30 hover:from-purple-600/40 hover:to-pink-600/40 border border-purple-500/30 text-purple-200 text-sm font-medium flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98]"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Open Wallet App
+        </motion.button>
+      )}
+
+      {/* Desktop: Open Wallet + Cancel buttons */}
       <div className="flex items-center justify-center gap-2">
-        {elapsed >= 2 && (
+        {!isMobile && elapsed >= 2 && (
           <motion.button
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
