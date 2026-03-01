@@ -216,7 +216,7 @@ export function FearGreedGauge() {
           <>
             <div className="flex items-baseline gap-2">
               <span className={`text-lg font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
-                ${formatMarketCap(top20.totalMarketCap)}
+                {formatMarketCap(top20.totalMarketCap)}
               </span>
               <span className={`flex items-center gap-0.5 text-xs font-medium ${
                 top20.weightedChange24h >= 0 ? "text-[#16c784]" : "text-[#ea3943]"

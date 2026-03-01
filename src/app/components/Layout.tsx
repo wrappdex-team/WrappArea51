@@ -23,6 +23,7 @@ import { AnimatedNumber } from "./AnimatedNumber";
 import { HolidayLogo } from "./HolidayLogo";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useBrandLogos } from "../hooks/useBrandLogos";
+import { BetaBadge } from "./BetaBadge";
 
 export function Layout() {
   const location = useLocation();
@@ -215,6 +216,11 @@ export function Layout() {
                 }
               />
             </Link>
+
+            {/* Beta badge — positioned snug against logo */}
+            <div className="flex-shrink-0 -ml-1 sm:-ml-0.5 self-center">
+              <BetaBadge />
+            </div>
 
             {/* Desktop Navigation */}
             <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3 overflow-hidden" aria-label="Main navigation">
