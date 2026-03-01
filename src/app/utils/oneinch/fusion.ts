@@ -34,7 +34,7 @@ import type {
   FusionOrderStatus,
 } from "./types";
 
-/* ══════════════��═══════════════════════════════════════════════════════
+/* ═════════════════════════════════════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -877,3 +877,178 @@ export const FUSION_POLL_INTERVAL_MS = 3_000;
 
 /** Maximum polling duration (10 minutes — Fusion slow orders can take a while). */
 export const FUSION_POLL_MAX_DURATION_MS = 10 * 60 * 1000;
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Step 8 — Active Order Fetching & Order Status Lookup
+ *
+ * IMPLEMENTATION NOTE: These functions support the OneInchOrderTracker
+ * component. Active orders are fetched from the Fusion Orders API via
+ * our proxy. Individual order status lookups are used for tracking
+ * localStorage-persisted order hashes across sessions.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/** Tracker polling interval (5 seconds for the order dashboard). */
+export const TRACKER_POLL_INTERVAL_MS = 5_000;
+
+/** LocalStorage key for persisted order hashes */
+export const ORDER_HISTORY_KEY = "wrappdex:fusion:order-history";
+
+/** Maximum number of order hashes to persist in localStorage */
+export const MAX_PERSISTED_ORDERS = 50;
+
+/**
+ * A single tracked order — combines API response with display metadata.
+ */
+export interface TrackedOrder {
+  /** Order hash */
+  readonly orderHash: string;
+  /** Chain ID */
+  readonly chainId: number;
+  /** Current status */
+  readonly status: FusionOrderStatus;
+  /** Source token address */
+  readonly srcTokenAddress?: string;
+  /** Destination token address */
+  readonly dstTokenAddress?: string;
+  /** Input amount (smallest unit) */
+  readonly srcTokenAmount?: string;
+  /** Output amount (smallest unit) */
+  readonly dstTokenAmount?: string;
+  /** ISO 8601 creation timestamp */
+  readonly createdAt?: string;
+  /** ISO 8601 fill timestamp */
+  readonly filledAt?: string;
+  /** Resolver address */
+  readonly resolverAddress?: string;
+  /** On-chain fill tx hash */
+  readonly txHash?: string;
+  /** Whether this order came from localStorage (history) vs active API */
+  readonly isHistorical?: boolean;
+}
+
+/**
+ * Fetch active (unfilled) Fusion orders for a wallet on a given chain.
+ *
+ * @param chainId       - EVM chain ID
+ * @param walletAddress - User's EVM wallet address
+ * @param signal        - Optional AbortSignal
+ * @returns Array of active orders
+ */
+export async function fetchActiveOrders(
+  chainId: number,
+  walletAddress: string,
+  signal?: AbortSignal,
+): Promise<TrackedOrder[]> {
+  if (!isFusionSupported(chainId)) return [];
+
+  try {
+    const res = await oneInchApi.get<{ orders?: FusionOrderStatusResponse[] }>(
+      `/fusion/active/${chainId}?walletAddress=${walletAddress}`,
+      { signal, timeout: 10_000 },
+    );
+
+    const orders = res.orders ?? (Array.isArray(res) ? res : []);
+
+    return orders.map((o: FusionOrderStatusResponse) => ({
+      orderHash: o.orderHash,
+      chainId,
+      status: o.status,
+      srcTokenAddress: o.srcTokenAddress,
+      dstTokenAddress: o.dstTokenAddress,
+      srcTokenAmount: o.srcTokenAmount,
+      dstTokenAmount: o.dstTokenAmount,
+      createdAt: o.createdAt,
+      filledAt: o.filledAt,
+      resolverAddress: o.resolverAddress,
+      txHash: o.txHash,
+      isHistorical: false,
+    }));
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    log.warn(TAG, `Failed to fetch active orders for chain ${chainId}`, err);
+    return [];
+  }
+}
+
+/**
+ * Fetch the status of a single Fusion order by hash.
+ *
+ * @param chainId   - EVM chain ID
+ * @param orderHash - The order hash
+ * @param signal    - Optional AbortSignal
+ * @returns Order status or null if not found
+ */
+export async function fetchOrderStatus(
+  chainId: number,
+  orderHash: string,
+  signal?: AbortSignal,
+): Promise<TrackedOrder | null> {
+  try {
+    const res = await oneInchApi.get<FusionOrderStatusResponse>(
+      `/fusion/status/${chainId}/${orderHash}`,
+      { signal, timeout: 10_000 },
+    );
+
+    return {
+      orderHash: res.orderHash || orderHash,
+      chainId,
+      status: res.status,
+      srcTokenAddress: res.srcTokenAddress,
+      dstTokenAddress: res.dstTokenAddress,
+      srcTokenAmount: res.srcTokenAmount,
+      dstTokenAmount: res.dstTokenAmount,
+      createdAt: res.createdAt,
+      filledAt: res.filledAt,
+      resolverAddress: res.resolverAddress,
+      txHash: res.txHash,
+      isHistorical: true,
+    };
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    log.warn(TAG, `Failed to fetch order status: ${orderHash}`, err);
+    return null;
+  }
+}
+
+/** Persisted order hash entry */
+export interface PersistedOrderEntry {
+  readonly orderHash: string;
+  readonly chainId: number;
+  readonly createdAt: string;
+  readonly srcSymbol?: string;
+  readonly dstSymbol?: string;
+}
+
+/**
+ * Save an order hash to localStorage history.
+ */
+export function persistOrderHash(entry: PersistedOrderEntry): void {
+  try {
+    const raw = localStorage.getItem(ORDER_HISTORY_KEY);
+    const history: PersistedOrderEntry[] = raw ? JSON.parse(raw) : [];
+
+    // Avoid duplicates
+    if (history.some(h => h.orderHash === entry.orderHash)) return;
+
+    // Prepend and cap
+    history.unshift(entry);
+    if (history.length > MAX_PERSISTED_ORDERS) history.length = MAX_PERSISTED_ORDERS;
+
+    localStorage.setItem(ORDER_HISTORY_KEY, JSON.stringify(history));
+    log.debug(TAG, `Persisted order ${entry.orderHash.slice(0, 10)}... (${history.length} total)`);
+  } catch {
+    log.warn(TAG, "Failed to persist order hash to localStorage");
+  }
+}
+
+/**
+ * Load persisted order hashes from localStorage.
+ */
+export function loadPersistedOrders(): PersistedOrderEntry[] {
+  try {
+    const raw = localStorage.getItem(ORDER_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}

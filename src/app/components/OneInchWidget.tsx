@@ -53,6 +53,7 @@ import { ONEINCH_LOGO } from "../assets/brand";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { OneInchTokenSelector } from "./OneInchTokenSelector";
+import { OneInchOrderTracker } from "./OneInchOrderTracker";
 import {
   POPULAR_TOKENS as MODULE_POPULAR_TOKENS,
   fetchTokenList,
@@ -88,6 +89,7 @@ import {
   FUSION_STATUS_LABELS,
   FUSION_STATUS_ICONS,
   FUSION_STATUS_PROGRESS,
+  persistOrderHash,
 } from "../utils/oneinch/fusion";
 import type { ParsedFusionQuote, ParsedPreset, FusionSignedOrder } from "../utils/oneinch/fusion";
 import type { FusionOrderStatus, FusionOrderStatusResponse } from "../utils/oneinch/types";
@@ -294,10 +296,22 @@ export function OneInchWidget() {
   const [fromPriceUsd, setFromPriceUsd] = useState<number | null>(null);
   const [toPriceUsd, setToPriceUsd] = useState<number | null>(null);
 
-  // ── Swap mode: "classic" (on-chain) vs "fusion" (gasless) ──
-  type WidgetSwapMode = "classic" | "fusion";
-  const [swapMode, setSwapMode] = useState<WidgetSwapMode>("fusion");
+  // ── Swap mode: "classic" (on-chain) vs "fusion" (gasless) vs "limit" (coming soon) ──
+  type WidgetSwapMode = "classic" | "fusion" | "limit";
+  const [swapMode, setSwapMode] = useState<WidgetSwapMode>(() => {
+    try {
+      const saved = localStorage.getItem("wrappdex:1inch:swap-mode");
+      if (saved === "classic" || saved === "fusion") return saved;
+    } catch {}
+    return "fusion";
+  });
   const chainSupportsFusion = isFusionSupported(selectedChainId);
+
+  // Persist swap mode to localStorage (Step 9)
+  const updateSwapMode = useCallback((mode: WidgetSwapMode) => {
+    setSwapMode(mode);
+    try { localStorage.setItem("wrappdex:1inch:swap-mode", mode); } catch {}
+  }, []);
 
   // ── Fusion quote state ──
   const [fusionQuote, setFusionQuote] = useState<ParsedFusionQuote | null>(null);
@@ -866,6 +880,15 @@ export function OneInchWidget() {
       log.info("1inch", `Fusion order submitted: status=${submitRes.status}`);
       setFusionOrderStatus(submitRes.status);
 
+      // Step 8: Persist order hash to localStorage for tracker history
+      persistOrderHash({
+        orderHash: signedOrder.orderHash,
+        chainId: selectedChainId,
+        createdAt: new Date().toISOString(),
+        srcSymbol: fromToken.symbol,
+        dstSymbol: toToken.symbol,
+      });
+
       // Step E: Poll for status until terminal (filled/expired/failed)
       setSwapStatus("polling");
       const pollDeadline = Date.now() + FUSION_POLL_MAX_DURATION_MS;
@@ -1030,6 +1053,7 @@ export function OneInchWidget() {
   }
 
   return (
+    <>
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
@@ -1202,42 +1226,107 @@ export function OneInchWidget() {
         )}
       </AnimatePresence>
 
-      {/* ═══ SWAP MODE TOGGLE — Classic vs Fusion ═══ */}
+      {/* ═══ SWAP MODE TOGGLE — Fusion / Classic / Limit (Step 9) ═══ */}
       {chainSupportsFusion && (
-        <div className={`flex items-center gap-1 p-1 rounded-xl mb-3 ${inputClass}`}>
-          <button
-            onClick={() => { setSwapMode("fusion"); playVipButtonChime(); }}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
-              swapMode === "fusion"
-                ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/20"
-                : isDark
-                  ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <Zap className="w-3 h-3" />
-            Fusion
-            <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
-              swapMode === "fusion"
-                ? "bg-white/20 text-white"
-                : isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600"
-            }`}>
-              GASLESS
-            </span>
-          </button>
-          <button
-            onClick={() => { setSwapMode("classic"); playVipButtonChime(); }}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
-              swapMode === "classic"
-                ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
-                : isDark
-                  ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <Fuel className="w-3 h-3" />
-            Classic
-          </button>
+        <div className="mb-3">
+          <div className={`flex items-center gap-1 p-1 rounded-xl ${inputClass}`}>
+            <button
+              onClick={() => { updateSwapMode("fusion"); playVipButtonChime(); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                swapMode === "fusion"
+                  ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/20"
+                  : isDark
+                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              }`}
+            >
+              <Zap className="w-3 h-3" />
+              Fusion
+              <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
+                swapMode === "fusion"
+                  ? "bg-white/20 text-white"
+                  : isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600"
+              }`}>
+                GASLESS
+              </span>
+            </button>
+            <button
+              onClick={() => { updateSwapMode("classic"); playVipButtonChime(); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                swapMode === "classic"
+                  ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
+                  : isDark
+                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              }`}
+            >
+              <Fuel className="w-3 h-3" />
+              Classic
+            </button>
+            <button
+              disabled
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-not-allowed ${
+                isDark
+                  ? "text-slate-600 hover:text-slate-500"
+                  : "text-gray-300 hover:text-gray-400"
+              }`}
+              title="Limit orders — coming soon"
+            >
+              <Timer className="w-3 h-3" />
+              Limit
+              <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
+                isDark ? "bg-slate-700/50 text-slate-500" : "bg-gray-100 text-gray-400"
+              }`}>
+                SOON
+              </span>
+            </button>
+          </div>
+
+          {/* Gas savings comparison (Fusion vs Classic) */}
+          <AnimatePresence>
+            {swapMode === "fusion" && fusionQuote?.estimatedGasSaved && fusionQuote.estimatedGasSaved > 0 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.15 }}
+                className={`flex items-center justify-center gap-1.5 mt-2 py-1.5 rounded-lg text-[10px] font-bold ${
+                  isDark
+                    ? "bg-emerald-900/15 text-emerald-400 border border-emerald-500/15"
+                    : "bg-emerald-50 text-emerald-600 border border-emerald-200/50"
+                }`}
+              >
+                <Fuel className="w-3 h-3" />
+                Fusion saves you {estimateGasSavingsUsd(fusionQuote.estimatedGasSaved, selectedChainId)} in gas
+                <span className={`text-[9px] ${isDark ? "text-emerald-500/60" : "text-emerald-500/50"}`}>
+                  vs Classic mode
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Classic mode gas indicator */}
+          <AnimatePresence>
+            {swapMode === "classic" && lastQuote?.gas && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.15 }}
+                className={`flex items-center justify-center gap-1.5 mt-2 py-1.5 rounded-lg text-[10px] font-bold ${
+                  isDark
+                    ? "bg-pink-900/15 text-pink-400 border border-pink-500/15"
+                    : "bg-pink-50 text-pink-600 border border-pink-200/50"
+                }`}
+              >
+                <Fuel className="w-3 h-3" />
+                Est. gas: {estimateGasSavingsUsd(lastQuote.gas, selectedChainId)}
+                <span className={`text-[9px] ${isDark ? "text-pink-500/60" : "text-pink-500/50"}`}>
+                  · You pay gas
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
@@ -1849,7 +1938,7 @@ export function OneInchWidget() {
                 : "bg-emerald-50 text-emerald-700 border border-emerald-200"
             }`}>
               <Zap className="w-2.5 h-2.5" />
-              1inch {swapMode === "fusion" ? "Fusion" : "Classic"} · {chain.name}
+              1inch {swapMode === "fusion" ? "Fusion" : swapMode === "limit" ? "Limit" : "Classic"} · {chain.name}
             </span>
             <span className="flex items-center gap-1">
               <span className={`font-mono text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -1873,6 +1962,11 @@ export function OneInchWidget() {
           </>
         )}
       </div>
+
     </motion.div>
+
+    {/* ═══ FUSION ORDER TRACKER (Step 8) — separate card below widget ═══ */}
+    <OneInchOrderTracker evmAccount={evmAccount} chainId={selectedChainId} isDark={isDark} />
+    </>
   );
 }
