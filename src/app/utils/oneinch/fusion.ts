@@ -54,7 +54,7 @@ const QUOTE_CACHE_TTL_MS = 10_000;
  * silently replace it with the wrapped ERC-20 equivalent (WETH, WPOL,
  * WBNB, etc.) before sending the quote/build request. The UI still
  * shows "ETH" — the resolver handles wrapping internally.
- * ═════════════════════════════���════════════════════════════════════════ */
+ * ═════════════════════════════════════════════════════════════════════ */
 
 const WRAPPED_NATIVE_BY_CHAIN: Record<number, string> = {
   1:     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH (Ethereum)
@@ -82,9 +82,12 @@ function resolveTokenForFusion(address: string, chainId: number): string {
       );
     }
     log.info(TAG, `Resolved native token → ${wrapped.slice(0, 10)}... (chain ${chainId})`);
-    return wrapped;
+    // IMPLEMENTATION NOTE: The 1inch Fusion API requires lowercase addresses.
+    // Always return lowercase to avoid "invalid address" rejections.
+    return wrapped.toLowerCase();
   }
-  return address;
+  // Always lowercase — the Fusion API rejects checksummed (mixed-case) addresses
+  return address.toLowerCase();
 }
 
 /** Auto-refresh interval for Fusion quotes (15 seconds) */
@@ -261,7 +264,7 @@ export async function getFusionQuote(
     srcTokenAddress: resolveTokenForFusion(srcTokenAddress, chainId),
     dstTokenAddress: resolveTokenForFusion(dstTokenAddress, chainId),
     amount,
-    walletAddress,
+    walletAddress: walletAddress.toLowerCase(),
     enableEstimate: true,
   };
 

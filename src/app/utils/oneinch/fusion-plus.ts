@@ -81,9 +81,11 @@ function resolveTokenForFusionPlus(address: string, chainId: number): string {
       );
     }
     log.info(TAG, `Resolved native token -> ${wrapped.slice(0, 10)}... (chain ${chainId})`);
-    return wrapped;
+    // IMPLEMENTATION NOTE: The 1inch Fusion+ API requires lowercase addresses.
+    return wrapped.toLowerCase();
   }
-  return address;
+  // Always lowercase — the Fusion+ API rejects checksummed (mixed-case) addresses
+  return address.toLowerCase();
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -314,7 +316,7 @@ export async function getCrossChainQuote(
     srcTokenAddress: resolvedSrc,
     dstTokenAddress: resolvedDst,
     amount,
-    walletAddress,
+    walletAddress: walletAddress.toLowerCase(),
     enableEstimate: true,
   };
 
