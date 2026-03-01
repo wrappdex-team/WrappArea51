@@ -31,12 +31,19 @@
 import { log } from "./logger";
 import { switchChain, getChainId } from "./metamask";
 import { NATIVE_TOKEN_ADDRESS } from "./stargate-chains";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 /* ══════════════════════════════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════ */
 
-const VT_API_BASE = "https://transfer.layerzero-api.com/v1";
+/**
+ * IMPLEMENTATION NOTE: The LayerZero VT API does not return CORS headers,
+ * so direct browser fetch() fails. All requests are proxied through our
+ * Supabase edge function at /stargate-vt/* which forwards to
+ * https://transfer.layerzero-api.com/v1/*.
+ */
+const VT_API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/stargate-vt`;
 
 /** Cache TTL — tokens don't change often, 5 minutes is safe */
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -286,6 +293,7 @@ async function vtFetch(url: string, init?: RequestInit): Promise<Response> {
       signal: controller.signal,
       headers: {
         "Accept": "application/json",
+        "Authorization": `Bearer ${publicAnonKey}`,
         ...(init?.headers ?? {}),
       },
     });

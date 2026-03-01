@@ -29,6 +29,7 @@ import { registerSaucerswapProxyRoutes } from "./saucerswap-proxy.ts";
 import { registerIconProxyRoutes } from "./icon-proxy.ts";
 import { registerLpHistoryRoutes } from "./lp-history.ts";
 import { registerBetaTermsRoutes } from "./beta-terms.ts";
+import { registerStargateVtProxyRoutes } from "./stargate-vt-proxy.ts";
 
 const app = new Hono();
 
@@ -98,5 +99,6 @@ registerSaucerswapProxyRoutes(app);
 registerIconProxyRoutes(app);
 registerLpHistoryRoutes(app);
 registerBetaTermsRoutes(app);
+registerStargateVtProxyRoutes(app);
 
 Deno.serve(app.fetch);
