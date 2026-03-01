@@ -21,6 +21,7 @@
 import { log } from "../logger";
 import { oneInchApi, OneInchApiError, isAbortError, friendlyErrorMessage } from "./api-client";
 import { getChainById, CHAINS } from "./chains";
+import { NATIVE_TOKEN_ADDRESS } from "./types";
 import type {
   FusionPreset,
   FusionQuoteParams,
@@ -42,6 +43,49 @@ const TAG = "1inch:fusion";
 
 /** How long to cache a Fusion quote (10s — quotes are time-sensitive) */
 const QUOTE_CACHE_TTL_MS = 10_000;
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Native → Wrapped Token Address Mapping
+ *
+ * IMPLEMENTATION NOTE: The Fusion API operates on ERC-20 tokens ONLY.
+ * It does NOT accept the "native placeholder" address
+ * (0xEeee...eeEE) that the Classic Swap API v6.0 uses for ETH/POL/BNB.
+ * When a user selects a native token for a Fusion swap, we must
+ * silently replace it with the wrapped ERC-20 equivalent (WETH, WPOL,
+ * WBNB, etc.) before sending the quote/build request. The UI still
+ * shows "ETH" — the resolver handles wrapping internally.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+const WRAPPED_NATIVE_BY_CHAIN: Record<number, string> = {
+  1:     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH (Ethereum)
+  56:    "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", // WBNB (BSC)
+  137:   "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", // WPOL (Polygon)
+  42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH (Arbitrum)
+  10:    "0x4200000000000000000000000000000000000006", // WETH (Optimism)
+  8453:  "0x4200000000000000000000000000000000000006", // WETH (Base)
+  43114: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", // WAVAX (Avalanche)
+  100:   "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d", // WXDAI (Gnosis)
+};
+
+/**
+ * Resolve a token address for Fusion API calls. If the address is the
+ * native placeholder (0xEeee…eeEE), return the wrapped ERC-20 address
+ * for the given chain. Otherwise, return the address as-is.
+ */
+function resolveTokenForFusion(address: string, chainId: number): string {
+  if (address.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase()) {
+    const wrapped = WRAPPED_NATIVE_BY_CHAIN[chainId];
+    if (!wrapped) {
+      throw new Error(
+        `No wrapped native token configured for chain ${chainId}. ` +
+        `Fusion cannot swap native tokens without a wrapped equivalent.`
+      );
+    }
+    log.info(TAG, `Resolved native token → ${wrapped.slice(0, 10)}... (chain ${chainId})`);
+    return wrapped;
+  }
+  return address;
+}
 
 /** Auto-refresh interval for Fusion quotes (15 seconds) */
 export const FUSION_QUOTE_REFRESH_INTERVAL_MS = 15_000;
@@ -214,8 +258,8 @@ export async function getFusionQuote(
   }
 
   const body: FusionQuoteParams = {
-    srcTokenAddress,
-    dstTokenAddress,
+    srcTokenAddress: resolveTokenForFusion(srcTokenAddress, chainId),
+    dstTokenAddress: resolveTokenForFusion(dstTokenAddress, chainId),
     amount,
     walletAddress,
     enableEstimate: true,
@@ -515,7 +559,7 @@ export async function buildAndSignFusionOrder(
  * to the 1inch Fusion resolvers. The resolvers execute the on-chain
  * swap and pay gas themselves. We poll the status of the order to
  * determine when it is filled, expired, or failed.
- * ══════════════════════════════════════════════════════════════════════ */
+ * ═══��══════════════════════════════════════════════════════════════════ */
 
 /**
  * Submit a signed Fusion order to the resolvers.
