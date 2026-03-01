@@ -23,11 +23,11 @@
 //   GET  /1inch/tokens/:chainId        → /swap/v6.0/{chainId}/tokens
 //
 //   ── Fusion API v2.0 (new) ──
-//   POST /1inch/fusion/quote/:chainId          → /fusion/v2.0/{chainId}/quote/receive
-//   POST /1inch/fusion/build/:chainId          → /fusion/v2.0/{chainId}/order/build
-//   POST /1inch/fusion/submit/:chainId         → /fusion/v2.0/{chainId}/order/submit
-//   GET  /1inch/fusion/status/:chainId/:hash   → /fusion/v2.0/{chainId}/order/status/{hash}
-//   GET  /1inch/fusion/active/:chainId         → /fusion/v2.0/{chainId}/order/active
+//   POST /1inch/fusion/quote/:chainId          → /fusion/quoter/v2.0/{chainId}/quote/receive
+//   POST /1inch/fusion/build/:chainId          → /fusion/relayer/v2.0/{chainId}/order/build
+//   POST /1inch/fusion/submit/:chainId         → /fusion/relayer/v2.0/{chainId}/order/submit
+//   GET  /1inch/fusion/status/:chainId/:hash   → /fusion/orders/v2.0/{chainId}/order/status/{hash}
+//   GET  /1inch/fusion/active/:chainId         → /fusion/orders/v2.0/{chainId}/order/active
 //
 //   ── Fusion+ API v1.0 (new) ──
 //   POST /1inch/fusion-plus/quote              → /fusion-plus/v1.0/quote/receive
@@ -62,18 +62,21 @@ const PREFIX = "/make-server-54299934/1inch";
 /**
  * 1inch Developer Portal API base URLs — one per API domain.
  *
- * IMPLEMENTATION NOTE: The 1inch API uses separate base paths for each
- * product. Swap and Fusion include {chainId} in the path; Fusion+ does
- * not (chain IDs are in the request body). Token, Balance, and Price
+ * IMPLEMENTATION NOTE: The 1inch Fusion API uses sub-service paths
+ * (quoter, relayer, orders) between the product name and version.
+ * Swap and Fusion include {chainId} in the path; Fusion+ does not
+ * (chain IDs are in the request body). Token, Balance, and Price
  * APIs include {chainId} in the path.
  */
 const API = {
-  swap:       "https://api.1inch.dev/swap/v6.0",
-  fusion:     "https://api.1inch.dev/fusion/v2.0",
-  fusionPlus: "https://api.1inch.dev/fusion-plus/v1.0",
-  token:      "https://api.1inch.dev/token/v1.2",
-  balance:    "https://api.1inch.dev/balance/v1.2",
-  price:      "https://api.1inch.dev/price/v1.1",
+  swap:           "https://api.1inch.dev/swap/v6.0",
+  fusionQuoter:   "https://api.1inch.dev/fusion/quoter/v2.0",
+  fusionRelayer:  "https://api.1inch.dev/fusion/relayer/v2.0",
+  fusionOrders:   "https://api.1inch.dev/fusion/orders/v2.0",
+  fusionPlus:     "https://api.1inch.dev/fusion-plus/v1.0",
+  token:          "https://api.1inch.dev/token/v1.2",
+  balance:        "https://api.1inch.dev/balance/v1.2",
+  price:          "https://api.1inch.dev/price/v1.1",
 } as const;
 
 /**
@@ -127,7 +130,7 @@ const TAG = "[1inch]";
 
 /* ══════════════════════════════════════════════════════════════════════
  * Validation Helpers
- * ══════════════════════════════════════════════════════════════════════ */
+ * ══════════════════════════════════════���═══════════════════════════════ */
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const NATIVE_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
@@ -349,9 +352,19 @@ function swapUrl(chainId: number, path: string, qs?: string): string {
   return `${API.swap}/${chainId}${path}${qs ? `?${qs}` : ""}`;
 }
 
-/** Build a Fusion API v2.0 URL: /fusion/v2.0/{chainId}/{path}?{query} */
-function fusionUrl(chainId: number, path: string, qs?: string): string {
-  return `${API.fusion}/${chainId}${path}${qs ? `?${qs}` : ""}`;
+/** Build a Fusion Quoter URL: /fusion/quoter/v2.0/{chainId}/{path}?{query} */
+function fusionQuoterUrl(chainId: number, path: string, qs?: string): string {
+  return `${API.fusionQuoter}/${chainId}${path}${qs ? `?${qs}` : ""}`;
+}
+
+/** Build a Fusion Relayer URL: /fusion/relayer/v2.0/{chainId}/{path}?{query} */
+function fusionRelayerUrl(chainId: number, path: string, qs?: string): string {
+  return `${API.fusionRelayer}/${chainId}${path}${qs ? `?${qs}` : ""}`;
+}
+
+/** Build a Fusion Orders URL: /fusion/orders/v2.0/{chainId}/{path}?{query} */
+function fusionOrdersUrl(chainId: number, path: string, qs?: string): string {
+  return `${API.fusionOrders}/${chainId}${path}${qs ? `?${qs}` : ""}`;
 }
 
 /** Build a Fusion+ API v1.0 URL: /fusion-plus/v1.0/{path}?{query} (no chainId) */
@@ -557,7 +570,7 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionUrl(chainId, "/quote/receive"),
+      fusionQuoterUrl(chainId, "/quote/receive"),
       JSON.stringify(body),
     );
     return c.json(resBody, status as any);
@@ -591,7 +604,7 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionUrl(chainId, "/order/build"),
+      fusionRelayerUrl(chainId, "/order/build"),
       JSON.stringify(body),
     );
     return c.json(resBody, status as any);
@@ -631,7 +644,7 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionUrl(chainId, "/order/submit"),
+      fusionRelayerUrl(chainId, "/order/submit"),
       JSON.stringify(body),
       FUSION_SUBMIT_TIMEOUT_MS,
     );
@@ -652,7 +665,7 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body } = await upstreamFetch(
       "GET",
-      fusionUrl(chainId, `/order/status/${orderHash}`),
+      fusionOrdersUrl(chainId, `/order/status/${orderHash}`),
     );
     return c.json(body, status as any);
   });
@@ -674,7 +687,7 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body } = await upstreamFetch(
       "GET",
-      fusionUrl(chainId, "/order/active", params.toString()),
+      fusionOrdersUrl(chainId, "/order/active", params.toString()),
     );
     return c.json(body, status as any);
   });

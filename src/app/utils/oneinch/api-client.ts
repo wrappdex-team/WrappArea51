@@ -532,7 +532,7 @@ export function friendlyErrorMessage(err: unknown): string {
       case "NETWORK_ERROR":
         return "Network error. Check your internet connection.";
       case "ROUTE_NOT_FOUND":
-        return "Fusion endpoint not available — redeploy the server with: supabase functions deploy server";
+        return "Endpoint not found (HTTP 404). The API endpoint may have changed or is unavailable.";
       default:
         return err.details ?? err.message;
     }
