@@ -342,6 +342,8 @@ export interface FusionPresetQuote {
   readonly auctionEndAmount: string;
   /** Estimated fill time in seconds */
   readonly estimatedTime: number;
+  /** Auction duration in seconds (Fusion+ cross-chain quotes) */
+  readonly auctionDuration?: number;
 }
 
 /** Response from POST /fusion/v2.0/{chainId}/quote/receive */
@@ -543,11 +545,11 @@ export interface FusionPlusQuoteResponse {
   readonly dstTokenAmount: string;
   /** Recommended speed preset */
   readonly recommendedPreset: FusionPreset;
-  /** Per-preset estimates */
-  readonly presets: {
-    readonly fast: FusionPresetQuote;
-    readonly medium: FusionPresetQuote;
-    readonly slow: FusionPresetQuote;
+  /** Per-preset estimates (some presets may be absent for certain pairs) */
+  readonly presets?: {
+    readonly fast?: FusionPresetQuote;
+    readonly medium?: FusionPresetQuote;
+    readonly slow?: FusionPresetQuote;
   };
   /** Estimated total time for the cross-chain transfer */
   readonly estimatedTime?: number;

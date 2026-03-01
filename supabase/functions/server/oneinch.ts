@@ -130,7 +130,7 @@ const TAG = "[1inch]";
 
 /* ══════════════════════════════════════════════════════════════════════
  * Validation Helpers
- * ══════════════════════════════════════���═══════════════════════════════ */
+ * ══════════════════════════════════════════════════════════════════════ */
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const NATIVE_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
@@ -138,7 +138,7 @@ const ORDER_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
 /** Validate an Ethereum address (contract or EOA) or the native token sentinel */
 function isValidEthAddress(addr: unknown): addr is string {
-  return typeof addr === "string" && (ETH_ADDRESS_RE.test(addr) || addr === NATIVE_ADDRESS);
+  return typeof addr === "string" && (ETH_ADDRESS_RE.test(addr) || addr.toLowerCase() === NATIVE_ADDRESS.toLowerCase());
 }
 
 /** Validate an Ethereum address strictly (no native sentinel — for wallet addresses) */
@@ -163,7 +163,7 @@ function getApiKey(): string | null {
   return key && key.length > 0 ? key : null;
 }
 
-/* ══════════════════════════════════════════════════════════════════════
+/* ═══════════���══════════════════════════════════════════════════════════
  * Caches — per API domain with appropriate TTLs
  *
  * IMPLEMENTATION NOTE: Caches are in-memory (per-isolate). This is
@@ -566,13 +566,34 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    console.log(`${TAG} Fusion quote: chain=${chainId} src=${body.srcTokenAddress} dst=${body.dstTokenAddress} amt=${body.amount}`);
+    // IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 expects addresses
+    // in lowercase. Normalise before forwarding upstream. Only pass fields
+    // the API explicitly supports to avoid "invalid address" rejections
+    // from unrecognised body fields.
+    const upstreamBody: Record<string, unknown> = {
+      srcTokenAddress: (body.srcTokenAddress as string).toLowerCase(),
+      dstTokenAddress: (body.dstTokenAddress as string).toLowerCase(),
+      amount: body.amount,
+      walletAddress: (body.walletAddress as string).toLowerCase(),
+    };
+    // Optional fields — only include if provided
+    if (body.permit) upstreamBody.permit = body.permit;
+    if (typeof body.fee === "number") upstreamBody.fee = body.fee;
+    if (body.source) upstreamBody.source = body.source;
+    if (typeof body.enableEstimate === "boolean") upstreamBody.enableEstimate = body.enableEstimate;
+    if (body.isPermit2) upstreamBody.isPermit2 = body.isPermit2;
+
+    const upstreamUrl = fusionQuoterUrl(chainId, "/quote/receive");
+    console.log(`${TAG} Fusion quote: chain=${chainId} src=${upstreamBody.srcTokenAddress} dst=${upstreamBody.dstTokenAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionQuoterUrl(chainId, "/quote/receive"),
-      JSON.stringify(body),
+      upstreamUrl,
+      JSON.stringify(upstreamBody),
     );
+    if (status !== 200) {
+      console.log(`${TAG} Fusion quote upstream error: status=${status} body=${JSON.stringify(resBody).slice(0, 500)}`);
+    }
     return c.json(resBody, status as any);
   });
 
@@ -730,13 +751,30 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    console.log(`${TAG} Fusion+ quote: ${srcChainId}→${dstChainId} src=${body.srcTokenAddress} dst=${body.dstTokenAddress} amt=${body.amount}`);
+    // IMPLEMENTATION NOTE: Lowercase all addresses before forwarding upstream
+    // (same defensive measure as the Fusion quote route).
+    const upstreamBody: Record<string, unknown> = {
+      srcChainId,
+      dstChainId,
+      srcTokenAddress: (body.srcTokenAddress as string).toLowerCase(),
+      dstTokenAddress: (body.dstTokenAddress as string).toLowerCase(),
+      amount: body.amount,
+      walletAddress: (body.walletAddress as string).toLowerCase(),
+    };
+    if (typeof body.enableEstimate === "boolean") upstreamBody.enableEstimate = body.enableEstimate;
+    if (typeof body.fee === "number") upstreamBody.fee = body.fee;
+
+    const upstreamUrl = fusionPlusUrl("/quote/receive");
+    console.log(`${TAG} Fusion+ quote: ${srcChainId}→${dstChainId} src=${upstreamBody.srcTokenAddress} dst=${upstreamBody.dstTokenAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionPlusUrl("/quote/receive"),
-      JSON.stringify(body),
+      upstreamUrl,
+      JSON.stringify(upstreamBody),
     );
+    if (status !== 200) {
+      console.log(`${TAG} Fusion+ quote upstream error: status=${status} body=${JSON.stringify(resBody).slice(0, 500)}`);
+    }
     return c.json(resBody, status as any);
   });
 

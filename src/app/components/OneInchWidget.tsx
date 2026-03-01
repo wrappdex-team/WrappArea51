@@ -93,6 +93,19 @@ import {
 } from "../utils/oneinch/fusion";
 import type { ParsedFusionQuote, ParsedPreset, FusionSignedOrder } from "../utils/oneinch/fusion";
 import type { FusionOrderStatus, FusionOrderStatusResponse } from "../utils/oneinch/types";
+import {
+  getCrossChainQuote,
+  isFusionPlusSupported,
+  getDestinationChains,
+  formatCrossChainRoute,
+  formatEstimatedTime,
+  formatCrossChainAmount,
+  CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS,
+} from "../utils/oneinch/fusion-plus";
+import type { ParsedCrossChainQuote } from "../utils/oneinch/fusion-plus";
+import {
+  getChainById as getModuleChainById,
+} from "../utils/oneinch/chains";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -296,12 +309,12 @@ export function OneInchWidget() {
   const [fromPriceUsd, setFromPriceUsd] = useState<number | null>(null);
   const [toPriceUsd, setToPriceUsd] = useState<number | null>(null);
 
-  // ── Swap mode: "classic" (on-chain) vs "fusion" (gasless) vs "limit" (coming soon) ──
-  type WidgetSwapMode = "classic" | "fusion" | "limit";
+  // ── Swap mode: "classic" | "fusion" | "limit" | "crossChain" ──
+  type WidgetSwapMode = "classic" | "fusion" | "limit" | "crossChain";
   const [swapMode, setSwapMode] = useState<WidgetSwapMode>(() => {
     try {
       const saved = localStorage.getItem("wrappdex:1inch:swap-mode");
-      if (saved === "classic" || saved === "fusion") return saved;
+      if (saved === "classic" || saved === "fusion" || saved === "crossChain") return saved;
     } catch {}
     return "fusion";
   });
@@ -322,9 +335,29 @@ export function OneInchWidget() {
   const fusionRefreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const fusionCountdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Cross-chain (Fusion+) state (Step 10) ──
+  const [dstChainId, setDstChainId] = useState<number>(42161); // Arbitrum default
+  const [showDstChainMenu, setShowDstChainMenu] = useState(false);
+  const [crossChainQuote, setCrossChainQuote] = useState<ParsedCrossChainQuote | null>(null);
+  const [crossChainQuoteLoading, setCrossChainQuoteLoading] = useState(false);
+  const [crossChainQuoteError, setCrossChainQuoteError] = useState<string | null>(null);
+  const [crossChainCountdown, setCrossChainCountdown] = useState(CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS);
+  const crossChainRefreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const quoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chain = useMemo(() => CHAINS.find(c => c.id === selectedChainId) || CHAINS[0], [selectedChainId]);
   const tokens = useMemo(() => POPULAR_TOKENS[selectedChainId] || POPULAR_TOKENS[1], [selectedChainId]);
+
+  // ── Cross-chain derived state (Step 10) ──
+  const chainSupportsFusionPlus = isFusionPlusSupported(selectedChainId);
+  const dstChain = useMemo(() => getModuleChainById(dstChainId), [dstChainId]);
+  const availableDstChains = useMemo(() => getDestinationChains(selectedChainId), [selectedChainId]);
+  const dstTokens = useMemo(() => POPULAR_TOKENS[dstChainId] || POPULAR_TOKENS[1], [dstChainId]);
+  // In cross-chain mode, destination token is from the destination chain
+  const [crossChainDstToken, setCrossChainDstToken] = useState<TokenInfo>(() => {
+    const dstPop = POPULAR_TOKENS[42161] || POPULAR_TOKENS[1];
+    return dstPop[1] || dstPop[0]; // Default to USDC on Arbitrum
+  });
 
   // Merged token list: popular first, then all fetched tokens (de-duped)
   const mergedTokens = useMemo(() => {
@@ -523,6 +556,8 @@ export function OneInchWidget() {
     setFusionQuote(null);
     setFusionQuoteError(null);
     setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
+    setCrossChainQuote(null);
+    setCrossChainQuoteError(null);
     setSwapStatus("idle");
     setSwapError(null);
     playVipButtonChime();
@@ -552,15 +587,30 @@ export function OneInchWidget() {
   }, [fromToken, toToken, selectedChainId]);
 
   const flipTokens = useCallback(() => {
-    setFromToken(toToken);
-    setToToken(fromToken);
-    setFromAmount(toAmount);
-    setToAmount(fromAmount);
+    if (swapMode === "crossChain") {
+      // In cross-chain mode: swap source ↔ destination chains + tokens
+      const oldSrcChainId = selectedChainId;
+      const oldDstChainId = dstChainId;
+      const oldFromToken = fromToken;
+      const oldDstToken = crossChainDstToken;
+      setSelectedChainId(oldDstChainId);
+      setDstChainId(oldSrcChainId);
+      setFromToken(oldDstToken);
+      setCrossChainDstToken(oldFromToken);
+      setFromAmount(toAmount);
+      setToAmount(fromAmount);
+      setCrossChainQuote(null);
+    } else {
+      setFromToken(toToken);
+      setToToken(fromToken);
+      setFromAmount(toAmount);
+      setToAmount(fromAmount);
+    }
     setLastQuote(null);
     setFusionQuote(null);
     setFromBalance(null);
     playVipButtonChime();
-  }, [fromToken, toToken, fromAmount, toAmount]);
+  }, [fromToken, toToken, fromAmount, toAmount, swapMode, selectedChainId, dstChainId, crossChainDstToken]);
 
   // ── Fetch quote ────────────────────────────────────────────────────
 
@@ -658,7 +708,9 @@ export function OneInchWidget() {
       } else {
         setFusionQuoteError(msg);
       }
-      log.warn("1inch", "Fusion quote error", err);
+      // Log full error details for debugging "invalid address" etc.
+      const errDetail = err?.error?.details ?? err?.details ?? "";
+      log.warn("1inch", `Fusion quote error: ${msg} | detail=${errDetail}`, err);
     }
     setFusionQuoteLoading(false);
   }, [evmAccount, fromToken, toToken, selectedChainId, selectedPreset]);
@@ -713,12 +765,94 @@ export function OneInchWidget() {
     }
   }, [selectedPreset, fusionQuote, toToken.decimals, swapMode]);
 
-  // Reset fusion state when switching modes
+  // ── Cross-chain (Fusion+) quote fetching (Step 10) ──────────────────
+
+  const fetchCrossChainQuote = useCallback(async (amount: string, signal?: AbortSignal) => {
+    if (!amount || parseFloat(amount) <= 0 || !evmAccount) {
+      setCrossChainQuote(null);
+      setCrossChainQuoteError(null);
+      return;
+    }
+    setCrossChainQuoteLoading(true);
+    setCrossChainQuoteError(null);
+    try {
+      const amountWei = toWei(amount, fromToken.decimals);
+      if (amountWei === "0") { setCrossChainQuote(null); setCrossChainQuoteLoading(false); return; }
+
+      const parsed = await getCrossChainQuote(
+        selectedChainId,
+        dstChainId,
+        fromToken.address,
+        crossChainDstToken.address,
+        amountWei,
+        evmAccount,
+        signal,
+      );
+      setCrossChainQuote(parsed);
+      setApiConfigured(true);
+
+      // Update toAmount from recommended preset
+      const activePreset = parsed.presets.find(p => p.preset === selectedPreset) ?? parsed.presets[0];
+      if (activePreset) {
+        setToAmount(formatCrossChainAmount(activePreset.dstAmount, crossChainDstToken.decimals));
+      }
+      setCrossChainCountdown(CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS);
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      const msg = friendlyErrorMessage(err);
+      if (msg.includes("not configured") || msg.includes("API key")) {
+        setApiConfigured(false);
+      } else {
+        setCrossChainQuoteError(msg);
+      }
+      log.warn("1inch", `Cross-chain quote error: ${msg}`, err);
+    }
+    setCrossChainQuoteLoading(false);
+  }, [evmAccount, fromToken, crossChainDstToken, selectedChainId, dstChainId, selectedPreset]);
+
+  // Debounced cross-chain quote
+  useEffect(() => {
+    if (swapMode !== "crossChain" || !chainSupportsFusionPlus) return;
+    if (!fromAmount || parseFloat(fromAmount) <= 0 || !evmAccount) {
+      setCrossChainQuote(null);
+      setCrossChainQuoteError(null);
+      setToAmount("");
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => fetchCrossChainQuote(fromAmount, controller.signal), 800);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [swapMode, chainSupportsFusionPlus, fromAmount, fromToken.address, crossChainDstToken.address, selectedChainId, dstChainId, evmAccount, fetchCrossChainQuote]);
+
+  // Auto-refresh cross-chain quote
+  useEffect(() => {
+    if (crossChainRefreshTimer.current) clearInterval(crossChainRefreshTimer.current);
+    if (swapMode !== "crossChain" || !crossChainQuote || !fromAmount || !evmAccount || swapStatus !== "idle") return;
+    crossChainRefreshTimer.current = setInterval(() => {
+      fetchCrossChainQuote(fromAmount);
+      setCrossChainCountdown(CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS);
+    }, CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS);
+    return () => { if (crossChainRefreshTimer.current) clearInterval(crossChainRefreshTimer.current); };
+  }, [swapMode, crossChainQuote, fromAmount, evmAccount, swapStatus, fetchCrossChainQuote]);
+
+  // Reset state when switching modes
   useEffect(() => {
     if (swapMode === "classic") {
       setFusionQuote(null);
       setFusionQuoteError(null);
       setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
+      setCrossChainQuote(null);
+      setCrossChainQuoteError(null);
+    } else if (swapMode === "fusion") {
+      setLastQuote(null);
+      setQuoteError(null);
+      setCrossChainQuote(null);
+      setCrossChainQuoteError(null);
+    } else if (swapMode === "crossChain") {
+      setLastQuote(null);
+      setQuoteError(null);
+      setFusionQuote(null);
+      setFusionQuoteError(null);
     } else {
       setLastQuote(null);
       setQuoteError(null);
@@ -731,7 +865,22 @@ export function OneInchWidget() {
     if (!chainSupportsFusion && swapMode === "fusion") {
       setSwapMode("classic");
     }
-  }, [chainSupportsFusion, swapMode]);
+    if (!chainSupportsFusionPlus && swapMode === "crossChain") {
+      setSwapMode(chainSupportsFusion ? "fusion" : "classic");
+    }
+  }, [chainSupportsFusion, chainSupportsFusionPlus, swapMode]);
+
+  // When src chain changes in cross-chain mode, ensure dst chain is different
+  useEffect(() => {
+    if (swapMode === "crossChain" && selectedChainId === dstChainId) {
+      const alt = availableDstChains[0];
+      if (alt) {
+        setDstChainId(alt.id);
+        const dstPop = POPULAR_TOKENS[alt.id] || POPULAR_TOKENS[1];
+        setCrossChainDstToken(dstPop[1] || dstPop[0]);
+      }
+    }
+  }, [swapMode, selectedChainId, dstChainId, availableDstChains]);
 
   // ── Execute CLASSIC swap ────────────────────────────────────────────
   const handleClassicSwap = useCallback(async () => {
@@ -947,6 +1096,12 @@ export function OneInchWidget() {
     if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
     if (evmChainId !== selectedChainId) { await switchChain(chain); return; }
 
+    if (swapMode === "crossChain") {
+      // IMPLEMENTATION NOTE: Cross-chain order building & signing will be
+      // implemented in Step 11. For now, show a placeholder message.
+      setSwapError("Cross-chain swaps are not yet enabled — order building comes in Step 11.");
+      return;
+    }
     if (swapMode === "fusion" && fusionQuote) {
       await handleFusionSwap();
     } else {
@@ -977,9 +1132,23 @@ export function OneInchWidget() {
   }, [fusionQuote, fromAmount, toToken.decimals, selectedPreset]);
 
   const isCorrectChain = evmChainId === selectedChainId;
-  const activeRate = swapMode === "fusion" ? fusionRate : rate;
+  // Cross-chain rate calculation (Step 10)
+  const crossChainRate = useMemo(() => {
+    if (!crossChainQuote || !fromAmount) return null;
+    const activePreset = crossChainQuote.presets.find(p => p.preset === selectedPreset) ?? crossChainQuote.presets[0];
+    if (!activePreset) return null;
+    const outStr = formatCrossChainAmount(activePreset.dstAmount, crossChainDstToken.decimals).replace(/,/g, "");
+    const outNum = parseFloat(outStr);
+    const inNum = parseFloat(fromAmount);
+    if (!outNum || !inNum) return null;
+    return outNum / inNum;
+  }, [crossChainQuote, fromAmount, crossChainDstToken.decimals, selectedPreset]);
+
+  const activeRate = swapMode === "fusion" ? fusionRate : swapMode === "crossChain" ? crossChainRate : rate;
+  // Effective output token — in cross-chain mode, use the destination chain token
+  const effectiveToToken = swapMode === "crossChain" ? crossChainDstToken : toToken;
   const canSwap = evmAccount && fromAmount && parseFloat(fromAmount) > 0
-    && ((swapMode === "classic" && lastQuote) || (swapMode === "fusion" && fusionQuote))
+    && ((swapMode === "classic" && lastQuote) || (swapMode === "fusion" && fusionQuote) || (swapMode === "crossChain" && crossChainQuote))
     && apiConfigured !== false && swapStatus === "idle";
 
   // ── Shared props for new OneInchTokenSelector ───────────────────────
@@ -1226,7 +1395,7 @@ export function OneInchWidget() {
         )}
       </AnimatePresence>
 
-      {/* ═══ SWAP MODE TOGGLE — Fusion / Classic / Limit (Step 9) ═══ */}
+      {/* ═══ SWAP MODE TOGGLE — Fusion / Classic / Cross-Chain / Limit (Step 10) ═══ */}
       {chainSupportsFusion && (
         <div className="mb-3">
           <div className={`flex items-center gap-1 p-1 rounded-xl ${inputClass}`}>
@@ -1263,6 +1432,28 @@ export function OneInchWidget() {
               <Fuel className="w-3 h-3" />
               Classic
             </button>
+            {chainSupportsFusionPlus && (
+              <button
+                onClick={() => { updateSwapMode("crossChain"); playVipButtonChime(); }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                  swapMode === "crossChain"
+                    ? "bg-gradient-to-r from-cyan-600 to-blue-500 text-white shadow-lg shadow-cyan-500/20"
+                    : isDark
+                      ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                <Globe className="w-3 h-3" />
+                Cross
+                <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
+                  swapMode === "crossChain"
+                    ? "bg-white/20 text-white"
+                    : isDark ? "bg-cyan-500/10 text-cyan-400" : "bg-cyan-50 text-cyan-600"
+                }`}>
+                  F+
+                </span>
+              </button>
+            )}
             <button
               disabled
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-not-allowed ${
@@ -1329,6 +1520,149 @@ export function OneInchWidget() {
           </AnimatePresence>
         </div>
       )}
+
+      {/* ═══ CROSS-CHAIN: DESTINATION CHAIN SELECTOR + ROUTE (Step 10) ═══ */}
+      <AnimatePresence>
+        {swapMode === "crossChain" && chainSupportsFusionPlus && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="mb-3"
+          >
+            {/* Source → Destination chain selectors */}
+            <div className={`rounded-xl p-3 ${inputClass}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <Globe className={`w-3.5 h-3.5 ${isDark ? "text-cyan-400" : "text-cyan-600"}`} />
+                <span className={`text-xs font-bold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>
+                  Cross-Chain Route
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Source chain (read-only — same as main chain selector) */}
+                <div className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg ${
+                  isDark ? "bg-slate-700/40 border border-slate-600/30" : "bg-gray-100 border border-gray-200"
+                }`}>
+                  <span className="text-sm">{chain.icon}</span>
+                  <span className={`text-xs font-bold ${isDark ? "text-slate-200" : "text-gray-700"}`}>
+                    {chain.name}
+                  </span>
+                </div>
+
+                {/* Arrow */}
+                <div className={`flex items-center justify-center ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>
+                  <ArrowRight className="w-4 h-4" />
+                </div>
+
+                {/* Destination chain selector */}
+                <div className="flex-1 relative">
+                  <button
+                    onClick={() => setShowDstChainMenu(!showDstChainMenu)}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
+                      isDark
+                        ? "bg-cyan-900/20 border border-cyan-500/20 hover:border-cyan-500/40 text-slate-200"
+                        : "bg-cyan-50 border border-cyan-200 hover:border-cyan-300 text-gray-700"
+                    }`}
+                  >
+                    <span className="text-sm">{dstChain?.icon ?? "?"}</span>
+                    <span className="text-xs font-bold flex-1 text-left">{dstChain?.name ?? "Select"}</span>
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+
+                  {/* Destination chain dropdown */}
+                  <AnimatePresence>
+                    {showDstChainMenu && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        className={`absolute top-full left-0 right-0 mt-1 z-50 rounded-xl shadow-2xl overflow-hidden ${
+                          isDark ? "bg-slate-800 border border-slate-700" : "bg-white border border-gray-200"
+                        }`}
+                      >
+                        {availableDstChains.map(c => (
+                          <button
+                            key={c.id}
+                            onClick={() => {
+                              setDstChainId(c.id);
+                              setShowDstChainMenu(false);
+                              const dstPop = POPULAR_TOKENS[c.id] || POPULAR_TOKENS[1];
+                              setCrossChainDstToken(dstPop[1] || dstPop[0]);
+                              setToAmount("");
+                              setCrossChainQuote(null);
+                              playVipButtonChime();
+                            }}
+                            className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-bold transition-all ${
+                              c.id === dstChainId
+                                ? isDark
+                                  ? "bg-cyan-900/30 text-cyan-300"
+                                  : "bg-cyan-50 text-cyan-700"
+                                : isDark
+                                  ? "text-slate-300 hover:bg-slate-700/50"
+                                  : "text-gray-600 hover:bg-gray-50"
+                            }`}
+                          >
+                            <span className="text-sm">{c.icon}</span>
+                            {c.name}
+                            {c.id === dstChainId && <CheckCircle2 className="w-3 h-3 ml-auto" />}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+
+              {/* Route description */}
+              <div className={`flex items-center justify-center gap-1.5 mt-2 py-1.5 rounded-lg text-[10px] font-bold ${
+                isDark
+                  ? "bg-cyan-900/10 text-cyan-400/80 border border-cyan-500/10"
+                  : "bg-cyan-50/60 text-cyan-600/80 border border-cyan-200/40"
+              }`}>
+                <Sparkles className="w-3 h-3" />
+                {formatCrossChainRoute(
+                  fromToken.symbol,
+                  chain.name,
+                  crossChainDstToken.symbol,
+                  dstChain?.name ?? "?"
+                )}
+              </div>
+
+              {/* Cross-chain quote status */}
+              {crossChainQuote && (
+                <div className={`flex items-center justify-between mt-2 text-[10px] ${
+                  isDark ? "text-slate-400" : "text-gray-500"
+                }`}>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5" />
+                    Est. time: {formatEstimatedTime(crossChainQuote.estimatedTimeSeconds)}
+                  </span>
+                  {crossChainQuote.fees.protocolFee && (
+                    <span>Protocol fee: {crossChainQuote.fees.protocolFee}</span>
+                  )}
+                </div>
+              )}
+              {crossChainQuoteError && (
+                <div className={`flex items-center gap-1.5 mt-2 text-[10px] ${
+                  isDark ? "text-red-400" : "text-red-600"
+                }`}>
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  <span>{crossChainQuoteError}</span>
+                </div>
+              )}
+              {crossChainQuoteLoading && (
+                <div className={`flex items-center justify-center gap-1.5 mt-2 text-[10px] ${
+                  isDark ? "text-cyan-400" : "text-cyan-600"
+                }`}>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Finding cross-chain resolvers...
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ═══ INPUT TOKEN ═══ */}
       <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
@@ -1425,20 +1759,22 @@ export function OneInchWidget() {
       {/* ═══ OUTPUT TOKEN ═══ */}
       <div className={`rounded-xl p-4 mt-2 ${inputClass}`}>
         <div className="flex items-center justify-between mb-2">
-          <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Receive</span>
+          <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+            You Receive{swapMode === "crossChain" && dstChain ? ` (on ${dstChain.name})` : ""}
+          </span>
           {activeRate && (
             <span className={`text-xs flex items-center gap-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              1 {fromToken.symbol} = {activeRate >= 1 ? activeRate.toFixed(4) : activeRate.toFixed(8)} {toToken.symbol}
+              1 {fromToken.symbol} = {activeRate >= 1 ? activeRate.toFixed(4) : activeRate.toFixed(8)} {effectiveToToken.symbol}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className={`flex-1 text-2xl min-w-0 ${(quoteLoading || fusionQuoteLoading) ? "animate-pulse" : ""} ${!toAmount ? (isDark ? "text-slate-600" : "text-gray-300") : ""}`}>
-            {(quoteLoading || fusionQuoteLoading) ? (
+          <div className={`flex-1 text-2xl min-w-0 ${(quoteLoading || fusionQuoteLoading || crossChainQuoteLoading) ? "animate-pulse" : ""} ${!toAmount ? (isDark ? "text-slate-600" : "text-gray-300") : ""}`}>
+            {(quoteLoading || fusionQuoteLoading || crossChainQuoteLoading) ? (
               <span className="flex items-center gap-2">
-                <Loader2 className="w-5 h-5 animate-spin text-pink-400" />
+                <Loader2 className={`w-5 h-5 animate-spin ${swapMode === "crossChain" ? "text-cyan-400" : "text-pink-400"}`} />
                 <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-400"}`}>
-                  {swapMode === "fusion" ? "Finding resolvers..." : "Routing..."}
+                  {swapMode === "crossChain" ? "Cross-chain routing..." : swapMode === "fusion" ? "Finding resolvers..." : "Routing..."}
                 </span>
               </span>
             ) : toAmount || "0.0"}
@@ -1448,32 +1784,46 @@ export function OneInchWidget() {
               className={`flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap transition-all ${
                 isDark ? "bg-slate-700/60 hover:bg-slate-600/80" : "bg-gray-200 hover:bg-gray-300"
               }`}>
-              {toToken.logoURI ? (
-                <img src={toToken.logoURI} alt={toToken.symbol} className="w-6 h-6 rounded-full shrink-0"
+              {effectiveToToken.logoURI ? (
+                <img src={effectiveToToken.logoURI} alt={effectiveToToken.symbol} className="w-6 h-6 rounded-full shrink-0"
                   onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
               ) : (
-                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 shrink-0" />
+                <div className={`w-6 h-6 rounded-full shrink-0 ${swapMode === "crossChain" ? "bg-gradient-to-br from-cyan-500 to-blue-500" : "bg-gradient-to-br from-pink-500 to-purple-500"}`} />
               )}
-              <span className="font-bold text-sm">{toToken.symbol}</span>
+              <span className="font-bold text-sm">{effectiveToToken.symbol}</span>
+              {swapMode === "crossChain" && dstChain && (
+                <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${isDark ? "bg-cyan-900/30 text-cyan-400" : "bg-cyan-50 text-cyan-600"}`}>{dstChain?.name ?? "?"}</span>
+              )}
               <ChevronDown className={`w-4 h-4 shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`} />
             </button>
             {showToSelector && (
               <OneInchTokenSelector
                 isOpen={showToSelector}
                 onClose={() => { setShowToSelector(false); setTokenSearch(""); }}
-                onSelect={t => handleSelectToken(t, false)}
-                excludeAddress={fromToken.address}
-                chainId={selectedChainId}
-                allTokens={mergedTokens}
-                enrichedTokens={enrichedTokens}
-                isLoading={tokensLoading}
+                onSelect={t => {
+                  if (swapMode === "crossChain") {
+                    setCrossChainDstToken(t);
+                    setShowToSelector(false);
+                    setTokenSearch("");
+                    setCrossChainQuote(null);
+                    setToAmount("");
+                    playVipButtonChime();
+                  } else {
+                    handleSelectToken(t, false);
+                  }
+                }}
+                excludeAddress={swapMode === "crossChain" ? "" : fromToken.address}
+                chainId={swapMode === "crossChain" ? dstChainId : selectedChainId}
+                allTokens={swapMode === "crossChain" ? dstTokens : mergedTokens}
+                enrichedTokens={swapMode === "crossChain" ? [] : enrichedTokens}
+                isLoading={false}
               />
             )}
           </div>
         </div>
         <div className={`flex items-center justify-between mt-1`}>
           <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-            {chain.name} network
+            {swapMode === "crossChain" ? `${dstChain?.name ?? "?"} network` : `${chain.name} network`}
           </span>
           {toAmount && parseFloat(toAmount.replace(/,/g, "")) > 0 && toPriceUsd !== null && toPriceUsd > 0 && (
             <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
@@ -1485,7 +1835,7 @@ export function OneInchWidget() {
 
       {/* Quote Error (classic or fusion) */}
       <AnimatePresence>
-        {(quoteError || fusionQuoteError) && (
+        {(quoteError || fusionQuoteError || crossChainQuoteError) && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -1495,7 +1845,7 @@ export function OneInchWidget() {
             }`}
           >
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="break-all">{quoteError || fusionQuoteError}</span>
+            <span className="break-all">{quoteError || fusionQuoteError || crossChainQuoteError}</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1907,22 +2257,30 @@ export function OneInchWidget() {
             className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
               !canSwap
                 ? isDark ? "bg-slate-700 text-slate-500 shadow-none cursor-not-allowed" : "bg-gray-300 text-gray-500 shadow-none cursor-not-allowed"
-                : swapMode === "fusion"
-                  ? "bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-emerald-500/30"
-                  : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
+                : swapMode === "crossChain"
+                  ? "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 shadow-cyan-500/30"
+                  : swapMode === "fusion"
+                    ? "bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-emerald-500/30"
+                    : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
             }`}
           >
             {!fromAmount || parseFloat(fromAmount) <= 0
               ? "Enter an amount"
-              : swapMode === "fusion" && !evmAccount
-                ? "Connect wallet for Fusion"
-                : swapMode === "fusion" && !fusionQuote
-                  ? fusionQuoteLoading ? "Finding resolvers..." : "Enter amount for quote"
-                  : swapMode === "classic" && !lastQuote
-                    ? "Fetching quote..."
-                    : swapMode === "fusion"
-                      ? `⚡ Gasless Swap ${fromToken.symbol} → ${toToken.symbol}`
-                      : `Swap ${fromToken.symbol} → ${toToken.symbol}`
+              : swapMode === "crossChain" && !evmAccount
+                ? "Connect wallet for Cross-Chain"
+                : swapMode === "crossChain" && !crossChainQuote
+                  ? crossChainQuoteLoading ? "Finding cross-chain resolvers..." : "Enter amount for quote"
+                  : swapMode === "fusion" && !evmAccount
+                    ? "Connect wallet for Fusion"
+                    : swapMode === "fusion" && !fusionQuote
+                      ? fusionQuoteLoading ? "Finding resolvers..." : "Enter amount for quote"
+                      : swapMode === "classic" && !lastQuote
+                        ? "Fetching quote..."
+                        : swapMode === "crossChain"
+                          ? `🌐 Cross-Chain ${fromToken.symbol} → ${effectiveToToken.symbol}`
+                          : swapMode === "fusion"
+                            ? `⚡ Gasless Swap ${fromToken.symbol} → ${toToken.symbol}`
+                            : `Swap ${fromToken.symbol} → ${toToken.symbol}`
             }
           </motion.button>
         )}
@@ -1938,7 +2296,7 @@ export function OneInchWidget() {
                 : "bg-emerald-50 text-emerald-700 border border-emerald-200"
             }`}>
               <Zap className="w-2.5 h-2.5" />
-              1inch {swapMode === "fusion" ? "Fusion" : swapMode === "limit" ? "Limit" : "Classic"} · {chain.name}
+              1inch {swapMode === "crossChain" ? "Fusion+" : swapMode === "fusion" ? "Fusion" : swapMode === "limit" ? "Limit" : "Classic"} · {swapMode === "crossChain" ? `${chain.name} → ${dstChain?.name ?? "?"}` : chain.name}
             </span>
             <span className="flex items-center gap-1">
               <span className={`font-mono text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>

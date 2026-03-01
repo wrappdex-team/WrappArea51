@@ -194,3 +194,29 @@ export {
   FUSION_STATUS_ICONS,
   FUSION_STATUS_PROGRESS,
 } from "./fusion";
+
+// ── Fusion+ v1.0 — Cross-Chain Swaps ──
+export type { ParsedCrossChainQuote, ParsedCrossChainPreset } from "./fusion-plus";
+export {
+  getCrossChainQuote,
+  isFusionPlusSupported,
+  getFusionPlusChainIds,
+  getDestinationChains,
+  isCrossChainTerminalStatus,
+  isCrossChainSuccessStatus,
+  formatCrossChainRoute,
+  formatEstimatedTime,
+  formatCrossChainAmount,
+  persistCrossChainOrderHash,
+  loadPersistedCrossChainOrders,
+  CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS,
+  CROSS_CHAIN_POLL_INTERVAL_MS,
+  CROSS_CHAIN_POLL_MAX_DURATION_MS,
+  CROSS_CHAIN_PRESET_LABELS,
+  CROSS_CHAIN_PRESET_TIMES,
+  CROSS_CHAIN_PRESET_ICONS,
+  CROSS_CHAIN_PRESET_DESCRIPTIONS,
+  CROSS_CHAIN_STATUS_LABELS,
+  CROSS_CHAIN_STATUS_ICONS,
+  CROSS_CHAIN_STATUS_PROGRESS,
+} from "./fusion-plus";

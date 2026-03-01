@@ -54,7 +54,7 @@ const QUOTE_CACHE_TTL_MS = 10_000;
  * silently replace it with the wrapped ERC-20 equivalent (WETH, WPOL,
  * WBNB, etc.) before sending the quote/build request. The UI still
  * shows "ETH" — the resolver handles wrapping internally.
- * ══════════════════════════════════════════════════════════════════════ */
+ * ═════════════════════════════���════════════════════════════════════════ */
 
 const WRAPPED_NATIVE_BY_CHAIN: Record<number, string> = {
   1:     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH (Ethereum)
@@ -267,7 +267,7 @@ export async function getFusionQuote(
 
   const cacheKey = `fusion-quote:${chainId}:${srcTokenAddress}:${dstTokenAddress}:${amount}`;
 
-  log.info(TAG, `Requesting Fusion quote: chain=${chainId} ${srcTokenAddress} -> ${dstTokenAddress} amount=${amount}`);
+  log.info(TAG, `Requesting Fusion quote: chain=${chainId} src=${body.srcTokenAddress} dst=${body.dstTokenAddress} wallet=${walletAddress} amount=${amount}`);
 
   const res = await oneInchApi.post<FusionQuoteResponse>(
     `/fusion/quote/${chainId}`,
@@ -559,7 +559,7 @@ export async function buildAndSignFusionOrder(
  * to the 1inch Fusion resolvers. The resolvers execute the on-chain
  * swap and pay gas themselves. We poll the status of the order to
  * determine when it is filled, expired, or failed.
- * ═══��══════════════════════════════════════════════════════════════════ */
+ * ═════════════════════════════════════════════════════════════════════ */
 
 /**
  * Submit a signed Fusion order to the resolvers.
