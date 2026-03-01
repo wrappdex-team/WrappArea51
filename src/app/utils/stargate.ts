@@ -1,3 +1,6 @@
+// IMPLEMENTATION NOTE: Legacy module — replaced by stargate-vt.ts using the
+// LayerZero Value Transfer API. Kept for reference only. Do not import.
+
 /**
  * Stargate V2 — On-chain bridge integration via LayerZero.
  *

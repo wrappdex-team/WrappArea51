@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Zap, Shield, Globe } from "lucide-react";
+import { Zap, Shield, Globe, Lock } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { SquidBridgeWidget } from "./SquidBridgeWidget";
 import { HashPortBridgeWidget } from "./HashPortBridgeWidget";
@@ -8,6 +8,8 @@ import { StargateBridgeWidget } from "./StargateBridgeWidget";
 // ── Official brand logos ──
 import { BUCKET_LOGOS } from "../assets/brand";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
+import { useWallet } from "../contexts/WalletContext";
+import { isDAOAdmin } from "../utils/dao";
 
 type ActiveBridge = null | "squid" | "hashport" | "stargate";
 
@@ -92,8 +94,16 @@ export function Bridges() {
   const { isDark } = useTheme();
   const partnerLogos = usePartneredLogos();
   const [activeBridge, setActiveBridge] = useState<ActiveBridge>(null);
+  const { hashPackSession } = useWallet();
+
+  // IMPLEMENTATION NOTE: Stargate is admin-locked pending gas fee review
+  // and sandbox configuration audit (20-step plan). Only DAO admins can access.
+  const accountId = hashPackSession?.accountId ?? "";
+  const isAdmin = accountId ? isDAOAdmin(accountId) : false;
 
   const handleBridgeToggle = (id: "squid" | "hashport" | "stargate") => {
+    // Block non-admins from opening Stargate
+    if (id === "stargate" && !isAdmin) return;
     setActiveBridge((prev) => (prev === id ? null : id));
   };
 
@@ -179,8 +189,27 @@ export function Bridges() {
                   ? `border-t ${isActive ? accent.borderActive : "border-white/[0.04] text-slate-500 group-hover:text-slate-300"}`
                   : `border-t ${isActive ? accent.borderActiveLight : "border-gray-100 text-gray-400 group-hover:text-gray-600"}`
               }`}>
-                {isActive ? "Click to Close" : "Click to Open Bridge"}
+                {bridge.id === "stargate" && !isAdmin
+                  ? "\u{1F512} Admin Only \u2014 Under Review"
+                  : isActive ? "Click to Close" : "Click to Open Bridge"}
               </div>
+
+              {/* IMPLEMENTATION NOTE: Admin-lock overlay for Stargate (non-admins) */}
+              {bridge.id === "stargate" && !isAdmin && (
+                <div className={`absolute inset-0 rounded-2xl flex flex-col items-center justify-center z-10 backdrop-blur-[2px] cursor-not-allowed ${
+                  isDark
+                    ? "bg-slate-950/60"
+                    : "bg-white/60"
+                }`}>
+                  <Lock className={`w-6 h-6 mb-2 ${isDark ? "text-amber-400/70" : "text-amber-600/70"}`} />
+                  <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? "text-amber-400/80" : "text-amber-700/80"}`}>
+                    Under Maintenance
+                  </span>
+                  <span className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    Admin access only
+                  </span>
+                </div>
+              )}
             </button>
           );
         })}
@@ -206,6 +235,7 @@ export function Bridges() {
               <StargateBridgeWidget
                 onClose={() => setActiveBridge(null)}
                 isDark={isDark}
+                isAdmin={isAdmin}
               />
             )}
           </div>
