@@ -260,52 +260,118 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * Parse a raw FusionPresetQuote into a display-ready ParsedPreset.
+ * Parse a raw preset from 1inch Fusion Quoter v2.0 into a display-ready ParsedPreset.
+ *
+ * IMPLEMENTATION NOTE: The actual v2.0 API response uses different field names than
+ * our original type definitions (based on early/unofficial docs):
+ *   - `startAmount`      (actual) vs `dstAmount`      (our type)
+ *   - `auctionDuration`  (actual) vs `estimatedTime`  (our type)
+ *
+ * This parser handles BOTH naming conventions for forward + backward compatibility.
  */
 function parsePreset(
-  raw: FusionPresetQuote | undefined,
+  raw: Record<string, unknown> | undefined,
   presetName: FusionPreset,
   recommended: FusionPreset,
 ): ParsedPreset | null {
   if (!raw) return null;
-  const estimatedTime = raw.estimatedTime ?? PRESET_ESTIMATED_TIMES[presetName];
+  // v2.0 actual: auctionDuration | Our old type: estimatedTime | Fallback: hardcoded per-tier
+  const estimatedTime =
+    (typeof raw.auctionDuration === "number" ? raw.auctionDuration : null) ??
+    (typeof raw.estimatedTime === "number" ? raw.estimatedTime : null) ??
+    PRESET_ESTIMATED_TIMES[presetName];
+  // v2.0 actual: startAmount | Also accept: auctionStartAmount | Our old type: dstAmount
+  const dstAmount =
+    (typeof raw.startAmount === "string" ? raw.startAmount : null) ??
+    (typeof raw.auctionStartAmount === "string" ? raw.auctionStartAmount : null) ??
+    (typeof raw.dstAmount === "string" ? raw.dstAmount : null) ??
+    "0";
+  const auctionStartAmount =
+    (typeof raw.auctionStartAmount === "string" ? raw.auctionStartAmount : null) ?? dstAmount;
+  const auctionEndAmount =
+    (typeof raw.auctionEndAmount === "string" ? raw.auctionEndAmount : null) ?? "0";
+
   return {
     preset: presetName,
-    dstAmount: raw.dstAmount,
+    dstAmount,
     estimatedTime,
     timeLabel: formatDuration(estimatedTime),
-    auctionStartAmount: raw.auctionStartAmount,
-    auctionEndAmount: raw.auctionEndAmount,
+    auctionStartAmount,
+    auctionEndAmount,
     isRecommended: presetName === recommended,
   };
 }
 
 /**
  * Parse the full API response into a ParsedFusionQuote.
+ *
+ * IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 response uses field names
+ * that differ from our original type definitions:
+ *   - `recommended_preset` (actual, snake_case) vs `recommendedPreset` (our type, camelCase)
+ *   - `fromTokenAmount`    (actual) vs `srcTokenAmount` (our type)
+ *   - `volume.usd`         (actual: { fromToken, toToken } object) vs (our type: string)
+ *
+ * This parser handles BOTH naming conventions to ensure compatibility regardless
+ * of which version of the API responds.
  */
 function parseQuoteResponse(res: FusionQuoteResponse): ParsedFusionQuote {
-  const recommended = res.recommendedPreset || "medium";
-  const presets: ParsedPreset[] = [];
+  // Cast to any for accessing actual v2.0 field names alongside our typed ones
+  const raw = res as unknown as Record<string, unknown>;
 
-  for (const tier of ["fast", "medium", "slow"] as const) {
-    const parsed = parsePreset(res.presets?.[tier], tier, recommended);
-    if (parsed) presets.push(parsed);
+  // v2.0 actual: recommended_preset (snake_case) | Our type: recommendedPreset (camelCase)
+  const recommended: FusionPreset =
+    (typeof raw.recommended_preset === "string" ? raw.recommended_preset as FusionPreset : null) ??
+    (typeof raw.recommendedPreset === "string" ? raw.recommendedPreset as FusionPreset : null) ??
+    "medium";
+
+  const presets: ParsedPreset[] = [];
+  const presetsObj = raw.presets as Record<string, Record<string, unknown>> | undefined;
+
+  if (presetsObj) {
+    for (const tier of ["fast", "medium", "slow"] as const) {
+      const parsed = parsePreset(presetsObj[tier], tier, recommended);
+      if (parsed) presets.push(parsed);
+    }
+    // If the API returned a custom preset, include it too
+    if (presetsObj.custom) {
+      const parsed = parsePreset(presetsObj.custom, "custom", recommended);
+      if (parsed) presets.push(parsed);
+    }
   }
-  // If the API returned a custom preset, include it too
-  if (res.presets?.custom) {
-    const parsed = parsePreset(res.presets.custom, "custom", recommended);
-    if (parsed) presets.push(parsed);
+
+  // v2.0 actual: fromTokenAmount | Our type: srcTokenAmount
+  const srcTokenAmount =
+    (typeof raw.fromTokenAmount === "string" ? raw.fromTokenAmount : null) ??
+    (typeof raw.srcTokenAmount === "string" ? raw.srcTokenAmount : null) ??
+    "";
+
+  // v2.0 actual: volume.usd is { fromToken: string, toToken: string }
+  // Our old type: volume.usd is a string
+  let volumeUsd: number | null = null;
+  if (raw.volume && typeof raw.volume === "object") {
+    const vol = (raw.volume as Record<string, unknown>).usd;
+    if (typeof vol === "string") {
+      volumeUsd = parseFloat(vol);
+    } else if (vol && typeof vol === "object") {
+      const volObj = vol as Record<string, string>;
+      // Use fromToken USD volume as the trade volume
+      const fromVal = volObj.fromToken ?? volObj.toToken;
+      if (fromVal) volumeUsd = parseFloat(fromVal);
+    }
   }
+
+  // v2.0 response has gasCost in presets, not top-level estimatedGas
+  const estimatedGas = typeof raw.estimatedGas === "number" ? raw.estimatedGas : null;
 
   const now = Date.now();
   return {
     raw: res,
-    quoteId: res.quoteId,
-    srcTokenAmount: res.srcTokenAmount,
+    quoteId: res.quoteId ?? (raw.quoteId as string) ?? "",
+    srcTokenAmount,
     recommendedPreset: recommended,
     presets,
-    estimatedGasSaved: res.estimatedGas ?? null,
-    volumeUsd: res.volume?.usd ? parseFloat(res.volume.usd) : null,
+    estimatedGasSaved: estimatedGas,
+    volumeUsd,
     fetchedAt: now,
     get isFresh() { return Date.now() - now < FUSION_QUOTE_REFRESH_INTERVAL_MS; },
   };
@@ -408,9 +474,13 @@ export async function getFusionQuote(
     { signal },
   );
 
-  if (!res.quoteId || !res.presets) {
-    log.warn(TAG, "Fusion quote response missing quoteId or presets", res);
-    throw new Error("Invalid Fusion quote response — missing quoteId or presets");
+  // IMPLEMENTATION NOTE: The v2.0 docs show quoteId can be null for some
+  // quote responses (e.g., when no resolver is available). We should only
+  // fail hard if presets are completely missing — a null quoteId is acceptable
+  // at the quote stage (it becomes required only for order/build).
+  if (!res.presets) {
+    log.warn(TAG, "Fusion quote response missing presets — full response:", JSON.stringify(res).slice(0, 500));
+    throw new Error("Invalid Fusion quote response — missing presets");
   }
 
   const parsed = parseQuoteResponse(res);

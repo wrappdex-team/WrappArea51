@@ -1,0 +1,81 @@
+[
+  {
+    "deployment_id": "ehmlclowiedoqncymegi_f676aa6c-3cef-4cee-8aee-bd697fecdc4d_214",
+    "execution_id": "4c1e1eda-08b5-4ba2-bb0e-7be8e1dd96a3",
+    "execution_time_ms": 1120,
+    "function_id": "f676aa6c-3cef-4cee-8aee-bd697fecdc4d",
+    "project_ref": "ehmlclowiedoqncymegi",
+    "request": [
+      {
+        "headers": [
+          {
+            "accept": "application/json",
+            "accept_encoding": "gzip, br",
+            "connection": "Keep-Alive",
+            "content_length": null,
+            "cookie": null,
+            "host": "ehmlclowiedoqncymegi.supabase.co",
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            "x_client_info": null
+          }
+        ],
+        "host": "ehmlclowiedoqncymegi.supabase.co",
+        "method": "GET",
+        "pathname": "/functions/v1/make-server-54299934/saucerswap/pools",
+        "port": null,
+        "protocol": "https:",
+        "sb": [
+          {
+            "apikey": [],
+            "auth_user": null,
+            "jwt": [
+              {
+                "apikey": [],
+                "authorization": [
+                  {
+                    "invalid": null,
+                    "payload": [
+                      {
+                        "algorithm": "HS256",
+                        "expires_at": 2086325621,
+                        "issuer": "supabase",
+                        "key_id": null,
+                        "role": "anon",
+                        "session_id": null,
+                        "signature_prefix": "kF3oej",
+                        "subject": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "search": null,
+        "url": "https://ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/saucerswap/pools"
+      }
+    ],
+    "response": [
+      {
+        "headers": [
+          {
+            "content_length": "4199",
+            "content_type": "application/json; charset=UTF-8",
+            "date": "Mon, 02 Mar 2026 17:24:44 GMT",
+            "sb_request_id": "019caf94-b247-7bcd-970f-8b94dc10f843",
+            "server": "cloudflare",
+            "vary": "Accept-Encoding",
+            "x_envoy_upstream_service_time": null,
+            "x_sb_compute_multiplier": null,
+            "x_sb_edge_region": "ca-central-1",
+            "x_sb_resource_multiplier": null,
+            "x_served_by": "supabase-edge-runtime"
+          }
+        ],
+        "status_code": 200
+      }
+    ],
+    "version": "214"
+  }
+]

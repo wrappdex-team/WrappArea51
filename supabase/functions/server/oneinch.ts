@@ -1089,7 +1089,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-02",
+      serverBuild: "2026-03-02b",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)

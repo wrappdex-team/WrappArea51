@@ -1,0 +1,136 @@
+Language: JSON
+
+```json
+{
+  "quoteId": null,
+  "fromTokenAmount": "string",
+  "toTokenAmount": "string",
+  "feeToken": null,
+  "fee": {
+    "receiver": "string",
+    "bps": 0,
+    "whitelistDiscountPercent": 0
+  },
+  "integratorFee": 0,
+  "integratorFeeReceiver": "string",
+  "integratorFeeShare": 0,
+  "presets": {
+    "fast": {
+      "bankFee": "string",
+      "auctionDuration": 0,
+      "startAuctionIn": 0,
+      "initialRateBump": 0,
+      "auctionStartAmount": "string",
+      "startAmount": "string",
+      "auctionEndAmount": "string",
+      "exclusiveResolver": null,
+      "tokenFee": "string",
+      "estP": 0,
+      "points": [
+        {
+          "delay": 0,
+          "coefficient": 0
+        }
+      ],
+      "allowPartialFills": false,
+      "allowMultipleFills": false,
+      "gasCost": {
+        "gasBumpEstimate": 0,
+        "gasPriceEstimate": "string"
+      }
+    },
+    "medium": {
+      "bankFee": "string",
+      "auctionDuration": 0,
+      "startAuctionIn": 0,
+      "initialRateBump": 0,
+      "auctionStartAmount": "string",
+      "startAmount": "string",
+      "auctionEndAmount": "string",
+      "exclusiveResolver": null,
+      "tokenFee": "string",
+      "estP": 0,
+      "points": [
+        {
+          "delay": 0,
+          "coefficient": 0
+        }
+      ],
+      "allowPartialFills": false,
+      "allowMultipleFills": false,
+      "gasCost": {
+        "gasBumpEstimate": 0,
+        "gasPriceEstimate": "string"
+      }
+    },
+    "slow": {
+      "bankFee": "string",
+      "auctionDuration": 0,
+      "startAuctionIn": 0,
+      "initialRateBump": 0,
+      "auctionStartAmount": "string",
+      "startAmount": "string",
+      "auctionEndAmount": "string",
+      "exclusiveResolver": null,
+      "tokenFee": "string",
+      "estP": 0,
+      "points": [
+        {
+          "delay": 0,
+          "coefficient": 0
+        }
+      ],
+      "allowPartialFills": false,
+      "allowMultipleFills": false,
+      "gasCost": {
+        "gasBumpEstimate": 0,
+        "gasPriceEstimate": "string"
+      }
+    },
+    "custom": {
+      "bankFee": "string",
+      "auctionDuration": 0,
+      "startAuctionIn": 0,
+      "initialRateBump": 0,
+      "auctionStartAmount": "string",
+      "startAmount": "string",
+      "auctionEndAmount": "string",
+      "exclusiveResolver": null,
+      "tokenFee": "string",
+      "estP": 0,
+      "points": [
+        {
+          "delay": 0,
+          "coefficient": 0
+        }
+      ],
+      "allowPartialFills": false,
+      "allowMultipleFills": false,
+      "gasCost": {
+        "gasBumpEstimate": 0,
+        "gasPriceEstimate": "string"
+      }
+    }
+  },
+  "settlementAddress": "string",
+  "nativeOrderFactoryAddress": "string",
+  "nativeOrderImplAddress": "string",
+  "whitelist": ["string"],
+  "recommended_preset": "fast",
+  "suggested": false,
+  "prices": {
+    "usd": {
+      "fromToken": "string",
+      "toToken": "string"
+    }
+  },
+  "volume": {
+    "usd": {
+      "fromToken": "string",
+      "toToken": "string"
+    }
+  },
+  "surplusFee": 0
+}
+
+```
