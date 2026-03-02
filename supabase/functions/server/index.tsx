@@ -30,6 +30,7 @@ import { registerIconProxyRoutes } from "./icon-proxy.ts";
 import { registerLpHistoryRoutes } from "./lp-history.ts";
 import { registerBetaTermsRoutes } from "./beta-terms.ts";
 import { registerStargateVtProxyRoutes } from "./stargate-vt-proxy.ts";
+import { registerCoinCapProxyRoutes } from "./coincap-proxy.ts";
 
 const app = new Hono();
 
@@ -100,5 +101,6 @@ registerIconProxyRoutes(app);
 registerLpHistoryRoutes(app);
 registerBetaTermsRoutes(app);
 registerStargateVtProxyRoutes(app);
+registerCoinCapProxyRoutes(app);
 
 Deno.serve(app.fetch);

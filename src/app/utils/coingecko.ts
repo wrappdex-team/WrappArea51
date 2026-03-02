@@ -1,5 +1,32 @@
-const COINCAP_API = "https://api.coincap.io/v2";
+// IMPLEMENTATION NOTE: COINCAP_API const removed — all CoinCap requests
+// now route through the server proxy (coincap-proxy.ts) which holds the API key.
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
+
+// ── CoinCap Proxy (server-side API key injection) ─────────────────
+// CoinCap now requires an API key. The key is stored server-side.
+// All CoinCap requests route through our Edge Function proxy.
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+const COINCAP_PROXY_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/coincap-proxy`;
+
+async function fetchCoinCapViaProxy(path: string, timeoutMs: number = 8000): Promise<Response> {
+  const url = `${COINCAP_PROXY_BASE}?path=${encodeURIComponent(path)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${publicAnonKey}`,
+        "Accept": "application/json",
+      },
+    });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
 
 import { fetchChainlinkPrices, chainlinkToCoinPrices, updateOracleStats } from "./chainlink";
 import type { ChainlinkPriceData } from "./chainlink";
@@ -36,7 +63,7 @@ for (const [sym, pair] of Object.entries(BINANCE_PAIR_MAP)) {
   if (pair) BINANCE_REVERSE[pair] = sym;
 }
 
-// CoinCap IDs (used for chart history ONLY, not price pipeline)
+// CoinCap IDs (used for chart history AND price fallback for non-Binance tokens)
 export const COINCAP_ID_MAP: Record<string, string> = {
   BTC: "bitcoin", ETH: "ethereum", USDT: "tether", BNB: "binance-coin",
   SOL: "solana", USDC: "usd-coin", XRP: "xrp", HBAR: "hedera-hashgraph",
@@ -62,7 +89,7 @@ export const COIN_ID_MAP: Record<string, string> = {
   SOL: "solana", USDC: "usd-coin", XRP: "ripple", HBAR: "hedera-hashgraph",
   DOGE: "dogecoin", ADA: "cardano", AVAX: "avalanche-2", TRX: "tron",
   TON: "toncoin", LINK: "chainlink", SHIB: "shiba-inu", DOT: "polkadot",
-  LTC: "litecoin", PAXG: "pax-gold", EURC: "euro-coin-2",
+  LTC: "litecoin", PAXG: "pax-gold", EURC: "eurc",
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "dai",
   XMR: "monero",
@@ -218,6 +245,7 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
 // T0 — Network Rate : Hedera 0x168 exchange rate (HBAR only, consensus-derived)
 // T1 — Chainlink    : On-chain decentralized oracles (most reliable for majors)
 // T2 — Binance      : Centralized exchange ticker (real-time, CORS-friendly)
+// T2.5 — CoinCap    : Market aggregator (enriches with mcap/volume)
 // T3 — CoinGecko    : Market aggregator (enriches with mcap/volume)
 // Fallback          : Hardcoded data above (offline resilience)
 //
@@ -255,60 +283,121 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 8000): Promise<
 }
 
 // ── Tier 2: Binance batch 24hr ticker ─────────────────────────────
+// IMPLEMENTATION NOTE: Binance returns HTTP 400 if ANY symbol in the
+// batch is invalid (e.g. delisted or futures-only). To prevent one bad
+// pair from killing ALL prices, we split into "proven" (historically
+// reliable) and "unproven" (newer additions). Proven pairs use a
+// single batch request for speed; unproven pairs use individual
+// requests so a failure is isolated.
+const PROVEN_BINANCE_PAIRS = new Set([
+  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "HBARUSDT",
+  "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "TRXUSDT", "TONUSDT", "LINKUSDT",
+  "SHIBUSDT", "DOTUSDT", "LTCUSDT", "PAXGUSDT", "AAVEUSDT", "DAIUSDT",
+]);
+
+/** Parse a single Binance ticker item into a CoinPrice */
+function parseBinanceTicker(item: any, sym: string): CoinPrice | null {
+  const price = parseFloat(item.lastPrice);
+  const change = parseFloat(item.priceChangePercent);
+  const volume = parseFloat(item.quoteVolume);
+  if (price <= 0) return null;
+  const fb = FALLBACK_DATA[sym];
+  return {
+    id: fb?.id || sym.toLowerCase(),
+    symbol: sym.toLowerCase(),
+    name: fb?.name || sym,
+    current_price: price,
+    price_change_percentage_24h: isFinite(change) ? change : 0,
+    market_cap: fb?.market_cap || 0,
+    total_volume: isFinite(volume) ? volume : 0,
+    image: TOKEN_LOGOS[sym] || "",
+    oracle_source: "binance",
+    oracle_updated_at: Math.floor(Date.now() / 1000),
+    high_24h: parseFloat(item.highPrice) || undefined,
+    low_24h: parseFloat(item.lowPrice) || undefined,
+  };
+}
+
 async function fetchBinancePrices(symbols: string[]): Promise<Record<string, CoinPrice>> {
   const result: Record<string, CoinPrice> = {};
-  const pairs = symbols
-    .map((s) => BINANCE_PAIR_MAP[s])
-    .filter(Boolean);
-  if (pairs.length === 0) return result;
 
-  try {
-    const symbolsParam = encodeURIComponent(JSON.stringify(pairs));
-    const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${symbolsParam}`;
-    const res = await fetchWithTimeout(url, 6000);
-    if (!res.ok) {
-      log.debug("Binance", `HTTP ${res.status}`);
-      return result;
-    }
+  // Split pairs into proven (batch-safe) and unproven (individual fetch)
+  const provenPairs: string[] = [];
+  const provenSyms: string[] = [];
+  const unprovenPairs: { sym: string; pair: string }[] = [];
 
-    const data: any[] = await res.json();
-    let count = 0;
-    for (const item of data) {
-      const sym = BINANCE_REVERSE[item.symbol];
-      if (!sym) continue;
-      const price = parseFloat(item.lastPrice);
-      const change = parseFloat(item.priceChangePercent);
-      const volume = parseFloat(item.quoteVolume);
-      if (price > 0) {
-        const fb = FALLBACK_DATA[sym];
-        result[sym] = {
-          id: fb?.id || sym.toLowerCase(),
-          symbol: sym.toLowerCase(),
-          name: fb?.name || sym,
-          current_price: price,
-          price_change_percentage_24h: isFinite(change) ? change : 0,
-          market_cap: fb?.market_cap || 0,
-          total_volume: isFinite(volume) ? volume : 0,
-          image: TOKEN_LOGOS[sym] || "",
-          oracle_source: "binance",
-          oracle_updated_at: Math.floor(Date.now() / 1000),
-          high_24h: parseFloat(item.highPrice) || undefined,
-          low_24h: parseFloat(item.lowPrice) || undefined,
-        };
-        count++;
-      }
-    }
-    updateOracleStats({ binanceCount: count });
-    log.debug("Binance", `${count} prices from batch ticker`);
-    return result;
-  } catch (err) {
-    if (err instanceof TypeError && (err as TypeError).message === "Failed to fetch") {
-      log.debug("Binance", "Unreachable (network/CORS)");
+  for (const s of symbols) {
+    const pair = BINANCE_PAIR_MAP[s];
+    if (!pair) continue;
+    if (PROVEN_BINANCE_PAIRS.has(pair)) {
+      provenPairs.push(pair);
+      provenSyms.push(s);
     } else {
-      log.debug("Binance", "Fetch failed", (err as Error).message);
+      unprovenPairs.push({ sym: s, pair });
     }
-    return result;
   }
+
+  // ── Batch request for proven pairs ──
+  let batchSucceeded = false;
+  if (provenPairs.length > 0) {
+    try {
+      const symbolsParam = encodeURIComponent(JSON.stringify(provenPairs));
+      const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${symbolsParam}`;
+      const res = await fetchWithTimeout(url, 6000);
+      if (res.ok) {
+        const data: any[] = await res.json();
+        for (const item of data) {
+          const sym = BINANCE_REVERSE[item.symbol];
+          if (!sym) continue;
+          const cp = parseBinanceTicker(item, sym);
+          if (cp) result[sym] = cp;
+        }
+        batchSucceeded = true;
+      } else {
+        log.debug("Binance", `Batch HTTP ${res.status} — falling back to individual`);
+      }
+    } catch (err) {
+      log.debug("Binance", "Batch failed", (err as Error).message);
+    }
+  }
+
+  // If batch failed, fetch proven pairs individually too
+  if (!batchSucceeded && provenPairs.length > 0) {
+    const individualProven = provenSyms.map(s => ({ sym: s, pair: BINANCE_PAIR_MAP[s] }));
+    unprovenPairs.push(...individualProven);
+  }
+
+  // ── Individual requests for unproven / failed pairs ──
+  if (unprovenPairs.length > 0) {
+    const individualResults = await Promise.all(
+      unprovenPairs.map(async ({ sym, pair }) => {
+        try {
+          const res = await fetchWithTimeout(
+            `https://api.binance.com/api/v3/ticker/24hr?symbol=${pair}`,
+            4000
+          );
+          if (!res.ok) {
+            log.debug("Binance", `Individual ${pair}: HTTP ${res.status}`);
+            return null;
+          }
+          const item = await res.json();
+          const cp = parseBinanceTicker(item, sym);
+          return cp ? { sym, cp } : null;
+        } catch {
+          log.debug("Binance", `Individual ${pair}: failed`);
+          return null;
+        }
+      })
+    );
+    for (const r of individualResults) {
+      if (r) result[r.sym] = r.cp;
+    }
+  }
+
+  const count = Object.keys(result).length;
+  updateOracleStats({ binanceCount: count });
+  log.debug("Binance", `${count} prices (${batchSucceeded ? "batch" : "individual"})`);
+  return result;
 }
 
 // ── HBAR fast-path: single Binance ticker (always included) ───────
@@ -342,6 +431,85 @@ async function fetchHbarFastPath(): Promise<CoinPrice | null> {
   } catch {
     return null;
   }
+}
+
+// ── Tier 2.5: CoinCap individual asset price (non-Binance tokens) ─
+// CoinCap now requires an API key. All requests go through our server proxy.
+// Used as a safety net for tokens not covered by Binance (XMR, EURC, CC).
+// IMPLEMENTATION NOTE: The proxy (coincap-proxy.ts) tries v2 then v3 with
+// the API key from COINCAP_API_KEY env var.
+
+async function fetchCoinCapPrices(symbols: string[]): Promise<Record<string, CoinPrice>> {
+  const result: Record<string, CoinPrice> = {};
+  // Only fetch tokens that have a CoinCap ID but NOT a Binance pair
+  const eligible = symbols.filter(s => COINCAP_ID_MAP[s] && !BINANCE_PAIR_MAP[s]);
+  if (eligible.length === 0) return result;
+
+  log.debug("CoinCap", `Fetching ${eligible.length} non-Binance tokens via proxy: ${eligible.join(", ")}`);
+
+  // Quick reachability test via proxy
+  try {
+    const testRes = await fetchCoinCapViaProxy("/assets/bitcoin", 5000);
+    if (!testRes.ok) {
+      log.debug("CoinCap", `Proxy returned HTTP ${testRes.status} — skipping price tier`);
+      return result;
+    }
+    const testJson = await testRes.json();
+    const btcPrice = testJson?.data?.priceUsd;
+    log.debug("CoinCap", `Proxy reachable (BTC=$${parseFloat(btcPrice || 0).toFixed(0)})`);
+  } catch (err) {
+    const msg = (err as Error)?.message || "unknown";
+    log.debug("CoinCap", `Proxy unreachable: ${msg.slice(0, 80)} — skipping price tier`);
+    return result;
+  }
+
+  const fetches = eligible.map(async (sym) => {
+    const assetId = COINCAP_ID_MAP[sym];
+    if (!assetId) return;
+    try {
+      const res = await fetchCoinCapViaProxy(`/assets/${assetId}`, 6000);
+      if (!res.ok) {
+        log.debug("CoinCap", `${sym} (${assetId}): HTTP ${res.status}`);
+        return;
+      }
+      const json = await res.json();
+      const asset = json.data;
+      if (!asset || !asset.priceUsd) {
+        log.debug("CoinCap", `${sym} (${assetId}): no priceUsd in response`);
+        return;
+      }
+
+      const price = parseFloat(asset.priceUsd);
+      const change = parseFloat(asset.changePercent24Hr);
+      const mcap = parseFloat(asset.marketCapUsd);
+      const vol = parseFloat(asset.volumeUsd24Hr);
+      const fb = FALLBACK_DATA[sym];
+
+      if (price > 0) {
+        result[sym] = {
+          id: fb?.id || assetId,
+          symbol: (asset.symbol || sym).toLowerCase(),
+          name: asset.name || fb?.name || sym,
+          current_price: price,
+          price_change_percentage_24h: isFinite(change) ? change : 0,
+          market_cap: isFinite(mcap) ? mcap : (fb?.market_cap || 0),
+          total_volume: isFinite(vol) ? vol : 0,
+          image: TOKEN_LOGOS[sym] || "",
+          oracle_source: "coincap",
+          oracle_updated_at: Math.floor(Date.now() / 1000),
+          change_source: isFinite(change) ? "coincap" : undefined,
+        };
+        log.debug("CoinCap", `${sym}: $${price.toFixed(4)}`);
+      }
+    } catch (err) {
+      log.debug("CoinCap", `${sym} fetch failed: ${(err as Error)?.message?.slice(0, 60) || "unknown"}`);
+    }
+  });
+
+  await Promise.all(fetches);
+  const count = Object.keys(result).length;
+  log.debug("CoinCap", `${count}/${eligible.length} prices from ${workingEndpoint}`);
+  return result;
 }
 
 // ── Tier 3: CoinGecko /coins/markets ─────────────────────────────
@@ -400,15 +568,28 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
   }
 }
 
+// ── Persistent image cache ───────────────────────────────────────
+// CoinGecko API returns authoritative logo URLs at runtime, but on
+// rate-limited refreshes those are lost. This cache survives across
+// the 30s price refresh cycle so logos never disappear.
+const _imageCache: Record<string, string> = {};
+
+// ── Last-good data cache ─────────────────────────────────────────
+// When a token falls to "fallback" oracle source, substitute the last
+// successful live data (up to 5 min old) to prevent stale fallback
+// prices from flashing on screen during transient API failures.
+const _lastGoodData: Record<string, { cp: CoinPrice; ts: number }> = {};
+const LAST_GOOD_TTL = 300_000; // 5 minutes
+
 // ── Main Pipeline: fetchCoinPrices ────────────────────────────────
-// Merges five oracle tiers + HBAR fast-path + fallback.
+// Merges six oracle tiers + HBAR fast-path + fallback.
 // Returns Record<symbol, CoinPrice>.
 //
 // T0: Network Exchange Rate (0x168) — HBAR only, consensus-derived
 // T1: Chainlink (19 decentralized feeds via Ethereum RPC)
-// T2: Binance (22 WebSocket pairs, real-time)
+// T2: Binance (proven batch + individual for unproven)
+// T2.5: CoinCap (non-Binance tokens — XMR, EURC, etc.)
 // T3: CoinGecko (market data enrichment, 24h change, mcap, volume)
-// T4: SaucerSwap (server-side only, TVL/depth calculations)
 // Fallback: Hardcoded data (offline resilience)
 export async function fetchCoinPrices(
   symbols: string[]
@@ -418,11 +599,12 @@ export async function fetchCoinPrices(
     return { ..._priceCache.data };
   }
 
-  // Start all tiers in parallel (T0 through T2 + fast-path)
+  // Start all tiers in parallel (T0 through T3 + fast-path + CoinCap)
   const needsHbar = symbols.includes("HBAR");
-  const [chainlinkData, binancePrices, geckoData, hbarFast, networkRate] = await Promise.all([
+  const [chainlinkData, binancePrices, coinCapPrices, geckoData, hbarFast, networkRate] = await Promise.all([
     fetchChainlinkPrices(symbols).catch(() => ({} as Record<string, ChainlinkPriceData>)),
     fetchBinancePrices(symbols).catch(() => ({} as Record<string, CoinPrice>)),
+    fetchCoinCapPrices(symbols).catch(() => ({} as Record<string, CoinPrice>)),
     fetchCoinGeckoPrices(symbols).catch(() => ({} as Record<string, CoinPrice>)),
     fetchHbarFastPath().catch(() => null),
     // T0: Network Exchange Rate — only fetched if HBAR is in requested symbols
@@ -475,6 +657,22 @@ export async function fetchCoinPrices(
       };
     }
 
+    // Layer 2.5: CoinCap (non-Binance tokens — XMR, EURC, etc.)
+    const capPrice = coinCapPrices[sym];
+    if (capPrice && capPrice.current_price > 0) {
+      merged[sym] = {
+        ...merged[sym],
+        current_price: capPrice.current_price,
+        price_change_percentage_24h: capPrice.price_change_percentage_24h,
+        oracle_source: "coincap",
+        oracle_updated_at: capPrice.oracle_updated_at,
+        change_source: isFinite(capPrice.price_change_percentage_24h) ? "coincap" as OracleSource : merged[sym]?.change_source,
+        // Keep CoinGecko market_cap if available, else use CoinCap's
+        market_cap: merged[sym]?.market_cap || capPrice.market_cap,
+        total_volume: capPrice.total_volume || merged[sym]?.total_volume || 0,
+      };
+    }
+
     // Layer 1: Chainlink (most reliable price — on-chain oracle)
     const cl = chainlinkPrices[sym];
     if (cl && cl.current_price > 0) {
@@ -488,14 +686,30 @@ export async function fetchCoinPrices(
       };
     }
 
-    // Ensure image is always populated
+    // Ensure image is always populated + cache authoritative logos
     if (merged[sym]) {
-      if (!merged[sym].image) {
-        merged[sym].image = TOKEN_LOGOS[sym] || "";
+      // Cache any runtime logo URL from CoinGecko API
+      const img = merged[sym].image;
+      if (img && img.startsWith("http")) {
+        _imageCache[sym] = img;
       }
-      // Track fallback usage
-      if (merged[sym].oracle_source === "fallback") {
-        fallbackCount++;
+      // Use cached logo > static TOKEN_LOGOS > empty
+      if (!merged[sym].image || !merged[sym].image.startsWith("http")) {
+        merged[sym].image = _imageCache[sym] || TOKEN_LOGOS[sym] || "";
+      }
+
+      // Last-good-data: persist live data, recover from transient failures
+      if (merged[sym].oracle_source !== "fallback") {
+        _lastGoodData[sym] = { cp: { ...merged[sym] }, ts: Date.now() };
+      } else {
+        // Check if we have recent live data to substitute
+        const lastGood = _lastGoodData[sym];
+        if (lastGood && Date.now() - lastGood.ts < LAST_GOOD_TTL) {
+          merged[sym] = { ...lastGood.cp, oracle_source: lastGood.cp.oracle_source };
+          log.debug("Pipeline", `${sym}: using last-good data (${lastGood.cp.oracle_source}, ${Math.round((Date.now() - lastGood.ts) / 1000)}s old)`);
+        } else {
+          fallbackCount++;
+        }
       }
     }
   }
@@ -546,6 +760,8 @@ export async function fetchCoinPrices(
 }
 
 // ── CoinCap History (chart data) ──────────────────────────────────
+// IMPLEMENTATION NOTE: Routes through server proxy (coincap-proxy.ts)
+// which adds the API key and tries v2 then v3 endpoints.
 export async function fetchCoinCapHistory(
   symbol: string,
   interval: string,
@@ -558,23 +774,27 @@ export async function fetchCoinCapHistory(
   const start = end - days * 24 * 60 * 60 * 1000;
 
   try {
-    const url = `${COINCAP_API}/assets/${assetId}/history?interval=${interval}&start=${start}&end=${end}`;
-    const res = await fetchWithTimeout(url, 8000);
+    const path = `/assets/${assetId}/history?interval=${interval}&start=${start}&end=${end}`;
+    const res = await fetchCoinCapViaProxy(path, 8000);
     if (!res.ok) {
-      log.debug("CoinCap", `HTTP ${res.status} for ${symbol}`);
+      log.debug("CoinCap", `Proxy history: HTTP ${res.status} for ${symbol}`);
       return [];
     }
     const json = await res.json();
     const data: any[] = json.data || [];
-    return data.map((d: any) => ({
-      priceUsd: parseFloat(d.priceUsd) || 0,
-      time: d.time,
-      date: d.date || new Date(d.time).toISOString(),
-    }));
+    if (data.length > 0) {
+      log.debug("CoinCap", `${symbol} history: ${data.length} points via proxy`);
+      return data.map((d: any) => ({
+        priceUsd: parseFloat(d.priceUsd) || 0,
+        time: d.time,
+        date: d.date || new Date(d.time).toISOString(),
+      }));
+    }
   } catch (err) {
-    log.debug("CoinCap", `Fetch failed for ${symbol}`, (err as Error).message);
-    return [];
+    log.debug("CoinCap", `Proxy history failed for ${symbol}: ${(err as Error)?.message?.slice(0, 60) || "unknown"}`);
   }
+
+  return [];
 }
 
 // ── Format Helpers ────────────────────────────────────────────────

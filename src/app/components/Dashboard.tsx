@@ -125,6 +125,54 @@ const CHART_SYMBOLS = TOKEN_REGISTRY
   .filter(t => t.category !== "stablecoin")
   .map(t => t.symbol);
 
+// ── Module-level broken-URL tracker ───────────────────────────────
+// Prevents the flicker loop where every 30s re-render tries a broken
+// URL → onError → hide → next render resets display → tries again.
+// Once a URL 404s, it stays blacklisted for the entire session.
+const _brokenLogos = new Set<string>();
+
+/** Flicker-free token logo with gradient letter-avatar fallback.
+ *  IMPLEMENTATION NOTE: Gradient is NOT placed behind the img because
+ *  most crypto logos have transparent PNG backgrounds — gradient would
+ *  bleed through and ruin the appearance of working logos. */
+function TokenLogo({ src, symbol, size = "md" }: { src: string; symbol: string; size?: "sm" | "md" }) {
+  const dim = size === "sm" ? "w-7 h-7" : "w-8 h-8 md:w-10 md:h-10";
+  const isBroken = !src || _brokenLogos.has(src);
+
+  // Known-broken URL: skip the img entirely, show gradient letter
+  if (isBroken) {
+    return (
+      <div className={`${dim} bg-gradient-to-br from-pink-500 via-purple-500 to-blue-500 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 text-xs`}>
+        {symbol[0]}
+      </div>
+    );
+  }
+
+  // Image might work: render img, with hidden gradient sibling that
+  // only appears if onError fires. No gradient behind = no bleed-through.
+  return (
+    <>
+      <img
+        src={src}
+        alt={symbol}
+        className={`${dim} rounded-full flex-shrink-0 object-cover`}
+        onError={(e) => {
+          _brokenLogos.add(src);
+          e.currentTarget.style.display = "none";
+          const next = e.currentTarget.nextElementSibling;
+          if (next) (next as HTMLElement).style.display = "flex";
+        }}
+      />
+      <div
+        className={`${dim} bg-gradient-to-br from-pink-500 via-purple-500 to-blue-500 rounded-full items-center justify-center font-bold text-white flex-shrink-0 text-xs`}
+        style={{ display: "none" }}
+      >
+        {symbol[0]}
+      </div>
+    </>
+  );
+}
+
 /** Map price data + TOKEN_REGISTRY into dashboard rows, sorted by market cap */
 function buildMarketAssets(prices: Record<string, CoinPrice>): MarketAsset[] {
   return TOKEN_REGISTRY.map(token => {
@@ -587,12 +635,7 @@ export function Dashboard() {
             <Link to="/trading/BTC" className={tickerCard}>
               <div className="flex items-center justify-between mb-3">
                 <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>Bitcoin</span>
-                <img
-                  src={btcAsset?.logo || TOKEN_LOGOS.BTC}
-                  alt="BTC"
-                  className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
-                  onError={(e) => { e.currentTarget.style.display = "none"; }}
-                />
+                <TokenLogo src={btcAsset?.logo || TOKEN_LOGOS.BTC} symbol="BTC" size="sm" />
               </div>
               <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
                 {formatTickerPrice(btcPrice)}
@@ -625,12 +668,7 @@ export function Dashboard() {
             <Link to="/trading/HBAR" className={tickerCard}>
               <div className="flex items-center justify-between mb-3">
                 <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>Hedera</span>
-                <img
-                  src={hbarAsset?.logo || TOKEN_LOGOS.HBAR}
-                  alt="HBAR"
-                  className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
-                  onError={(e) => { e.currentTarget.style.display = "none"; }}
-                />
+                <TokenLogo src={hbarAsset?.logo || TOKEN_LOGOS.HBAR} symbol="HBAR" size="sm" />
               </div>
               <div className={`text-xl sm:text-2xl lg:text-[28px] font-bold tracking-tight leading-none ${isDark ? "text-white" : "text-gray-900"}`}>
                 {formatTickerPrice(hbarPrice)}
@@ -902,18 +940,7 @@ export function Dashboard() {
                   onClick={() => toggleExpand(item.symbol)}
                 >
                   <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
-                    <img
-                      src={item.logo}
-                      alt={item.name}
-                      className="w-8 h-8 md:w-10 md:h-10 rounded-full flex-shrink-0"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                        e.currentTarget.nextElementSibling?.classList.remove("hidden");
-                      }}
-                    />
-                    <div className="w-8 h-8 md:w-10 md:h-10 bg-gradient-to-br from-pink-500 via-purple-500 to-blue-500 rounded-full items-center justify-center font-bold hidden text-white flex-shrink-0">
-                      {item.symbol[0]}
-                    </div>
+                    <TokenLogo src={item.logo} symbol={item.symbol} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="font-bold text-sm md:text-base">{item.symbol}</span>
