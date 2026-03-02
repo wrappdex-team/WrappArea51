@@ -436,8 +436,10 @@ async function fetchHbarFastPath(): Promise<CoinPrice | null> {
 // ── Tier 2.5: CoinCap individual asset price (non-Binance tokens) ─
 // CoinCap now requires an API key. All requests go through our server proxy.
 // Used as a safety net for tokens not covered by Binance (XMR, EURC, CC).
-// IMPLEMENTATION NOTE: The proxy (coincap-proxy.ts) tries v2 then v3 with
-// the API key from COINCAP_API_KEY env var.
+// IMPLEMENTATION NOTE: v3 batch endpoint (/assets?ids=bitcoin,ethereum,...)
+// fetches ALL eligible tokens in a SINGLE request — much more efficient
+// than N individual /assets/{id} calls. The proxy (coincap-proxy.ts)
+// tries v3 primary, v2 degraded fallback, with the API key from env.
 
 async function fetchCoinCapPrices(symbols: string[]): Promise<Record<string, CoinPrice>> {
   const result: Record<string, CoinPrice> = {};
@@ -445,39 +447,34 @@ async function fetchCoinCapPrices(symbols: string[]): Promise<Record<string, Coi
   const eligible = symbols.filter(s => COINCAP_ID_MAP[s] && !BINANCE_PAIR_MAP[s]);
   if (eligible.length === 0) return result;
 
-  log.debug("CoinCap", `Fetching ${eligible.length} non-Binance tokens via proxy: ${eligible.join(", ")}`);
+  log.debug("CoinCap", `Fetching ${eligible.length} non-Binance tokens via v3 batch proxy: ${eligible.join(", ")}`);
 
-  // Quick reachability test via proxy
-  try {
-    const testRes = await fetchCoinCapViaProxy("/assets/bitcoin", 5000);
-    if (!testRes.ok) {
-      log.debug("CoinCap", `Proxy returned HTTP ${testRes.status} — skipping price tier`);
-      return result;
+  // Build reverse map: CoinCap assetId → our symbol
+  const idToSym: Record<string, string> = {};
+  const assetIds: string[] = [];
+  for (const sym of eligible) {
+    const assetId = COINCAP_ID_MAP[sym];
+    if (assetId) {
+      idToSym[assetId] = sym;
+      assetIds.push(assetId);
     }
-    const testJson = await testRes.json();
-    const btcPrice = testJson?.data?.priceUsd;
-    log.debug("CoinCap", `Proxy reachable (BTC=$${parseFloat(btcPrice || 0).toFixed(0)})`);
-  } catch (err) {
-    const msg = (err as Error)?.message || "unknown";
-    log.debug("CoinCap", `Proxy unreachable: ${msg.slice(0, 80)} — skipping price tier`);
-    return result;
   }
 
-  const fetches = eligible.map(async (sym) => {
-    const assetId = COINCAP_ID_MAP[sym];
-    if (!assetId) return;
-    try {
-      const res = await fetchCoinCapViaProxy(`/assets/${assetId}`, 6000);
-      if (!res.ok) {
-        log.debug("CoinCap", `${sym} (${assetId}): HTTP ${res.status}`);
-        return;
-      }
-      const json = await res.json();
-      const asset = json.data;
-      if (!asset || !asset.priceUsd) {
-        log.debug("CoinCap", `${sym} (${assetId}): no priceUsd in response`);
-        return;
-      }
+  // Single batch request: /assets?ids=bitcoin,ethereum,...&limit=2000
+  try {
+    const batchPath = `/assets?ids=${assetIds.join(",")}&limit=2000`;
+    const res = await fetchCoinCapViaProxy(batchPath, 8000);
+    if (!res.ok) {
+      log.debug("CoinCap", `Batch proxy returned HTTP ${res.status} — skipping price tier`);
+      return result;
+    }
+    const json = await res.json();
+    const assets: any[] = json.data || [];
+
+    for (const asset of assets) {
+      // Match by id (e.g. "bitcoin") — CoinCap returns the id field
+      const sym = idToSym[asset.id];
+      if (!sym) continue;
 
       const price = parseFloat(asset.priceUsd);
       const change = parseFloat(asset.changePercent24Hr);
@@ -487,7 +484,7 @@ async function fetchCoinCapPrices(symbols: string[]): Promise<Record<string, Coi
 
       if (price > 0) {
         result[sym] = {
-          id: fb?.id || assetId,
+          id: fb?.id || asset.id,
           symbol: (asset.symbol || sym).toLowerCase(),
           name: asset.name || fb?.name || sym,
           current_price: price,
@@ -501,14 +498,15 @@ async function fetchCoinCapPrices(symbols: string[]): Promise<Record<string, Coi
         };
         log.debug("CoinCap", `${sym}: $${price.toFixed(4)}`);
       }
-    } catch (err) {
-      log.debug("CoinCap", `${sym} fetch failed: ${(err as Error)?.message?.slice(0, 60) || "unknown"}`);
     }
-  });
 
-  await Promise.all(fetches);
-  const count = Object.keys(result).length;
-  log.debug("CoinCap", `${count}/${eligible.length} prices from ${workingEndpoint}`);
+    const count = Object.keys(result).length;
+    log.debug("CoinCap", `${count}/${eligible.length} prices via v3 batch proxy`);
+  } catch (err) {
+    const msg = (err as Error)?.message || "unknown";
+    log.debug("CoinCap", `Batch proxy failed: ${msg.slice(0, 80)} — skipping price tier`);
+  }
+
   return result;
 }
 
@@ -761,7 +759,7 @@ export async function fetchCoinPrices(
 
 // ── CoinCap History (chart data) ──────────────────────────────────
 // IMPLEMENTATION NOTE: Routes through server proxy (coincap-proxy.ts)
-// which adds the API key and tries v2 then v3 endpoints.
+// which adds the API key and tries v3 primary, v2 degraded fallback.
 export async function fetchCoinCapHistory(
   symbol: string,
   interval: string,

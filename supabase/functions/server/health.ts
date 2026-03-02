@@ -60,28 +60,28 @@ async function probeApiV2(url: string): Promise<HealthCheckResultV2> {
   }
 }
 
-// ── Deep CoinCap diagnostic probe ───────────────────────────────────
-// CoinCap v2 (api.coincap.io) has been unreliable from Supabase Edge
-// Functions (Deno runtime). This probe tries multiple strategies to
-// diagnose whether the issue is DNS, TLS, IP-blocking, or API-level.
-// IMPLEMENTATION NOTE: The frontend (browser) fetches CoinCap directly
-// via CORS — this server probe tests Deno-side reachability separately.
+// ── CoinCap v3 health probe ─────────────────────────────────────────
+// v3 (rest.coincap.io) is the primary endpoint. v2 (api.coincap.io) is
+// degraded fallback only. Both require Authorization: Bearer <key>.
+// IMPLEMENTATION NOTE: v3 OK = "ok", v2 fallback OK = "degraded",
+// both down = "error" with diagnostic detail.
 async function probeCoinCap(): Promise<HealthCheckResultV2> {
   const t0 = Date.now();
   const attempts: string[] = [];
   const apiKey = Deno.env.get("COINCAP_API_KEY") || "";
+  const authHeaders: Record<string, string> = {
+    "Accept": "application/json",
+    "User-Agent": "WRAPpDEX-HealthCheck/1.0",
+    ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
+  };
 
-  // Strategy 1: Standard v2 endpoint (what we actually use)
+  // Strategy 1: v3 PRIMARY — rest.coincap.io
   try {
     const ac1 = new AbortController();
     const t1 = setTimeout(() => ac1.abort(), 5000);
-    const res = await fetch("https://api.coincap.io/v2/assets/bitcoin", {
+    const res = await fetch("https://rest.coincap.io/v3/assets/bitcoin", {
       signal: ac1.signal,
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "WRAPpDEX-HealthCheck/1.0",
-        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
-      },
+      headers: authHeaders,
     });
     clearTimeout(t1);
     const latencyMs = Date.now() - t0;
@@ -91,44 +91,42 @@ async function probeCoinCap(): Promise<HealthCheckResultV2> {
       return {
         status: "ok",
         latencyMs,
-        detail: `HTTP ${res.status} — BTC $${parseFloat(price || 0).toFixed(0)} (v2 API)`,
-      };
-    }
-    attempts.push(`v2: HTTP ${res.status}`);
-  } catch (err: any) {
-    const msg = err?.name === "AbortError" ? "timeout >5s" : (err?.message || "unknown").slice(0, 60);
-    attempts.push(`v2: ${msg}`);
-    console.log(`[Health] CoinCap v2 probe failed:`, err?.message || err);
-  }
-
-  // Strategy 2: Try v3 REST endpoint (CoinCap moved some infra here)
-  try {
-    const ac2 = new AbortController();
-    const t2 = setTimeout(() => ac2.abort(), 5000);
-    const res = await fetch("https://rest.coincap.io/v3/assets/bitcoin", {
-      signal: ac2.signal,
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "WRAPpDEX-HealthCheck/1.0",
-        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
-      },
-    });
-    clearTimeout(t2);
-    const latencyMs = Date.now() - t0;
-    if (res.ok) {
-      return {
-        status: "degraded",
-        latencyMs,
-        detail: `v2 DOWN but v3 OK (HTTP ${res.status}) — migrate needed`,
+        detail: `v3 OK — BTC $${parseFloat(price || 0).toFixed(0)}${apiKey ? " (authed)" : " (no key!)"}`,
       };
     }
     attempts.push(`v3: HTTP ${res.status}`);
   } catch (err: any) {
     const msg = err?.name === "AbortError" ? "timeout >5s" : (err?.message || "unknown").slice(0, 60);
     attempts.push(`v3: ${msg}`);
+    console.log(`[Health] CoinCap v3 probe failed:`, err?.message || err);
   }
 
-  // Strategy 3: Try bare domain (DNS/TLS test)
+  // Strategy 2: v2 degraded fallback — api.coincap.io
+  try {
+    const ac2 = new AbortController();
+    const t2 = setTimeout(() => ac2.abort(), 5000);
+    const res = await fetch("https://api.coincap.io/v2/assets/bitcoin", {
+      signal: ac2.signal,
+      headers: authHeaders,
+    });
+    clearTimeout(t2);
+    const latencyMs = Date.now() - t0;
+    if (res.ok) {
+      const json = await res.json();
+      const price = json?.data?.priceUsd;
+      return {
+        status: "degraded",
+        latencyMs,
+        detail: `v3 DOWN, v2 fallback OK — BTC $${parseFloat(price || 0).toFixed(0)}`,
+      };
+    }
+    attempts.push(`v2: HTTP ${res.status}`);
+  } catch (err: any) {
+    const msg = err?.name === "AbortError" ? "timeout >5s" : (err?.message || "unknown").slice(0, 60);
+    attempts.push(`v2: ${msg}`);
+  }
+
+  // Strategy 3: Bare domain DNS/TLS test
   try {
     const ac3 = new AbortController();
     const t3 = setTimeout(() => ac3.abort(), 4000);
@@ -146,7 +144,7 @@ async function probeCoinCap(): Promise<HealthCheckResultV2> {
 
   const latencyMs = Date.now() - t0;
   const detail = attempts.join(" | ");
-  console.log(`[Health] CoinCap deep probe: ${detail}`);
+  console.log(`[Health] CoinCap probe: ${detail}`);
   return { status: "error", latencyMs, detail };
 }
 

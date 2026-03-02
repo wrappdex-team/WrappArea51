@@ -114,7 +114,7 @@ const SERVER_CHECK_META: Record<string, { label: string; icon: React.ReactNode }
   storage:      { label: "Object Storage",    icon: <HardDrive className="w-3.5 h-3.5" /> },
   binance:      { label: "Binance API",       icon: <Activity className="w-3.5 h-3.5" /> },
   coingecko:    { label: "CoinGecko API",     icon: <Activity className="w-3.5 h-3.5" /> },
-  coincap:      { label: "CoinCap v2/v3",     icon: <Activity className="w-3.5 h-3.5" /> },
+  coincap:      { label: "CoinCap v3",        icon: <Activity className="w-3.5 h-3.5" /> },
   fearGreed:    { label: "Fear & Greed",      icon: <Activity className="w-3.5 h-3.5" /> },
   dexscreener:  { label: "DexScreener",       icon: <Activity className="w-3.5 h-3.5" /> },
 };
