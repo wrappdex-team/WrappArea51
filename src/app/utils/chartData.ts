@@ -29,7 +29,9 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
   SHIB: "SHIBUSDT", DOT: "DOTUSDT", LTC: "LTCUSDT", PAXG: "PAXGUSDT",
   AAVE: "AAVEUSDT", DAI: "DAIUSDT",
   XLM: "XLMUSDT", UNI: "UNIUSDT",
-  HYPE: "HYPEUSDT", CC: "CCUSDT",
+  HYPE: "HYPEUSDT",
+  // IMPLEMENTATION NOTE: Canton (CC) is NOT listed on Binance — no valid pair.
+  // Charts fall through to CoinGecko OHLC → CoinCap → synthetic cascade.
 };
 
 // ── Binance interval mapping ─────────────────────────────────────────

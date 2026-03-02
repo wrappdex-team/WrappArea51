@@ -26,7 +26,8 @@ const BINANCE_PAIR_MAP: Record<string, string> = {
   XLM: "XLMUSDT",
   UNI: "UNIUSDT",
   HYPE: "HYPEUSDT",
-  CC: "CCUSDT",
+  // IMPLEMENTATION NOTE: Canton (CC) is NOT listed on Binance.
+  // Do NOT add CC here — one invalid pair kills the entire batch request (HTTP 400).
 };
 
 // Reverse map: Binance pair -> our symbol
@@ -48,7 +49,8 @@ export const COINCAP_ID_MAP: Record<string, string> = {
   XLM: "stellar",
   UNI: "uniswap",
   HYPE: "hyperliquid",
-  CC: "canton",
+  // IMPLEMENTATION NOTE: Canton (CC) is NOT listed on CoinCap — no valid asset ID.
+  // Chart fallback cascade handles it via CoinGecko OHLC → synthetic.
   // Wrapped bridge tokens (map to parent asset)
   WHBAR: "hedera-hashgraph", WBTC: "bitcoin", WETH: "ethereum",
   WBNB: "binance-coin", WAVAX: "avalanche", WMATIC: "matic-network",
@@ -67,7 +69,7 @@ export const COIN_ID_MAP: Record<string, string> = {
   XLM: "stellar",
   UNI: "uniswap",
   HYPE: "hyperliquid",
-  CC: "canton",
+  CC: "canton-network",
   // Wrapped bridge tokens (map to parent asset CoinGecko ID)
   WHBAR: "hedera-hashgraph", WBTC: "wrapped-bitcoin", WETH: "weth",
   WBNB: "binancecoin", WAVAX: "avalanche-2", WMATIC: "matic-network",
@@ -101,8 +103,12 @@ export const TOKEN_LOGOS: Record<string, string> = {
   XMR: `${CG}/69/standard/monero_logo.png`,
   XLM: `${CG}/100/standard/Stellar_symbol_black_RGB.png`,
   UNI: `${CG}/12504/standard/uni.jpg`,
-  HYPE: `${CG}/40845/standard/hyperliquid.jpeg`,
-  CC: `${CG}/37249/standard/canton.png`,
+  // IMPLEMENTATION NOTE: HYPE and CC static logo URLs are best-effort guesses
+  // of CoinGecko CDN paths. The CoinGecko /coins/markets API provides the
+  // authoritative `image` URL at runtime — these are fallback-only.
+  // If they 404, the Dashboard gradient letter-avatar fallback renders.
+  HYPE: `${CG}/40845/standard/HYPE.png`,
+  CC: `${CG}/37249/standard/canton_network.png`,
   // Wrapped bridge tokens (AMM-specific — reuse parent asset logos)
   WHBAR: `${CG}/3688/standard/hbar.png`,
   WBTC: `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`,
@@ -136,6 +142,44 @@ export interface CoinPrice {
   sparkline_in_7d?: { price: number[] };
 }
 
+// ── History Point (CoinCap chart data) ────────────────────────────
+export interface HistoryPoint {
+  priceUsd: number;
+  time: number;
+  date: string;
+}
+
+// ── Global Market Data ────────────────────────────────────────────
+export interface GlobalMarketData {
+  totalMarketCap: number;
+  totalVolume24h: number;
+  marketCapChange24h: number;
+  btcDominance: number;
+  ethDominance: number;
+  activeCryptos: number;
+}
+
+// ── Top 20 Index Types ────────────────────────────────────────────
+export interface Top20Coin {
+  symbol: string;
+  name: string;
+  image: string;
+  price: number;
+  change24h: number;
+  marketCap: number;
+  dominancePercent: number;
+}
+
+export interface Top20IndexData {
+  totalMarketCap: number;
+  weightedChange24h: number;
+  topCoins: Top20Coin[];
+  topCoinCount: number;
+}
+
+// ── Sparkline Map ─────────────────────────────────────────────────
+export type SparklineMap = Record<string, number[]>;
+
 // ── Hardcoded Fallback (last resort) ──────────────────────────────
 const FALLBACK_DATA: Record<string, CoinPrice> = {
   BTC:  { id: "bitcoin",    symbol: "btc",  name: "Bitcoin",    current_price: 104000,   price_change_percentage_24h: 1.2,   market_cap: 2060000000000, total_volume: 35000000000, image: TOKEN_LOGOS.BTC },
@@ -163,8 +207,8 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
   XMR:  { id: "monero",     symbol: "xmr",  name: "Monero",     current_price: 334,      price_change_percentage_24h: 1.2,   market_cap: 6200000000,    total_volume: 120000000,   image: TOKEN_LOGOS.XMR },
   XLM:  { id: "stellar",    symbol: "xlm",  name: "Stellar",    current_price: 0.15,     price_change_percentage_24h: 0.2,   market_cap: 10000000000,   total_volume: 1000000000,  image: TOKEN_LOGOS.XLM },
   UNI:  { id: "uniswap",    symbol: "uni",  name: "Uniswap",    current_price: 15,       price_change_percentage_24h: 0.5,   market_cap: 10000000000,   total_volume: 500000000,   image: TOKEN_LOGOS.UNI },
-  HYPE: { id: "hyperliquid",symbol: "hype",name: "Hyperliquid",current_price: 28,       price_change_percentage_24h: 3.5,   market_cap: 9300000000,    total_volume: 800000000,   image: TOKEN_LOGOS.HYPE },
-  CC:   { id: "canton",     symbol: "cc",   name: "Canton",      current_price: 0.025,    price_change_percentage_24h: 1.8,   market_cap: 6000000000,    total_volume: 350000000,   image: TOKEN_LOGOS.CC },
+  HYPE: { id: "hyperliquid",symbol: "hype", name: "Hyperliquid", current_price: 15,      price_change_percentage_24h: 2.0,   market_cap: 5000000000,    total_volume: 300000000,   image: TOKEN_LOGOS.HYPE },
+  CC:   { id: "canton-network", symbol: "cc", name: "Canton Network", current_price: 0.012, price_change_percentage_24h: 1.5, market_cap: 500000000,   total_volume: 50000000,    image: TOKEN_LOGOS.CC },
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -449,470 +493,282 @@ export async function fetchCoinPrices(
       if (!merged[sym].image) {
         merged[sym].image = TOKEN_LOGOS[sym] || "";
       }
+      // Track fallback usage
       if (merged[sym].oracle_source === "fallback") {
         fallbackCount++;
       }
     }
   }
 
-  // HBAR fast-path override (always attempt for fastest HBAR price)
-  if (hbarFast && hbarFast.current_price > 0) {
-    const existing = merged["HBAR"];
-    if (existing) {
-      // Only override if we don't have Chainlink
-      if (existing.oracle_source !== "chainlink") {
-        merged["HBAR"] = {
-          ...existing,
-          current_price: hbarFast.current_price,
-          price_change_percentage_24h: hbarFast.price_change_percentage_24h,
-          oracle_source: "binance",
-          oracle_updated_at: hbarFast.oracle_updated_at,
-          high_24h: hbarFast.high_24h,
-          low_24h: hbarFast.low_24h,
-        };
-      }
+  // HBAR fast-path: if main Binance batch missed HBAR, use dedicated ticker
+  if (needsHbar && hbarFast && hbarFast.current_price > 0 && (!merged["HBAR"] || merged["HBAR"].oracle_source === "fallback")) {
+    merged["HBAR"] = {
+      ...merged["HBAR"],
+      current_price: hbarFast.current_price,
+      price_change_percentage_24h: hbarFast.price_change_percentage_24h,
+      oracle_source: "binance",
+      oracle_updated_at: hbarFast.oracle_updated_at,
+      total_volume: hbarFast.total_volume || merged["HBAR"]?.total_volume || 0,
+      high_24h: hbarFast.high_24h || merged["HBAR"]?.high_24h,
+      low_24h: hbarFast.low_24h || merged["HBAR"]?.low_24h,
+    };
+  }
+
+  // T0: Network Exchange Rate — overrides HBAR price with consensus-derived rate
+  if (needsHbar && networkRate && networkRate.priceUsd > 0) {
+    if (merged["HBAR"]) {
+      merged["HBAR"].current_price = networkRate.priceUsd;
+      merged["HBAR"].oracle_source = "network";
+      merged["HBAR"].oracle_updated_at = Math.floor(Date.now() / 1000);
     }
   }
 
-  // ── T0: Network Exchange Rate (0x168) — HBAR ONLY ──────────────
-  // Highest-priority tier: consensus-derived from Hedera file 0.0.112.
-  // Overrides ALL other tiers for HBAR price. Only provides price —
-  // keeps 24h change from Binance/CoinGecko and market_cap from CoinGecko.
-  if (networkRate && networkRate.priceUsd > 0 && merged["HBAR"]) {
-    merged["HBAR"] = {
-      ...merged["HBAR"],
-      current_price: networkRate.priceUsd,
-      oracle_source: "network",
-      oracle_updated_at: Math.floor(networkRate.fetchedAt / 1000),
-      // Preserve 24h change from lower tiers (network rate doesn't provide it)
-      // Preserve market_cap, volume, image from CoinGecko/Binance
-    };
-    log.debug("T0-ExRate", `HBAR price set to $${networkRate.priceUsd.toFixed(6)} from network exchange rate (${networkRate.rateUsed} rate: ${networkRate.centEquivalent}c/${networkRate.hbarEquivalent}hbar)`);
+  // Ensure USDCh is always populated (mirrors USDC data)
+  if (symbols.includes("USDCh") && !merged["USDCh"] && merged["USDC"]) {
+    merged["USDCh"] = { ...merged["USDC"], oracle_source: merged["USDC"].oracle_source };
   }
 
-  updateOracleStats({
-    fallbackCount,
-    totalFeeds: symbols.length,
-  });
+  // Update oracle stats
+  updateOracleStats({ fallbackCount });
+
+  // Log summary
+  const sources = new Map<string, number>();
+  for (const cp of Object.values(merged)) {
+    const src = cp.oracle_source || "unknown";
+    sources.set(src, (sources.get(src) || 0) + 1);
+  }
+  const summary = [...sources.entries()].map(([k, v]) => `${k}:${v}`).join(" ");
+  log.debug("Pipeline", `${Object.keys(merged).length} prices (${summary})`);
 
   // Cache
   _priceCache = { data: merged, timestamp: Date.now() };
-
-  const sources: Record<string, number> = { network: 0, chainlink: 0, binance: 0, coingecko: 0, fallback: 0 };
-  for (const cp of Object.values(merged)) {
-    const s = cp.oracle_source || "fallback";
-    if (s in sources) sources[s]++;
-  }
-  log.debug("Pipeline", `Prices: T0=${sources.network} CL=${sources.chainlink} BN=${sources.binance} CG=${sources.coingecko} FB=${sources.fallback}`);
-
-  return merged;
+  return { ...merged };
 }
 
-// ── Global Market Data ────────────────────────────────────────────
-export interface GlobalMarketData {
-  totalMarketCap: number;
-  totalVolume24h: number;
-  marketCapChange24h: number;
-  btcDominance: number;
-  ethDominance: number;
-  activeCryptos: number;
-}
-
-// Cache for global market data (60s TTL — refreshes every 120s from Dashboard)
-let _globalCache: { data: GlobalMarketData; ts: number } | null = null;
-const GLOBAL_CACHE_TTL = 60_000;
-
-/**
- * Compute approximate global stats from individual token price data.
- * Used as instant fast-path while CoinGecko /global loads in background.
- *
- * IMPLEMENTATION NOTE: Our token list covers ~22 tokens (top by market cap),
- * which typically represents 75-85% of total crypto market cap. We apply
- * a correction factor to estimate the full market. BTC dominance is
- * computed directly (BTC mcap / sum of our tracked mcaps × correction).
- */
-export function computeApproxGlobalData(
-  prices: Record<string, CoinPrice>
-): GlobalMarketData {
-  let totalMcap = 0;
-  let totalVol = 0;
-  let btcMcap = 0;
-  let ethMcap = 0;
-
-  for (const [sym, p] of Object.entries(prices)) {
-    const mcap = p.market_cap || 0;
-    const vol = p.total_volume || 0;
-    totalMcap += mcap;
-    totalVol += vol;
-    if (sym === "BTC") btcMcap = mcap;
-    if (sym === "ETH") ethMcap = mcap;
-  }
-
-  // Our ~22 tokens ≈ 80% of total market. Apply correction factor.
-  // This is a rough approximation — CoinGecko /global will replace it.
-  const COVERAGE_FACTOR = 1.25;
-  const estimatedTotalMcap = totalMcap * COVERAGE_FACTOR;
-  const estimatedTotalVol = totalVol * COVERAGE_FACTOR;
-
-  return {
-    totalMarketCap: estimatedTotalMcap,
-    totalVolume24h: estimatedTotalVol,
-    marketCapChange24h: 0, // Can't compute without previous data
-    btcDominance: totalMcap > 0 ? (btcMcap / estimatedTotalMcap) * 100 : 60,
-    ethDominance: totalMcap > 0 ? (ethMcap / estimatedTotalMcap) * 100 : 10,
-    activeCryptos: 0, // Only CoinGecko knows this
-  };
-}
-
-export async function fetchGlobalMarketData(): Promise<GlobalMarketData | null> {
-  // Return cache if fresh
-  if (_globalCache && Date.now() - _globalCache.ts < GLOBAL_CACHE_TTL) {
-    return _globalCache.data;
-  }
-
-  try {
-    const res = await fetchWithTimeout(`${COINGECKO_API}/global`, 8000);
-    if (!res.ok) return _globalCache?.data ?? null;
-    const json = await res.json();
-    const d = json.data;
-    if (!d) return _globalCache?.data ?? null;
-    const result: GlobalMarketData = {
-      totalMarketCap: d.total_market_cap?.usd ?? 0,
-      totalVolume24h: d.total_volume?.usd ?? 0,
-      marketCapChange24h: d.market_cap_change_percentage_24h_usd ?? 0,
-      btcDominance: d.market_cap_percentage?.btc ?? 0,
-      ethDominance: d.market_cap_percentage?.eth ?? 0,
-      activeCryptos: d.active_cryptocurrencies ?? 0,
-    };
-    _globalCache = { data: result, ts: Date.now() };
-    return result;
-  } catch (err) {
-    log.debug("CoinGecko", "Global market data fetch failed", (err as Error).message);
-    return _globalCache?.data ?? null;
-  }
-}
-
-// ── Format Helpers ────────────────────────────────────────────────
-export function formatMarketCap(n: number): string {
-  if (!n || !isFinite(n)) return "$0";
-  const abs = Math.abs(n);
-  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
-  return `$${n.toFixed(2)}`;
-}
-
-export function formatVolume(n: number): string {
-  if (!n || !isFinite(n)) return "$0";
-  const abs = Math.abs(n);
-  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (abs >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${n.toFixed(2)}`;
-}
-
-// ── CoinCap History ────────────────────────────────────────────────
-export interface HistoryPoint {
-  time: number;     // Unix ms
-  priceUsd: number;
-}
-
+// ── CoinCap History (chart data) ──────────────────────────────────
 export async function fetchCoinCapHistory(
   symbol: string,
-  interval: "m1" | "m5" | "m15" | "m30" | "h1" | "h2" | "h6" | "h12" | "d1" = "h1",
-  days: number = 7
+  interval: string,
+  days: number
 ): Promise<HistoryPoint[]> {
-  const coinCapId = COINCAP_ID_MAP[symbol];
-  if (!coinCapId) return [];
+  const assetId = COINCAP_ID_MAP[symbol];
+  if (!assetId) return [];
 
-  const endMs = Date.now();
-  const startMs = endMs - days * 24 * 60 * 60 * 1000;
+  const end = Date.now();
+  const start = end - days * 24 * 60 * 60 * 1000;
 
   try {
-    const url = `${COINCAP_API}/assets/${coinCapId}/history?interval=${interval}&start=${startMs}&end=${endMs}`;
+    const url = `${COINCAP_API}/assets/${assetId}/history?interval=${interval}&start=${start}&end=${end}`;
     const res = await fetchWithTimeout(url, 8000);
     if (!res.ok) {
       log.debug("CoinCap", `HTTP ${res.status} for ${symbol}`);
       return [];
     }
-
     const json = await res.json();
     const data: any[] = json.data || [];
-    return data
-      .map((p: any) => ({
-        time: p.time,
-        priceUsd: parseFloat(p.priceUsd),
-      }))
-      .filter((p) => isFinite(p.priceUsd) && p.priceUsd > 0);
+    return data.map((d: any) => ({
+      priceUsd: parseFloat(d.priceUsd) || 0,
+      time: d.time,
+      date: d.date || new Date(d.time).toISOString(),
+    }));
   } catch (err) {
-    log.debug("CoinCap", `History fetch failed for ${symbol}`, (err as Error).message);
+    log.debug("CoinCap", `Fetch failed for ${symbol}`, (err as Error).message);
     return [];
   }
 }
 
-// ── RSI Computation ───────────────────────────────────────────────
-function computeRSI(closes: number[], period: number = 14): number {
-  if (closes.length < period + 1) return 50; // Not enough data
-
-  let avgGain = 0;
-  let avgLoss = 0;
-
-  // Initial average
-  for (let i = 1; i <= period; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) avgGain += diff;
-    else avgLoss += Math.abs(diff);
-  }
-
-  avgGain /= period;
-  avgLoss /= period;
-
-  // Smooth over remaining closes
-  for (let i = period + 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    const gain = diff > 0 ? diff : 0;
-    const loss = diff < 0 ? Math.abs(diff) : 0;
-    avgGain = (avgGain * (period - 1) + gain) / period;
-    avgLoss = (avgLoss * (period - 1) + loss) / period;
-  }
-
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - 100 / (1 + rs);
+// ── Format Helpers ────────────────────────────────────────────────
+export function formatMarketCap(value: number): string {
+  if (!value || !isFinite(value)) return "—";
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+  return `$${value.toFixed(2)}`;
 }
 
-// ── Market RSI (BTC-based) ────────────────────────────────────────
-export async function fetchMarketRSI(): Promise<{ rsi: number; prices: number[] }> {
+export function formatVolume(value: number): string {
+  if (!value || !isFinite(value)) return "—";
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(1)}T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`;
+  return `$${Math.round(value)}`;
+}
+
+// ── Global Market Data (CoinGecko /global) ────────────────────────
+export async function fetchGlobalMarketData(): Promise<GlobalMarketData | null> {
   try {
-    const history = await fetchCoinCapHistory("BTC", "d1", 30);
-    if (history.length < 16) return { rsi: 50, prices: [] };
-
-    // Aggregate to daily closes
-    const dailyMap = new Map<string, number>();
-    for (const p of history) {
-      const dateKey = new Date(p.time).toISOString().slice(0, 10);
-      dailyMap.set(dateKey, p.priceUsd); // Last value per day = close
+    const res = await fetchWithTimeout(`${COINGECKO_API}/global`, 8000);
+    if (!res.ok) {
+      log.debug("CoinGecko", `Global: HTTP ${res.status}`);
+      return null;
     }
+    const json = await res.json();
+    const data = json.data;
+    if (!data) return null;
 
-    const dailyCloses: number[] = [];
-    const sortedKeys = [...dailyMap.keys()].sort();
-    for (const key of sortedKeys) {
-      dailyCloses.push(dailyMap.get(key)!);
-    }
-
-    // Need at least 15 closes for 14-period RSI
-    if (dailyCloses.length > 14) {
-      const rsi = computeRSI(dailyCloses, 14);
-      return { rsi: Math.round(rsi * 100) / 100, prices: dailyCloses.slice(-30) };
-    }
-
-    return { rsi: 50, prices: dailyCloses };
+    return {
+      totalMarketCap: data.total_market_cap?.usd ?? 0,
+      totalVolume24h: data.total_volume?.usd ?? 0,
+      marketCapChange24h: data.market_cap_change_percentage_24h_usd ?? 0,
+      btcDominance: data.market_cap_percentage?.btc ?? 0,
+      ethDominance: data.market_cap_percentage?.eth ?? 0,
+      activeCryptos: data.active_cryptocurrencies ?? 0,
+    };
   } catch (err) {
-    log.debug("RSI", "Calculation failed", (err as Error).message);
-    return { rsi: 50, prices: [] };
+    log.debug("CoinGecko", "Global fetch failed", (err as Error).message);
+    return null;
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// SPARKLINE PIPELINE — 7-day hourly close prices for mini-charts
-// ══════════════════════════════════════════════════════════════════════
-//
-// IMPLEMENTATION NOTE: Binance-first, CoinCap fallback. Completely
-// decoupled from the price pipeline so prices load fast (sparkline=false
-// on CoinGecko) while sparklines arrive in the background (~200ms from
-// Binance). Module-level cache (5 min TTL) persists across remounts.
-// ══════════════════════════════════════════════════════════════════════
+// ── Compute Approximate Global Data from merged prices ────────────
+// Used as a fast fallback when CoinGecko /global is slow or unavailable.
+export function computeApproxGlobalData(prices: Record<string, CoinPrice>): GlobalMarketData {
+  let totalMarketCap = 0;
+  let totalVolume = 0;
+  let btcMarketCap = 0;
+  let ethMarketCap = 0;
 
-export type SparklineMap = Record<string, number[]>;
+  for (const [sym, cp] of Object.entries(prices)) {
+    totalMarketCap += cp.market_cap || 0;
+    totalVolume += cp.total_volume || 0;
+    if (sym === "BTC") btcMarketCap = cp.market_cap || 0;
+    if (sym === "ETH") ethMarketCap = cp.market_cap || 0;
+  }
 
-interface SparklineCacheEntry {
-  data: SparklineMap;
-  timestamp: number;
+  return {
+    totalMarketCap,
+    totalVolume24h: totalVolume,
+    marketCapChange24h: 0, // Cannot compute without historical data
+    btcDominance: totalMarketCap > 0 ? (btcMarketCap / totalMarketCap) * 100 : 50,
+    ethDominance: totalMarketCap > 0 ? (ethMarketCap / totalMarketCap) * 100 : 15,
+    activeCryptos: 0, // Cannot determine from price data alone
+  };
 }
 
-const SPARKLINE_CACHE_TTL = 5 * 60_000; // 5 minutes
-let _sparklineCacheEntry: SparklineCacheEntry | null = null;
-
-/**
- * Fetch 7-day hourly klines from Binance for a single symbol.
- * Returns close prices only (~168 points). Typically <200ms.
- */
-async function fetchBinanceSparkline(symbol: string): Promise<number[]> {
-  const pair = BINANCE_PAIR_MAP[symbol];
-  if (!pair) return [];
-
+// ── Market RSI (14-period RSI based on BTC daily closes) ──────────
+export async function fetchMarketRSI(): Promise<{ rsi: number }> {
   try {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1h&limit=168`;
-    const res = await fetchWithTimeout(url, 4000);
-    if (!res.ok) return [];
-
+    // Use Binance BTC 1d klines for RSI calculation (14 periods + buffer)
+    const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=30";
+    const res = await fetchWithTimeout(url, 6000);
+    if (!res.ok) return { rsi: 50 };
     const klines: any[] = await res.json();
-    // Each kline: [openTime, open, high, low, close, volume, ...]
-    return klines
-      .map((k: any) => parseFloat(k[4])) // close price
-      .filter((v: number) => isFinite(v) && v > 0);
+
+    const closes = klines.map((k: any) => parseFloat(k[4]));
+    if (closes.length < 15) return { rsi: 50 };
+
+    // Standard 14-period RSI
+    const period = 14;
+    let gainSum = 0;
+    let lossSum = 0;
+
+    for (let i = 1; i <= period; i++) {
+      const diff = closes[i] - closes[i - 1];
+      if (diff > 0) gainSum += diff;
+      else lossSum += Math.abs(diff);
+    }
+
+    let avgGain = gainSum / period;
+    let avgLoss = lossSum / period;
+
+    // Smooth with remaining data points
+    for (let i = period + 1; i < closes.length; i++) {
+      const diff = closes[i] - closes[i - 1];
+      const gain = diff > 0 ? diff : 0;
+      const loss = diff < 0 ? Math.abs(diff) : 0;
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+    }
+
+    if (avgLoss === 0) return { rsi: 100 };
+    const rs = avgGain / avgLoss;
+    const rsi = 100 - 100 / (1 + rs);
+
+    return { rsi: Math.round(rsi * 100) / 100 };
   } catch {
-    return [];
+    return { rsi: 50 };
   }
 }
 
-/**
- * Fetch 7-day hourly history from CoinCap as fallback.
- * Slower than Binance but covers tokens like EURC, XMR.
- */
-async function fetchCoinCapSparkline(symbol: string): Promise<number[]> {
-  try {
-    const history = await fetchCoinCapHistory(symbol, "h1", 7);
-    return history.map(p => p.priceUsd);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Fetch sparkline data for ALL requested symbols.
- *
- * Strategy:
- *   1. Batch-fetch Binance klines in parallel (covers 18 tokens in ~200ms)
- *   2. For any symbols without Binance pair or Binance failure, fall back to CoinCap
- *   3. Stablecoins get flat synthetic lines (sparkline for USDT/USDC is just noise)
- *
- * Returns cached data if fresh (5 min TTL).
- */
+// ── Sparklines (Binance 7-day klines for mini charts) ─────────────
 export async function fetchAllSparklines(symbols: string[]): Promise<SparklineMap> {
-  // Return cache if fresh
-  if (_sparklineCacheEntry && Date.now() - _sparklineCacheEntry.timestamp < SPARKLINE_CACHE_TTL) {
-    return _sparklineCacheEntry.data;
-  }
-
   const result: SparklineMap = {};
-  const STABLECOIN_SYMBOLS = new Set(["USDT", "USDC", "USDCh", "EURC", "DAI"]);
 
-  // Separate symbols into tiers
-  const binanceSymbols: string[] = [];
-  const coinCapFallback: string[] = [];
+  // Fetch in parallel batches of 6 to avoid rate limits
+  const BATCH_SIZE = 6;
+  const eligible = symbols.filter((s) => BINANCE_PAIR_MAP[s]);
 
-  for (const sym of symbols) {
-    if (STABLECOIN_SYMBOLS.has(sym)) {
-      // Stablecoins: flat line at $1
-      result[sym] = Array(168).fill(1.0);
-    } else if (BINANCE_PAIR_MAP[sym]) {
-      binanceSymbols.push(sym);
-    } else {
-      coinCapFallback.push(sym);
-    }
-  }
-
-  // Tier 1: Parallel Binance klines (fast, ~200ms for all)
-  const binanceResults = await Promise.all(
-    binanceSymbols.map(async (sym) => {
-      const data = await fetchBinanceSparkline(sym);
-      return { sym, data };
-    })
-  );
-
-  for (const { sym, data } of binanceResults) {
-    if (data.length >= 10) {
-      result[sym] = data;
-    } else {
-      // Binance failed for this symbol — add to CoinCap fallback
-      coinCapFallback.push(sym);
-    }
-  }
-
-  // Tier 2: CoinCap fallback for symbols without Binance coverage
-  if (coinCapFallback.length > 0) {
-    const coinCapResults = await Promise.all(
-      coinCapFallback.map(async (sym) => {
-        const data = await fetchCoinCapSparkline(sym);
-        return { sym, data };
-      })
-    );
-
-    for (const { sym, data } of coinCapResults) {
-      if (data.length >= 10) {
-        result[sym] = data;
+  for (let i = 0; i < eligible.length; i += BATCH_SIZE) {
+    const batch = eligible.slice(i, i + BATCH_SIZE);
+    const promises = batch.map(async (sym) => {
+      const pair = BINANCE_PAIR_MAP[sym];
+      if (!pair) return;
+      try {
+        const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1h&limit=168`;
+        const res = await fetchWithTimeout(url, 5000);
+        if (!res.ok) return;
+        const klines: any[] = await res.json();
+        result[sym] = klines.map((k: any) => parseFloat(k[4])); // close prices
+      } catch {
+        // Skip this symbol
       }
+    });
+    await Promise.all(promises);
+    // Small delay between batches to avoid Binance rate limits
+    if (i + BATCH_SIZE < eligible.length) {
+      await new Promise((r) => setTimeout(r, 100));
     }
   }
 
-  const coveredCount = Object.values(result).filter(v => v.length >= 10).length;
-  log.debug("Sparklines", `${coveredCount}/${symbols.length} covered (Binance: ${binanceResults.filter(r => r.data.length >= 10).length}, CoinCap fallback: ${coinCapFallback.length})`);
-
-  // Cache
-  _sparklineCacheEntry = { data: result, timestamp: Date.now() };
   return result;
 }
 
-// ── Top 20 Index (CoinGecko) ──────────────────────────────────────
-export interface Top20Coin {
-  symbol: string;
-  name: string;
-  image: string;
-  price: number;
-  change24h: number;
-  marketCap: number;
-  dominancePercent: number;
-}
-
-export interface Top20IndexData {
-  totalMarketCap: number;
-  weightedChange24h: number;
-  topCoins: Top20Coin[];
-  topCoinCount: number;
-}
-
+// ── Top 20 Composite Index ────────────────────────────────────────
 export async function fetchTop20Index(): Promise<Top20IndexData | null> {
   try {
     const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h`;
     const res = await fetchWithTimeout(url, 8000);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      log.debug("CoinGecko", `Top20: HTTP ${res.status}`);
+      return null;
+    }
 
     const data: any[] = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
+    if (!data || data.length === 0) return null;
 
     let totalMcap = 0;
-    const coins: Top20Coin[] = [];
+    let weightedChangeSum = 0;
 
-    for (const coin of data) {
-      const mcap = coin.market_cap || 0;
+    const coins: Top20Coin[] = data.map((coin: any) => {
+      const mcap = coin.market_cap ?? 0;
       totalMcap += mcap;
-      coins.push({
+      return {
         symbol: (coin.symbol || "").toUpperCase(),
         name: coin.name || "",
         image: coin.image || "",
-        price: coin.current_price || 0,
-        change24h: coin.price_change_percentage_24h || 0,
+        price: coin.current_price ?? 0,
+        change24h: coin.price_change_percentage_24h ?? 0,
         marketCap: mcap,
-        dominancePercent: 0, // calculated below
-      });
-    }
+        dominancePercent: 0, // Computed below
+      };
+    });
 
-    // Compute dominance percentages
-    if (totalMcap > 0) {
-      for (const c of coins) {
-        c.dominancePercent = (c.marketCap / totalMcap) * 100;
-      }
-    }
-
-    // Weighted 24h change
-    let weightedChange = 0;
-    if (totalMcap > 0) {
-      for (const c of coins) {
-        weightedChange += (c.marketCap / totalMcap) * c.change24h;
-      }
+    // Compute dominance percentages and weighted change
+    for (const coin of coins) {
+      coin.dominancePercent = totalMcap > 0 ? (coin.marketCap / totalMcap) * 100 : 0;
+      weightedChangeSum += coin.change24h * (coin.dominancePercent / 100);
     }
 
     return {
       totalMarketCap: totalMcap,
-      weightedChange24h: Math.round(weightedChange * 100) / 100,
+      weightedChange24h: weightedChangeSum,
       topCoins: coins,
       topCoinCount: coins.length,
     };
   } catch (err) {
-    log.debug("CoinGecko", "Top20 index fetch failed", (err as Error).message);
+    log.debug("CoinGecko", "Top20 fetch failed", (err as Error).message);
     return null;
   }
 }
