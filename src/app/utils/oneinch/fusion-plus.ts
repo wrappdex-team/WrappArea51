@@ -30,7 +30,7 @@ import type {
   FusionPresetQuote,
 } from "./types";
 
-/* ══════════════════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════════════���═══════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -81,11 +81,13 @@ function resolveTokenForFusionPlus(address: string, chainId: number): string {
       );
     }
     log.info(TAG, `Resolved native token -> ${wrapped.slice(0, 10)}... (chain ${chainId})`);
-    // IMPLEMENTATION NOTE: The 1inch Fusion+ API requires lowercase addresses.
-    return wrapped.toLowerCase();
+    // IMPLEMENTATION NOTE: Return the checksummed wrapped address as-is.
+    // The 1inch Fusion+ API expects EIP-55 checksummed addresses.
+    return wrapped;
   }
-  // Always lowercase — the Fusion+ API rejects checksummed (mixed-case) addresses
-  return address.toLowerCase();
+  // Pass through as-is — token addresses from the 1inch Token API are already
+  // EIP-55 checksummed, and the Fusion+ API requires that format.
+  return address;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -316,7 +318,7 @@ export async function getCrossChainQuote(
     srcTokenAddress: resolvedSrc,
     dstTokenAddress: resolvedDst,
     amount,
-    walletAddress: walletAddress.toLowerCase(),
+    walletAddress,
     enableEstimate: true,
   };
 

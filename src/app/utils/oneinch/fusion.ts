@@ -35,7 +35,7 @@ import type {
   FusionOrderStatus,
 } from "./types";
 
-/* ═════════════════════════════════════════════════════════════════════
+/* ═���═══════════════════════════════════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -82,12 +82,14 @@ function resolveTokenForFusion(address: string, chainId: number): string {
       );
     }
     log.info(TAG, `Resolved native token → ${wrapped.slice(0, 10)}... (chain ${chainId})`);
-    // IMPLEMENTATION NOTE: The 1inch Fusion API requires lowercase addresses.
-    // Always return lowercase to avoid "invalid address" rejections.
-    return wrapped.toLowerCase();
+    // IMPLEMENTATION NOTE: Return the checksummed wrapped address as-is.
+    // The 1inch Fusion API v2.0 expects EIP-55 checksummed addresses —
+    // lowercasing them causes "invalid address" rejections.
+    return wrapped;
   }
-  // Always lowercase — the Fusion API rejects checksummed (mixed-case) addresses
-  return address.toLowerCase();
+  // Pass through as-is — token addresses from the 1inch Token API are already
+  // EIP-55 checksummed, and the Fusion API requires that format.
+  return address;
 }
 
 /** Auto-refresh interval for Fusion quotes (15 seconds) */
@@ -264,7 +266,7 @@ export async function getFusionQuote(
     srcTokenAddress: resolveTokenForFusion(srcTokenAddress, chainId),
     dstTokenAddress: resolveTokenForFusion(dstTokenAddress, chainId),
     amount,
-    walletAddress: walletAddress.toLowerCase(),
+    walletAddress,
     enableEstimate: true,
   };
 

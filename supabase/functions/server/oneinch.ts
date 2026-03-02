@@ -163,7 +163,7 @@ function getApiKey(): string | null {
   return key && key.length > 0 ? key : null;
 }
 
-/* ═══════════���══════════════════════════════════════════════════════════
+/* ═════════════════════════════════════════════════════════════════════
  * Caches — per API domain with appropriate TTLs
  *
  * IMPLEMENTATION NOTE: Caches are in-memory (per-isolate). This is
@@ -566,15 +566,16 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 expects addresses
-    // in lowercase. Normalise before forwarding upstream. Only pass fields
-    // the API explicitly supports to avoid "invalid address" rejections
-    // from unrecognised body fields.
+    // IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 expects EIP-55
+    // checksummed addresses. Pass through as-is — do NOT lowercase, as
+    // that triggers "invalid address" rejections. Only pass fields
+    // the API explicitly supports to avoid rejections from unrecognised
+    // body fields.
     const upstreamBody: Record<string, unknown> = {
-      srcTokenAddress: (body.srcTokenAddress as string).toLowerCase(),
-      dstTokenAddress: (body.dstTokenAddress as string).toLowerCase(),
+      srcTokenAddress: body.srcTokenAddress as string,
+      dstTokenAddress: body.dstTokenAddress as string,
       amount: body.amount,
-      walletAddress: (body.walletAddress as string).toLowerCase(),
+      walletAddress: body.walletAddress as string,
     };
     // Optional fields — only include if provided
     if (body.permit) upstreamBody.permit = body.permit;
@@ -751,15 +752,15 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: Lowercase all addresses before forwarding upstream
-    // (same defensive measure as the Fusion quote route).
+    // IMPLEMENTATION NOTE: Pass addresses through as-is (EIP-55 checksummed).
+    // Same as the Fusion quote route — do NOT lowercase.
     const upstreamBody: Record<string, unknown> = {
       srcChainId,
       dstChainId,
-      srcTokenAddress: (body.srcTokenAddress as string).toLowerCase(),
-      dstTokenAddress: (body.dstTokenAddress as string).toLowerCase(),
+      srcTokenAddress: body.srcTokenAddress as string,
+      dstTokenAddress: body.dstTokenAddress as string,
       amount: body.amount,
-      walletAddress: (body.walletAddress as string).toLowerCase(),
+      walletAddress: body.walletAddress as string,
     };
     if (typeof body.enableEstimate === "boolean") upstreamBody.enableEstimate = body.enableEstimate;
     if (typeof body.fee === "number") upstreamBody.fee = body.fee;
