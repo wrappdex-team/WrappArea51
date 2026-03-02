@@ -23,6 +23,10 @@ const BINANCE_PAIR_MAP: Record<string, string> = {
   SHIB: "SHIBUSDT", DOT: "DOTUSDT", LTC: "LTCUSDT", PAXG: "PAXGUSDT",
   AAVE: "AAVEUSDT",
   DAI: "DAIUSDT",
+  XLM: "XLMUSDT",
+  UNI: "UNIUSDT",
+  HYPE: "HYPEUSDT",
+  CC: "CCUSDT",
 };
 
 // Reverse map: Binance pair -> our symbol
@@ -41,6 +45,10 @@ export const COINCAP_ID_MAP: Record<string, string> = {
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "multi-collateral-dai",
   XMR: "monero",
+  XLM: "stellar",
+  UNI: "uniswap",
+  HYPE: "hyperliquid",
+  CC: "canton",
   // Wrapped bridge tokens (map to parent asset)
   WHBAR: "hedera-hashgraph", WBTC: "bitcoin", WETH: "ethereum",
   WBNB: "binance-coin", WAVAX: "avalanche", WMATIC: "matic-network",
@@ -56,6 +64,10 @@ export const COIN_ID_MAP: Record<string, string> = {
   USDCh: "usd-coin", AAVE: "aave",
   DAI: "dai",
   XMR: "monero",
+  XLM: "stellar",
+  UNI: "uniswap",
+  HYPE: "hyperliquid",
+  CC: "canton",
   // Wrapped bridge tokens (map to parent asset CoinGecko ID)
   WHBAR: "hedera-hashgraph", WBTC: "wrapped-bitcoin", WETH: "weth",
   WBNB: "binancecoin", WAVAX: "avalanche-2", WMATIC: "matic-network",
@@ -87,6 +99,10 @@ export const TOKEN_LOGOS: Record<string, string> = {
   AAVE: `${CG}/12645/standard/aave-token-round.png`,
   DAI: `${CG}/9956/standard/Badge_Dai.png`,
   XMR: `${CG}/69/standard/monero_logo.png`,
+  XLM: `${CG}/100/standard/Stellar_symbol_black_RGB.png`,
+  UNI: `${CG}/12504/standard/uni.jpg`,
+  HYPE: `${CG}/40845/standard/hyperliquid.jpeg`,
+  CC: `${CG}/37249/standard/canton.png`,
   // Wrapped bridge tokens (AMM-specific — reuse parent asset logos)
   WHBAR: `${CG}/3688/standard/hbar.png`,
   WBTC: `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`,
@@ -145,6 +161,10 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
   AAVE: { id: "aave",       symbol: "aave", name: "AAVE",       current_price: 150,      price_change_percentage_24h: 0.5,   market_cap: 15000000000,   total_volume: 100000000,   image: TOKEN_LOGOS.AAVE },
   DAI:  { id: "dai",        symbol: "dai",  name: "Dai",        current_price: 1.0000,   price_change_percentage_24h: 0.01,  market_cap: 5300000000,    total_volume: 300000000,   image: TOKEN_LOGOS.DAI },
   XMR:  { id: "monero",     symbol: "xmr",  name: "Monero",     current_price: 334,      price_change_percentage_24h: 1.2,   market_cap: 6200000000,    total_volume: 120000000,   image: TOKEN_LOGOS.XMR },
+  XLM:  { id: "stellar",    symbol: "xlm",  name: "Stellar",    current_price: 0.15,     price_change_percentage_24h: 0.2,   market_cap: 10000000000,   total_volume: 1000000000,  image: TOKEN_LOGOS.XLM },
+  UNI:  { id: "uniswap",    symbol: "uni",  name: "Uniswap",    current_price: 15,       price_change_percentage_24h: 0.5,   market_cap: 10000000000,   total_volume: 500000000,   image: TOKEN_LOGOS.UNI },
+  HYPE: { id: "hyperliquid",symbol: "hype",name: "Hyperliquid",current_price: 28,       price_change_percentage_24h: 3.5,   market_cap: 9300000000,    total_volume: 800000000,   image: TOKEN_LOGOS.HYPE },
+  CC:   { id: "canton",     symbol: "cc",   name: "Canton",      current_price: 0.025,    price_change_percentage_24h: 1.8,   market_cap: 6000000000,    total_volume: 350000000,   image: TOKEN_LOGOS.CC },
 };
 
 // ─────────────────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ import { log } from "./logger";
 // (coingecko.ts imports from chainlink.ts at runtime)
 import type { CoinPrice, OracleSource } from "./coingecko";
 
-// ── ABI Function Selector ──────────��────────────────────────────
+// ── ABI Function Selector ──────────────────────────────────────
 // latestRoundData() → (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
 const LATEST_ROUND_DATA = "0xfeaf968c";
 
@@ -52,6 +52,8 @@ export const CHAINLINK_FEEDS: Record<string, { address: string; decimals: number
   SHIB:  { address: "0x8dD1CD88F43aF196ae478e91b9F5E4Ac69A97C61", decimals: 18, pair: "SHIB / ETH" }, // Note: denominated in ETH
   AAVE:  { address: "0x547a514d5e3769680Ce22B2361c10Ea13619e8a9", decimals: 8,  pair: "AAVE / USD" },
   DAI:   { address: "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9", decimals: 8,  pair: "DAI / USD" },
+  UNI:   { address: "0x553303d460EE0afB37EdFf9bE42922D8FF63220e", decimals: 8,  pair: "UNI / USD" },
+  XLM:   { address: "0x692AE5510cA9070095A496dbcFBCDA99D4024Cd0", decimals: 8,  pair: "XLM / USD" },
 };
 
 // ── Response Cache ─────────────────────────────────────────────────

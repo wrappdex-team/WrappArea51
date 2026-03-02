@@ -38,6 +38,10 @@ export const TOKEN_REGISTRY: TokenDef[] = [
   { symbol: "DOT",   name: "Polkadot",   category: "layer1",      volatility: 0.06,  fallbackPrice: 7.89,       fallbackChange: 4.12,  logo: TOKEN_LOGOS.DOT },
   { symbol: "LTC",   name: "Litecoin",   category: "layer1",      volatility: 0.05,  fallbackPrice: 95.43,      fallbackChange: 2.15,  logo: TOKEN_LOGOS.LTC },
   { symbol: "XMR",   name: "Monero",     category: "layer1",      volatility: 0.06,  fallbackPrice: 334,        fallbackChange: 1.20,  logo: TOKEN_LOGOS.XMR },
+  { symbol: "XLM",   name: "Stellar",    category: "layer1",      volatility: 0.08,  fallbackPrice: 0.15,       fallbackChange: 0.20,  logo: TOKEN_LOGOS.XLM },
+  { symbol: "UNI",   name: "Uniswap",    category: "defi",        volatility: 0.10,  fallbackPrice: 15.0,       fallbackChange: 0.50,  logo: TOKEN_LOGOS.UNI },
+  { symbol: "HYPE",  name: "Hyperliquid", category: "defi",        volatility: 0.15,  fallbackPrice: 28.0,       fallbackChange: 3.50,  logo: TOKEN_LOGOS.HYPE },
+  { symbol: "CC",    name: "Canton",      category: "layer1",      volatility: 0.12,  fallbackPrice: 0.025,      fallbackChange: 1.80,  logo: TOKEN_LOGOS.CC },
 ];
 
 // Subsets for specific views

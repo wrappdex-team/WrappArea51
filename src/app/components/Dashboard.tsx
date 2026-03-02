@@ -766,7 +766,7 @@ export function Dashboard() {
 
       {/* Market Overview */}
       <div>
-        {/* ── Unified Header: Title + Filters + Column Labels ── */}
+        {/* ── Unified Single-Row Header: Title + Column Labels + Filter pills ── */}
         <div
           className={`rounded-xl mb-3 transition-all duration-300 ${
             isDark
@@ -774,115 +774,103 @@ export function Dashboard() {
               : "bg-gray-50/80 border border-gray-100"
           }${vipActive ? " vip-col-header" : ""}`}
         >
-          {/* Top line: Title + Filter pills */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-3 md:px-4 pt-3 pb-2 gap-2">
-            <h2 className={`text-lg md:text-xl font-bold ${isDark ? "text-white" : "text-gray-900"} transition-all duration-300 leading-none`}>
-              Top Markets
-            </h2>
-            <div className="flex gap-1.5 overflow-x-auto w-full sm:w-auto">
-              {(["all", "layer1", "stablecoin"] as const).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setMarketFilter(f)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-300 whitespace-nowrap ${
-                    marketFilter === f
-                      ? f === "stablecoin"
-                        ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm shadow-emerald-500/20"
-                        : "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm shadow-pink-500/20"
-                      : isDark
+          {/* Single row: Title + Filter pills (left) | Column Labels (right) */}
+          <div className="flex items-center px-3 md:px-4 py-2.5 gap-3">
+            {/* Left: Title + filter pills */}
+            <div className="flex items-center flex-1 min-w-0 gap-3">
+              <h2 className={`text-lg md:text-xl font-bold ${isDark ? "text-white" : "text-gray-900"} transition-all duration-300 leading-none whitespace-nowrap`}>
+                Top Markets
+              </h2>
+              <div className="hidden sm:flex gap-1.5 items-center">
+                {(["all", "layer1", "stablecoin"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setMarketFilter(f)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-300 whitespace-nowrap ${
+                      marketFilter === f
+                        ? f === "stablecoin"
+                          ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm shadow-emerald-500/20"
+                          : "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm shadow-pink-500/20"
+                        : isDark
+                        ? "bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-700/60"
+                        : "bg-white text-gray-500 hover:text-gray-900 hover:bg-gray-100 border border-gray-200/60"
+                    }`}
+                  >
+                    {f === "all" ? "All" : f === "layer1" ? "Layer 1" : "Stablecoins"}
+                  </button>
+                ))}
+                <Link
+                  to="/defi"
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 whitespace-nowrap ${
+                    isDark
                       ? "bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-700/60"
                       : "bg-white text-gray-500 hover:text-gray-900 hover:bg-gray-100 border border-gray-200/60"
                   }`}
                 >
-                  {f === "all" ? "All" : f === "layer1" ? "Layer 1" : "Stablecoins"}
-                </button>
-              ))}
-              <Link
-                to="/defi"
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 whitespace-nowrap ${
-                  isDark
+                  DeFi
+                </Link>
+              </div>
+            </div>
+
+            {/* Right: column labels ONLY — structure mirrors data row right side exactly */}
+            <div className="flex items-center gap-3 md:gap-6">
+              <div className="w-28 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>Price</span>
+              </div>
+              <div className="hidden md:block w-20 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>24h %</span>
+              </div>
+              <div className="hidden lg:block w-20 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>Volume</span>
+              </div>
+              <div className="hidden lg:block w-24 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>Mkt Cap</span>
+              </div>
+              <div className="hidden md:block w-32" />
+              {/* Invisible spacer matching Trade+Bridge button area width */}
+              <div className="hidden sm:block w-[165px]" />
+              <div className="w-5" />
+            </div>
+          </div>
+
+          {/* Mobile filter pills — visible below sm only */}
+          <div className="flex sm:hidden gap-1.5 overflow-x-auto px-3 pb-2">
+            {(["all", "layer1", "stablecoin"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setMarketFilter(f)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-300 whitespace-nowrap ${
+                  marketFilter === f
+                    ? f === "stablecoin"
+                      ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm shadow-emerald-500/20"
+                      : "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-sm shadow-pink-500/20"
+                    : isDark
                     ? "bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-700/60"
                     : "bg-white text-gray-500 hover:text-gray-900 hover:bg-gray-100 border border-gray-200/60"
                 }`}
               >
-                DeFi
-              </Link>
-            </div>
+                {f === "all" ? "All" : f === "layer1" ? "Layer 1" : "Stablecoins"}
+              </button>
+            ))}
+            <Link
+              to="/defi"
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 whitespace-nowrap ${
+                isDark
+                  ? "bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-700/60"
+                  : "bg-white text-gray-500 hover:text-gray-900 hover:bg-gray-100 border border-gray-200/60"
+              }`}
+            >
+              DeFi
+            </Link>
           </div>
-
-          {/* Divider */}
-          <div className={`mx-3 md:mx-4 ${isDark ? "border-t border-slate-800/60" : "border-t border-gray-200/60"}`} />
-
-          {/* Column labels row */}
-          {!loading && filteredMarkets.length > 0 && (
-            <div className="flex items-center justify-between px-3 md:px-4 py-2">
-              {/* Left: Asset label — matches the flex-1 token area */}
-              <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
-                <div className="w-8 md:w-10 flex-shrink-0" />
-                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
-                  isDark ? "text-slate-500" : "text-gray-400"
-                }`}>
-                  Asset
-                </span>
-              </div>
-
-              {/* Right: column labels — mirrors data row flex structure */}
-              <div className="flex items-center gap-3 md:gap-6">
-                {/* Price */}
-                <div className="text-right min-w-[4.5rem] sm:min-w-[5.5rem]">
-                  <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
-                    isDark ? "text-slate-500" : "text-gray-400"
-                  }`}>
-                    Price
-                  </span>
-                </div>
-
-                {/* 24h — hidden below md, w-20 */}
-                <div className="hidden md:block w-20 text-right">
-                  <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
-                    isDark ? "text-slate-500" : "text-gray-400"
-                  }`}>
-                    24h %
-                  </span>
-                </div>
-
-                {/* Volume — hidden below lg, w-20 */}
-                <div className="hidden lg:block w-20 text-right">
-                  <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
-                    isDark ? "text-slate-500" : "text-gray-400"
-                  }`}>
-                    Volume
-                  </span>
-                </div>
-
-                {/* Market Cap — hidden below lg, w-24 */}
-                <div className="hidden lg:block w-24 text-right">
-                  <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
-                    isDark ? "text-slate-500" : "text-gray-400"
-                  }`}>
-                    Mkt Cap
-                  </span>
-                </div>
-
-                {/* 7d sparkline — invisible spacer only (no label), w-32 */}
-                <div className="hidden md:block w-32" />
-
-                {/* Actions spacer — hidden below sm, matches Trade+Bridge button area */}
-                <div className="hidden sm:flex gap-1.5 items-center relative">
-                  <span className="px-3 py-1.5 text-sm font-semibold invisible flex items-center gap-1.5" aria-hidden="true">Trade<ArrowUpRight className="w-3.5 h-3.5" /></span>
-                  <span className="px-3 py-1.5 text-sm font-medium invisible flex items-center gap-1.5" aria-hidden="true">Bridge<ArrowRightLeft className="w-3.5 h-3.5" /></span>
-                  <span className={`absolute inset-0 flex items-center justify-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
-                    isDark ? "text-slate-600" : "text-gray-300"
-                  }`}>
-                    Actions
-                  </span>
-                </div>
-
-                {/* Chevron spacer */}
-                <div className="w-5" />
-              </div>
-            </div>
-          )}
         </div>
 
         {loading ? (
@@ -910,7 +898,7 @@ export function Dashboard() {
               >
                 {/* Row header */}
                 <div
-                  className="flex items-center justify-between p-3 md:p-4 cursor-pointer"
+                  className="flex items-center p-3 md:p-4 cursor-pointer"
                   onClick={() => toggleExpand(item.symbol)}
                 >
                   <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
@@ -955,7 +943,7 @@ export function Dashboard() {
                   </div>
 
                   <div className="flex items-center gap-3 md:gap-6">
-                    <div className="text-right">
+                    <div className="w-28 text-right">
                       <div className="font-bold text-sm md:text-base">
                         ${item.price >= 1 ? item.price.toLocaleString() : item.price < 0.001 ? item.price.toFixed(8) : item.price.toFixed(4)}
                       </div>
@@ -1025,7 +1013,7 @@ export function Dashboard() {
                     </div>
 
                     {/* Trade / Bridge — VIP iridescent glow */}
-                    <div className="hidden sm:flex gap-1.5">
+                    <div className="hidden sm:flex gap-1.5 w-[165px] justify-end">
                       <Link
                         to={item.symbol === "HBAR.ħ" ? "/swap" : `/trading/${item.symbol}`}
                         onClick={(e) => { e.stopPropagation(); if (vipActive) playVipButtonChime(); }}
