@@ -23,7 +23,7 @@
 //   GET  /1inch/tokens/:chainId        → /swap/v6.0/{chainId}/tokens
 //
 //   ── Fusion API v2.0 (new) ──
-//   POST /1inch/fusion/quote/:chainId          → /fusion/quoter/v2.0/{chainId}/quote/receive
+//   POST /1inch/fusion/quote/:chainId          → GET /fusion/quoter/v2.0/{chainId}/quote/receive (query params)
 //   POST /1inch/fusion/build/:chainId          → /fusion/relayer/v2.0/{chainId}/order/build
 //   POST /1inch/fusion/submit/:chainId         → /fusion/relayer/v2.0/{chainId}/order/submit
 //   GET  /1inch/fusion/status/:chainId/:hash   → /fusion/orders/v2.0/{chainId}/order/status/{hash}
@@ -635,7 +635,24 @@ export function registerOneInchRoutes(app: Hono) {
     if (typeof body.enableEstimate === "boolean") upstreamBody.enableEstimate = body.enableEstimate;
     if (body.isPermit2) upstreamBody.isPermit2 = body.isPermit2;
 
-    const upstreamUrl = fusionQuoterUrl(chainId, "/quote/receive");
+    // IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 /quote/receive
+    // endpoint is a **GET** endpoint with **query parameters** — NOT a POST
+    // with a JSON body. The 1inch reference code (axios.get with config.params)
+    // confirms this. Sending POST causes 1inch to ignore the JSON body, see
+    // empty query params, and return "invalid address" for all fields.
+    const quoteParams = new URLSearchParams();
+    quoteParams.set("fromTokenAddress", upstreamBody.fromTokenAddress as string);
+    quoteParams.set("toTokenAddress", upstreamBody.toTokenAddress as string);
+    quoteParams.set("amount", upstreamBody.amount as string);
+    quoteParams.set("walletAddress", upstreamBody.walletAddress as string);
+    // Optional params — only include if provided
+    if (upstreamBody.permit) quoteParams.set("permit", String(upstreamBody.permit));
+    if (typeof upstreamBody.fee === "number") quoteParams.set("fee", String(upstreamBody.fee));
+    if (upstreamBody.source) quoteParams.set("source", String(upstreamBody.source));
+    if (typeof upstreamBody.enableEstimate === "boolean") quoteParams.set("enableEstimate", String(upstreamBody.enableEstimate));
+    if (upstreamBody.isPermit2) quoteParams.set("isPermit2", String(upstreamBody.isPermit2));
+
+    const upstreamUrl = fusionQuoterUrl(chainId, "/quote/receive", quoteParams.toString());
     console.log(
       `${TAG} Fusion quote: chain=${chainId}` +
       ` from=${upstreamBody.fromTokenAddress}` +
@@ -643,13 +660,14 @@ export function registerOneInchRoutes(app: Hono) {
       ` wallet=${upstreamBody.walletAddress}` +
       ` amt=${upstreamBody.amount}` +
       ` enableEstimate=${upstreamBody.enableEstimate ?? "not-set"}` +
+      ` method=GET (query params)` +
       ` url=${upstreamUrl}`
     );
 
     const { status, body: resBody } = await upstreamFetch(
-      "POST",
+      "GET",
       upstreamUrl,
-      JSON.stringify(upstreamBody),
+      null,
     );
     if (status !== 200) {
       console.log(`${TAG} Fusion quote upstream error: status=${status} body=${JSON.stringify(resBody).slice(0, 500)}`);
@@ -1071,10 +1089,11 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2025-03-02",
+      serverBuild: "2026-03-02",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
-      fusionChecksumming: "eip55",   // EIP-55 via viem getAddress()
-      note: "Fusion proxy maps client srcTokenAddress→fromTokenAddress, dstTokenAddress→toTokenAddress before forwarding to 1inch Quoter v2.0",
+      fusionChecksumming: "eip55",   // EIP-55 via keccak256
+      fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)
+      note: "Fusion quote uses GET /quote/receive?fromTokenAddress=...&toTokenAddress=... (query params, not POST body)",
     });
   });
 

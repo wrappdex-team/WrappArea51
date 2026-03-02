@@ -1,0 +1,69 @@
+SwapPage-aOHWljzk.js:23  POST https://ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion/quote/1 400 (Bad Request)
+m @ SwapPage-aOHWljzk.js:23
+or @ SwapPage-aOHWljzk.js:23
+Hn @ SwapPage-aOHWljzk.js:23
+po @ SwapPage-aOHWljzk.js:37
+(anonymous) @ SwapPage-aOHWljzk.js:43
+(anonymous) @ SwapPage-aOHWljzk.js:43
+setTimeout
+(anonymous) @ SwapPage-aOHWljzk.js:43
+di @ vendor-react-b7-JL9ua.js:40
+ul @ vendor-react-b7-JL9ua.js:40
+Yh @ vendor-react-b7-JL9ua.js:40
+Tr @ vendor-react-b7-JL9ua.js:40
+kf @ vendor-react-b7-JL9ua.js:40
+Xn @ vendor-react-b7-JL9ua.js:38
+(anonymous) @ vendor-react-b7-JL9ua.js:40
+App-CiAjC2dF.js:2 [HBAR.h][1inch] Fusion quote error: 1inch rejected the address format (invalid address). If this persists, ensure the server has been redeployed: supabase functions deploy make-server-54299934 | detail=invalid address | proxyStatus=v2-deployed OneInchApiError: 1inch API error
+    at m (SwapPage-aOHWljzk.js:23:15080)
+    at async po (SwapPage-aOHWljzk.js:37:73)
+    at async SwapPage-aOHWljzk.js:43:25725
+console.warn @ App-CiAjC2dF.js:2
+SV @ App-CiAjC2dF.js:192
+(anonymous) @ SwapPage-aOHWljzk.js:43
+await in (anonymous)
+(anonymous) @ SwapPage-aOHWljzk.js:43
+setTimeout
+(anonymous) @ SwapPage-aOHWljzk.js:43
+di @ vendor-react-b7-JL9ua.js:40
+ul @ vendor-react-b7-JL9ua.js:40
+Yh @ vendor-react-b7-JL9ua.js:40
+Tr @ vendor-react-b7-JL9ua.js:40
+kf @ vendor-react-b7-JL9ua.js:40
+Xn @ vendor-react-b7-JL9ua.js:38
+(anonymous) @ vendor-react-b7-JL9ua.js:40
+SwapPage-aOHWljzk.js:23  POST https://ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion/quote/1 400 (Bad Request)
+m @ SwapPage-aOHWljzk.js:23
+or @ SwapPage-aOHWljzk.js:23
+Hn @ SwapPage-aOHWljzk.js:23
+po @ SwapPage-aOHWljzk.js:37
+(anonymous) @ SwapPage-aOHWljzk.js:43
+(anonymous) @ SwapPage-aOHWljzk.js:43
+setTimeout
+(anonymous) @ SwapPage-aOHWljzk.js:43
+di @ vendor-react-b7-JL9ua.js:40
+ul @ vendor-react-b7-JL9ua.js:40
+Yh @ vendor-react-b7-JL9ua.js:40
+Tr @ vendor-react-b7-JL9ua.js:40
+kf @ vendor-react-b7-JL9ua.js:40
+Xn @ vendor-react-b7-JL9ua.js:38
+(anonymous) @ vendor-react-b7-JL9ua.js:40
+App-CiAjC2dF.js:2 [HBAR.h][1inch] Fusion quote error: 1inch rejected the address format (invalid address). If this persists, ensure the server has been redeployed: supabase functions deploy make-server-54299934 | detail=invalid address | proxyStatus=v2-deployed OneInchApiError: 1inch API error
+    at m (SwapPage-aOHWljzk.js:23:15080)
+    at async po (SwapPage-aOHWljzk.js:37:73)
+    at async SwapPage-aOHWljzk.js:43:25725
+console.warn @ App-CiAjC2dF.js:2
+SV @ App-CiAjC2dF.js:192
+(anonymous) @ SwapPage-aOHWljzk.js:43
+await in (anonymous)
+(anonymous) @ SwapPage-aOHWljzk.js:43
+setTimeout
+(anonymous) @ SwapPage-aOHWljzk.js:43
+di @ vendor-react-b7-JL9ua.js:40
+ul @ vendor-react-b7-JL9ua.js:40
+Yh @ vendor-react-b7-JL9ua.js:40
+Tr @ vendor-react-b7-JL9ua.js:40
+kf @ vendor-react-b7-JL9ua.js:40
+Xn @ vendor-react-b7-JL9ua.js:38
+(anonymous) @ vendor-react-b7-JL9ua.js:40
+App-CiAjC2dF.js:2 [HBAR.h] Live token prices updated: 38 tokens {HBAR: 0.10142206, WHBAR: 0.10142206, SAUCE: 0.017805029496857933, AAVE: 17.52017949, BTC.ℏ: 0.00391235, …}
