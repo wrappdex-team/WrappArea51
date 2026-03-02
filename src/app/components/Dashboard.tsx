@@ -22,11 +22,14 @@ import { playVipButtonChime } from "../utils/sounds";
 import { SiteActivity } from "./SiteActivity";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { TOKEN_LOGOS } from "../utils/coingecko";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
-import { DashboardStatsSkeleton, MarketListSkeleton } from "./Skeletons";
-import { Tip } from "./Tip";
-import { PriceFlash } from "./PriceFlash";
-import { MiniSparkline } from "./MiniSparkline";
+
+// ── Icon-proxy base URL for production CDN fallback ──────────────
+// CoinGecko CDN blocks hotlinking from Vercel in production.
+// When a direct image load fails, retry via our server-side icon-proxy
+// which fetches the image without referrer issues.
+const ICON_PROXY_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/icon-proxy`;
 
 // ── Module-level caches ────────────────────────────────────────────
 // Persist across component unmount/remount cycles (tab switches,
@@ -134,7 +137,9 @@ const _brokenLogos = new Set<string>();
 /** Flicker-free token logo with gradient letter-avatar fallback.
  *  IMPLEMENTATION NOTE: Gradient is NOT placed behind the img because
  *  most crypto logos have transparent PNG backgrounds — gradient would
- *  bleed through and ruin the appearance of working logos. */
+ *  bleed through and ruin the appearance of working logos.
+ *  Phase 1: Try direct CDN URL. Phase 2: Retry via icon-proxy (bypasses
+ *  CoinGecko hotlink blocking on Vercel). Phase 3: Gradient letter. */
 function TokenLogo({ src, symbol, size = "md" }: { src: string; symbol: string; size?: "sm" | "md" }) {
   const dim = size === "sm" ? "w-7 h-7" : "w-8 h-8 md:w-10 md:h-10";
   const isBroken = !src || _brokenLogos.has(src);
@@ -149,7 +154,7 @@ function TokenLogo({ src, symbol, size = "md" }: { src: string; symbol: string; 
   }
 
   // Image might work: render img, with hidden gradient sibling that
-  // only appears if onError fires. No gradient behind = no bleed-through.
+  // only appears if both direct + proxy fail. No gradient behind = no bleed-through.
   return (
     <>
       <img
@@ -157,9 +162,18 @@ function TokenLogo({ src, symbol, size = "md" }: { src: string; symbol: string; 
         alt={symbol}
         className={`${dim} rounded-full flex-shrink-0 object-cover`}
         onError={(e) => {
+          const img = e.currentTarget;
+          const retried = img.dataset.retried;
+          // Phase 2: CDN failed — retry through icon-proxy (server-side, no referrer)
+          if (!retried && src.startsWith("http") && !src.includes("/icon-proxy")) {
+            img.dataset.retried = "1";
+            img.src = `${ICON_PROXY_BASE}?url=${encodeURIComponent(src)}`;
+            return;
+          }
+          // Phase 3: Both direct + proxy failed — blacklist and show gradient
           _brokenLogos.add(src);
-          e.currentTarget.style.display = "none";
-          const next = e.currentTarget.nextElementSibling;
+          img.style.display = "none";
+          const next = img.nextElementSibling;
           if (next) (next as HTMLElement).style.display = "flex";
         }}
       />

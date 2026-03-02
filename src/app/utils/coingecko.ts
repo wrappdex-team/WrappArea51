@@ -130,12 +130,12 @@ export const TOKEN_LOGOS: Record<string, string> = {
   XMR: `${CG}/69/standard/monero_logo.png`,
   XLM: `${CG}/100/standard/Stellar_symbol_black_RGB.png`,
   UNI: `${CG}/12504/standard/uni.jpg`,
-  // IMPLEMENTATION NOTE: HYPE and CC static logo URLs are best-effort guesses
-  // of CoinGecko CDN paths. The CoinGecko /coins/markets API provides the
-  // authoritative `image` URL at runtime — these are fallback-only.
-  // If they 404, the Dashboard gradient letter-avatar fallback renders.
-  HYPE: `${CG}/40845/standard/HYPE.png`,
-  CC: `${CG}/37249/standard/canton_network.png`,
+  // IMPLEMENTATION NOTE: HYPE and CC use coin-images.coingecko.com (newer CDN).
+  // The CoinGecko /coins/markets API returns the authoritative `image` URL at
+  // runtime — these are fallback-only. If they 404, the Dashboard TokenLogo
+  // retries via icon-proxy, then falls back to gradient letter-avatar.
+  HYPE: "https://coin-images.coingecko.com/coins/images/40845/standard/hype.png",
+  CC: "https://coin-images.coingecko.com/coins/images/37249/standard/canton_network.png",
   // Wrapped bridge tokens (AMM-specific — reuse parent asset logos)
   WHBAR: `${CG}/3688/standard/hbar.png`,
   WBTC: `${CG}/7598/standard/wrapped_bitcoin_wbtc.png`,
