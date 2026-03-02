@@ -311,34 +311,55 @@ export async function getFusionQuote(
   // [DIAG] One-time ping to confirm the v2 field mapping fix is deployed
   pingFusionProxy().catch(() => {});
 
-  const body: FusionQuoteParams = {
-    srcTokenAddress: resolveTokenForFusion(srcTokenAddress, chainId),
-    dstTokenAddress: resolveTokenForFusion(dstTokenAddress, chainId),
+  const resolvedSrc = resolveTokenForFusion(srcTokenAddress, chainId);
+  const resolvedDst = resolveTokenForFusion(dstTokenAddress, chainId);
+  const checksummedWallet = (() => {
+    try { return getAddress(walletAddress); } catch { return walletAddress; }
+  })();
+
+  // IMPLEMENTATION NOTE — Dual field name strategy (backward + forward compatible):
+  //
+  // 1inch Fusion Quoter v2.0 requires `fromTokenAddress` / `toTokenAddress`.
+  // Our server proxy validates using `srcTokenAddress` / `dstTokenAddress` (our
+  // internal naming convention), then remaps to the upstream field names.
+  //
+  // However, older server deployments forwarded the client body as-is to 1inch.
+  // By including BOTH naming conventions we handle both scenarios without code change:
+  //   • Old server (body forwarded as-is)  → 1inch sees fromToken/toToken  ✅
+  //   • New server (explicit field mapping) → uses srcToken/dstToken for validation,
+  //     rebuilds upstream body with fromToken/toToken                       ✅
+  //
+  // Extra unknown fields in the 1inch JSON body are silently ignored — no side-effects.
+  const body: FusionQuoteParams & { fromTokenAddress: string; toTokenAddress: string } = {
+    // Old server field names (used for proxy validation + new-server mapping)
+    srcTokenAddress: resolvedSrc,
+    dstTokenAddress: resolvedDst,
+    // New field names — directly consumed by 1inch Fusion Quoter v2.0
+    // if the body is forwarded as-is by an older server deployment
+    fromTokenAddress: resolvedSrc,
+    toTokenAddress:   resolvedDst,
     amount,
-    // IMPLEMENTATION NOTE: Checksum the wallet address via viem's getAddress.
-    // MetaMask and some wallet providers may return lowercased addresses from
-    // eth_accounts. The 1inch Fusion API v2.0 requires EIP-55 checksummed
-    // addresses for ALL fields — including walletAddress.
-    walletAddress: (() => { try { return getAddress(walletAddress); } catch { return walletAddress; } })(),
+    // EIP-55 checksummed wallet — Fusion API v2.0 requires strict mixed-case format
+    walletAddress: checksummedWallet,
     enableEstimate: true,
   };
 
-  const cacheKey = `fusion-quote:${chainId}:${srcTokenAddress}:${dstTokenAddress}:${amount}`;
-
-  // [DIAG] Verbose logging for debugging "invalid address" quote rejections
-  log.info(TAG, `Requesting Fusion quote:`,
+  // [DIAG] Verbose logging — shows both field name sets sent to the server
+  log.info(TAG, `[DIAG] Fusion quote body:`,
     `\n  chain=${chainId}`,
-    `\n  srcToken=${body.srcTokenAddress}`,
-    `\n  dstToken=${body.dstTokenAddress}`,
-    `\n  wallet=${body.walletAddress}`,
+    `\n  srcTokenAddress=${resolvedSrc}  ← server validation`,
+    `\n  fromTokenAddress=${resolvedSrc} ← 1inch Quoter v2.0 direct`,
+    `\n  dstTokenAddress=${resolvedDst}  ← server validation`,
+    `\n  toTokenAddress=${resolvedDst}   ← 1inch Quoter v2.0 direct`,
+    `\n  walletAddress=${checksummedWallet}`,
     `\n  amount=${amount}`,
-    `\n  enableEstimate=${body.enableEstimate}`,
+    `\n  [dual-field=ON — works with both deployed and new server]`,
   );
 
   const res = await oneInchApi.post<FusionQuoteResponse>(
     `/fusion/quote/${chainId}`,
     body,
-    { signal, cacheKey, cacheTtlMs: QUOTE_CACHE_TTL_MS },
+    { signal },
   );
 
   if (!res.quoteId || !res.presets) {
