@@ -270,7 +270,15 @@ export async function getFusionQuote(
 
   const cacheKey = `fusion-quote:${chainId}:${srcTokenAddress}:${dstTokenAddress}:${amount}`;
 
-  log.info(TAG, `Requesting Fusion quote: chain=${chainId} src=${body.srcTokenAddress} dst=${body.dstTokenAddress} wallet=${walletAddress} amount=${amount}`);
+  // [DIAG] Verbose logging for debugging "invalid address" quote rejections
+  log.info(TAG, `Requesting Fusion quote:`,
+    `\n  chain=${chainId}`,
+    `\n  srcToken=${body.srcTokenAddress}`,
+    `\n  dstToken=${body.dstTokenAddress}`,
+    `\n  wallet=${body.walletAddress}`,
+    `\n  amount=${amount}`,
+    `\n  enableEstimate=${body.enableEstimate}`,
+  );
 
   const res = await oneInchApi.post<FusionQuoteResponse>(
     `/fusion/quote/${chainId}`,
@@ -502,15 +510,39 @@ export async function signFusionOrder(
     throw new Error("No EVM wallet detected. Install MetaMask or another wallet.");
   }
 
-  log.info(TAG, `Requesting EIP-712 signature from ${account.slice(0, 8)}... primaryType=${typedData.primaryType}`);
-
   // IMPLEMENTATION NOTE: eth_signTypedData_v4 expects:
-  //   params[0] = signer address (checksummed)
+  //   params[0] = signer address (checksummed — MetaMask requires exact match)
   //   params[1] = JSON.stringify(typedData)
   //
   // The typed data MUST include EIP712Domain in types.
   // The 1inch API returns it pre-built — we pass it through as-is.
   // MetaMask displays a human-readable breakdown of the order.
+
+  // [DIAG] Log all addresses involved for debugging "invalid address" errors
+  const domain = typedData?.domain;
+  log.info(TAG, `Requesting EIP-712 signature:`,
+    `\n  signer=${account}`,
+    `\n  primaryType=${typedData.primaryType}`,
+    `\n  domain.name=${domain?.name}`,
+    `\n  domain.verifyingContract=${domain?.verifyingContract}`,
+    `\n  domain.chainId=${domain?.chainId}`,
+    `\n  message keys=${Object.keys(typedData?.message ?? {}).join(",")}`,
+  );
+
+  // [DIAG] Verify the signer account matches a wallet account
+  try {
+    const walletAccounts: string[] = await window.ethereum!.request({ method: "eth_accounts" });
+    const signerLower = account.toLowerCase();
+    const match = walletAccounts.find(a => a.toLowerCase() === signerLower);
+    if (!match) {
+      log.warn(TAG, `SIGNER MISMATCH: ${account} not in wallet accounts [${walletAccounts.join(", ")}]`);
+    } else if (match !== account) {
+      // MetaMask returns checksummed addresses — use the wallet's version to avoid "invalid address"
+      log.info(TAG, `Using wallet's checksummed address: ${match} (was: ${account})`);
+      account = match;
+    }
+  } catch { /* non-critical diagnostic */ }
+
   const signature = await window.ethereum.request({
     method: "eth_signTypedData_v4",
     params: [account, JSON.stringify(typedData)],

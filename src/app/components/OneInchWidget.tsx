@@ -906,9 +906,12 @@ export function OneInchWidget() {
           );
           if (approveData.configured === false) throw new Error("1inch API key not configured");
           if (!approveData.to || !approveData.data) throw new Error("Invalid approval response from 1inch");
+          const approveValue = approveData.value && approveData.value !== "0"
+            ? "0x" + BigInt(approveData.value).toString(16)
+            : "0x0";
           const approveTxHash = await window.ethereum.request({
             method: "eth_sendTransaction",
-            params: [{ from: evmAccount, to: approveData.to, data: approveData.data, value: approveData.value || "0x0" }],
+            params: [{ from: evmAccount, to: approveData.to, data: approveData.data, value: approveValue }],
           });
           log.info("1inch", "Waiting for approval tx", approveTxHash);
           for (let i = 0; i < 30; i++) {
@@ -936,12 +939,23 @@ export function OneInchWidget() {
       if (swapData.error) throw new Error(swapData.details || swapData.error);
       if (!swapData.tx?.to || !swapData.tx?.data) throw new Error("Invalid swap response from 1inch");
 
+      // IMPLEMENTATION NOTE: 1inch API returns value/gas as DECIMAL strings
+      // (e.g., "43605000000000000" for 0.043 ETH). MetaMask's eth_sendTransaction
+      // requires hex-encoded values with "0x" prefix per EIP-1193. Passing the raw
+      // decimal string causes MetaMask to interpret it as a much larger number,
+      // resulting in "Amount: 77,679,494 ETH" instead of "0.043 ETH".
+      const txValue = swapData.tx.value && swapData.tx.value !== "0"
+        ? "0x" + BigInt(swapData.tx.value).toString(16)
+        : "0x0";
+      const txGas = swapData.tx.gas
+        ? "0x" + BigInt(String(swapData.tx.gas)).toString(16)
+        : undefined;
+
       const txHash = await window.ethereum.request({
         method: "eth_sendTransaction",
         params: [{
           from: evmAccount, to: swapData.tx.to,
-          data: swapData.tx.data, value: swapData.tx.value || "0x0",
-          gas: swapData.tx.gas ? "0x" + parseInt(swapData.tx.gas).toString(16) : undefined,
+          data: swapData.tx.data, value: txValue, gas: txGas,
         }],
       });
 
