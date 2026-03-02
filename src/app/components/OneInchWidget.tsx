@@ -1036,6 +1036,17 @@ export function OneInchWidget() {
     try {
       const amountWei = toWei(fromAmount, fromToken.decimals);
 
+      // IMPLEMENTATION NOTE: Check quoteId BEFORE spending gas on approval.
+      // If quoteId is empty (no resolver available, amount too small, or field-name
+      // mismatch in the API response), the build step will fail. We should NOT make
+      // the user pay for an approve() tx that will be followed by a guaranteed failure.
+      if (!fusionQuote.quoteId) {
+        log.error("1inch", `Fusion quoteId is empty — cannot proceed. Raw quote keys: ${Object.keys(fusionQuote.raw as any).join(", ")}`);
+        setSwapError("Missing or invalid quoteId — the Fusion quote did not include a quote identifier. This may mean the trade amount is too small for resolvers, or the token pair has insufficient Fusion liquidity. Try a larger amount or use Classic mode instead.");
+        setSwapStatus("error");
+        return;
+      }
+
       // Step A: For non-native ERC-20 tokens, ensure 1inch router approval.
       // This is the ONLY place in Fusion where gas is paid — a one-time approve().
       if (!fromToken.isNative) {

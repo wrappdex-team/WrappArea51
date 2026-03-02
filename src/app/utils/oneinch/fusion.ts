@@ -366,7 +366,14 @@ function parseQuoteResponse(res: FusionQuoteResponse): ParsedFusionQuote {
   const now = Date.now();
   return {
     raw: res,
-    quoteId: res.quoteId ?? (raw.quoteId as string) ?? "",
+    quoteId:
+      // IMPLEMENTATION NOTE: 1inch v2.0 may return quoteId as "quoteId" or "quote_id" (snake_case)
+      // — same pattern as recommended_preset. Also check id as fallback.
+      (typeof res.quoteId === "string" && res.quoteId ? res.quoteId : null) ??
+      (typeof raw.quoteId === "string" && (raw.quoteId as string) ? (raw.quoteId as string) : null) ??
+      (typeof raw.quote_id === "string" && (raw.quote_id as string) ? (raw.quote_id as string) : null) ??
+      (typeof raw.id === "string" && (raw.id as string) ? (raw.id as string) : null) ??
+      "",
     srcTokenAmount,
     recommendedPreset: recommended,
     presets,
@@ -483,8 +490,30 @@ export async function getFusionQuote(
     throw new Error("Invalid Fusion quote response — missing presets");
   }
 
+  // [DIAG] Log ALL top-level keys and quoteId candidates so we can see what field
+  // name 1inch actually returns (quoteId vs quote_id vs id vs something else)
+  const rawKeys = Object.keys(res as Record<string, unknown>);
+  const rawObj = res as Record<string, unknown>;
+  log.info(TAG, `[DIAG] Quote response top-level keys: [${rawKeys.join(", ")}]`);
+  log.info(TAG, `[DIAG] quoteId candidates:`,
+    `\n  res.quoteId=${JSON.stringify(rawObj.quoteId)}`,
+    `\n  res.quote_id=${JSON.stringify(rawObj.quote_id)}`,
+    `\n  res.id=${JSON.stringify(rawObj.id)}`,
+    `\n  typeof quoteId=${typeof rawObj.quoteId}`,
+    `\n  full response (first 800 chars)=${JSON.stringify(res).slice(0, 800)}`,
+  );
+
   const parsed = parseQuoteResponse(res);
-  log.info(TAG, `Fusion quote received: quoteId=${parsed.quoteId} recommended=${parsed.recommendedPreset} presets=${parsed.presets.length}`);
+  log.info(TAG, `Fusion quote received: quoteId=${parsed.quoteId || "(EMPTY)"} recommended=${parsed.recommendedPreset} presets=${parsed.presets.length}`);
+
+  // IMPLEMENTATION NOTE: If quoteId is empty, the order build step will fail.
+  // Warn prominently so it's visible in console.
+  if (!parsed.quoteId) {
+    log.warn(TAG, `⚠️ QUOTE HAS NO quoteId — the build step WILL fail. This may mean:`
+      + `\n  1. The trade amount is too small for resolvers to profit`
+      + `\n  2. The token pair has no Fusion liquidity`
+      + `\n  3. 1inch returned quoteId under a different field name (check DIAG logs above)`);
+  }
 
   return parsed;
 }

@@ -51,7 +51,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import { isRateLimited, getClientIp, oneInchBreaker, isHttpFailure, CircuitBreakerOpenError } from "./shared.ts";
-import { keccak_256 } from "jsr:@noble/hashes/sha3";
+import { keccak_256 } from "npm:@noble/hashes@1.7.1/sha3";
 
 /* ══════════════════════════════════════════════════════════════════════
  * Constants
@@ -395,7 +395,7 @@ async function upstreamFetch(
  * Each builder produces the full upstream URL for its API domain.
  * This keeps route handlers clean and ensures URL construction is
  * correct and consistent.
- * ══════════════════════════════════════════════════════════════════════ */
+ * ══��═══════════════════════════════════════════════════════════════════ */
 
 /** Build a Swap API v6.0 URL: /swap/v6.0/{chainId}/{path}?{query} */
 function swapUrl(chainId: number, path: string, qs?: string): string {
@@ -671,6 +671,10 @@ export function registerOneInchRoutes(app: Hono) {
     );
     if (status !== 200) {
       console.log(`${TAG} Fusion quote upstream error: status=${status} body=${JSON.stringify(resBody).slice(0, 500)}`);
+    } else {
+      // [DIAG] Log quoteId field so we can confirm the correct field name
+      const keys = Object.keys(resBody);
+      console.log(`${TAG} Fusion quote SUCCESS: keys=[${keys.join(",")}] quoteId=${JSON.stringify(resBody.quoteId)} quote_id=${JSON.stringify((resBody as any).quote_id)} id=${JSON.stringify(resBody.id)} first500=${JSON.stringify(resBody).slice(0, 500)}`);
     }
     return c.json(resBody, status as any);
   });
@@ -1089,7 +1093,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-02b",
+      serverBuild: "2026-03-02c",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)
