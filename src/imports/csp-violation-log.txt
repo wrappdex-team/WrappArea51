@@ -1,0 +1,212 @@
+ SES Removing unpermitted intrinsics
+vendor-hedera-DoZZGfTI.js:42 Patching Protobuf Long.js instance...
+App-ux8s7hi-.js:2 [SECURITY] Production build using hardcoded fallback values for: VITE_WALLETCONNECT_PROJECT_ID, VITE_DYNAMIC_ENV_ID, VITE_CHANGENOW_AFFILIATE_ID. Set these env vars to enable rotation without redeployment.
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:287 Connecting to 'https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json' violates the following Content Security Policy directive: "connect-src 'self' https://ehmlclowiedoqncymegi.supabase.co https://api.saucerswap.finance https://api.alternative.me https://api.coingecko.com https://api.coincap.io https://api.binance.com https://mainnet-data-staging.bonzo.finance https://mainnet-public.mirrornode.hedera.com https://testnet.mirrornode.hedera.com https://mainnet.hashio.io https://testnet.hashio.io https://ethereum-rpc.publicnode.com https://rpc.ankr.com https://cloudflare-eth.com https://eth.llamarpc.com https://1rpc.io https://polygon-rpc.com https://bsc-dataseed1.binance.org https://arb1.arbitrum.io wss://relay.walletconnect.org https://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.com https://echo.walletconnect.com https://pulse.walletconnect.org https://rpc.walletconnect.org https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://app.dynamic.xyz https://app.dynamicauth.com https://relay.farcaster.xyz https://quantifycrypto.com https://*.quantifycrypto.com https://api.dexscreener.com". The action has been blocked.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Connecting to 'https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json' violates the following Content Security Policy directive: "connect-src 'self' https://ehmlclowiedoqncymegi.supabase.co https://api.saucerswap.finance https://api.alternative.me https://api.coingecko.com https://api.coincap.io https://api.binance.com https://mainnet-data-staging.bonzo.finance https://mainnet-public.mirrornode.hedera.com https://testnet.mirrornode.hedera.com https://mainnet.hashio.io https://testnet.hashio.io https://ethereum-rpc.publicnode.com https://rpc.ankr.com https://cloudflare-eth.com https://eth.llamarpc.com https://1rpc.io https://polygon-rpc.com https://bsc-dataseed1.binance.org https://arb1.arbitrum.io wss://relay.walletconnect.org https://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.com https://echo.walletconnect.com https://pulse.walletconnect.org https://rpc.walletconnect.org https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://app.dynamic.xyz https://app.dynamicauth.com https://relay.farcaster.xyz https://quantifycrypto.com https://*.quantifycrypto.com https://api.dexscreener.com". The action has been blocked.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Connecting to 'https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json' violates the following Content Security Policy directive: "connect-src 'self' https://ehmlclowiedoqncymegi.supabase.co https://api.saucerswap.finance https://api.alternative.me https://api.coingecko.com https://api.coincap.io https://api.binance.com https://mainnet-data-staging.bonzo.finance https://mainnet-public.mirrornode.hedera.com https://testnet.mirrornode.hedera.com https://mainnet.hashio.io https://testnet.hashio.io https://ethereum-rpc.publicnode.com https://rpc.ankr.com https://cloudflare-eth.com https://eth.llamarpc.com https://1rpc.io https://polygon-rpc.com https://bsc-dataseed1.binance.org https://arb1.arbitrum.io wss://relay.walletconnect.org https://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.com https://echo.walletconnect.com https://pulse.walletconnect.org https://rpc.walletconnect.org https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://app.dynamic.xyz https://app.dynamicauth.com https://relay.farcaster.xyz https://quantifycrypto.com https://*.quantifycrypto.com https://api.dexscreener.com". The action has been blocked.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Connecting to 'https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json' violates the following Content Security Policy directive: "connect-src 'self' https://ehmlclowiedoqncymegi.supabase.co https://api.saucerswap.finance https://api.alternative.me https://api.coingecko.com https://api.coincap.io https://api.binance.com https://mainnet-data-staging.bonzo.finance https://mainnet-public.mirrornode.hedera.com https://testnet.mirrornode.hedera.com https://mainnet.hashio.io https://testnet.hashio.io https://ethereum-rpc.publicnode.com https://rpc.ankr.com https://cloudflare-eth.com https://eth.llamarpc.com https://1rpc.io https://polygon-rpc.com https://bsc-dataseed1.binance.org https://arb1.arbitrum.io wss://relay.walletconnect.org https://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.com https://echo.walletconnect.com https://pulse.walletconnect.org https://rpc.walletconnect.org https://verify.walletconnect.com https://verify.walletconnect.org https://explorer-api.walletconnect.com https://app.dynamic.xyz https://app.dynamicauth.com https://relay.farcaster.xyz https://quantifycrypto.com https://*.quantifycrypto.com https://api.dexscreener.com". The action has been blocked.
+(anonymous) @ App-ux8s7hi-.js:287
+App-ux8s7hi-.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-ux8s7hi-.js:287
+api.coincap.io/v2/assets/hedera-hashgraph:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+api.coincap.io/v2/assets?limit=1:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app/:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app/:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app/:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+api.saucerswap.finance/tokens:1  Failed to load resource: the server responded with a status of 401 ()
+api.saucerswap.finance/tokens:1  Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin
+App-ux8s7hi-.js:332 Fetching content from 'https://iconic.dynamic-static-assets.com/icons/sprite.svg' violates the following Content Security Policy directive: "default-src 'self'". The action has been blocked.
+l7 @ App-ux8s7hi-.js:332
+App-ux8s7hi-.js:332 Fetching content from 'https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json' violates the following Content Security Policy directive: "default-src 'self'". The action has been blocked.
+l7 @ App-ux8s7hi-.js:332
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+Loading the image '<URL>' violates the following Content Security Policy directive: "img-src 'self' data: blob: <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app/:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app/:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+App-ux8s7hi-.js:2 [WC] SignClient ready. Sessions: 1
+App-ux8s7hi-.js:2 [WC] Pre-connect relay keepalive started
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.731861 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.975304 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1234197 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1244965 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1285191 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1285191 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1459482 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1459482 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.746480 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1080694 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1244965 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.746480 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1234197 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.975304 spender=0.0.3949434
+App-ux8s7hi-.js:2 [C53] No existing allowance for 0.0.1080694 spender=0.0.3045981
+App-ux8s7hi-.js:2 [C53] Existing allowance for 0.0.731861 spender=0.0.3949434: 309132106
+App-ux8s7hi-.js:2 [HBAR.h] [C47] Resolved contract 0.0.3045981 -> EVM: 0x00000000000000000000000000000000002e7a5d (via proxy, actual=true)
+App-ux8s7hi-.js:2 [HBAR.h] [C47] Resolved contract 0.0.3949434 -> EVM: 0x00000000000000000000000000000000003c437a (via proxy, actual=true)
+App-ux8s7hi-.js:2 [HBAR.h] fetchHbarhPrice() called -- starting price strategies
+api.coincap.io/v2/assets/bitcoin/history?interval=d1&start=1769873824924&end=1772465824924:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+App-ux8s7hi-.js:2 [HBAR.h] SaucerSwap V2 pool list fetched via /v2/pools/full: 45 pools (raw: 45)
+api.coincap.io/v2/assets/bitcoin/history?interval=d1&start=1769873824926&end=1772465824926:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+api.coincap.io/v2/assets/bitcoin/history?interval=h1&start=1771861024929&end=1772465824929:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+api.coincap.io/v2/assets/hedera-hashgraph/history?interval=h1&start=1771861024929&end=1772465824929:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+markets:1 Access to fetch at 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h:1  Failed to load resource: net::ERR_FAILED
+markets:1 Access to fetch at 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,tether,binancecoin,solana,usd-coin,euro-coin-2,pax-gold,ripple,hedera-hashgraph,dogecoin,cardano,avalanche-2,tron,toncoin,chainlink,aave,dai,shiba-inu,polkadot,litecoin,monero&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h' from origin 'https://wrappmvp10-excm00o2b-wrappdex-teams-projects.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,tether,binancecoin,solana,usd-coin,euro-coin-2,pax-gold,ripple,hedera-hashgraph,dogecoin,cardano,avalanche-2,tron,toncoin,chainlink,aave,dai,shiba-inu,polkadot,litecoin,monero&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h:1  Failed to load resource: net::ERR_FAILED
+App-ux8s7hi-.js:2 [HBAR.h] DexScreener pairs status: 200
+App-ux8s7hi-.js:2 [HBAR.h] DexScreener pairs keys: Array(3)
+App-ux8s7hi-.js:2 [HBAR.h] DexScreener pairs price: $0.00000132
+App-ux8s7hi-.js:2 [HBAR.h] FINAL price: $0.00000132 (source: dexscreener-pairs)
+widgets/ticker.html?theme=dark:1 An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.
+ SES Removing unpermitted intrinsics
+widgets/heatmap.html?theme=dark:1 An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.
+ SES Removing unpermitted intrinsics
+ Loading the script 'https://www.googletagmanager.com/gtag/js?id=UA-119114337-1&l=dataLayer' violates the following Content Security Policy directive: "script-src 'unsafe-inline' https://quantifycrypto.com". Note that 'script-src-elem' was not explicitly set, so 'script-src' is used as a fallback. The action has been blocked.
+(anonymous) @ quantifycrypto.com/w…-ticker-widget.js:7
+ Loading the script 'https://www.googletagmanager.com/gtag/js?id=UA-119114337-1&l=dataLayer' violates the following Content Security Policy directive: "script-src 'unsafe-inline' https://quantifycrypto.com". Note that 'script-src-elem' was not explicitly set, so 'script-src' is used as a fallback. The action has been blocked.
+(anonymous) @ quantifycrypto.com/w…eatmap-widget.js:42
+api.coincap.io/v2/assets/monero/history?interval=h1&start=1771861025455&end=1772465825455:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/ss-proxy?path=%2Fv1%2Fpools:1  Failed to load resource: the server responded with a status of 404 ()
+api.saucerswap.finance/v1/pools:1  Failed to load resource: the server responded with a status of 404 ()
+App-ux8s7hi-.js:2 [WC] Pre-connect relay keepalive stopped
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Balance fetch failed: chain=1 wallet=0x4bd5190073e6d2e23ac278a7b7f540753fe6981f AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch] Token list fetch failed AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:23801
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-Cb6baUQM.js:23:14170)
+    at SwapPage-Cb6baUQM.js:35:24169
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ux8s7hi-.js:2
+App-ux8s7hi-.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+App-ux8s7hi-.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion/quote/1:1  Failed to load resource: the server responded with a status of 400 ()
+App-ux8s7hi-.js:2 [HBAR.h][1inch] Fusion quote error: invalid address | detail=invalid address OneInchApiError: 1inch API error
+    at m (SwapPage-Cb6baUQM.js:23:14909)
+    at async uo (SwapPage-Cb6baUQM.js:29:48)
+    at async SwapPage-Cb6baUQM.js:35:25725
+console.warn @ App-ux8s7hi-.js:2
+ [HBAR.h] Live token prices updated: 38 tokens {HBAR: 0.10115702, WHBAR: 0.10115702, SAUCE: 0.017733028463381324, AAVE: 17.47439509, BTC.ℏ: 0.00390213, …}

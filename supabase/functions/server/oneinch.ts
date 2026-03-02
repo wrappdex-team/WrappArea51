@@ -51,6 +51,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import { isRateLimited, getClientIp, oneInchBreaker, isHttpFailure, CircuitBreakerOpenError } from "./shared.ts";
+import { keccak_256 } from "jsr:@noble/hashes/sha3";
 
 /* ══════════════════════════════════════════════════════════════════════
  * Constants
@@ -161,6 +162,40 @@ function parseChainId(raw: string, allowedSet: Set<number> = SUPPORTED_CHAINS): 
 function getApiKey(): string | null {
   const key = Deno.env.get("ONEINCH_API_KEY");
   return key && key.length > 0 ? key : null;
+}
+
+/**
+ * Compute EIP-55 mixed-case checksum of an Ethereum address.
+ *
+ * IMPLEMENTATION NOTE: 1inch Fusion Quoter v2.0 STRICTLY requires
+ * EIP-55 checksummed addresses for ALL fields (fromTokenAddress,
+ * toTokenAddress, walletAddress). MetaMask on Hedera EVM and some
+ * other wallets return lowercase hex — this function is the server's
+ * last line of defense before addresses hit the 1inch API.
+ *
+ * Algorithm: keccak256(lowercase_address_without_0x), then uppercase
+ * each hex letter whose corresponding nibble in the hash is >= 8.
+ *
+ * @param address - Raw Ethereum address (0x-prefixed, any case)
+ * @returns EIP-55 checksummed address
+ * @throws if the address is not a valid 20-byte hex string
+ */
+function eip55Checksum(address: string): string {
+  const stripped = address.replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(stripped)) {
+    throw new Error(`Not a valid Ethereum address: ${address}`);
+  }
+  const hashBytes = keccak_256(new TextEncoder().encode(stripped));
+  // Convert each byte to 2 hex chars: 32 bytes → 64-char hash
+  const hashHex = Array.from(hashBytes)
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+  // For each char in the address, uppercase it if the corresponding
+  // nibble in the keccak hash is >= 8 (i.e., 8–f)
+  const checksummed = stripped.split("").map((c, i) =>
+    /[a-f]/.test(c) && parseInt(hashHex[i], 16) >= 8 ? c.toUpperCase() : c
+  ).join("");
+  return "0x" + checksummed;
 }
 
 /* ═════════════════════════════════════════════════════════════════════
@@ -573,10 +608,10 @@ export function registerOneInchRoutes(app: Hono) {
     // with Fusion+ v1.0, so the server maps to the upstream field names here.
     // Only pass fields the API explicitly supports to avoid rejections.
     const upstreamBody: Record<string, unknown> = {
-      fromTokenAddress: body.srcTokenAddress as string,
-      toTokenAddress: body.dstTokenAddress as string,
+      fromTokenAddress: eip55Checksum(body.srcTokenAddress as string),
+      toTokenAddress: eip55Checksum(body.dstTokenAddress as string),
       amount: body.amount,
-      walletAddress: body.walletAddress as string,
+      walletAddress: eip55Checksum(body.walletAddress as string),
     };
     // Optional fields — only include if provided
     if (body.permit) upstreamBody.permit = body.permit;

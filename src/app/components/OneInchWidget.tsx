@@ -80,6 +80,7 @@ import {
   formatFusionAmount,
   estimateGasSavingsUsd,
   formatCountdown,
+  getFusionProxyStatus,
   FUSION_QUOTE_REFRESH_INTERVAL_MS,
   FUSION_POLL_INTERVAL_MS,
   FUSION_POLL_MAX_DURATION_MS,
@@ -703,14 +704,44 @@ export function OneInchWidget() {
       if (err?.name === "AbortError") return;
       // Use friendlyErrorMessage for better user-facing error descriptions
       const msg = friendlyErrorMessage(err);
+      const errDetail = (err?.error?.details ?? err?.details ?? "") as string;
+
       if (msg.includes("not configured") || msg.includes("API key")) {
         setApiConfigured(false);
       } else {
-        setFusionQuoteError(msg);
+        // IMPLEMENTATION NOTE — Deployment detection for "invalid address" errors:
+        // When the deployed server still has old field names (srcTokenAddress/dstTokenAddress
+        // instead of fromTokenAddress/toTokenAddress for 1inch Fusion Quoter v2.0),
+        // 1inch returns 400 "invalid address" because fromTokenAddress is missing.
+        // The ping result tells us exactly whether this is a deployment issue.
+        const isAddressError =
+          errDetail.toLowerCase().includes("invalid address") ||
+          msg.toLowerCase().includes("invalid address");
+        const proxyStatus = getFusionProxyStatus();
+        const isDeploymentIssue = isAddressError && proxyStatus === "old-server";
+        const isDeploymentUnknown = isAddressError && proxyStatus === "unknown";
+
+        if (isDeploymentIssue) {
+          setFusionQuoteError(
+            "Server deployment required — the Fusion proxy has the old field mapping bug. " +
+            "Run: supabase functions deploy make-server-54299934"
+          );
+        } else if (isDeploymentUnknown) {
+          setFusionQuoteError(
+            "invalid address — server deployment may be required. " +
+            "Run: supabase functions deploy make-server-54299934 (then retry)"
+          );
+        } else {
+          setFusionQuoteError(msg);
+        }
       }
+
       // Log full error details for debugging "invalid address" etc.
-      const errDetail = err?.error?.details ?? err?.details ?? "";
-      log.warn("1inch", `Fusion quote error: ${msg} | detail=${errDetail}`, err);
+      const proxyStatus = getFusionProxyStatus();
+      log.warn("1inch",
+        `Fusion quote error: ${msg} | detail=${errDetail} | proxyStatus=${proxyStatus}`,
+        err,
+      );
     }
     setFusionQuoteLoading(false);
   }, [evmAccount, fromToken, toToken, selectedChainId, selectedPreset]);
@@ -1849,19 +1880,38 @@ export function OneInchWidget() {
 
       {/* Quote Error (classic or fusion) */}
       <AnimatePresence>
-        {(quoteError || fusionQuoteError || crossChainQuoteError) && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className={`flex items-start gap-2 p-3 rounded-xl text-xs mt-3 ${
-              isDark ? "bg-red-900/10 text-red-400 border border-red-500/20" : "bg-red-50 text-red-600 border border-red-200"
-            }`}
-          >
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="break-all">{quoteError || fusionQuoteError || crossChainQuoteError}</span>
-          </motion.div>
-        )}
+        {(quoteError || fusionQuoteError || crossChainQuoteError) && (() => {
+          const errMsg = quoteError || fusionQuoteError || crossChainQuoteError || "";
+          const isDeploymentError = errMsg.includes("deployment required") || errMsg.includes("make-server-54299934");
+          return (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className={`flex items-start gap-2 p-3 rounded-xl text-xs mt-3 ${
+                isDeploymentError
+                  ? isDark
+                    ? "bg-amber-900/20 text-amber-300 border border-amber-500/30"
+                    : "bg-amber-50 text-amber-700 border border-amber-300"
+                  : isDark
+                    ? "bg-red-900/10 text-red-400 border border-red-500/20"
+                    : "bg-red-50 text-red-600 border border-red-200"
+              }`}
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className="break-all leading-relaxed">{errMsg}</span>
+                {isDeploymentError && (
+                  <code className={`mt-1 px-2 py-1 rounded text-[10px] font-mono select-all ${
+                    isDark ? "bg-black/30 text-amber-200" : "bg-amber-100 text-amber-800"
+                  }`}>
+                    supabase functions deploy make-server-54299934
+                  </code>
+                )}
+              </div>
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* ═══ FUSION QUOTE DETAILS — Preset Selector + Gasless Badge ═══ */}

@@ -56,7 +56,22 @@ const QUOTE_CACHE_TTL_MS = 10_000;
  * "invalid address" bug will still occur.
  * ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Deployment status of the 1inch server proxy.
+ *   "unknown"      — ping not yet attempted
+ *   "v2-deployed"  — server has fromTokenAddress/toTokenAddress fix + EIP-55 checksumming
+ *   "old-server"   — /1inch/ping returned 404 → old server still deployed
+ *   "unreachable"  — ping failed for a non-deployment reason (network, timeout)
+ */
+export type FusionProxyStatus = "unknown" | "v2-deployed" | "old-server" | "unreachable";
+
 let _proxyPinged = false;
+let _proxyStatus: FusionProxyStatus = "unknown";
+
+/** Return the current proxy deployment status (set after first ping). */
+export function getFusionProxyStatus(): FusionProxyStatus {
+  return _proxyStatus;
+}
 
 async function pingFusionProxy(): Promise<void> {
   if (_proxyPinged) return;
@@ -66,17 +81,31 @@ async function pingFusionProxy(): Promise<void> {
       ok?: boolean;
       fusionFieldMapping?: string;
       serverBuild?: string;
+      fusionChecksumming?: string;
     }>("/ping", { timeout: 4_000, retries: 0 });
 
     if (ping.fusionFieldMapping === "v2") {
-      log.info(TAG, `[DIAG] ✅ Server v2 deployed — build=${ping.serverBuild} fusionFieldMapping=fromTokenAddress/toTokenAddress EIP-55 checksumming active`);
+      _proxyStatus = "v2-deployed";
+      log.info(TAG,
+        `[DIAG] ✅ Server v2 deployed — build=${ping.serverBuild}`,
+        `\n  fusionFieldMapping=fromTokenAddress/toTokenAddress`,
+        `\n  fusionChecksumming=${ping.fusionChecksumming ?? "unknown"}`,
+      );
     } else {
-      log.warn(TAG, `[DIAG] ⚠️ Server ping returned unexpected payload: ${JSON.stringify(ping)} — field mapping may not be v2`);
+      _proxyStatus = "old-server";
+      log.warn(TAG, `[DIAG] ⚠️ Server ping returned unexpected payload (may be old): ${JSON.stringify(ping)}`);
     }
   } catch (e: any) {
     if (e?.status === 404 || e?.kind === "ROUTE_NOT_FOUND") {
-      log.warn(TAG, `[DIAG] ❌ GET /1inch/ping returned 404 — OLD SERVER STILL DEPLOYED. The srcTokenAddress→fromTokenAddress fix is NOT live. Run: supabase functions deploy make-server-54299934`);
+      _proxyStatus = "old-server";
+      log.warn(TAG,
+        `[DIAG] ❌ GET /1inch/ping → 404 — OLD SERVER STILL DEPLOYED.`,
+        `\n  The srcTokenAddress→fromTokenAddress field mapping fix is NOT live.`,
+        `\n  Fusion quotes will fail with "invalid address" until deployed.`,
+        `\n  FIX: supabase functions deploy make-server-54299934`,
+      );
     } else {
+      _proxyStatus = "unreachable";
       log.warn(TAG, `[DIAG] Proxy ping failed (non-critical): ${e?.message ?? e}`);
     }
   }
