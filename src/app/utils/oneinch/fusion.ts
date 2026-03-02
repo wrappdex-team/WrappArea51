@@ -370,19 +370,36 @@ export async function getFusionQuote(
     amount,
     // EIP-55 checksummed wallet — Fusion API v2.0 requires strict mixed-case format
     walletAddress: checksummedWallet,
-    enableEstimate: true,
+    // IMPLEMENTATION NOTE: enableEstimate MUST be false for Hedera EVM wallets.
+    //
+    // When enableEstimate=true, 1inch Fusion Quoter v2.0 calls the on-chain
+    // Settlement contract (simulateTransfer) to validate the wallet's:
+    //   1. Token approval for the 1inch router
+    //   2. Sufficient token balance
+    //
+    // A Hedera EVM address (e.g. 0x4bd5190073e6d2e23ac278a7b7f540753fe6981f)
+    // has ZERO state on Ethereum mainnet — no tokens, no approvals, no nonce.
+    // When 1inch simulates against this wallet, the call reverts and 1inch
+    // returns 400 "invalid address" (their generic simulation failure code).
+    //
+    // Setting enableEstimate=false skips the on-chain simulation entirely.
+    // The quote returns pricing/preset data based purely on the token pair
+    // and amount, which is all we need at the quote stage. Token approvals
+    // are handled separately by ensureFusionApproval() before order build.
+    enableEstimate: false,
   };
 
   // [DIAG] Verbose logging — shows both field name sets sent to the server
   log.info(TAG, `[DIAG] Fusion quote body:`,
     `\n  chain=${chainId}`,
     `\n  srcTokenAddress=${resolvedSrc}  ← server validation`,
-    `\n  fromTokenAddress=${resolvedSrc} ← 1inch Quoter v2.0 direct`,
+    `\n  fromTokenAddress=${resolvedSrc} ← 1inch Quoter v2.0 upstream`,
     `\n  dstTokenAddress=${resolvedDst}  ← server validation`,
-    `\n  toTokenAddress=${resolvedDst}   ← 1inch Quoter v2.0 direct`,
+    `\n  toTokenAddress=${resolvedDst}   ← 1inch Quoter v2.0 upstream`,
     `\n  walletAddress=${checksummedWallet}`,
     `\n  amount=${amount}`,
-    `\n  [dual-field=ON — works with both deployed and new server]`,
+    `\n  enableEstimate=false ← MUST be false for Hedera EVM wallets`,
+    `\n  [dual-field=ON, enableEstimate=OFF — works for all wallets]`,
   );
 
   const res = await oneInchApi.post<FusionQuoteResponse>(

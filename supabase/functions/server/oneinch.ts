@@ -347,10 +347,25 @@ async function upstreamFetch(
         : typeof parsed.message === "string" ? parsed.message
         : JSON.stringify(parsed);
 
-      console.log(`${TAG} Upstream ${res.status} for ${method} ${url}: ${detail}`);
+      // IMPLEMENTATION NOTE: Include the full `meta` array from 1inch error
+      // responses. The meta array identifies WHICH field is invalid (e.g.,
+      // { type: "field", value: "walletAddress", message: "must be a valid address" }).
+      // This is critical for debugging "invalid address" errors.
+      const meta = Array.isArray(parsed.meta) ? parsed.meta : undefined;
+
+      console.log(
+        `${TAG} Upstream ${res.status} for ${method} ${url}: ${detail}` +
+        (meta ? ` | meta=${JSON.stringify(meta)}` : "") +
+        ` | full=${JSON.stringify(parsed).slice(0, 400)}`
+      );
       return {
         status: res.status,
-        body: { error: "1inch API error", details: detail, statusCode: res.status },
+        body: {
+          error: "1inch API error",
+          details: detail,
+          statusCode: res.status,
+          ...(meta ? { meta } : {}),
+        },
       };
     }
 
@@ -621,7 +636,15 @@ export function registerOneInchRoutes(app: Hono) {
     if (body.isPermit2) upstreamBody.isPermit2 = body.isPermit2;
 
     const upstreamUrl = fusionQuoterUrl(chainId, "/quote/receive");
-    console.log(`${TAG} Fusion quote: chain=${chainId} from=${upstreamBody.fromTokenAddress} to=${upstreamBody.toTokenAddress} wallet=${upstreamBody.walletAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
+    console.log(
+      `${TAG} Fusion quote: chain=${chainId}` +
+      ` from=${upstreamBody.fromTokenAddress}` +
+      ` to=${upstreamBody.toTokenAddress}` +
+      ` wallet=${upstreamBody.walletAddress}` +
+      ` amt=${upstreamBody.amount}` +
+      ` enableEstimate=${upstreamBody.enableEstimate ?? "not-set"}` +
+      ` url=${upstreamUrl}`
+    );
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",

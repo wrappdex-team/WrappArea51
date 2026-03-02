@@ -207,7 +207,7 @@ function classifyError(
   }
 
   // Extract the most descriptive message from the response body
-  const details =
+  const baseDetails =
     typeof body?.details === "string"
       ? body.details
       : typeof body?.description === "string"
@@ -215,6 +215,20 @@ function classifyError(
         : typeof body?.error === "string"
           ? body.error
           : undefined;
+
+  // IMPLEMENTATION NOTE: 1inch returns a `meta` array identifying WHICH field
+  // is invalid (e.g., [{ type: "field", value: "walletAddress", message: "..." }]).
+  // Appending this to `details` gives us precise diagnostics in the UI and logs
+  // without needing a separate error type field for the meta array.
+  let details = baseDetails;
+  if (Array.isArray(body?.meta) && (body.meta as unknown[]).length > 0) {
+    const metaInfo = (body.meta as Array<{ value?: string; message?: string }>)
+      .map(m => [m.value, m.message].filter(Boolean).join(": "))
+      .join("; ");
+    if (metaInfo) {
+      details = details ? `${details} [field → ${metaInfo}]` : `[field → ${metaInfo}]`;
+    }
+  }
 
   return Object.freeze({ kind, status, message, details, retryable });
 }
