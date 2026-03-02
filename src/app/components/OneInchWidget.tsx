@@ -738,8 +738,11 @@ export function OneInchWidget() {
 
       // Log full error details for debugging "invalid address" etc.
       const proxyStatus = getFusionProxyStatus();
+      const fullErrorBody = err?.error ? JSON.stringify(err.error) : "n/a";
       log.warn("1inch",
-        `Fusion quote error: ${msg} | detail=${errDetail} | proxyStatus=${proxyStatus}`,
+        `Fusion quote error: ${msg} | detail=${errDetail} | proxyStatus=${proxyStatus}` +
+        ` | fullError=${fullErrorBody}` +
+        ` | Run diagnostic: GET /1inch/fusion/diag?wallet=${evmAccount || ""}`,
         err,
       );
     }

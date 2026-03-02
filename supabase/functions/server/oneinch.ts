@@ -1097,6 +1097,165 @@ export function registerOneInchRoutes(app: Hono) {
     });
   });
 
+  // ── GET /1inch/fusion/diag ─────────────────────────────────────────
+  // Deep diagnostic: makes 4 test requests to 1inch Fusion Quoter to find
+  // the correct API domain × HTTP method combination.
+  //
+  //   Test 1: GET  api.1inch.dev   (our current domain)
+  //   Test 2: POST api.1inch.dev   (our previous approach)
+  //   Test 3: GET  api.1inch.com   (domain from latest 1inch business docs)
+  //   Test 4: POST api.1inch.com   (domain from latest 1inch business docs)
+  //
+  // Uses the exact reference parameters from official 1inch docs.
+  // Pass ?wallet=0x... to also test with the user's real wallet.
+  app.get(`${PREFIX}/fusion/diag`, async (c) => {
+    const apiKey = getApiKey();
+    if (!apiKey) return c.json({ error: "ONEINCH_API_KEY not configured" }, 500);
+
+    // Exact reference params from official 1inch docs
+    const refParams: Record<string, string> = {
+      fromTokenAddress: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      toTokenAddress:   "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      amount:           "100000000000000000",
+      walletAddress:    "0x0000000000000000000000000000000000000000",
+      enableEstimate:   "false",
+    };
+
+    // Also try lowercase addresses (as in the official docs reference code)
+    const refParamsLower: Record<string, string> = {
+      fromTokenAddress: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+      toTokenAddress:   "0x6b175474e89094c44da98b954eedeac495271d0f",
+      amount:           "100000000000000000",
+      walletAddress:    "0x0000000000000000000000000000000000000000",
+      enableEstimate:   "false",
+    };
+
+    const chainId = 1;
+    const domains = [
+      { name: "api.1inch.dev", base: `https://api.1inch.dev/fusion/quoter/v2.0/${chainId}/quote/receive` },
+      { name: "api.1inch.com", base: `https://api.1inch.com/fusion/quoter/v2.0/${chainId}/quote/receive` },
+    ];
+    const methods = ["GET", "POST"] as const;
+    const addressFormats = [
+      { label: "eip55", params: refParams },
+      { label: "lowercase", params: refParamsLower },
+    ];
+
+    interface DiagResult {
+      test: string;
+      domain: string;
+      method: string;
+      addressFormat: string;
+      httpStatus: number | string;
+      rawBody: unknown;
+      latencyMs: number;
+    }
+    const results: DiagResult[] = [];
+
+    for (const domain of domains) {
+      for (const method of methods) {
+        for (const fmt of addressFormats) {
+          const label = `${method} ${domain.name} [${fmt.label}]`;
+          const qs = new URLSearchParams(fmt.params).toString();
+          const url = method === "GET" ? `${domain.base}?${qs}` : domain.base;
+
+          const startMs = Date.now();
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 12_000);
+            const headers: Record<string, string> = {
+              Authorization: `Bearer ${apiKey}`,
+              Accept: "application/json",
+            };
+            if (method === "POST") headers["Content-Type"] = "application/json";
+
+            const res = await fetch(url, {
+              method,
+              headers,
+              body: method === "POST" ? JSON.stringify(fmt.params) : undefined,
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+
+            let rawBody: unknown;
+            const text = await res.text();
+            try { rawBody = JSON.parse(text); } catch { rawBody = text.slice(0, 1000); }
+
+            results.push({
+              test: label, domain: domain.name, method,
+              addressFormat: fmt.label,
+              httpStatus: res.status, rawBody,
+              latencyMs: Date.now() - startMs,
+            });
+            console.log(`${TAG} [DIAG] ${label}: HTTP ${res.status} (${Date.now() - startMs}ms) — ${JSON.stringify(rawBody).slice(0, 300)}`);
+          } catch (err: any) {
+            results.push({
+              test: label, domain: domain.name, method,
+              addressFormat: fmt.label,
+              httpStatus: err?.name === "AbortError" ? "TIMEOUT" : "FETCH_ERROR",
+              rawBody: { error: err?.message ?? String(err) },
+              latencyMs: Date.now() - startMs,
+            });
+            console.log(`${TAG} [DIAG] ${label}: ERROR — ${err?.message}`);
+          }
+        }
+      }
+    }
+
+    // Also test with the user's real wallet if provided
+    const userWallet = c.req.query("wallet");
+    let userWalletResults: DiagResult[] = [];
+    if (userWallet && isValidWalletAddress(userWallet)) {
+      const winning = results.find(r => r.httpStatus === 200);
+      if (winning) {
+        const matchDomain = domains.find(d => d.name === winning.domain)!;
+        const matchMethod = winning.method as "GET" | "POST";
+        for (const walletCase of [userWallet, eip55Checksum(userWallet), userWallet.toLowerCase()]) {
+          const p = { ...refParams, walletAddress: walletCase };
+          const qs = new URLSearchParams(p).toString();
+          const url = matchMethod === "GET" ? `${matchDomain.base}?${qs}` : matchDomain.base;
+          const startMs = Date.now();
+          try {
+            const res = await fetch(url, {
+              method: matchMethod,
+              headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", ...(matchMethod === "POST" ? { "Content-Type": "application/json" } : {}) },
+              body: matchMethod === "POST" ? JSON.stringify(p) : undefined,
+            });
+            const text = await res.text();
+            let rawBody: unknown;
+            try { rawBody = JSON.parse(text); } catch { rawBody = text.slice(0, 500); }
+            userWalletResults.push({
+              test: `${matchMethod} ${matchDomain.name} wallet=${walletCase.slice(0, 10)}...`,
+              domain: matchDomain.name, method: matchMethod,
+              addressFormat: walletCase === userWallet ? "as-provided" : walletCase === userWallet.toLowerCase() ? "lowercase" : "eip55",
+              httpStatus: res.status, rawBody, latencyMs: Date.now() - startMs,
+            });
+          } catch (err: any) {
+            userWalletResults.push({
+              test: `${matchMethod} ${matchDomain.name} wallet=${walletCase.slice(0, 10)}...`,
+              domain: matchDomain.name, method: matchMethod,
+              addressFormat: "unknown", httpStatus: "FETCH_ERROR",
+              rawBody: { error: err?.message }, latencyMs: Date.now() - startMs,
+            });
+          }
+        }
+      }
+    }
+
+    const successes = results.filter(r => r.httpStatus === 200);
+    return c.json({
+      summary: successes.length > 0
+        ? `${successes.length}/${results.length} tests succeeded: ${successes.map(s => s.test).join("; ")}`
+        : `ALL ${results.length} tests FAILED`,
+      recommendation: successes.length > 0
+        ? `Use domain="${successes[0].domain}" method="${successes[0].method}" addresses="${successes[0].addressFormat}"`
+        : "Check API key — may not have Fusion Quoter permission, or try a different key from business.1inch.com",
+      currentConfig: { domain: "api.1inch.dev", method: "GET" },
+      results,
+      ...(userWalletResults.length > 0 ? { userWalletTests: userWalletResults } : {}),
+    });
+  });
+
   // ── GET /1inch/health ────────────────────────────────────────────
   // Returns proxy health: API key status, circuit breaker state, cache stats.
   // Useful for the admin debug panel.
