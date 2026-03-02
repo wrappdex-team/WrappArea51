@@ -1197,14 +1197,17 @@ export function OneInchWidget() {
       }, FUSION_POLL_INTERVAL_MS);
 
     } catch (err: any) {
-      const msg = err?.message || "Fusion swap failed";
+      const msg = friendlyErrorMessage(err);
+      // Surface additional detail from OneInchApiError.details when available
+      const detail = (err?.error?.details ?? err?.details ?? "") as string;
+      const fullMsg = detail && !msg.includes(detail) ? `${msg} — ${detail}` : msg;
       if (msg.includes("User rejected") || msg.includes("user rejected") || msg.includes("denied")) {
         setSwapStatus("idle");
       } else {
         setSwapStatus("error");
-        setSwapError(msg);
+        setSwapError(fullMsg);
       }
-      log.warn("1inch", "Fusion swap error", err);
+      log.warn("1inch", `Fusion swap error: ${fullMsg}`, err);
       stopFusionPolling();
     }
   }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, fromBalance, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);

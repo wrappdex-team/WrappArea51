@@ -703,13 +703,52 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${body.quoteId}`);
+    const relayerUrl = fusionRelayerUrl(chainId, "/order/build");
+    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${body.quoteId} wallet=${body.walletAddress} preset=${body.preset} url=${relayerUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionRelayerUrl(chainId, "/order/build"),
+      relayerUrl,
       JSON.stringify(body),
     );
+
+    // IMPLEMENTATION NOTE — Fusion Build Endpoint Fallback Strategy:
+    //
+    // The 1inch Fusion v2.0 API has two possible build endpoint locations:
+    //   1. Relayer:  POST /fusion/relayer/v2.0/{chain}/order/build  (primary/documented)
+    //   2. Quoter:   POST /fusion/quoter/v2.0/{chain}/quote/build   (fallback — some API versions)
+    //
+    // If the relayer endpoint returns 404 (endpoint removed/deprecated), we
+    // automatically fall back to the quoter endpoint.
+    if (status === 404) {
+      const quoterUrl = fusionQuoterUrl(chainId, "/quote/build");
+      console.log(`${TAG} Fusion build relayer returned 404 — trying quoter fallback: url=${quoterUrl}`);
+
+      const fallback = await upstreamFetch(
+        "POST",
+        quoterUrl,
+        JSON.stringify(body),
+      );
+      if (fallback.status !== 200) {
+        console.log(`${TAG} Fusion build quoter fallback ALSO FAILED: status=${fallback.status} response=${JSON.stringify(fallback.body).slice(0, 500)}`);
+        return c.json({
+          ...fallback.body,
+          _debug: {
+            relayerUrl,
+            relayerStatus: 404,
+            quoterUrl,
+            quoterStatus: fallback.status,
+            hint: "Both relayer and quoter build endpoints failed. Check https://portal.1inch.dev for current Fusion API endpoints.",
+          },
+        }, fallback.status as any);
+      }
+      console.log(`${TAG} Fusion build quoter fallback SUCCESS`);
+      return c.json(fallback.body);
+    }
+
+    if (status !== 200) {
+      console.log(`${TAG} Fusion build FAILED: status=${status} response=${JSON.stringify(resBody).slice(0, 500)}`);
+    }
     return c.json(resBody, status as any);
   });
 
@@ -743,14 +782,18 @@ export function registerOneInchRoutes(app: Hono) {
     }
 
     // IMPLEMENTATION NOTE: Do NOT log the signature — it is a sensitive cryptographic value.
-    console.log(`${TAG} Fusion submit: chain=${chainId} orderHash=${body.orderHash}`);
+    const submitUrl = fusionRelayerUrl(chainId, "/order/submit");
+    console.log(`${TAG} Fusion submit: chain=${chainId} orderHash=${body.orderHash} url=${submitUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionRelayerUrl(chainId, "/order/submit"),
+      submitUrl,
       JSON.stringify(body),
       FUSION_SUBMIT_TIMEOUT_MS,
     );
+    if (status !== 200) {
+      console.log(`${TAG} Fusion submit FAILED: status=${status} response=${JSON.stringify(resBody).slice(0, 500)}`);
+    }
     return c.json(resBody, status as any);
   });
 

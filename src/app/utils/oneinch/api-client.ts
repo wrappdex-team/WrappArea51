@@ -554,7 +554,7 @@ export function friendlyErrorMessage(err: unknown): string {
       case "NETWORK_ERROR":
         return "Network error. Check your internet connection.";
       case "ROUTE_NOT_FOUND":
-        return "Endpoint not found (HTTP 404). The API endpoint may have changed or is unavailable.";
+        return "Endpoint not found (404). Either the server needs redeployment or the upstream 1inch API endpoint has changed.";
       default:
         return err.details ?? err.message;
     }

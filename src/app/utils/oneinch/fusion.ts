@@ -692,7 +692,7 @@ export async function buildFusionOrder(
     preset,
   };
 
-  log.info(TAG, `Building Fusion order: chain=${chainId} quoteId=${quoteId} preset=${preset}`);
+  log.info(TAG, `Building Fusion order: chain=${chainId} quoteId=${quoteId} wallet=${walletAddress} preset=${preset} path=/fusion/build/${chainId}`);
 
   // No caching — each build generates a unique nonce + deadline
   const res = await oneInchApi.post<FusionOrderBuildResponse>(
