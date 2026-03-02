@@ -1092,7 +1092,7 @@ export function SwapPanel() {
               onSwap={handleSwap}
               onReset={handleResetSwap}
               onHover={prewarmRelay}
-              onOpenWallet={tryOpenWalletExtension}
+              onOpenWallet={() => tryOpenWalletExtension({ userInitiated: true })}
               isDark={isDark}
               approvalNeeded={
                 // [STEP6] Prefer quote-time approval status (arrives faster, bundled with quote)

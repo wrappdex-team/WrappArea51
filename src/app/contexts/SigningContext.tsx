@@ -347,7 +347,7 @@ function PendingContent({
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.3 }}
-          onClick={() => tryOpenWalletExtension()}
+          onClick={() => tryOpenWalletExtension({ userInitiated: true })}
           className="w-full mb-3 px-5 py-3.5 rounded-xl bg-gradient-to-r from-purple-600/30 to-pink-600/30 hover:from-purple-600/40 hover:to-pink-600/40 border border-purple-500/30 text-purple-200 text-sm font-medium flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98]"
         >
           <ExternalLink className="w-4 h-4" />
@@ -361,7 +361,7 @@ function PendingContent({
           <motion.button
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            onClick={() => tryOpenWalletExtension()}
+            onClick={() => tryOpenWalletExtension({ userInitiated: true })}
             className="px-5 py-2.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm flex items-center gap-2 transition-all duration-200"
           >
             <ExternalLink className="w-3.5 h-3.5" />
@@ -462,7 +462,7 @@ function ErrorContent({
             onClick={() => {
               onDismiss();
               // Try to open HashPack extension
-              tryOpenWalletExtension();
+              tryOpenWalletExtension({ userInitiated: true });
             }}
             className="px-5 py-2.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm flex items-center gap-2 transition-all duration-200"
           >

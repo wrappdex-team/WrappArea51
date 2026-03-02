@@ -661,113 +661,73 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           Math.round((Date.now() - _relayLastVerifiedAt) / 1000), "s ago — skipping forced cycle");
       }
       else {
-      console.log("[WC] [MOB-FIX-v5] Mobile detected — checking relay connection before signing...");
+      // ── [MOB-WEB3-05] Gentle relay verification for mobile external browsers ──
+      // The previous approach (forced disconnect→reconnect) was too aggressive:
+      // after reconnection the WS reports OPEN but relay topic subscriptions
+      // haven't settled, so client.request() publishes into a half-initialized
+      // connection and the message never reaches the wallet.
+      //
+      // New approach:
+      //   1. If WS is OPEN → verify with session ping (5s timeout)
+      //   2. If ping succeeds → relay is healthy, proceed directly
+      //   3. If ping fails or WS not OPEN → use _ensureRelayConnected (graceful)
+      //   4. After any reconnect, wait 1.5s for subscription settlement
+      //   5. Verify with a final ping before proceeding
+      console.log("[WC] [MOB-WEB3-05] Mobile external browser — gentle relay verification...");
       try {
         const relayer = client.core?.relayer;
         const provider = relayer?.provider;
-
-        // 1. Check raw WS state
         const ws = provider?.connection?.socket ?? provider?.socket;
         const wsState = ws?.readyState ?? -1;
-        console.log("[WC] [MOB-FIX-v5] Pre-check WS state:",
-          "relayer.connected=", relayer?.connected,
-          "ws.readyState=", wsState,
-          "(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)");
+        console.log("[WC] [MOB-WEB3-05] WS state:", wsState,
+          "relayer.connected=", relayer?.connected);
 
-        // [MOB-FIX-v5] SMART PATH: If WS appears OPEN, verify with a session
-        // ping before deciding whether to skip the full reconnect cycle.
-        //
-        // CRITICAL: On mobile, ws.readyState === 1 can be STALE (half-open).
-        // The OS killed the TCP connection while the tab was backgrounded, but
-        // the browser's WebSocket object still reports OPEN because the `close`
-        // event hasn't fired. The v4 code proceeded on stale connections, causing
-        // client.request() to send data into a dead socket. The relay never
-        // received the signing request, so the wallet opened with nothing to sign.
-        //
-        // Fix: If the session ping FAILS, fall through to the full disconnect→
-        // reconnect cycle (v3 behavior). Only skip the cycle when the ping
-        // SUCCEEDS, confirming true end-to-end relay connectivity.
-        let needsFullCycle = true; // Default: assume we need a full cycle
+        let relayHealthy = false;
 
-        if (ws && wsState === 1 /* OPEN */ && (ws.bufferedAmount ?? 0) === 0) {
-          console.log("[WC] [MOB-FIX-v5] WS appears OPEN with empty buffer — verifying with session ping...");
+        // Step 1: If WS appears OPEN, verify with ping
+        if (ws && wsState === 1 && (ws.bufferedAmount ?? 0) === 0) {
           try {
             await Promise.race([
               client.ping({ topic: params.topic }),
               new Promise((_, rej) => setTimeout(() => rej(new Error("ping timeout")), 5000)),
             ]);
-            console.log("[WC] [MOB-FIX-v5] Session ping OK — relay is truly healthy, skipping forced cycle");
-            needsFullCycle = false;
-            _relayLastVerifiedAt = Date.now();
+            console.log("[WC] [MOB-WEB3-05] Session ping OK — relay healthy");
+            relayHealthy = true;
           } catch (pingErr: any) {
-            console.warn("[WC] [MOB-FIX-v5] Session ping FAILED:", pingErr?.message,
-              "— WS is likely half-open (stale). Falling through to full disconnect→reconnect cycle.");
-            // needsFullCycle stays true — fall through to rebuild WS
+            console.warn("[WC] [MOB-WEB3-05] Ping failed:", pingErr?.message, "— reconnecting gracefully");
           }
         }
 
-        if (needsFullCycle) {
-          console.log("[WC] [MOB-FIX-v5] Forcing fresh relay connection (state=", wsState, ")...");
+        // Step 2: If not healthy, use graceful reconnection (NOT forced disconnect)
+        if (!relayHealthy) {
+          console.log("[WC] [MOB-WEB3-05] Using _ensureRelayConnected (graceful restartTransport)...");
+          await _ensureRelayConnected(client, 12000);
 
-          // 2. Force disconnect the provider (tears down the WebSocket)
-          if (provider && typeof provider.disconnect === "function") {
-            try {
-              await Promise.race([
-                provider.disconnect(),
-                new Promise(r => setTimeout(r, 2000)),
-              ]);
-            } catch { /* disconnect can throw if already closed */ }
-          }
+          // Step 3: Wait for topic re-subscription settlement
+          // This is the critical delay — the relay needs time to register
+          // this connection as a subscriber for the session topic.
+          // Without this, publish succeeds but the response can't route back.
+          console.log("[WC] [MOB-WEB3-05] Waiting 1.5s for topic subscription settlement...");
+          await new Promise(r => setTimeout(r, 1500));
 
-          // 3. Brief pause for WebSocket to fully close
-          await new Promise(r => setTimeout(r, 300));
-
-          // 4. Reconnect with a fresh WebSocket
-          if (provider && typeof provider.connect === "function") {
+          // Step 4: Verify with a final ping
+          try {
             await Promise.race([
-              provider.connect(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay reconnect timeout")), 8000)),
+              client.ping({ topic: params.topic }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("post-reconnect ping timeout")), 5000)),
             ]);
-          } else if (typeof relayer?.restartTransport === "function") {
-            await Promise.race([
-              relayer.restartTransport(),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("mobile relay restart timeout")), 8000)),
-            ]);
+            console.log("[WC] [MOB-WEB3-05] Post-reconnect ping OK — relay ready");
+            relayHealthy = true;
+          } catch {
+            console.warn("[WC] [MOB-WEB3-05] Post-reconnect ping failed — proceeding anyway (message may not deliver)");
           }
-
-          // 5. Verify the new connection
-          const ws2 = provider?.connection?.socket ?? provider?.socket;
-          const ws2State = ws2?.readyState ?? -1;
-          console.log("[WC] [MOB-FIX-v5] Post-cycle WS state:",
-            "relayer.connected=", relayer?.connected,
-            "ws.readyState=", ws2State);
-
-          if (ws2State !== 1 /* OPEN */) {
-            console.warn("[WC] [MOB-FIX-v5] Fresh WS still not OPEN — polling for up to 5s...");
-            const pollStart = Date.now();
-            while (Date.now() - pollStart < 5000) {
-              const wsNow = provider?.connection?.socket ?? provider?.socket;
-              if (wsNow?.readyState === 1) {
-                console.log("[WC] [MOB-FIX-v5] WS became OPEN after", Date.now() - pollStart, "ms");
-                break;
-              }
-              await new Promise(r => setTimeout(r, 200));
-            }
-          }
-
-          // 6. [MOB-FIX-v5] Wait for topic re-subscription after reconnect.
-          // The WC SDK re-subscribes to session topics when the transport
-          // reconnects, but this happens asynchronously. Give it 500ms to
-          // complete so the relay knows where to route the wallet's response.
-          await new Promise(r => setTimeout(r, 500));
-          console.log("[WC] [MOB-FIX-v5] Post-reconnect stabilization complete — ready to send request");
         }
+
+        _relayLastVerifiedAt = Date.now();
       } catch (e: any) {
-        console.warn("[WC] [MOB-FIX-v5] Relay check failed:", e?.message,
-          "— proceeding with existing connection (may fail)");
+        console.warn("[WC] [MOB-WEB3-05] Relay verification error:", e?.message,
+          "— proceeding with existing connection");
       }
-      // [MOB-WEB3-01] Mark relay as verified after successful cycle
-      _relayLastVerifiedAt = Date.now();
       } // close else (non-DApp-browser, non-cached mobile path)
     }
 
@@ -1823,14 +1783,33 @@ const KNOWN_WALLET_EXTENSION_IDS = [
  * The chrome.runtime + WC ping combo reliably wakes the extension
  * without any URL tab opening.
  */
-export async function tryOpenWalletExtension(): Promise<void> {
+export async function tryOpenWalletExtension(options?: { userInitiated?: boolean }): Promise<void> {
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const userInitiated = options?.userInitiated ?? false;
 
   // [MOB-WEB3-03] On mobile, open the wallet app via native deep link.
-  // chrome.runtime is not available on mobile browsers. Instead, detect
-  // the connected wallet from the WC session peer metadata and open its
-  // native URL scheme (e.g., "hashpack://") to bring it to foreground.
+  // CRITICAL: Only navigate when the user explicitly tapped "Open Wallet".
+  // Auto-activation calls (from handleSwap start) must NOT navigate because
+  // the signing request hasn't been sent to the relay yet. Navigating away
+  // backgrounds the browser → freezes JS → request never sends → wallet
+  // opens with nothing to sign. This was the root cause of "wallet opens
+  // instantly but no signing message" on Chrome/Brave mobile.
   if (isMobile && !_isInWalletDAppBrowser()) {
+    if (!userInitiated) {
+      // Auto-activation on mobile: just ping the relay to keep it warm.
+      // Don't navigate — _safeRequest handles the redirect AFTER publish.
+      console.log("[WC] [MOB-WEB3-03] Mobile auto-activation — relay ping only (no navigation)");
+      try {
+        const client = await getSignClient();
+        const sessions = client?.session?.getAll?.() ?? [];
+        for (const s of sessions) {
+          try { client.ping({ topic: s.topic }); } catch { /* */ }
+        }
+      } catch { /* */ }
+      return;
+    }
+
+    // User explicitly tapped "Open Wallet" — navigate to wallet app
     try {
       const client = await getSignClient();
       const sessions = client?.session?.getAll?.() ?? [];
@@ -1849,20 +1828,20 @@ export async function tryOpenWalletExtension(): Promise<void> {
         }
 
         if (nativeUrl) {
-          console.log("[WC] [MOB-WEB3-03] Opening wallet via native scheme:", nativeUrl);
+          console.log("[WC] [MOB-WEB3-03] User tap: opening wallet via", nativeUrl);
           try { window.location.href = nativeUrl; } catch {
             try { window.open(nativeUrl, "_blank"); } catch { /* */ }
           }
           return;
         }
         if (redirect?.universal) {
-          console.log("[WC] [MOB-WEB3-03] Opening wallet via universal link:", redirect.universal);
+          console.log("[WC] [MOB-WEB3-03] User tap: opening wallet via", redirect.universal);
           window.location.href = redirect.universal;
           return;
         }
       }
     } catch { /* non-fatal */ }
-    console.warn("[WC] [MOB-WEB3-03] No wallet redirect URL found — cannot open wallet app");
+    console.warn("[WC] [MOB-WEB3-03] No wallet redirect URL found");
     return;
   }
 
