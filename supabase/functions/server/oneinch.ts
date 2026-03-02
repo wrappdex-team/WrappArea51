@@ -566,14 +566,15 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 expects EIP-55
-    // checksummed addresses. Pass through as-is — do NOT lowercase, as
-    // that triggers "invalid address" rejections. Only pass fields
-    // the API explicitly supports to avoid rejections from unrecognised
-    // body fields.
+    // IMPLEMENTATION NOTE: The 1inch Fusion Quoter v2.0 expects:
+    //   - `fromTokenAddress` / `toTokenAddress` (NOT srcTokenAddress/dstTokenAddress)
+    //   - EIP-55 checksummed addresses (do NOT lowercase)
+    // Our internal API uses srcTokenAddress/dstTokenAddress for consistency
+    // with Fusion+ v1.0, so the server maps to the upstream field names here.
+    // Only pass fields the API explicitly supports to avoid rejections.
     const upstreamBody: Record<string, unknown> = {
-      srcTokenAddress: body.srcTokenAddress as string,
-      dstTokenAddress: body.dstTokenAddress as string,
+      fromTokenAddress: body.srcTokenAddress as string,
+      toTokenAddress: body.dstTokenAddress as string,
       amount: body.amount,
       walletAddress: body.walletAddress as string,
     };
@@ -585,7 +586,7 @@ export function registerOneInchRoutes(app: Hono) {
     if (body.isPermit2) upstreamBody.isPermit2 = body.isPermit2;
 
     const upstreamUrl = fusionQuoterUrl(chainId, "/quote/receive");
-    console.log(`${TAG} Fusion quote: chain=${chainId} src=${upstreamBody.srcTokenAddress} dst=${upstreamBody.dstTokenAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
+    console.log(`${TAG} Fusion quote: chain=${chainId} from=${upstreamBody.fromTokenAddress} to=${upstreamBody.toTokenAddress} wallet=${upstreamBody.walletAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",

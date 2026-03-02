@@ -45,22 +45,19 @@ const CHANGENOW_LOGO = "https://changenow.io/images/changenow-logo.svg";
 const SLIPPAGE_OPTIONS = [1.0, 3.0];
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  IMPLEMENTATION NOTE — SAUCERSWAP SWAP PRODUCTION LOCK             │
+// │  IMPLEMENTATION NOTE — TOP UP TAB PRODUCTION LOCK                  │
 // │                                                                    │
-// │  The Hedera swap tab (Buy/Sell HBAR) is production-ready and       │
-// │  routes through SaucerSwap V1. It is locked                        │
-// │  behind a test gate so ONLY the owner wallet (0.0.518487) can      │
-// │  execute live swaps until end-to-end testing is complete on a      │
-// │  deployed Vercel URL.                                              │
+// │  The Hedera Swap and Cross-Chain tabs are now LIVE for all users.  │
+// │  The Top Up (fiat on-ramp) tab remains locked behind a test gate   │
+// │  pending ChangeNOW partner integration verification.               │
 // │                                                                    │
-// │  TO GO LIVE: set BUYSELL_SWAP_LOCKED = false                       │
+// │  TO GO LIVE: set BUYSELL_TOPUP_LOCKED = false                      │
 // │                                                                    │
-// │  SaucerSwap Partner ID: MOVED SERVER-SIDE [C108]                   │
-// │  API key now lives in SAUCERSWAP_API_KEY Supabase secret and is   │
-// │  attached by the /ss-proxy endpoint. No longer client-exposed.    │
-// │  Current status: SERVER-SIDE ONLY
+// │  SaucerSwap Partner ID: SERVER-SIDE [C108]                         │
+// │  API key lives in SAUCERSWAP_API_KEY Supabase secret and is        │
+// │  attached by the /ss-proxy endpoint. No longer client-exposed.     │
 // └─────────────────────────────────────────────────────────────────────┘
-const BUYSELL_SWAP_LOCKED = true;
+const BUYSELL_TOPUP_LOCKED = true;
 const BUYSELL_ALLOWED_ACCOUNT = "0.0.518487";
 
 // ── ChangeNOW widget config ──────────────────────────────────────────
@@ -150,10 +147,10 @@ export function BuySell() {
   const { isDark } = useTheme();
   const { primaryWallet, hederaAccount, hashPackSession, hederaNetwork, hbarPrice: ctxHbarPrice } = useWallet();
 
-  // ── Swap Lock Gate (derived — evaluated after all hooks below) ──
+  // ── Top Up Lock Gate (derived — evaluated after all hooks below) ──
   const connectedHederaAccount = hashPackSession?.accountId ?? "";
   const isAllowedTester = connectedHederaAccount === BUYSELL_ALLOWED_ACCOUNT;
-  const isSwapLocked = BUYSELL_SWAP_LOCKED && !isAllowedTester;
+  const isTopUpLocked = BUYSELL_TOPUP_LOCKED && !isAllowedTester;
 
   const [activeTab, setActiveTab] = useState<TabKey>("swap");
   const [mode, setMode] = useState<"buy" | "sell">("buy");
@@ -475,60 +472,7 @@ export function BuySell() {
         </div>
 
         {/* ── TAB: Hedera Swap ── */}
-        {activeTab === "swap" && isSwapLocked && (
-          <div className="max-w-lg mx-auto">
-            <div className={`rounded-2xl p-6 ${cardClass}`}>
-              {/* Buy/Sell Toggle — visible but disabled */}
-              <div className="grid grid-cols-2 gap-2 mb-6">
-                <button disabled className="py-3 rounded-xl font-bold bg-gradient-to-r from-emerald-600/40 to-green-500/40 text-white/50 cursor-not-allowed">
-                  Buy HBAR
-                </button>
-                <button disabled className={`py-3 rounded-xl font-bold cursor-not-allowed ${isDark ? "bg-slate-800/30 text-slate-600" : "bg-gray-100 text-gray-400"}`}>
-                  Sell HBAR
-                </button>
-              </div>
-
-              {/* Lock Banner */}
-              <div className={`rounded-xl p-8 text-center ${
-                isDark
-                  ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border border-amber-500/20"
-                  : "bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200"
-              }`}>
-                <div className={`w-16 h-16 rounded-2xl mx-auto mb-5 flex items-center justify-center ${
-                  isDark ? "bg-amber-500/10" : "bg-amber-100"
-                }`}>
-                  <Lock className={`w-8 h-8 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
-                </div>
-                <h4 className={`text-lg font-bold mb-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
-                  Swap Testing in Progress
-                </h4>
-                <p className={`text-sm leading-relaxed max-w-sm mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
-                  The on-chain swap engine (SaucerSwap V1) is currently locked for
-                  founder testing. It will be available to all users once the full swap flow has been
-                  verified on a live deployment.
-                </p>
-                {connectedHederaAccount && (
-                  <p className={`text-xs mt-4 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                    Connected: {connectedHederaAccount}
-                  </p>
-                )}
-              </div>
-
-              {/* Router badge */}
-              <div className="mt-4 flex items-center justify-center gap-2 text-xs">
-                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-emerald-900/20 text-emerald-400/50 border border-emerald-500/10" : "bg-emerald-50 text-emerald-700/50 border border-emerald-200/50"}`}>
-                  <Zap className="w-2.5 h-2.5" />
-                  SauceSwap V1
-                </span>
-              </div>
-              <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Routed through SauceSwap on Hedera with ~2s finality. Signed via HashPack.</span>
-              </div>
-            </div>
-          </div>
-        )}
-        {activeTab === "swap" && !isSwapLocked && (
+        {activeTab === "swap" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-7 space-y-4">
               <div className={`rounded-2xl p-6 ${cardClass}`}>
@@ -1020,7 +964,48 @@ export function BuySell() {
         )}
 
         {/* ── TAB: Top Up (ChangeNOW Fiat On-Ramp) ── */}
-        {activeTab === "topup" && (
+        {activeTab === "topup" && isTopUpLocked && (
+          <div className="max-w-lg mx-auto">
+            <div className={`rounded-2xl p-6 ${cardClass}`}>
+              {/* Lock Banner */}
+              <div className={`rounded-xl p-8 text-center ${
+                isDark
+                  ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border border-amber-500/20"
+                  : "bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200"
+              }`}>
+                <div className={`w-16 h-16 rounded-2xl mx-auto mb-5 flex items-center justify-center ${
+                  isDark ? "bg-amber-500/10" : "bg-amber-100"
+                }`}>
+                  <Lock className={`w-8 h-8 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
+                </div>
+                <h4 className={`text-lg font-bold mb-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
+                  Top Up Coming Soon
+                </h4>
+                <p className={`text-sm leading-relaxed max-w-sm mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
+                  The fiat on-ramp (buy crypto with card) is currently locked for
+                  founder testing. It will be available to all users once the payment
+                  integration has been fully verified.
+                </p>
+                {connectedHederaAccount && (
+                  <p className={`text-xs mt-4 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                    Connected: {connectedHederaAccount}
+                  </p>
+                )}
+              </div>
+              <div className="mt-4 flex items-center justify-center gap-2 text-xs">
+                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-pink-900/20 text-pink-400/50 border border-pink-500/10" : "bg-pink-50 text-pink-700/50 border border-pink-200/50"}`}>
+                  <CreditCard className="w-2.5 h-2.5" />
+                  ChangeNOW
+                </span>
+              </div>
+              <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                <Shield className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Powered by ChangeNOW. Buy with credit card, debit card, Apple Pay, or bank transfer.</span>
+              </div>
+            </div>
+          </div>
+        )}
+        {activeTab === "topup" && !isTopUpLocked && (
           <div className="max-w-2xl mx-auto space-y-4">
             <div className={`rounded-2xl overflow-hidden ${cardClass}`}>
               {/* Header */}

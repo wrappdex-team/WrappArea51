@@ -22,6 +22,7 @@ import { log } from "../logger";
 import { oneInchApi, OneInchApiError, isAbortError, friendlyErrorMessage } from "./api-client";
 import { getChainById, CHAINS } from "./chains";
 import { NATIVE_TOKEN_ADDRESS } from "./types";
+import { getAddress } from "viem";
 import type {
   FusionPreset,
   FusionQuoteParams,
@@ -35,7 +36,7 @@ import type {
   FusionOrderStatus,
 } from "./types";
 
-/* ═���═══════════════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -82,14 +83,22 @@ function resolveTokenForFusion(address: string, chainId: number): string {
       );
     }
     log.info(TAG, `Resolved native token → ${wrapped.slice(0, 10)}... (chain ${chainId})`);
-    // IMPLEMENTATION NOTE: Return the checksummed wrapped address as-is.
-    // The 1inch Fusion API v2.0 expects EIP-55 checksummed addresses —
-    // lowercasing them causes "invalid address" rejections.
-    return wrapped;
+    // IMPLEMENTATION NOTE: Return EIP-55 checksummed address via viem's getAddress.
+    // The 1inch Fusion API v2.0 STRICTLY requires EIP-55 checksummed addresses —
+    // any deviation (lowercase, wrong mixed-case) causes "invalid address" rejections.
+    return getAddress(wrapped);
   }
-  // Pass through as-is — token addresses from the 1inch Token API are already
-  // EIP-55 checksummed, and the Fusion API requires that format.
-  return address;
+  // IMPLEMENTATION NOTE: Always ensure EIP-55 checksum via viem's getAddress.
+  // Token addresses from the 1inch Token API, user-selected tokens, or the
+  // widget's POPULAR_TOKENS list may arrive with inconsistent casing.
+  // The Fusion API rejects anything that isn't strict EIP-55.
+  try {
+    return getAddress(address);
+  } catch {
+    // If getAddress throws (truly invalid address), return as-is and let the API reject it
+    log.warn(TAG, `Could not checksum address: ${address} — passing through as-is`);
+    return address;
+  }
 }
 
 /** Auto-refresh interval for Fusion quotes (15 seconds) */
@@ -266,7 +275,11 @@ export async function getFusionQuote(
     srcTokenAddress: resolveTokenForFusion(srcTokenAddress, chainId),
     dstTokenAddress: resolveTokenForFusion(dstTokenAddress, chainId),
     amount,
-    walletAddress,
+    // IMPLEMENTATION NOTE: Checksum the wallet address via viem's getAddress.
+    // MetaMask and some wallet providers may return lowercased addresses from
+    // eth_accounts. The 1inch Fusion API v2.0 requires EIP-55 checksummed
+    // addresses for ALL fields — including walletAddress.
+    walletAddress: (() => { try { return getAddress(walletAddress); } catch { return walletAddress; } })(),
     enableEstimate: true,
   };
 
@@ -461,7 +474,8 @@ export async function buildFusionOrder(
 
   const body: FusionOrderBuildParams = {
     quoteId,
-    walletAddress,
+    // IMPLEMENTATION NOTE: Checksum wallet address for Fusion Relayer v2.0
+    walletAddress: (() => { try { return getAddress(walletAddress); } catch { return walletAddress; } })(),
     preset,
   };
 
