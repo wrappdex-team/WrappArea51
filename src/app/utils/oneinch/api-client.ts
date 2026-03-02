@@ -521,8 +521,16 @@ export function friendlyErrorMessage(err: unknown): string {
         return "Too many requests. Please wait a moment and try again.";
       case "INSUFFICIENT_LIQUIDITY":
         return "Insufficient liquidity for this trade. Try a smaller amount or different pair.";
-      case "INVALID_PARAMS":
-        return err.details ?? "Invalid swap parameters.";
+      case "INVALID_PARAMS": {
+        // Detect "invalid address" specifically — most likely cause is stale server deployment
+        // where the old srcTokenAddress/dstTokenAddress fields are still being sent to
+        // 1inch Fusion Quoter v2.0 (which expects fromTokenAddress/toTokenAddress).
+        const rawDetail = err.details ?? err.message ?? "";
+        if (rawDetail.toLowerCase().includes("invalid address")) {
+          return `1inch rejected the address format (${rawDetail}). If this persists, ensure the server has been redeployed: supabase functions deploy make-server-54299934`;
+        }
+        return rawDetail || "Invalid swap parameters.";
+      }
       case "UPSTREAM_ERROR":
         return "1inch API is temporarily unavailable. Please try again shortly.";
       case "CIRCUIT_OPEN":

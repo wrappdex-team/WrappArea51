@@ -46,6 +46,43 @@ const TAG = "1inch:fusion";
 const QUOTE_CACHE_TTL_MS = 10_000;
 
 /* ══════════════════════════════════════════════════════════════════════
+ * Proxy Deployment Verification
+ *
+ * IMPLEMENTATION NOTE: pingFusionProxy() is called once (lazily) when
+ * the first Fusion quote is attempted. It hits GET /1inch/ping on our
+ * server — a zero-upstream-call diagnostic endpoint — and logs whether
+ * the Fusion v2 field mapping fix (fromTokenAddress/toTokenAddress) is
+ * deployed. If the endpoint 404s, the OLD server is still live and the
+ * "invalid address" bug will still occur.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+let _proxyPinged = false;
+
+async function pingFusionProxy(): Promise<void> {
+  if (_proxyPinged) return;
+  _proxyPinged = true;
+  try {
+    const ping = await oneInchApi.get<{
+      ok?: boolean;
+      fusionFieldMapping?: string;
+      serverBuild?: string;
+    }>("/ping", { timeout: 4_000, retries: 0 });
+
+    if (ping.fusionFieldMapping === "v2") {
+      log.info(TAG, `[DIAG] ✅ Server v2 deployed — build=${ping.serverBuild} fusionFieldMapping=fromTokenAddress/toTokenAddress EIP-55 checksumming active`);
+    } else {
+      log.warn(TAG, `[DIAG] ⚠️ Server ping returned unexpected payload: ${JSON.stringify(ping)} — field mapping may not be v2`);
+    }
+  } catch (e: any) {
+    if (e?.status === 404 || e?.kind === "ROUTE_NOT_FOUND") {
+      log.warn(TAG, `[DIAG] ❌ GET /1inch/ping returned 404 — OLD SERVER STILL DEPLOYED. The srcTokenAddress→fromTokenAddress fix is NOT live. Run: supabase functions deploy make-server-54299934`);
+    } else {
+      log.warn(TAG, `[DIAG] Proxy ping failed (non-critical): ${e?.message ?? e}`);
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
  * Native → Wrapped Token Address Mapping
  *
  * IMPLEMENTATION NOTE: The Fusion API operates on ERC-20 tokens ONLY.
@@ -270,6 +307,9 @@ export async function getFusionQuote(
   if (!chain?.supportsFusion) {
     throw new Error(`Fusion is not supported on chain ${chainId} (${chain?.name ?? "unknown"})`);
   }
+
+  // [DIAG] One-time ping to confirm the v2 field mapping fix is deployed
+  pingFusionProxy().catch(() => {});
 
   const body: FusionQuoteParams = {
     srcTokenAddress: resolveTokenForFusion(srcTokenAddress, chainId),

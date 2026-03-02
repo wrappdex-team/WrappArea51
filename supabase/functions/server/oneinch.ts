@@ -13,7 +13,7 @@
 //   Balance API v1.2     — Multi-token wallet balances
 //   Price API v1.1       — USD token prices
 //
-// Route inventory (19 routes):
+// Route inventory (20 routes):
 //
 //   ── Swap API v6.0 (existing, refactored) ──
 //   GET  /1inch/quote/:chainId         → /swap/v6.0/{chainId}/quote
@@ -1001,6 +1001,25 @@ export function registerOneInchRoutes(app: Hono) {
   // ║  Diagnostics — Cache Stats (admin only, non-authenticated)     ║
   // ╚══════════════════════════════════════════════════════════════════╝
 
+  // ── GET /1inch/ping ──────────────────────────────────────────────
+  // Deployment-verification endpoint — no upstream call, instant response.
+  //
+  // IMPLEMENTATION NOTE: The frontend calls this on the first Fusion quote
+  // attempt to verify the v2 field mapping fix (fromTokenAddress/toTokenAddress)
+  // is deployed. If this endpoint returns 404 (Hono default not-found), the OLD
+  // server is still running with the srcTokenAddress/dstTokenAddress bug.
+  //
+  // Expected response: { ok: true, fusionFieldMapping: "v2", serverBuild: "..." }
+  app.get(`${PREFIX}/ping`, (c) => {
+    return c.json({
+      ok: true,
+      serverBuild: "2025-03-02",
+      fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
+      fusionChecksumming: "eip55",   // EIP-55 via viem getAddress()
+      note: "Fusion proxy maps client srcTokenAddress→fromTokenAddress, dstTokenAddress→toTokenAddress before forwarding to 1inch Quoter v2.0",
+    });
+  });
+
   // ── GET /1inch/health ────────────────────────────────────────────
   // Returns proxy health: API key status, circuit breaker state, cache stats.
   // Useful for the admin debug panel.
@@ -1025,8 +1044,9 @@ export function registerOneInchRoutes(app: Hono) {
   // ── Startup log ──────────────────────────────────────────────────
   const apiKey = getApiKey();
   console.log(
-    `${TAG} Routes registered (19 routes, 6 API domains). ` +
+    `${TAG} Routes registered (20 routes, 6 API domains). ` +
     `API key: ${apiKey ? "configured \u2713" : "NOT SET \u2717"} | ` +
-    `Chains: ${SUPPORTED_CHAINS.size} classic, ${FUSION_CHAINS.size} fusion, ${FUSION_PLUS_CHAINS.size} fusion+`,
+    `Chains: ${SUPPORTED_CHAINS.size} classic, ${FUSION_CHAINS.size} fusion, ${FUSION_PLUS_CHAINS.size} fusion+ | ` +
+    `Fusion field mapping: v2 (fromTokenAddress/toTokenAddress) \u2713`,
   );
 }
