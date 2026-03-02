@@ -973,3 +973,45 @@ html.vip-theme .vip-market-row:hover {
     0 0 36px rgba(6,182,212,0.06),
     0 0 54px rgba(52,211,153,0.03) !important;
 }
+
+/* ── Column header bar (Top Markets) ── */
+html.vip-theme .vip-col-header {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(16,185,129,0.15) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(16,185,129,0.03) 0%,
+    rgba(6,182,212,0.02) 50%,
+    rgba(52,211,153,0.03) 100%
+  ) !important;
+}
+
+html.vip-theme .vip-col-header::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(16,185,129,0.10),
+    rgba(6,182,212,0.06),
+    rgba(52,211,153,0.10),
+    rgba(6,182,212,0.06),
+    rgba(16,185,129,0.10)
+  );
+  background-size: 200% 100%;
+  animation: vip-card-flow 8s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 1px;
+}
+
+html.vip-theme .vip-col-header span {
+  position: relative;
+  z-index: 1;
+}

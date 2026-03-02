@@ -801,6 +801,92 @@ export function Dashboard() {
           </div>
         </div>
 
+        {/* ── Column Headers ── */}
+        {!loading && filteredMarkets.length > 0 && (
+          <div
+            className={`flex items-center justify-between px-3 md:px-4 py-2 mb-1 rounded-lg transition-all duration-300 ${
+              isDark
+                ? "bg-slate-900/40 border border-slate-800/40"
+                : "bg-gray-50/80 border border-gray-100"
+            }${vipActive ? " vip-col-header" : ""}`}
+          >
+            {/* Left: Asset label — matches the flex-1 token area */}
+            <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+              {/* Spacer matching the logo width */}
+              <div className="w-8 md:w-10 flex-shrink-0" />
+              <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                isDark ? "text-slate-500" : "text-gray-400"
+              }`}>
+                Asset
+              </span>
+            </div>
+
+            {/* Right: column labels — mirrors data row's flex structure exactly */}
+            <div className="flex items-center gap-3 md:gap-6">
+              {/* Price — auto width, matches data row */}
+              <div className="text-right min-w-[4.5rem] sm:min-w-[5.5rem]">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>
+                  Price
+                </span>
+              </div>
+
+              {/* 24h — hidden below md, w-20, matches data row */}
+              <div className="hidden md:block w-20 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>
+                  24h %
+                </span>
+              </div>
+
+              {/* Volume — hidden below lg, w-20, matches data row */}
+              <div className="hidden lg:block w-20 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>
+                  Volume
+                </span>
+              </div>
+
+              {/* Market Cap — hidden below lg, w-24, matches data row */}
+              <div className="hidden lg:block w-24 text-right">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>
+                  Mkt Cap
+                </span>
+              </div>
+
+              {/* 7d sparkline label — hidden below md, w-32, matches data row */}
+              <div className="hidden md:flex w-32 items-center justify-center">
+                <span className={`text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-500" : "text-gray-400"
+                }`}>
+                  7d Chart
+                </span>
+              </div>
+
+              {/* Actions spacer — hidden below sm, matches Trade+Bridge button area */}
+              <div className="hidden sm:flex gap-1.5 items-center relative">
+                {/* Invisible sizing ghosts matching Trade + Bridge button dimensions */}
+                <span className="px-3 py-1.5 text-sm font-semibold invisible flex items-center gap-1.5" aria-hidden="true">Trade<ArrowUpRight className="w-3.5 h-3.5" /></span>
+                <span className="px-3 py-1.5 text-sm font-medium invisible flex items-center gap-1.5" aria-hidden="true">Bridge<ArrowRightLeft className="w-3.5 h-3.5" /></span>
+                {/* Centered visible label */}
+                <span className={`absolute inset-0 flex items-center justify-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider ${
+                  isDark ? "text-slate-600" : "text-gray-300"
+                }`}>
+                  Actions
+                </span>
+              </div>
+
+              {/* Chevron spacer — matches the expand chevron in data rows */}
+              <div className="w-5" />
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <MarketListSkeleton rows={8} />
         ) : (
