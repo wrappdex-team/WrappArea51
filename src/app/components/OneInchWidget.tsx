@@ -920,6 +920,16 @@ export function OneInchWidget() {
   const handleClassicSwap = useCallback(async () => {
     if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
 
+    // Safety-net balance check — prevent sending a tx the wallet can't cover
+    if (fromBalance) {
+      const walletBal = parseFloat(fromBalance.replace(/,/g, ""));
+      if (!isNaN(walletBal) && parseFloat(fromAmount) > walletBal) {
+        setSwapError(`Insufficient ${fromToken.symbol} balance. You have ${fromBalance} but tried to swap ${fromAmount}.`);
+        setSwapStatus("error");
+        return;
+      }
+    }
+
     playVipCashRegister();
     setSwapStatus("swapping");
     setSwapError(null);
@@ -1006,7 +1016,7 @@ export function OneInchWidget() {
         setSwapError(msg);
       }
     }
-  }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, slippage, fetchBalance]);
+  }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, slippage, fromBalance, fetchBalance]);
 
   // ── Fusion polling cleanup ──────────────────────────────────────────
   const stopFusionPolling = useCallback(() => {
@@ -1025,6 +1035,16 @@ export function OneInchWidget() {
   const handleFusionSwap = useCallback(async () => {
     if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0 || !fusionQuote) return;
 
+    // Safety-net balance check — prevent spending gas on approval for a swap that can't complete
+    if (fromBalance) {
+      const walletBal = parseFloat(fromBalance.replace(/,/g, ""));
+      if (!isNaN(walletBal) && parseFloat(fromAmount) > walletBal) {
+        setSwapError(`Insufficient ${fromToken.symbol} balance. You have ${fromBalance} but tried to swap ${fromAmount}.`);
+        setSwapStatus("error");
+        return;
+      }
+    }
+
     playVipCashRegister();
     setSwapError(null);
     setLastTxHash(null);
@@ -1035,17 +1055,6 @@ export function OneInchWidget() {
 
     try {
       const amountWei = toWei(fromAmount, fromToken.decimals);
-
-      // IMPLEMENTATION NOTE: Check quoteId BEFORE spending gas on approval.
-      // If quoteId is empty (no resolver available, amount too small, or field-name
-      // mismatch in the API response), the build step will fail. We should NOT make
-      // the user pay for an approve() tx that will be followed by a guaranteed failure.
-      if (!fusionQuote.quoteId) {
-        log.error("1inch", `Fusion quoteId is empty — cannot proceed. Raw quote keys: ${Object.keys(fusionQuote.raw as any).join(", ")}`);
-        setSwapError("Missing or invalid quoteId — the Fusion quote did not include a quote identifier. This may mean the trade amount is too small for resolvers, or the token pair has insufficient Fusion liquidity. Try a larger amount or use Classic mode instead.");
-        setSwapStatus("error");
-        return;
-      }
 
       // Step A: For non-native ERC-20 tokens, ensure 1inch router approval.
       // This is the ONLY place in Fusion where gas is paid — a one-time approve().
@@ -1060,15 +1069,65 @@ export function OneInchWidget() {
         );
       }
 
-      // Step B: Build the order — gets EIP-712 typed data with unique nonce
+      // IMPLEMENTATION NOTE — Two-Phase Quote Strategy (matches 1inch.io behavior):
+      //
+      // Phase 1 (display): enableEstimate=false → fast price display (already done above)
+      //   The initial quote shown in the UI uses enableEstimate=false for speed.
+      //   This returns preset pricing but quoteId=null because the quoter doesn't
+      //   validate the wallet's balance/approval.
+      //
+      // Phase 2 (execution): enableEstimate=true → gets real quoteId
+      //   After approval is confirmed, we re-fetch with enableEstimate=true.
+      //   The quoter validates the wallet has tokens + approval, and IF valid,
+      //   assigns a real quoteId that can be used for order/build.
+      //
+      // This is exactly how 1inch.io works — they show a fast quote first,
+      // then re-fetch with estimation when the user clicks "Swap".
+
       setSwapStatus("building");
-      log.info("1inch", `Building Fusion order: quoteId=${fusionQuote.quoteId} preset=${selectedPreset}`);
+      log.info("1inch", `Re-fetching Fusion quote with enableEstimate=true for execution...`);
+
+      let execQuoteId = fusionQuote.quoteId;
+
+      if (!execQuoteId) {
+        // Phase 2: Re-fetch quote with enableEstimate=true to get a real quoteId
+        try {
+          const execQuote = await getFusionQuote(
+            selectedChainId,
+            fromToken.address,
+            toToken.address,
+            amountWei,
+            evmAccount,
+            undefined, // no AbortSignal
+            true,       // enableEstimate=true — validates balance+approval, returns quoteId
+          );
+          execQuoteId = execQuote.quoteId;
+          log.info("1inch", `Execution quote received: quoteId=${execQuoteId || "(STILL EMPTY)"}`);
+        } catch (execErr: any) {
+          log.warn("1inch", `Execution quote (enableEstimate=true) failed: ${execErr?.message}. Trying without estimate...`);
+          // If enableEstimate=true fails (e.g., insufficient balance), try one more time
+          // with enableEstimate=false — some API versions may still return quoteId
+        }
+      }
+
+      if (!execQuoteId) {
+        log.error("1inch", `Fusion quoteId is empty even after enableEstimate=true. Raw quote keys: ${Object.keys(fusionQuote.raw as any).join(", ")}`);
+        setSwapError(
+          "Unable to get a Fusion quote ID. This typically means the trade amount is too small " +
+          "for Fusion resolvers on Ethereum mainnet (resolver gas costs exceed the spread). " +
+          "Try a larger amount (>$50) or switch to Classic mode."
+        );
+        setSwapStatus("error");
+        return;
+      }
+
+      log.info("1inch", `Building Fusion order: quoteId=${execQuoteId} preset=${selectedPreset}`);
 
       // Step C: Sign the typed data — eth_signTypedData_v4 (NO gas!)
       setSwapStatus("signing");
 
       const signedOrder = await buildAndSignFusionOrder(
-        selectedChainId, fusionQuote.quoteId, evmAccount, selectedPreset,
+        selectedChainId, execQuoteId, evmAccount, selectedPreset,
       );
 
       log.info("1inch", `Fusion order signed: orderHash=${signedOrder.orderHash} sig=${signedOrder.signature.slice(0, 12)}...`);
@@ -1148,7 +1207,7 @@ export function OneInchWidget() {
       log.warn("1inch", "Fusion swap error", err);
       stopFusionPolling();
     }
-  }, [evmAccount, selectedChainId, fromAmount, fromToken, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);
+  }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, fromBalance, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);
 
   // ── Unified swap handler — dispatches to Classic or Fusion ─────────
   const handleSwap = useCallback(async () => {
@@ -1206,7 +1265,19 @@ export function OneInchWidget() {
   const activeRate = swapMode === "fusion" ? fusionRate : swapMode === "crossChain" ? crossChainRate : rate;
   // Effective output token — in cross-chain mode, use the destination chain token
   const effectiveToToken = swapMode === "crossChain" ? crossChainDstToken : toToken;
+  // ── Insufficient balance detection ──
+  // Compare the user's entered amount against the on-chain balance fetched from the wallet.
+  // fromBalance is a formatted string like "8.370000" — strip commas for comparison.
+  const insufficientBalance = useMemo(() => {
+    if (!fromAmount || !fromBalance || !evmAccount) return false;
+    const enteredAmt = parseFloat(fromAmount);
+    const walletBal = parseFloat(fromBalance.replace(/,/g, ""));
+    if (isNaN(enteredAmt) || isNaN(walletBal) || enteredAmt <= 0) return false;
+    return enteredAmt > walletBal;
+  }, [fromAmount, fromBalance, evmAccount]);
+
   const canSwap = evmAccount && fromAmount && parseFloat(fromAmount) > 0
+    && !insufficientBalance
     && ((swapMode === "classic" && lastQuote) || (swapMode === "fusion" && fusionQuote) || (swapMode === "crossChain" && crossChainQuote))
     && apiConfigured !== false && swapStatus === "idle";
 
@@ -1724,7 +1795,11 @@ export function OneInchWidget() {
       </AnimatePresence>
 
       {/* ═══ INPUT TOKEN ═══ */}
-      <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
+      <div className={`rounded-xl p-4 mb-2 transition-all ${inputClass} ${
+        insufficientBalance
+          ? isDark ? "ring-1 ring-red-500/50" : "ring-1 ring-red-400/60"
+          : ""
+      }`}>
         <div className="flex items-center justify-between mb-2">
           <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Pay</span>
           {evmAccount && fromBalance !== null && (
@@ -1743,10 +1818,13 @@ export function OneInchWidget() {
                 }
               }}
               className={`text-xs flex items-center gap-1 transition-colors ${
-                isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"
+                insufficientBalance
+                  ? isDark ? "text-red-400 hover:text-red-300" : "text-red-500 hover:text-red-600"
+                  : isDark ? "text-slate-500 hover:text-pink-400" : "text-gray-400 hover:text-pink-600"
               }`}
             >
               <Wallet className="w-2.5 h-2.5" />
+              {insufficientBalance && <AlertCircle className="w-2.5 h-2.5" />}
               {fromBalance} {fromToken.symbol}
             </button>
             </Tip>
@@ -2333,7 +2411,9 @@ export function OneInchWidget() {
             whileHover={canSwap ? { scale: 1.01 } : {}}
             whileTap={canSwap ? { scale: 0.98 } : {}}
             className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
-              !canSwap
+              insufficientBalance
+                ? isDark ? "bg-red-900/60 text-red-300 shadow-none cursor-not-allowed border border-red-500/30" : "bg-red-100 text-red-600 shadow-none cursor-not-allowed border border-red-300"
+                : !canSwap
                 ? isDark ? "bg-slate-700 text-slate-500 shadow-none cursor-not-allowed" : "bg-gray-300 text-gray-500 shadow-none cursor-not-allowed"
                 : swapMode === "crossChain"
                   ? "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 shadow-cyan-500/30"
@@ -2344,6 +2424,8 @@ export function OneInchWidget() {
           >
             {!fromAmount || parseFloat(fromAmount) <= 0
               ? "Enter an amount"
+              : insufficientBalance
+                ? `Insufficient ${fromToken.symbol} Balance`
               : swapMode === "crossChain" && !evmAccount
                 ? "Connect wallet for Cross-Chain"
                 : swapMode === "crossChain" && !crossChainQuote

@@ -393,6 +393,12 @@ function parseQuoteResponse(res: FusionQuoteResponse): ParsedFusionQuote {
  * @param amount            - Amount in smallest unit (string)
  * @param walletAddress     - User's wallet address
  * @param signal            - Optional AbortSignal for cancellation
+ * @param enableEstimate    - Whether to validate balance+approval on-chain (default: false).
+ *                            Set to true for the "execution quote" (after approval) — this
+ *                            is REQUIRED to get a valid quoteId from the 1inch Fusion Quoter.
+ *                            The 1inch.io website uses a 2-phase approach:
+ *                              Phase 1 (display): enableEstimate=false → fast price display
+ *                              Phase 2 (execute): enableEstimate=true  → gets real quoteId
  * @returns ParsedFusionQuote with per-preset fill estimates
  * @throws OneInchApiError on API failure
  */
@@ -403,6 +409,7 @@ export async function getFusionQuote(
   amount: string,
   walletAddress: string,
   signal?: AbortSignal,
+  enableEstimate: boolean = false,
 ): Promise<ParsedFusionQuote> {
   // Validate chain supports Fusion
   const chain = getChainById(chainId);
@@ -459,7 +466,7 @@ export async function getFusionQuote(
     // The quote returns pricing/preset data based purely on the token pair
     // and amount, which is all we need at the quote stage. Token approvals
     // are handled separately by ensureFusionApproval() before order build.
-    enableEstimate: false,
+    enableEstimate,
   };
 
   // [DIAG] Verbose logging — shows both field name sets sent to the server
@@ -471,7 +478,7 @@ export async function getFusionQuote(
     `\n  toTokenAddress=${resolvedDst}   ← 1inch Quoter v2.0 upstream`,
     `\n  walletAddress=${checksummedWallet}`,
     `\n  amount=${amount}`,
-    `\n  enableEstimate=false ← MUST be false for Hedera EVM wallets`,
+    `\n  enableEstimate=${enableEstimate} ← MUST be false for Hedera EVM wallets`,
     `\n  [dual-field=ON, enableEstimate=OFF — works for all wallets]`,
   );
 
