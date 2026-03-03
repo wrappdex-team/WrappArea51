@@ -731,75 +731,79 @@ export function registerOneInchRoutes(app: Hono) {
 
     // IMPLEMENTATION NOTE — CRITICAL DISCOVERY (2026-03-03):
     //
-    // The 1inch Fusion Relayer v2.0 /order/build endpoint reads parameters
-    // from the URL QUERY STRING, not the JSON body. We confirmed this by
-    // observing the error response meta: {"type":"string.empty","value":"",
-    // "path":["walletAddress"]} — 1inch received an empty walletAddress
-    // despite our JSON body containing a valid checksummed address.
+    // The 1inch Fusion Relayer v2.0 /order/build endpoint returned 400 with
+    // meta: {"type":"string.empty","value":"","path":["walletAddress"]} when
+    // we sent a JSON body containing a valid walletAddress. This means the
+    // relayer's body parser does NOT read application/json — it likely expects
+    // application/x-www-form-urlencoded (or reads from query string).
     //
-    // Strategy: Try 4 approaches to find which one the relayer accepts:
-    //   1. POST with query params + JSON body (belt-and-suspenders)
-    //   2. POST with query params only (no body)
-    //   3. POST with JSON body only (original approach — known to fail)
-    //   4. GET with query params (some build endpoints are GET)
+    // Strategy: Try 3 approaches (1 at a time, stop on first success):
+    //   1. POST with application/x-www-form-urlencoded body (most likely fix)
+    //   2. POST with application/json body (original — returns 400)
+    //   3. POST with query string params (no body)
 
-    const queryParams = new URLSearchParams();
-    queryParams.set("quoteId", cleanBody.quoteId as string);
-    queryParams.set("walletAddress", cleanBody.walletAddress as string);
-    if (cleanBody.secretsCount != null) queryParams.set("secretsCount", String(cleanBody.secretsCount));
-    if (cleanBody.preset) queryParams.set("preset", cleanBody.preset as string);
-    if (cleanBody.receiver) queryParams.set("receiver", cleanBody.receiver as string);
-    if (cleanBody.nonce != null) queryParams.set("nonce", String(cleanBody.nonce));
-    if (cleanBody.permit) queryParams.set("permit", cleanBody.permit as string);
-    if (cleanBody.isPermit2 != null) queryParams.set("isPermit2", String(cleanBody.isPermit2));
+    const relayerUrl = fusionRelayerUrl(chainId, "/order/build");
+    const jsonBody = JSON.stringify(cleanBody);
+    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${(cleanBody.quoteId as string).slice(0, 20)}... wallet=${cleanBody.walletAddress} url=${relayerUrl}`);
 
-    const relayerBaseUrl = fusionRelayerUrl(chainId, "/order/build");
-    const relayerUrlWithQuery = `${relayerBaseUrl}?${queryParams.toString()}`;
-    console.log(`${TAG} Fusion build: chain=${chainId} queryKeys=[${[...queryParams.keys()].join(",")}] baseUrl=${relayerBaseUrl}`);
-
-    // Attempt 1: POST with query params + JSON body
-    const a1 = await upstreamFetch("POST", relayerUrlWithQuery, JSON.stringify(cleanBody));
-    if (a1.status === 200) {
-      console.log(`${TAG} Fusion build SUCCESS (attempt 1: POST query+body)`);
-      return c.json(a1.body);
+    // ── Attempt 1: form-encoded body ──────────────────────────────────
+    // Many API gateways default to parsing form-encoded bodies. If 1inch
+    // uses express.urlencoded() but NOT express.json(), this would explain
+    // why walletAddress arrives as "" with JSON content-type.
+    const formBody = new URLSearchParams();
+    for (const [k, v] of Object.entries(cleanBody)) {
+      if (v != null) formBody.set(k, String(v));
     }
-    console.log(`${TAG} Fusion build attempt 1 FAILED: status=${a1.status} resp=${JSON.stringify(a1.body).slice(0, 300)}`);
-
-    // Attempt 2: POST with query params only (no body)
-    const a2 = await upstreamFetch("POST", relayerUrlWithQuery, null);
-    if (a2.status === 200) {
-      console.log(`${TAG} Fusion build SUCCESS (attempt 2: POST query only)`);
-      return c.json(a2.body);
+    const apiKey = getApiKey();
+    let a1Status = 0;
+    let a1Body: Record<string, unknown> = {};
+    try {
+      const res1 = await fetch(relayerUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Accept": "application/json",
+        },
+        body: formBody.toString(),
+      });
+      a1Status = res1.status;
+      try { a1Body = await res1.json(); } catch { a1Body = { error: `Non-JSON (${res1.status})` }; }
+      console.log(`${TAG} Fusion build attempt 1 (form-encoded): status=${a1Status} resp=${JSON.stringify(a1Body).slice(0, 400)}`);
+      if (a1Status === 200) return c.json(a1Body);
+    } catch (e: any) {
+      console.log(`${TAG} Fusion build attempt 1 (form-encoded) THREW: ${e.message}`);
+      a1Body = { error: e.message };
     }
-    console.log(`${TAG} Fusion build attempt 2 FAILED: status=${a2.status} resp=${JSON.stringify(a2.body).slice(0, 300)}`);
 
-    // Attempt 3: POST with JSON body only (no query) — known to fail
-    const a3 = await upstreamFetch("POST", relayerBaseUrl, JSON.stringify(cleanBody));
-    if (a3.status === 200) {
-      console.log(`${TAG} Fusion build SUCCESS (attempt 3: POST body only)`);
-      return c.json(a3.body);
-    }
-    console.log(`${TAG} Fusion build attempt 3 FAILED: status=${a3.status} resp=${JSON.stringify(a3.body).slice(0, 300)}`);
+    // ── Attempt 2: JSON body (original approach) ──────────────────────
+    const a2 = await upstreamFetch("POST", relayerUrl, jsonBody);
+    console.log(`${TAG} Fusion build attempt 2 (JSON body): status=${a2.status} resp=${JSON.stringify(a2.body).slice(0, 400)}`);
+    if (a2.status === 200) return c.json(a2.body);
 
-    // Attempt 4: GET with query params
-    const a4 = await upstreamFetch("GET", relayerUrlWithQuery);
-    if (a4.status === 200) {
-      console.log(`${TAG} Fusion build SUCCESS (attempt 4: GET query)`);
-      return c.json(a4.body);
-    }
-    console.log(`${TAG} Fusion build attempt 4 FAILED: status=${a4.status} resp=${JSON.stringify(a4.body).slice(0, 300)}`);
+    // ── Attempt 3: query string (no body) ─────────────────────────────
+    const qs = formBody.toString();
+    const urlWithQs = `${relayerUrl}?${qs}`;
+    const a3 = await upstreamFetch("POST", urlWithQs, null);
+    console.log(`${TAG} Fusion build attempt 3 (query string): status=${a3.status} resp=${JSON.stringify(a3.body).slice(0, 400)}`);
+    if (a3.status === 200) return c.json(a3.body);
 
-    // All 4 attempts failed — return detailed debug info
+    // All failed — return comprehensive debug
     return c.json({
-      ...a1.body,
+      ...a2.body,
       _debug: {
         sentBody: cleanBody,
-        relayerBaseUrl,
-        queryString: queryParams.toString().slice(0, 200),
-        attempts: { "1_POST_query+body": a1.status, "2_POST_query_only": a2.status, "3_POST_body_only": a3.status, "4_GET_query": a4.status },
-        hint: "All 4 build strategies failed. The _upstream field shows 1inch raw error.",
+        relayerUrl,
+        attempts: {
+          "1_form_encoded": a1Status,
+          "2_json_body": a2.status,
+          "3_query_string": a3.status,
+        },
+        a1_upstream: JSON.stringify(a1Body).slice(0, 300),
+        a2_upstream: (a2.body as any)?._upstream ?? "none",
+        a3_upstream: (a3.body as any)?._upstream ?? "none",
       },
-    }, a1.status as any);
+    }, a2.status as any);
   });
 
   // ── POST /1inch/fusion/submit/:chainId ───────────────────────────
@@ -1186,7 +1190,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-03d-build-query-params",
+      serverBuild: "2026-03-03e-build-form-encoded",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)
