@@ -950,68 +950,44 @@ export function registerOneInchRoutes(app: Hono) {
       return u.toString();
     };
 
-    // ── 6 trial URL patterns (Round 2 — informed by Round 1 diagnostics) ──
+    // ── Round 3 — ROOT CAUSE IDENTIFIED ──
     //
-    // Round 1 eliminated:
-    //   ✗ fusion-plus/v2.0/{chain}/... → 404 (v2.0 doesn't exist for fusion-plus)
-    //   ✗ fusion/v2.0/{chain}/?dstChainId=...&toTokenAddress=... → 400 CANNOT_SYNC_TOKEN
-    //   ✗ fusion-plus/v1.0/ POST body → 400 REQUIRED_FIELD_MISSING (GET-only)
+    // After 10 failed patterns across Rounds 1-2, we definitively know:
+    //   ✗ v2.0 doesn't exist for /fusion-plus/ (404)
+    //   ✗ v1.0 with chain-in-path doesn't exist (404)
+    //   ✗ Fusion v2.0 merged → CANNOT_SYNC_TOKEN / INVALID_ADDRESS
+    //   ✗ POST body → REQUIRED_FIELD_MISSING (endpoint is GET-only)
+    //   ✓ GET /fusion-plus/quoter/v1.0/quote/receive IS alive (returns 400)
     //
-    // Key: v1.0 IS alive. We never tried v1.0 + chain-in-path (the "wrong chain id"
-    // was v1.0 without chain; the 404 was v1.2 with chain).
+    // ROOT CAUSE: The API expects `srcChain` / `dstChain` (NOT `srcChainId` /
+    // `dstChainId`). The 1inch Fusion+ SDK's toApi() strips the "Id" suffix.
+    // We sent unknown param names → API saw no chain → "wrong chain id".
     const trials: { label: string; method: "GET" | "POST"; url: string; body?: string }[] = [
-      // T1: v1.0 + srcChainId IN PATH + Fusion+ fields — the untested combo!
+      // T1 (PRIMARY): srcChain/dstChain — correct SDK param names
       {
-        label: "v1.0/chain-path/plus-fields",
-        method: "GET",
-        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/${srcChainId}/quote/receive?${qs([
-          ["dstChainId", String(dstChainId)], ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
-          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
-        ])}`,
-      },
-      // T2: v1.0 + chain in path + v2 field names
-      {
-        label: "v1.0/chain-path/v2-fields",
-        method: "GET",
-        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/${srcChainId}/quote/receive?${qs([
-          ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["toTokenAddress", cDst],
-          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
-        ])}`,
-      },
-      // T3: v1.0 NO chain in path (the original — re-confirm "wrong chain id")
-      {
-        label: "v1.0/no-chain/query-only",
+        label: "v1.0/srcChain+dstChain",
         method: "GET",
         url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${qs([
-          ["srcChainId", String(srcChainId)], ["dstChainId", String(dstChainId)],
+          ["srcChain", String(srcChainId)], ["dstChain", String(dstChainId)],
           ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
           ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
         ])}`,
       },
-      // T4: Fusion v2.0 merged — use dstTokenAddress instead of toTokenAddress
+      // T2: srcChain/dstChain + v2 token field names
       {
-        label: "fusion-v2.0/merged/dstTokenAddress",
+        label: "v1.0/srcChain+dstChain/v2-fields",
         method: "GET",
-        url: `https://api.1inch.dev/fusion/quoter/v2.0/${srcChainId}/quote/receive?${qs([
-          ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["dstTokenAddress", cDst],
-          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
-        ])}`,
-      },
-      // T5: v1.0 POST with query params (not body)
-      {
-        label: "v1.0/POST-query-params",
-        method: "POST",
         url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${qs([
-          ["srcChainId", String(srcChainId)], ["dstChainId", String(dstChainId)],
-          ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
+          ["srcChain", String(srcChainId)], ["dstChain", String(dstChainId)],
+          ["fromTokenAddress", cSrc], ["toTokenAddress", cDst],
           ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
         ])}`,
       },
-      // T6: v1.0 chain in path + both chainIds also in query (belt + suspenders)
+      // T3: Control — old param names (expect "wrong chain id" again)
       {
-        label: "v1.0/chain-path/both-chains-in-query",
+        label: "v1.0/srcChainId+dstChainId(control)",
         method: "GET",
-        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/${srcChainId}/quote/receive?${qs([
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${qs([
           ["srcChainId", String(srcChainId)], ["dstChainId", String(dstChainId)],
           ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
           ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
@@ -1019,7 +995,7 @@ export function registerOneInchRoutes(app: Hono) {
       },
     ];
 
-    console.log(`${TAG} Fusion+ MULTI-TRIAL R2: ${srcChainId}→${dstChainId} src=${cSrc.slice(0,10)}... dst=${cDst.slice(0,10)}... trials=${trials.length}`);
+    console.log(`${TAG} Fusion+ R3: ${srcChainId}→${dstChainId} src=${cSrc.slice(0,10)}... dst=${cDst.slice(0,10)}... trials=${trials.length}`);
 
     const results: { label: string; status: number; snippet: string }[] = [];
     for (const t of trials) {
