@@ -446,13 +446,24 @@ function buildServerSideOrder(
     // Field 3: takingAmountData = settlement(20) + auctionDetails
     const takingAmountData = catBytes(settleBytes, auctionBytes);
 
-    // Field 7: postInteraction = settlement(20) + resolver_count(1) + whitelist + hashlock(32)
+    // Field 7: postInteraction = settlement(20) + compact_whitelist + hashlock(32)
+    //
+    // IMPLEMENTATION NOTE (2026-03-03, whitelist encoding fix):
+    // The SDK uses COMPACT whitelist encoding — NOT full 20-byte addresses.
+    // Each entry is: last 10 bytes of address (truncated) + uint16 relative allowFrom
+    // = 12 bytes per entry. There is NO count byte — count is derived from field length.
+    // The allowFrom is relative to the auction startTime.
     const whitelist = (rawQuote.whitelist || []) as { address: string; allowFrom: number }[];
     const wlParts: Uint8Array[] = [];
     for (const w of whitelist) {
       try {
-        wlParts.push(hexBytes(w.address));
-        wlParts.push(u32be(w.allowFrom || 0));
+        // Compact encoding: last 10 bytes of address (20 hex chars from end)
+        const addrHex = (w.address || "").replace(/^0x/i, "").toLowerCase();
+        const truncated = addrHex.slice(-20); // last 20 hex chars = 10 bytes
+        wlParts.push(hexBytes(truncated));
+        // allowFrom as uint16 relative to auction start
+        const relativeAllowFrom = Math.max(0, (w.allowFrom || 0) - startTime);
+        wlParts.push(u16be(relativeAllowFrom & 0xFFFF));
       } catch (e: any) {
         console.log(`${TAG} [EXT] Skipping invalid whitelist entry: ${JSON.stringify(w)} — ${e?.message}`);
       }
@@ -460,12 +471,14 @@ function buildServerSideOrder(
     const wlBytes = wlParts.length > 0 ? catBytes(...wlParts) : new Uint8Array(0);
     const hashLockBytes = hexBytes(hashLock);
 
-    // Post interaction: settlement(20) + count(1) + whitelist + hashlock(32)
-    // IMPLEMENTATION NOTE: The count byte tells the settlement contract how many
-    // resolvers are in the whitelist. Each entry is 24 bytes (address + allowFrom).
+    diag.whitelistCount = whitelist.length;
+    diag.whitelistBytesLen = wlBytes.length;
+    diag.whitelistRaw = whitelist.map(w => ({ address: w.address?.slice(0, 14), allowFrom: w.allowFrom }));
+
+    // Post interaction: settlement(20) + compact_whitelist(12*W) + hashlock(32)
+    // IMPLEMENTATION NOTE: No count byte — the SDK derives count from field length.
     const postInteraction = catBytes(
       settleBytes,
-      new Uint8Array([whitelist.length & 0xFF]),
       wlBytes,
       hashLockBytes,
     );
@@ -551,14 +564,14 @@ function buildServerSideOrder(
     const makerTraits = packMakerTraits(expiration, nonce, true);
 
     const order = {
-      salt: "0x" + salt.toString(16),
+      salt: "0x" + salt.toString(16).padStart(64, "0"),
       maker: walletAddress,
       receiver: "0x0000000000000000000000000000000000000000",
       makerAsset: srcTokenAddress,
       takerAsset: dstTokenAddress,
       makingAmount: srcTokenAmount,
       takingAmount: takingAmount,
-      makerTraits: "0x" + makerTraits.toString(16),
+      makerTraits: "0x" + makerTraits.toString(16).padStart(64, "0"),
     };
 
     // ── Build EIP-712 typed data ──
@@ -588,6 +601,13 @@ function buildServerSideOrder(
     const orderHash = toHex(hashBytes);
 
     console.log(`${TAG} [EXT] Server-side order built: ext=${extension.length} chars, wl=${whitelist.length} resolvers, auction=${duration}s, salt=${order.salt.slice(0, 14)}...`);
+
+    // IMPLEMENTATION NOTE: Log exact field byte counts for debugging "Can not consume X bytes" errors.
+    // The relayer computes the expected extension size from the quote params and rejects mismatches.
+    const totalDataBytes = fields.reduce((s, f) => s + f.length, 0);
+    console.log(`${TAG} [EXT] Field bytes: making=${makingAmountData.length} taking=${takingAmountData.length} post=${fullPostInteraction.length} total_data=${totalDataBytes}`);
+    console.log(`${TAG} [EXT] Auction: header=10 + ${points.length}*5pts = ${auctionBytes.length} bytes. Whitelist: ${whitelist.length}*12 = ${wlBytes.length} bytes. CC suffix: ${crossChainSuffix.length} bytes`);
+    console.log(`${TAG} [EXT] Extension: 32(offsets) + ${totalDataBytes}(data) = ${32 + totalDataBytes} total bytes`);
 
     return { order, extension, typedData, orderHash, diagnostics: diag };
   } catch (err: any) {
@@ -1084,6 +1104,14 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
 
     const submitUrl = `${RELAYER_BASE}/submit`;
     console.log(`${TAG} [SDK-SUBMIT] POST ${submitUrl} payload keys=[${Object.keys(submitPayload).join(",")}] srcChain=${body.srcChainId} quoteId=${(body.quoteId as string).slice(0, 20)}...`);
+
+    // IMPLEMENTATION NOTE: Log the extension hex for debugging byte count mismatches.
+    // The relayer error "Can not consume X bytes, have only Y" refers to extension data size.
+    const extHex = typeof submitPayload.extension === "string" ? submitPayload.extension : "none";
+    const extDataBytes = extHex.startsWith("0x") ? (extHex.length - 2) / 2 : 0;
+    const extBodyBytes = extDataBytes > 32 ? extDataBytes - 32 : 0; // subtract 32-byte offsets
+    console.log(`${TAG} [SDK-SUBMIT] Extension: ${extHex.length} hex chars, ${extDataBytes} total bytes, ${extBodyBytes} body bytes (after offsets)`);
+    console.log(`${TAG} [SDK-SUBMIT] Extension hex (first 300 chars): ${extHex.slice(0, 300)}`);
 
     const { status, body: resBody } = await apiFetch("POST", submitUrl, JSON.stringify(submitPayload), 25_000);
 
