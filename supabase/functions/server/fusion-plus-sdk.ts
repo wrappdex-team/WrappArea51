@@ -256,27 +256,162 @@ function u256be(v: bigint): Uint8Array {
 }
 
 /**
- * Encode auction details in the format used by the 1inch Fusion settlement.
- * Format: uint32(startTime) + uint24(duration) + uint24(initialRateBump)
- *         + [uint16(delay) + uint24(coefficient)]...
+ * Encode auction details matching SDK's exact format.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: @1inch/fusion-sdk/dist/esm/fusion-order/auction-details/auction-details.js
+ * Format: uint24(gasBumpEstimate) + uint32(gasPriceEstimate) + uint32(startTime)
+ *         + uint24(duration) + uint24(initialRateBump) + uint8(pointsCount)
+ *         + [uint24(coefficient) + uint16(delay)]...
+ * Header = 18 bytes, each point = 5 bytes.
  */
 function encodeAuctionDetails(
   startTime: number,
   duration: number,
   initialRateBump: number,
   points: { delay: number; coefficient: number }[],
+  gasBumpEstimate: number = 0,
+  gasPriceEstimate: number = 0,
 ): Uint8Array {
-  const parts = [u32be(startTime), u24be(duration), u24be(initialRateBump)];
+  const parts = [
+    u24be(gasBumpEstimate),
+    u32be(gasPriceEstimate),
+    u32be(startTime),
+    u24be(duration),
+    u24be(initialRateBump),
+    new Uint8Array([points.length & 0xFF]),
+  ];
   for (const p of points) {
-    parts.push(u16be(p.delay), u24be(p.coefficient));
+    parts.push(u24be(p.coefficient), u16be(p.delay));
   }
   return catBytes(...parts);
 }
 
 /**
+ * Encode whitelist matching SDK's Whitelist.encodeInto() format.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: @1inch/fusion-sdk/dist/esm/fusion-order/whitelist/whitelist.js
+ * Format: uint32(resolvingStartTime) + uint8(count) + (bytes10(addressHalf) + uint16(delay)) × N
+ */
+function encodeWhitelist(
+  resolvingStartTime: number,
+  entries: { addressHalf: string; delay: number }[],
+): Uint8Array {
+  const parts: Uint8Array[] = [
+    u32be(resolvingStartTime),
+    new Uint8Array([entries.length & 0xFF]),
+  ];
+  for (const e of entries) {
+    parts.push(hexBytes(e.addressHalf.padStart(20, "0").slice(-20)));
+    parts.push(u16be(e.delay & 0xFFFF));
+  }
+  return catBytes(...parts);
+}
+
+/**
+ * Encode whitelist addresses only (for makingAmountData/takingAmountData).
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: FusionExtension.buildAmountGetterData(true) — amount getters need
+ * only uint8(count) + (bytes10 addressHalf) × N, without delays.
+ */
+function encodeWhitelistAddressesOnly(
+  entries: { addressHalf: string }[],
+): Uint8Array {
+  const parts: Uint8Array[] = [
+    new Uint8Array([entries.length & 0xFF]),
+  ];
+  for (const e of entries) {
+    parts.push(hexBytes(e.addressHalf.padStart(20, "0").slice(-20)));
+  }
+  return catBytes(...parts);
+}
+
+/**
+ * Encode fee bytes for buildAmountGetterData / postInteraction.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: FusionExtension.buildAmountGetterData()
+ * Format: uint16(integratorFee) + uint8(integratorShare) + uint16(resolverFee) + uint8(whitelistDiscountNumerator)
+ * = 6 bytes. whitelistDiscountNumerator = BASE_1E2 - discount (contract expects numerator).
+ */
+function encodeFeeBytes(
+  integratorFee: number = 0,
+  integratorShare: number = 0,
+  resolverFee: number = 0,
+  whitelistDiscountNumerator: number = 100,
+): Uint8Array {
+  return catBytes(
+    u16be(integratorFee & 0xFFFF),
+    new Uint8Array([integratorShare & 0xFF]),
+    u16be(resolverFee & 0xFFFF),
+    new Uint8Array([whitelistDiscountNumerator & 0xFF]),
+  );
+}
+
+/**
+ * ABI-encode crossChainData as 5 × uint256 = 160 bytes.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: @1inch/cross-chain-sdk/dist/esm/cross-chain-order/evm/escrow-extension.js
+ * Types: [bytes32 hashLock, uint256 dstChainId, uint256 dstToken, uint256 packedSafetyDeposit, uint256 timeLocks]
+ */
+function encodeCrossChainData(
+  hashLock: string,
+  dstChainId: number,
+  dstTokenAddress: string,
+  srcSafetyDeposit: bigint,
+  dstSafetyDeposit: bigint,
+  timeLocksValue: bigint,
+): Uint8Array {
+  const hashLockBytes = u256be(BigInt(hashLock));
+  const dstChainIdBytes = u256be(BigInt(dstChainId));
+  const dstTokenNorm = dstTokenAddress.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+    ? 0n : BigInt(dstTokenAddress);
+  const dstTokenBytes = u256be(dstTokenNorm);
+  const packedSafety = (srcSafetyDeposit << 128n) | dstSafetyDeposit;
+  const packedSafetyBytes = u256be(packedSafety);
+  const timeLocksBytes = u256be(timeLocksValue);
+  return catBytes(hashLockBytes, dstChainIdBytes, dstTokenBytes, packedSafetyBytes, timeLocksBytes);
+}
+
+/**
+ * Pack TimeLocks from quote response into uint256.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: @1inch/cross-chain-sdk/dist/esm/domains/time-locks/time-locks.js
+ * Build packs 8 × uint32 left-to-right:
+ * [deployedAt(0), dstCancellation, dstPublicWithdrawal, dstWithdrawal,
+ *  srcPublicCancellation, srcCancellation, srcPublicWithdrawal, srcWithdrawal]
+ */
+function packTimeLocks(tl: Record<string, number>): bigint {
+  const vals = [
+    0, // deployedAt = 0 at construction
+    Number(tl.dstCancellation) || 0,
+    Number(tl.dstPublicWithdrawal) || 0,
+    Number(tl.dstWithdrawal) || 0,
+    Number(tl.srcPublicCancellation) || 0,
+    Number(tl.srcCancellation) || 0,
+    Number(tl.srcPublicWithdrawal) || 0,
+    Number(tl.srcWithdrawal) || 0,
+  ];
+  let result = 0n;
+  for (const v of vals) {
+    result = (result << 32n) | BigInt(v);
+  }
+  return result;
+}
+
+/**
  * Pack the LOP v4 extension offsets word.
- * Each slot (32 bits) contains the CUMULATIVE byte length up to and including
- * that field. Slot 0 = makerAssetSuffix end, ..., Slot 7 = postInteraction end.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: @1inch/limit-order-sdk/dist/esm/limit-order/extensions/extension.js
+ * Each slot (32 bits) = cumulative byte count. Field order:
+ * [makerAssetSuffix, takerAssetSuffix, makingAmountData, takingAmountData,
+ *  predicate, makerPermit, preInteraction, postInteraction]
+ * Fields stored as 0x-prefixed hex strings; byte length = (hex.length / 2 - 1).
  */
 function packExtOffsets(lengths: number[]): string {
   let offsets = 0n;
@@ -289,23 +424,51 @@ function packExtOffsets(lengths: number[]): string {
 }
 
 /**
- * Pack MakerTraits for a Fusion+ order (same layout as client-side builder).
- * bits 40-103: expiration, bits 104-119: nonce, bit 253: hasExtension
+ * Pack MakerTraits for a Fusion+ order.
+ *
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified):
+ * Source: @1inch/limit-order-sdk/dist/esm/limit-order/maker-traits.js
+ * Bit layout:
+ *   [0,80)   = allowed sender (0 = any)
+ *   [80,120) = expiration timestamp (uint40)
+ *   [120,160) = nonce/epoch
+ *   249 = HAS_EXTENSION_FLAG
+ *   251 = POST_INTERACTION_CALL_FLAG
+ *   254 = ALLOW_MULTIPLE_FILLS_FLAG
+ *   255 = NO_PARTIAL_FILLS_FLAG
+ *
+ * For Fusion+: always set bits 254, 251, 249. Expiration in [80,120).
  */
-function packMakerTraits(expiration: number, nonce: number, hasExtension: boolean): bigint {
+function packMakerTraits(
+  expiration: bigint,
+  nonce: bigint | undefined,
+  allowMultipleFills: boolean,
+  allowPartialFills: boolean,
+): bigint {
   let traits = 0n;
-  traits |= (BigInt(expiration) & 0xFFFFFFFFFFFFFFFFn) << 40n;
-  traits |= (BigInt(nonce) & 0xFFFFn) << 104n;
-  if (hasExtension) traits |= 1n << 253n;
+  // Expiration in bits [80, 120) — 40-bit field
+  traits |= (expiration & 0xFFFFFFFFFFn) << 80n;
+  // Nonce in bits [120, 160) — 40-bit field
+  if (nonce !== undefined) {
+    traits |= (nonce & 0xFFFFFFFFFFn) << 120n;
+  }
+  // Bit 249: HAS_EXTENSION (always for Fusion+)
+  traits |= 1n << 249n;
+  // Bit 251: POST_INTERACTION (always for Fusion+)
+  traits |= 1n << 251n;
+  // Bit 254: ALLOW_MULTIPLE_FILLS
+  if (allowMultipleFills) traits |= 1n << 254n;
+  // Bit 255: NO_PARTIAL_FILLS (set if partial fills NOT allowed)
+  if (!allowPartialFills) traits |= 1n << 255n;
   return traits;
 }
 
-/** Generate a random 256-bit salt */
-function randomSalt(): bigint {
-  const bytes = new Uint8Array(32);
+/** Generate a random 96-bit baseSalt (matching SDK's randBigInt((1n << 96n) - 1n)) */
+function randomBaseSalt(): bigint {
+  const bytes = new Uint8Array(12); // 96 bits
   crypto.getRandomValues(bytes);
   let salt = 0n;
-  for (let i = 0; i < 32; i++) salt = (salt << 8n) | BigInt(bytes[i]);
+  for (let i = 0; i < 12; i++) salt = (salt << 8n) | BigInt(bytes[i]);
   return salt;
 }
 
@@ -327,12 +490,111 @@ const LOP_ORDER_TYPES = {
 };
 
 /**
+ * Verify salt embeds the extension hash in the lowest 160 bits.
+ *
+ * IMPLEMENTATION NOTE (Step 6, SDK-verified):
+ * Source: @1inch/limit-order-sdk/dist/esm/limit-order/limit-order.js → verifySalt()
+ * The LOP v4 contract checks this on-chain — if it doesn't match, the order
+ * can NEVER be filled. This self-check catches encoding bugs early.
+ */
+function verifySalt(salt: bigint, extensionHex: string): void {
+  const UINT_160_MAX = (1n << 160n) - 1n;
+  const extensionBytes = hexBytes(extensionHex);
+  const extensionHash = keccak_256(extensionBytes);
+  const expectedHash = BigInt(toHex(extensionHash)) & UINT_160_MAX;
+  const actualHash = salt & UINT_160_MAX;
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `Salt verification FAILED: lowest 160 bits mismatch. ` +
+      `actual=0x${actualHash.toString(16)} expected=0x${expectedHash.toString(16)}. ` +
+      `The on-chain contract would reject this order.`
+    );
+  }
+}
+
+/**
+ * Compute proper EIP-712 order hash matching ethers.TypedDataEncoder.hash().
+ *
+ * IMPLEMENTATION NOTE (Step 6, SDK-verified):
+ * Source: @1inch/limit-order-sdk/dist/esm/limit-order/eip712/order-typed-data-builder.js
+ * The relayer uses this hash for order tracking. MetaMask computes the same hash
+ * when the user signs via eth_signTypedData_v4. Formula:
+ *   orderHash = keccak256("\x19\x01" + domainSeparator + structHash)
+ */
+function computeEIP712OrderHash(
+  order: Record<string, string>,
+  srcChainId: number,
+): string {
+  // 1. Type hash: keccak256 of the canonical type string
+  const ORDER_TYPEHASH = keccak_256(
+    new TextEncoder().encode(
+      "Order(uint256 salt,address maker,address receiver,address makerAsset,address takerAsset,uint256 makingAmount,uint256 takingAmount,uint256 makerTraits)"
+    )
+  );
+
+  // 2. Struct hash: keccak256(typeHash + abi_encode(field values))
+  // Each field is encoded as 32 bytes: uint256 as-is, address as uint256(address)
+  const structFields = catBytes(
+    new Uint8Array(ORDER_TYPEHASH),
+    u256be(BigInt(order.salt)),
+    u256be(BigInt(order.maker)),
+    u256be(BigInt(order.receiver)),
+    u256be(BigInt(order.makerAsset)),
+    u256be(BigInt(order.takerAsset)),
+    u256be(BigInt(order.makingAmount)),
+    u256be(BigInt(order.takingAmount)),
+    u256be(BigInt(order.makerTraits)),
+  );
+  const structHash = keccak_256(structFields);
+
+  // 3. Domain separator: keccak256(typeHash + keccak256(name) + keccak256(version) + chainId + verifyingContract)
+  const DOMAIN_TYPEHASH = keccak_256(
+    new TextEncoder().encode(
+      "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    )
+  );
+  const nameHash = keccak_256(new TextEncoder().encode("1inch Aggregation Router"));
+  const versionHash = keccak_256(new TextEncoder().encode("6"));
+  const domainFields = catBytes(
+    new Uint8Array(DOMAIN_TYPEHASH),
+    new Uint8Array(nameHash),
+    new Uint8Array(versionHash),
+    u256be(BigInt(srcChainId)),
+    u256be(BigInt(AGG_ROUTER_V6)),
+  );
+  const domainSeparator = keccak_256(domainFields);
+
+  // 4. Final hash: keccak256("\x19\x01" + domainSeparator + structHash)
+  const prefix = new Uint8Array([0x19, 0x01]);
+  const finalInput = catBytes(prefix, new Uint8Array(domainSeparator), new Uint8Array(structHash));
+  const finalHash = keccak_256(finalInput);
+
+  return toHex(finalHash);
+}
+
+/**
  * Build a complete Fusion+ order with extension from raw quote data.
  *
- * IMPLEMENTATION NOTE: This is the server-side manual builder. It encodes
- * the LOP v4 extension with auction details, resolver whitelist, and hashlock.
- * The settlement/escrow address is extracted from the quote response.
- * If the address can't be found, this returns null (falls through to client-side).
+ * IMPLEMENTATION NOTE (Step 5, SDK-verified rewrite):
+ * Every byte justified by reading the actual SDK source in node_modules:
+ *   - @1inch/cross-chain-sdk: EscrowExtension, EvmCrossChainOrder, TimeLocks, HashLock
+ *   - @1inch/fusion-sdk: FusionExtension, FusionOrder, AuctionDetails, Whitelist
+ *   - @1inch/limit-order-sdk: Extension, LimitOrder, MakerTraits
+ *
+ * Key fixes from Steps 2-4 analysis:
+ *   1. AuctionDetails: uint24 gasBump + uint32 gasPrice + uint32 startTime +
+ *      uint24 duration + uint24 initialRateBump + uint8 pointsCount + (uint24 coeff + uint16 delay) × N
+ *   2. makingAmountData = settlement(20) + auctionDetails + fees(6) + uint8(wlCount) + (bytes10 addr) × N
+ *   3. takingAmountData = identical to makingAmountData
+ *   4. postInteraction = settlement(20) + integrator(20) + protocol(20) + fees(6)
+ *      + whitelist(5+12N) + crossChainData(160)
+ *   5. crossChainData = ABI-encoded [hashLock, dstChainId, dstToken, packedDeposits, timeLocks] = 160 bytes
+ *   6. takerAsset = TRUE_ERC20 (0xda0000d4000015a526378bb6fafc650cea5966f8), NOT dstToken
+ *   7. salt = (random96 << 160) | (keccak256(extension.encode()) & UINT_160_MAX)
+ *   8. MakerTraits: bits 254, 251, 249 set; expiration in [80,120)
+ *   9. All order struct fields are decimal strings (not hex for salt/makerTraits)
+ *  10. receiver = escrowFactory (if fees) or 0x0 (if receiver==maker, no fees)
+ *  11. customData = '0x' (empty for EVM→EVM)
  */
 function buildServerSideOrder(
   rawQuote: Record<string, unknown>,
@@ -341,7 +603,7 @@ function buildServerSideOrder(
   srcChainId: number,
   dstChainId: number,
 ): { order: Record<string, string>; extension: string; typedData: any; orderHash: string; diagnostics: Record<string, unknown> } | null {
-  const diag: Record<string, unknown> = { method: "server-manual-ext" };
+  const diag: Record<string, unknown> = { method: "server-manual-ext-v6" };
 
   try {
     // ── Extract preset data ──
@@ -354,45 +616,37 @@ function buildServerSideOrder(
       return null;
     }
 
-    // ── Find settlement/escrow address ──
-    // IMPLEMENTATION NOTE: The quote response from the v1.2 API may include
-    // the settlement or escrow factory address under various field names.
-    // We search for it aggressively and log all available keys for diagnostics.
-    let settlAddr = "";
+    // ── Find escrow factory address ──
+    // IMPLEMENTATION NOTE: SDK uses quote.srcEscrowFactory as the extension address.
+    let escrowFactoryAddr = "";
     const addressFieldCandidates = [
-      "settlementAddress", "settlementContract", "srcEscrowFactory",
+      "srcEscrowFactory", "settlementAddress", "settlementContract",
       "escrowFactory", "srcSettlement", "settlement", "escrowAddress",
     ];
     for (const key of addressFieldCandidates) {
       const val = rawQuote[key];
       if (typeof val === "string" && /^0x[0-9a-fA-F]{40}$/i.test(val)) {
-        settlAddr = val;
-        diag.settlementSource = `rawQuote.${key}`;
+        escrowFactoryAddr = val.toLowerCase();
+        diag.escrowSource = `rawQuote.${key}`;
         break;
       }
     }
-    // Check inside preset
-    if (!settlAddr) {
+    if (!escrowFactoryAddr) {
       for (const key of ["srcEscrowFactory", "settlementAddress", "escrowFactory"]) {
         const val = preset[key];
         if (typeof val === "string" && /^0x[0-9a-fA-F]{40}$/i.test(val)) {
-          settlAddr = val;
-          diag.settlementSource = `preset.${key}`;
+          escrowFactoryAddr = val.toLowerCase();
+          diag.escrowSource = `preset.${key}`;
           break;
         }
       }
     }
-    // Check whitelist[0].address as potential settlement (unlikely but worth trying)
-    // Actually, whitelist entries are resolver addresses, not settlement. Skip.
 
-    // IMPLEMENTATION NOTE: Log ALL available keys for diagnostics.
-    // This helps identify which field contains the settlement address.
     const allQuoteKeys = Object.keys(rawQuote);
     const allPresetKeys = Object.keys(preset);
     diag.rawQuoteKeys = allQuoteKeys;
     diag.presetKeys = allPresetKeys;
 
-    // Log all string values that look like addresses (for discovery)
     const addressLikeFields: Record<string, string> = {};
     for (const key of allQuoteKeys) {
       const val = rawQuote[key];
@@ -400,191 +654,260 @@ function buildServerSideOrder(
         addressLikeFields[key] = val;
       }
     }
-    for (const key of allPresetKeys) {
-      const val = preset[key];
-      if (typeof val === "string" && /^0x[0-9a-fA-F]{40}$/i.test(val)) {
-        addressLikeFields[`preset.${key}`] = val;
-      }
-    }
     diag.addressLikeFields = addressLikeFields;
-
-    // Dump cross-chain specific fields
     diag.timeLocks = rawQuote.timeLocks ?? "missing";
     diag.srcSafetyDeposit = rawQuote.srcSafetyDeposit ?? "missing";
     diag.dstSafetyDeposit = rawQuote.dstSafetyDeposit ?? "missing";
     diag.whitelist = rawQuote.whitelist ?? "missing";
 
-    // Full quote dump for next-iteration debugging (truncated)
     console.log(`${TAG} [EXT] Raw quote dump (2000 chars): ${JSON.stringify(rawQuote).slice(0, 2000)}`);
     console.log(`${TAG} [EXT] Address-like fields: ${JSON.stringify(addressLikeFields)}`);
 
-    if (!settlAddr) {
-      diag.error = "No settlement/escrow address found in quote response";
-      console.log(`${TAG} [EXT] ${diag.error}. Keys: [${allQuoteKeys.join(", ")}]. Preset keys: [${allPresetKeys.join(", ")}]`);
-      // IMPLEMENTATION NOTE: Return null so the client-side builder can try.
-      // The comprehensive logs above will reveal which field has the address.
+    if (!escrowFactoryAddr) {
+      diag.error = "No escrow factory address found in quote response";
+      console.log(`${TAG} [EXT] ${diag.error}. Keys: [${allQuoteKeys.join(", ")}]`);
       return null;
     }
 
-    console.log(`${TAG} [EXT] Using settlement address: ${settlAddr} (from ${diag.settlementSource})`);
+    console.log(`${TAG} [EXT] Using escrow factory: ${escrowFactoryAddr} (from ${diag.escrowSource})`);
 
-    // ── Encode auction details ──
-    const now = Math.floor(Date.now() / 1000);
+    // ── Auction details ──
+    const nowSec = Math.floor(Date.now() / 1000);
     const startAuctionIn = Number(preset.startAuctionIn) || 12;
-    const startTime = now + startAuctionIn;
+    const startTime = nowSec + startAuctionIn;
     const duration = Number(preset.auctionDuration) || 180;
     const initialRateBump = Number(preset.initialRateBump) || 50000;
     const points = (preset.points || []) as { delay: number; coefficient: number }[];
+    const gasBumpEstimate = Number(preset.gasCost?.gasBumpEstimate ?? preset.gasBumpEstimate ?? 0);
+    const gasPriceEstimate = Number(preset.gasCost?.gasPriceEstimate ?? preset.gasPriceEstimate ?? 0);
 
-    diag.auctionParams = { startTime, startAuctionIn, duration, initialRateBump, pointCount: points.length };
-    const auctionBytes = encodeAuctionDetails(startTime, duration, initialRateBump, points);
-    const settleBytes = hexBytes(settlAddr);
+    diag.auctionParams = { startTime, startAuctionIn, duration, initialRateBump, pointCount: points.length, gasBumpEstimate, gasPriceEstimate };
+    const auctionBytes = encodeAuctionDetails(startTime, duration, initialRateBump, points, gasBumpEstimate, gasPriceEstimate);
 
-    // ── Build extension fields ──
-    // Field 2: makingAmountData = settlement(20) + auctionDetails
-    const makingAmountData = catBytes(settleBytes, auctionBytes);
-    // Field 3: takingAmountData = settlement(20) + auctionDetails
-    const takingAmountData = catBytes(settleBytes, auctionBytes);
+    // ── Whitelist processing ──
+    // IMPLEMENTATION NOTE (Step 5): Quote API returns whitelist as plain address strings.
+    // Source: quote.js → response.whitelist.map((w) => EvmAddress.fromString(w))
+    // Whitelist.new(resolvingStartTime, [{address, allowFrom}]) sorts by allowFrom ASC,
+    // clamps to resolvingStartTime, then converts to relative delays.
+    // Without exclusiveResolver, all allowFrom = 0 → clamped to resolvingStartTime → delay = 0.
+    const rawWhitelist = (rawQuote.whitelist || []) as (string | { address: string; allowFrom?: number })[];
+    const exclusiveResolver = preset.exclusiveResolver as string | undefined;
+    const resolvingStartTime = nowSec; // SDK uses BigInt(now()) when not provided
 
-    // Field 7: postInteraction = settlement(20) + compact_whitelist + hashlock(32)
-    //
-    // IMPLEMENTATION NOTE (2026-03-03, whitelist encoding fix):
-    // The SDK uses COMPACT whitelist encoding — NOT full 20-byte addresses.
-    // Each entry is: last 10 bytes of address (truncated) + uint16 relative allowFrom
-    // = 12 bytes per entry. There is NO count byte — count is derived from field length.
-    // The allowFrom is relative to the auction startTime.
-    const whitelist = (rawQuote.whitelist || []) as { address: string; allowFrom: number }[];
-    const wlParts: Uint8Array[] = [];
-    for (const w of whitelist) {
-      try {
-        // Compact encoding: last 10 bytes of address (20 hex chars from end)
-        const addrHex = (w.address || "").replace(/^0x/i, "").toLowerCase();
-        const truncated = addrHex.slice(-20); // last 20 hex chars = 10 bytes
-        wlParts.push(hexBytes(truncated));
-        // allowFrom as uint16 relative to auction start
-        const relativeAllowFrom = Math.max(0, (w.allowFrom || 0) - startTime);
-        wlParts.push(u16be(relativeAllowFrom & 0xFFFF));
-      } catch (e: any) {
-        console.log(`${TAG} [EXT] Skipping invalid whitelist entry: ${JSON.stringify(w)} — ${e?.message}`);
+    // Build whitelist entries with addressHalf (last 10 bytes) and delays
+    const wlEntries: { addressHalf: string; delay: number; allowFrom: number }[] = [];
+    for (const w of rawWhitelist) {
+      const addr = typeof w === "string" ? w : w.address;
+      if (!addr) continue;
+      const addrHex = addr.replace(/^0x/i, "").toLowerCase();
+      const addressHalf = addrHex.slice(-20); // last 20 hex chars = 10 bytes
+
+      // Compute allowFrom: exclusive resolver gets 0, others get auctionStartTime
+      let allowFrom = 0;
+      if (exclusiveResolver) {
+        const exclHex = exclusiveResolver.replace(/^0x/i, "").toLowerCase();
+        const isExclusive = addrHex === exclHex;
+        allowFrom = isExclusive ? 0 : startTime;
       }
+      // Clamp: if allowFrom < resolvingStartTime, set to resolvingStartTime
+      if (allowFrom < resolvingStartTime) allowFrom = resolvingStartTime;
+
+      wlEntries.push({ addressHalf, delay: 0, allowFrom });
     }
-    const wlBytes = wlParts.length > 0 ? catBytes(...wlParts) : new Uint8Array(0);
-    const hashLockBytes = hexBytes(hashLock);
 
-    diag.whitelistCount = whitelist.length;
-    diag.whitelistBytesLen = wlBytes.length;
-    diag.whitelistRaw = whitelist.map(w => ({ address: w.address?.slice(0, 14), allowFrom: w.allowFrom }));
+    // Sort by allowFrom ASC, then compute relative delays
+    wlEntries.sort((a, b) => a.allowFrom - b.allowFrom);
+    let sumDelay = 0;
+    for (const e of wlEntries) {
+      const delay = e.allowFrom - resolvingStartTime - sumDelay;
+      e.delay = Math.max(0, delay);
+      sumDelay += e.delay;
+    }
 
-    // Post interaction: settlement(20) + compact_whitelist(12*W) + hashlock(32)
-    // IMPLEMENTATION NOTE: No count byte — the SDK derives count from field length.
-    const postInteraction = catBytes(
-      settleBytes,
-      wlBytes,
-      hashLockBytes,
+    diag.whitelistCount = wlEntries.length;
+    diag.whitelistEntries = wlEntries.map(e => ({ addr: e.addressHalf.slice(0, 8) + "...", delay: e.delay }));
+
+    // ── Fee bytes ──
+    // IMPLEMENTATION NOTE: For our case without integrator/resolver fees, all zero.
+    // whitelistDiscountNumerator = 100 (BASE_1E2 - 0 discount = 100)
+    const feeInfo = rawQuote.feeInfo as Record<string, any> | undefined;
+    let integratorFeeVal = 0, integratorShareVal = 0, resolverFeeVal = 0, whitelistDiscountNum = 100;
+    let integratorReceiver = "0x0000000000000000000000000000000000000000";
+    let protocolReceiver = "0x0000000000000000000000000000000000000000";
+    const hasFees = !!feeInfo?.resolverFee || !!feeInfo?.integratorFee;
+
+    if (feeInfo?.resolverFee) {
+      resolverFeeVal = Number(feeInfo.resolverFee.bps) || 0;
+      if (feeInfo.resolverFee.receiver) protocolReceiver = feeInfo.resolverFee.receiver;
+      const discountPercent = Number(feeInfo.resolverFee.whitelistDiscountPercent) || 0;
+      whitelistDiscountNum = 100 - Math.round(discountPercent);
+    }
+    if (feeInfo?.integratorFee) {
+      integratorFeeVal = Number(feeInfo.integratorFee.bps) || 0;
+      integratorShareVal = Math.round(Number(feeInfo.integratorFee.share) || 0);
+      if (feeInfo.integratorFee.receiver) integratorReceiver = feeInfo.integratorFee.receiver;
+    }
+
+    const feeBytes = encodeFeeBytes(integratorFeeVal, integratorShareVal, resolverFeeVal, whitelistDiscountNum);
+    diag.feeBytes = { integratorFeeVal, integratorShareVal, resolverFeeVal, whitelistDiscountNum, hasFees };
+
+    // ── Build makingAmountData / takingAmountData ──
+    // IMPLEMENTATION NOTE (Step 5): FusionExtension.buildAmountGetterData(true):
+    // = auctionDetails.encode() + fees(6) + uint8(wlCount) + (bytes10 addressHalf) × N
+    // ExtensionBuilder.withMakingAmountData(address, data) → address.toString() + trim0x(data)
+    // So: makingAmountData = escrowFactory(20) + auctionDetails + fees(6) + wlAddresses
+    const escrowAddrBytes = hexBytes(escrowFactoryAddr);
+    const wlAddressesOnly = encodeWhitelistAddressesOnly(wlEntries);
+    const amountGetterData = catBytes(auctionBytes, feeBytes, wlAddressesOnly);
+    const makingAmountData = catBytes(escrowAddrBytes, amountGetterData);
+    const takingAmountData = catBytes(escrowAddrBytes, amountGetterData); // must be identical
+
+    // ── Build postInteraction ──
+    // IMPLEMENTATION NOTE (Step 5): EscrowExtension.build() produces:
+    // extensionAddr(20) + integrator(20) + protocol(20) + feeAndWhitelist + crossChainData(160)
+    //
+    // Where feeAndWhitelist = buildAmountGetterData(false) =
+    //   fees(6) + whitelist.encodeInto()
+    //   whitelist.encodeInto() = uint32(resolvingStartTime) + uint8(count) + (bytes10 addr + uint16 delay) × N
+
+    const whitelistEncoded = encodeWhitelist(resolvingStartTime, wlEntries);
+    const feeAndWhitelist = catBytes(feeBytes, whitelistEncoded);
+
+    // ── Cross-chain data (160 bytes) ──
+    const srcSafetyDeposit = BigInt(rawQuote.srcSafetyDeposit as string || "0");
+    const dstSafetyDeposit = BigInt(rawQuote.dstSafetyDeposit as string || "0");
+    const timeLocks = rawQuote.timeLocks as Record<string, number> | undefined;
+    const timeLocksValue = timeLocks ? packTimeLocks(timeLocks) : 0n;
+
+    const dstTokenAddress = rawQuote.dstTokenAddress as string || "0x0000000000000000000000000000000000000000";
+    const crossChainData = encodeCrossChainData(
+      hashLock, dstChainId, dstTokenAddress,
+      srcSafetyDeposit, dstSafetyDeposit, timeLocksValue,
     );
 
-    // ── Add cross-chain extras if available ──
-    // For Fusion+, the postInteraction may also need srcSafetyDeposit,
-    // dstSafetyDeposit, and timeLocks. We append them if present.
-    let crossChainSuffix = new Uint8Array(0);
-    const srcSafety = rawQuote.srcSafetyDeposit;
-    const dstSafety = rawQuote.dstSafetyDeposit;
-    const timeLocks = rawQuote.timeLocks as Record<string, number> | undefined;
+    diag.crossChainDataLen = crossChainData.length; // should be 160
+    diag.timeLocksValue = timeLocksValue.toString(16);
 
-    if (srcSafety !== undefined && dstSafety !== undefined) {
-      try {
-        const srcDepBytes = u256be(BigInt(srcSafety as string));
-        const dstDepBytes = u256be(BigInt(dstSafety as string));
-        crossChainSuffix = catBytes(crossChainSuffix, srcDepBytes, dstDepBytes);
-        diag.safetyDepositsEncoded = true;
-      } catch (e: any) {
-        console.log(`${TAG} [EXT] Failed to encode safety deposits: ${e?.message}`);
-      }
-    }
+    const integratorAddrBytes = hexBytes(integratorReceiver);
+    const protocolAddrBytes = hexBytes(protocolReceiver);
 
-    if (timeLocks) {
-      try {
-        // Encode time locks as 8 × uint32 = 32 bytes
-        const tlKeys = [
-          "srcWithdrawal", "srcPublicWithdrawal", "srcCancellation", "srcPublicCancellation",
-          "dstWithdrawal", "dstPublicWithdrawal", "dstCancellation", "dstPublicCancellation",
-        ];
-        const tlParts: Uint8Array[] = [];
-        for (const k of tlKeys) {
-          tlParts.push(u32be(Number(timeLocks[k]) || 0));
-        }
-        crossChainSuffix = catBytes(crossChainSuffix, ...tlParts);
-        diag.timeLocksEncoded = true;
-      } catch (e: any) {
-        console.log(`${TAG} [EXT] Failed to encode timeLocks: ${e?.message}`);
-      }
-    }
-
-    // Append cross-chain suffix to postInteraction
-    const fullPostInteraction = crossChainSuffix.length > 0
-      ? catBytes(postInteraction, crossChainSuffix)
-      : postInteraction;
+    const postInteractionBytes = catBytes(
+      escrowAddrBytes,      // 20 bytes — escrow factory
+      integratorAddrBytes,  // 20 bytes — integrator fee receiver (0x0 if none)
+      protocolAddrBytes,    // 20 bytes — protocol fee receiver (0x0 if none)
+      feeAndWhitelist,      // fees(6) + whitelist(5 + 12*N)
+      crossChainData,       // 160 bytes — ABI-encoded cross-chain params
+    );
 
     // ── Pack LOP v4 extension ──
-    const fields = [
-      new Uint8Array(0), // 0: makerAssetSuffix
-      new Uint8Array(0), // 1: takerAssetSuffix
-      makingAmountData,   // 2: makingAmountData
-      takingAmountData,   // 3: takingAmountData
-      new Uint8Array(0), // 4: predicate
-      new Uint8Array(0), // 5: makerPermit
-      new Uint8Array(0), // 6: preInteraction
-      fullPostInteraction, // 7: postInteraction
+    // IMPLEMENTATION NOTE (Step 5): Extension.encode() from limit-order-sdk:
+    // Fields ordered: [makerAssetSuffix, takerAssetSuffix, makingAmountData,
+    //   takingAmountData, predicate, makerPermit, preInteraction, postInteraction]
+    // encode() = 0x + offsets(64 hex) + concatenated fields + customData
+    const fieldLengths = [
+      0, // makerAssetSuffix
+      0, // takerAssetSuffix
+      makingAmountData.length,
+      takingAmountData.length,
+      0, // predicate
+      0, // makerPermit
+      0, // preInteraction
+      postInteractionBytes.length,
     ];
 
-    const offsetsHex = packExtOffsets(fields.map(f => f.length));
-    const fieldsHex = fields.map(f => bHex(f)).join("");
+    const offsetsHex = packExtOffsets(fieldLengths);
+    const fieldsHex = bHex(makingAmountData) + bHex(takingAmountData) + bHex(postInteractionBytes);
 
-    // ── CustomData: cross-chain routing (appended AFTER the 8 fields) ──
-    // IMPLEMENTATION NOTE (2026-03-03, 8-byte gap fix):
-    // The relayer expects 160 bytes but we produce 152 — exactly 8 bytes short.
-    // In LOP v4, customData sits after field 7's boundary and is NOT tracked
-    // by the offsets word. For Fusion+ cross-chain orders, the SDK encodes
-    // routing information here: uint32(srcChainId) + uint32(dstChainId).
-    // The settlement/escrow contract reads this to know which chains are involved.
-    const customData = catBytes(u32be(srcChainId), u32be(dstChainId));
-    const customDataHex = bHex(customData);
-    diag.customDataBytes = customData.length;
-    diag.customDataHex = customDataHex;
-
-    const extension = "0x" + offsetsHex + fieldsHex + customDataHex;
+    // customData = empty for EVM→EVM (SDK: encodeCustomData returns ZX/'0x')
+    const extension = "0x" + offsetsHex + fieldsHex;
 
     diag.extensionLength = extension.length;
-    diag.fieldLengths = fields.map(f => f.length);
+    diag.extensionByteCount = (extension.length - 2) / 2;
+    diag.fieldLengths = fieldLengths;
+
+    // ── Compute salt = (baseSalt << 160) | (keccak256(extension) & UINT_160_MAX) ──
+    // IMPLEMENTATION NOTE (Step 5): LimitOrder.buildSalt() from limit-order-sdk.
+    // extension.keccak256() = BigInt(keccak256(this.encode()))
+    const extensionRawBytes = hexBytes(extension);
+    const extensionHash = keccak_256(extensionRawBytes);
+    const extensionHashBigInt = BigInt(toHex(extensionHash));
+    const UINT_160_MAX = (1n << 160n) - 1n;
+    const baseSalt = randomBaseSalt();
+    const salt = (baseSalt << 160n) | (extensionHashBigInt & UINT_160_MAX);
+
+    // ── Verify salt embeds extension hash (Step 6) ──
+    // IMPLEMENTATION NOTE: This matches LimitOrder.verifySalt() from the SDK.
+    // If this throws, we have an encoding bug — the on-chain contract would reject.
+    verifySalt(salt, extension);
+
+    diag.baseSalt = baseSalt.toString(16);
+    diag.extensionHash = toHex(extensionHash).slice(0, 18) + "...";
+    diag.saltVerified = true;
+
+    // ── Build MakerTraits ──
+    const allowMultipleFills = preset.allowMultipleFills !== false; // default true
+    const allowPartialFills = preset.allowPartialFills !== false; // default true
+    const orderExpirationDelay = 12n; // SDK default
+    const deadline = BigInt(startTime) + BigInt(duration) + orderExpirationDelay;
+
+    // Nonce: required when partial or multiple fills disallowed (bit invalidator mode)
+    const isBitInvalidatorMode = !allowPartialFills || !allowMultipleFills;
+    const nonce = isBitInvalidatorMode ? BigInt(nowSec % 65535) : undefined;
+
+    const makerTraits = packMakerTraits(deadline, nonce, allowMultipleFills, allowPartialFills);
+
+    diag.makerTraitsBits = {
+      deadline: deadline.toString(),
+      nonce: nonce?.toString(),
+      allowMultipleFills,
+      allowPartialFills,
+      isBitInvalidatorMode,
+    };
 
     // ── Build order struct ──
+    // IMPLEMENTATION NOTE (Step 5): LimitOrder.build() produces ALL decimal strings.
+    // takerAsset = TRUE_ERC20 (not dstTokenAddress!)
+    // receiver = escrowFactory if fees exist, else 0x0 (optimized: receiver==maker → 0x0)
     const srcTokenAmount = rawQuote.srcTokenAmount as string;
     const auctionEndAmount = preset.auctionEndAmount as string;
-    const takingAmount = auctionEndAmount || rawQuote.dstTokenAmount as string;
+    const takingAmountStr = auctionEndAmount || rawQuote.dstTokenAmount as string;
     const srcTokenAddress = rawQuote.srcTokenAddress as string;
-    const dstTokenAddress = rawQuote.dstTokenAddress as string;
 
-    if (!srcTokenAmount || !takingAmount || !srcTokenAddress || !dstTokenAddress) {
-      diag.error = `Missing order fields: srcAmt=${srcTokenAmount} takAmt=${takingAmount} srcTok=${srcTokenAddress} dstTok=${dstTokenAddress}`;
+    if (!srcTokenAmount || !takingAmountStr || !srcTokenAddress) {
+      diag.error = `Missing order fields: srcAmt=${srcTokenAmount} takAmt=${takingAmountStr} srcTok=${srcTokenAddress}`;
       return null;
     }
 
-    // IMPLEMENTATION NOTE: In LOP v4, receiver=0x0 means "same as maker".
-    // The SDK typically uses 0x0 for the receiver field in Fusion orders.
-    const expiration = now + startAuctionIn + duration + 120;
-    const nonce = now % 65535;
-    const salt = randomSalt();
-    const makerTraits = packMakerTraits(expiration, nonce, true);
+    // TRUE_ERC20 address — same on all chains except zkSync
+    const TRUE_ERC20 = srcChainId === 324
+      ? "0xd66097c27eb8dee404bac235737932260edc6f3b"
+      : "0xda0000d4000015a526378bb6fafc650cea5966f8";
 
-    const order = {
-      salt: "0x" + salt.toString(16).padStart(64, "0"),
-      maker: walletAddress,
-      receiver: "0x0000000000000000000000000000000000000000",
-      makerAsset: srcTokenAddress,
-      takerAsset: dstTokenAddress,
+    // Receiver: if fees exist → escrowFactory; else → 0x0 (optimized, same as maker)
+    const orderReceiver = hasFees
+      ? eip55Checksum(escrowFactoryAddr)
+      : "0x0000000000000000000000000000000000000000";
+
+    const order: Record<string, string> = {
+      salt: salt.toString(),  // DECIMAL string (SDK: this.salt.toString())
+      maker: eip55Checksum(walletAddress),
+      receiver: orderReceiver,
+      makerAsset: eip55Checksum(srcTokenAddress),
+      takerAsset: eip55Checksum(TRUE_ERC20),
       makingAmount: srcTokenAmount,
-      takingAmount: takingAmount,
-      makerTraits: "0x" + makerTraits.toString(16).padStart(64, "0"),
+      takingAmount: takingAmountStr,
+      makerTraits: makerTraits.toString(),  // DECIMAL string (SDK: asBigInt().toString())
+    };
+
+    diag.orderFields = {
+      salt: order.salt.slice(0, 20) + "...",
+      maker: order.maker,
+      receiver: order.receiver,
+      makerAsset: order.makerAsset,
+      takerAsset: order.takerAsset,
+      makingAmount: order.makingAmount,
+      takingAmount: order.takingAmount,
+      makerTraits: order.makerTraits.slice(0, 20) + "...",
     };
 
     // ── Build EIP-712 typed data ──
@@ -608,25 +931,33 @@ function buildServerSideOrder(
       message: order,
     };
 
-    // Compute order hash (simplified — relayer re-computes anyway)
-    const orderHashInput = new TextEncoder().encode(JSON.stringify(order));
-    const hashBytes = keccak_256(orderHashInput);
-    const orderHash = toHex(hashBytes);
+    // ── Compute order hash (proper EIP-712) ──
+    // IMPLEMENTATION NOTE (Step 6): Replaced simplified JSON hash with proper
+    // EIP-712 hash matching ethers.TypedDataEncoder.hash(). This is critical:
+    // the relayer expects this exact hash, and MetaMask produces it when signing.
+    const orderHash = computeEIP712OrderHash(order, srcChainId);
 
-    console.log(`${TAG} [EXT] Server-side order built: ext=${extension.length} chars, wl=${whitelist.length} resolvers, auction=${duration}s, salt=${order.salt.slice(0, 14)}...`);
+    // ── Diagnostics logging ──
+    const totalDataBytes = fieldLengths.reduce((s, l) => s + l, 0);
+    const makingLen = makingAmountData.length;
+    const takingLen = takingAmountData.length;
+    const postLen = postInteractionBytes.length;
 
-    // IMPLEMENTATION NOTE: Log exact field byte counts for debugging "Can not consume X bytes" errors.
-    // The relayer computes the expected extension size from the quote params and rejects mismatches.
-    const totalDataBytes = fields.reduce((s, f) => s + f.length, 0);
-    console.log(`${TAG} [EXT] Field bytes: making=${makingAmountData.length} taking=${takingAmountData.length} post=${fullPostInteraction.length} total_data=${totalDataBytes}`);
-    console.log(`${TAG} [EXT] Auction: header=10 + ${points.length}*5pts = ${auctionBytes.length} bytes. Whitelist: ${whitelist.length}*12 = ${wlBytes.length} bytes. CC suffix: ${crossChainSuffix.length} bytes`);
-    console.log(`${TAG} [EXT] CustomData: ${customData.length} bytes (srcChain=${srcChainId} dstChain=${dstChainId}). Extension total: 32(offsets) + ${totalDataBytes}(fields) + ${customData.length}(custom) = ${32 + totalDataBytes + customData.length} bytes`);
+    console.log(`${TAG} [EXT-v6] Server-side order built: ext=${extension.length} chars (${(extension.length - 2) / 2} bytes), wl=${wlEntries.length} resolvers, auction=${duration}s`);
+    console.log(`${TAG} [EXT-v6] Field bytes: making=${makingLen} taking=${takingLen} post=${postLen} total=${totalDataBytes}`);
+    console.log(`${TAG} [EXT-v6] Auction: header=18 + ${points.length}*5pts = ${auctionBytes.length} bytes`);
+    console.log(`${TAG} [EXT-v6] Whitelist: ${wlEntries.length} entries, encoded=${whitelistEncoded.length} bytes (5+12*${wlEntries.length}=${5 + 12 * wlEntries.length})`);
+    console.log(`${TAG} [EXT-v6] CrossChainData: ${crossChainData.length} bytes (expected 160)`);
+    console.log(`${TAG} [EXT-v6] PostInteraction breakdown: escrow(20) + integrator(20) + protocol(20) + fees(${feeBytes.length}) + whitelist(${whitelistEncoded.length}) + cc(${crossChainData.length}) = ${postLen}`);
+    console.log(`${TAG} [EXT-v6] Salt: baseSalt=${baseSalt.toString(16).slice(0, 12)}... extHash=${toHex(extensionHash).slice(0, 18)}... verified=true final=${order.salt.slice(0, 20)}...`);
+    console.log(`${TAG} [EXT-v6] MakerTraits: ${order.makerTraits.slice(0, 20)}... takerAsset=${order.takerAsset} receiver=${order.receiver}`);
+    console.log(`${TAG} [EXT-v6] EIP-712 orderHash: ${orderHash}`);
 
     return { order, extension, typedData, orderHash, diagnostics: diag };
   } catch (err: any) {
     diag.error = err?.message;
-    console.log(`${TAG} [EXT] Server-side order construction failed: ${err?.message}`);
-    console.log(`${TAG} [EXT] Stack: ${err?.stack?.slice(0, 300)}`);
+    console.log(`${TAG} [EXT-v6] Server-side order construction failed: ${err?.message}`);
+    console.log(`${TAG} [EXT-v6] Stack: ${err?.stack?.slice(0, 500)}`);
     return null;
   }
 }

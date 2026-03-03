@@ -8,7 +8,12 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@1inch/byte-utils": "^3.1.7",
+    "@1inch/cross-chain-sdk": "^2.0.1",
     "@1inch/embedded-widget": "^0.0.2",
+    "@1inch/fusion-sdk": "^2.4.6",
+    "@1inch/limit-order-protocol-utils": "^4.0.1",
+    "@1inch/limit-order-sdk": "^5.2.3",
     "@dynamic-labs/ethereum": "^4.61.2",
     "@dynamic-labs/sdk-react-core": "^4.61.2",
     "@hashgraph/sdk": "^2.80.0",
