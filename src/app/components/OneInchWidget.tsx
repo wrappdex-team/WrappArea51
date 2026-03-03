@@ -1285,7 +1285,10 @@ export function OneInchWidget() {
         preset: crossChainQuote.recommendedPreset || undefined,
       });
 
-      log.info("1inch", `[FUSION+] Build success: orderHash=${buildResult.orderHash} hasTypedData=${!!buildResult.typedData}`);
+      if ((buildResult as any)._buildTrialWinner) {
+        log.info("1inch", `[FUSION+] BUILD TRIAL WINNER: ${(buildResult as any)._buildTrialWinner}`);
+      }
+      log.info("1inch", `[FUSION+] Build result: orderHash=${buildResult.orderHash ?? "none"} hasTypedData=${!!buildResult.typedData} hasSecret=${!!(buildResult as any)._secret} keys=[${Object.keys(buildResult).join(",")}]`);
       setCrossChainBuildData(buildResult);
 
       if (!buildResult.typedData || !buildResult.orderHash) {

@@ -1053,60 +1053,90 @@ export function registerOneInchRoutes(app: Hono) {
     let cDst: string; try { cDst = eip55Checksum(body.dstTokenAddress as string); } catch { cDst = body.dstTokenAddress as string; }
     const amt = body.amount as string;
 
-    // IMPLEMENTATION NOTE: Fusion+ uses HTLC (Hash Time-Locked Contracts).
-    // The build endpoint requires hashLock = keccak256(secret). The user
-    // reveals the secret later to settle the swap on the destination chain.
+    // ── HTLC Secret Generation ──
+    // Fusion+ uses HTLC. Build endpoint needs hashLock = keccak256(secret)
+    // with first byte zeroed (SDK's HashLock.forSingleFill pattern).
     const secretBytes = new Uint8Array(32);
     crypto.getRandomValues(secretBytes);
-    const secret = "0x" + Array.from(secretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    const toHex = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+    const secret = "0x" + toHex(secretBytes);
     const hashBytes = keccak_256(secretBytes);
-    const hashLock = "0x" + Array.from(hashBytes).map(b => b.toString(16).padStart(2, "0")).join("");
-    console.log(`${TAG} Fusion+ HTLC: secret=${secret.slice(0,18)}... hashLock=${hashLock.slice(0,18)}...`);
+    const secretHash = "0x" + toHex(hashBytes);
+    const hlBytes = new Uint8Array(hashBytes);
+    hlBytes[0] = 0;
+    const hashLock = "0x" + toHex(hlBytes);
+    console.log(`${TAG} HTLC: secret=${secret.slice(0,18)}... secretHash=${secretHash.slice(0,18)}... hashLock=${hashLock.slice(0,18)}...`);
 
-    // Build query string — srcChain/dstChain (proven for /quote/receive)
-    const bQs = new URLSearchParams();
-    bQs.set("srcChain", String(srcChainId));
-    bQs.set("dstChain", String(dstChainId));
-    bQs.set("srcTokenAddress", cSrc);
-    bQs.set("dstTokenAddress", cDst);
-    bQs.set("amount", amt);
-    bQs.set("walletAddress", cWallet);
-    bQs.set("enableEstimate", typeof body.enableEstimate === "boolean" ? String(body.enableEstimate) : "true");
-    bQs.set("hashLock", hashLock);
-    if (typeof body.quoteId === "string" && body.quoteId) bQs.set("quoteId", body.quoteId);
-    if (typeof body.preset === "string") bQs.set("preset", body.preset);
-    if (typeof body.source === "string") bQs.set("source", body.source);
+    const quoteId = typeof body.quoteId === "string" && body.quoteId ? body.quoteId : null;
+    const BASE = "https://api.1inch.dev/fusion-plus/quoter";
 
-    const buildUrl = `${API.fusionPlusQuoter}/quote/build?${bQs.toString()}`;
-    console.log(`${TAG} Fusion+ BUILD R4: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet}`);
-    console.log(`${TAG} BUILD URL: ${buildUrl.slice(0,250)}...`);
+    // ── Round 5 Multi-trial ──
+    // Docs: "Build EVM order by given quoteId (v1.2)" POST
+    // R1-R4 all used v1.0. Now trying v1.2 with POST body.
+    const trials: { label: string; method: "GET" | "POST"; url: string; body: string | null }[] = [];
 
-    // Try POST first (build endpoint is POST per the SDK)
-    const { status, body: resBody } = await upstreamFetch("POST", buildUrl, null);
-    if (status === 200) {
-      console.log(`${TAG} Fusion+ BUILD SUCCESS (POST): keys=[${Object.keys(resBody).join(",")}] orderHash=${JSON.stringify(resBody.orderHash)}`);
-      return c.json({ ...resBody, _secret: secret, _hashLock: hashLock }, 200);
+    if (quoteId) {
+      // T1: v1.2 POST body {quoteId, walletAddress, hashLock, secretHashes}
+      trials.push({
+        label: "v1.2/POST/body{quoteId+hashLock}",
+        method: "POST",
+        url: `${BASE}/v1.2/quote/build`,
+        body: JSON.stringify({ quoteId, walletAddress: cWallet, hashLock, secretHashes: [secretHash] }),
+      });
+      // T2: v1.0 POST body {quoteId, walletAddress, hashLock, secretHashes}
+      trials.push({
+        label: "v1.0/POST/body{quoteId+hashLock}",
+        method: "POST",
+        url: `${BASE}/v1.0/quote/build`,
+        body: JSON.stringify({ quoteId, walletAddress: cWallet, hashLock, secretHashes: [secretHash] }),
+      });
+      // T3: v1.2 POST body with raw secretHash as hashLock (no zeroed byte)
+      trials.push({
+        label: "v1.2/POST/body{rawHash}",
+        method: "POST",
+        url: `${BASE}/v1.2/quote/build`,
+        body: JSON.stringify({ quoteId, walletAddress: cWallet, hashLock: secretHash, secretHashes: [secretHash] }),
+      });
+    }
+    // T4: v1.2 POST QS with full swap params + hashLock
+    const qs12 = new URLSearchParams();
+    qs12.set("srcChain", String(srcChainId)); qs12.set("dstChain", String(dstChainId));
+    qs12.set("srcTokenAddress", cSrc); qs12.set("dstTokenAddress", cDst);
+    qs12.set("amount", amt); qs12.set("walletAddress", cWallet);
+    qs12.set("enableEstimate", "true"); qs12.set("hashLock", hashLock);
+    if (quoteId) qs12.set("quoteId", quoteId);
+    trials.push({
+      label: "v1.2/POST/qs{fullParams+hashLock}",
+      method: "POST", url: `${BASE}/v1.2/quote/build?${qs12.toString()}`, body: null,
+    });
+    // T5: v1.0 POST QS control
+    trials.push({
+      label: "v1.0/POST/qs{fullParams+hashLock}",
+      method: "POST", url: `${BASE}/v1.0/quote/build?${qs12.toString()}`, body: null,
+    });
+
+    console.log(`${TAG} BUILD R5: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet} quoteId=${quoteId?.slice(0,20) ?? "NONE"} trials=${trials.length}`);
+
+    const results: { label: string; status: number; snippet: string }[] = [];
+    for (const t of trials) {
+      console.log(`${TAG} [BUILD-R5] ${t.label}: ${t.method} ${t.url.slice(0, 120)}... body=${t.body ? t.body.slice(0,100) : "null"}`);
+      const { status: s, body: b } = await upstreamFetch(t.method, t.url, t.body);
+      const snip = JSON.stringify(b).slice(0, 400);
+      results.push({ label: t.label, status: s, snippet: snip });
+      if (s === 200) {
+        console.log(`${TAG} [BUILD-R5] ✓ WINNER [${t.label}] keys=[${Object.keys(b).join(",")}]`);
+        return c.json({ ...b, _secret: secret, _hashLock: hashLock, _buildTrialWinner: t.label }, 200);
+      }
+      console.log(`${TAG} [BUILD-R5] ✗ ${t.label}: HTTP ${s} — ${snip}`);
     }
 
-    // Fallback: try GET
-    console.log(`${TAG} Fusion+ BUILD POST failed (${status}), trying GET...`);
-    const { status: s2, body: b2 } = await upstreamFetch("GET", buildUrl, null);
-    if (s2 === 200) {
-      console.log(`${TAG} Fusion+ BUILD SUCCESS (GET): keys=[${Object.keys(b2).join(",")}] orderHash=${JSON.stringify(b2.orderHash)}`);
-      return c.json({ ...b2, _secret: secret, _hashLock: hashLock }, 200);
-    }
-
-    const postSnip = JSON.stringify(resBody).slice(0, 600);
-    const getSnip = JSON.stringify(b2).slice(0, 600);
-    console.log(`${TAG} Fusion+ BUILD FAILED: POST=${status} GET=${s2}`);
-    console.log(`${TAG} POST resp: ${postSnip}`);
-    console.log(`${TAG} GET resp: ${getSnip}`);
+    console.log(`${TAG} [BUILD-R5] ALL ${trials.length} FAILED`);
     return c.json({
-      error: "Fusion+ build failed",
-      details: `POST=${status} GET=${s2}`,
-      _postResp: resBody,
-      _getResp: b2,
-    }, status as any);
+      error: "All Fusion+ build patterns failed",
+      details: `Tried ${trials.length} patterns. See _trials.`,
+      statusCode: 502,
+      _trials: results,
+    }, 502);
   });
 
   // ── POST /1inch/fusion-plus/submit ───────────────────────────────
