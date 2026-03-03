@@ -259,6 +259,9 @@ async function getDirectQuote(
 
   if (v12Result.status === 200 && v12Result.body.quoteId) {
     console.log(`${TAG} [QUOTE] v1.2 SUCCESS: quoteId=${(v12Result.body.quoteId as string).slice(0, 30)}... keys=[${Object.keys(v12Result.body).join(",")}]`);
+    // IMPLEMENTATION NOTE: Enrich rawQuote with request params so the client-side
+    // order builder always has token addresses even if the API doesn't echo them.
+    const enriched12 = { ...v12Result.body, srcTokenAddress, dstTokenAddress, srcChain: srcChainId, dstChain: dstChainId, walletAddress };
     return {
       success: true,
       quoteId: v12Result.body.quoteId as string,
@@ -266,7 +269,7 @@ async function getDirectQuote(
       dstTokenAmount: v12Result.body.dstTokenAmount as string,
       presets: v12Result.body.presets as Record<string, unknown>,
       recommendedPreset: v12Result.body.recommendedPreset as string,
-      rawQuote: v12Result.body,
+      rawQuote: enriched12,
       _apiVersion: "v1.2",
     };
   }
@@ -279,6 +282,7 @@ async function getDirectQuote(
 
   if (v10Result.status === 200 && v10Result.body.quoteId) {
     console.log(`${TAG} [QUOTE] v1.0 SUCCESS: quoteId=${(v10Result.body.quoteId as string).slice(0, 30)}... keys=[${Object.keys(v10Result.body).join(",")}]`);
+    const enriched10 = { ...v10Result.body, srcTokenAddress, dstTokenAddress, srcChain: srcChainId, dstChain: dstChainId, walletAddress };
     return {
       success: true,
       quoteId: v10Result.body.quoteId as string,
@@ -286,7 +290,7 @@ async function getDirectQuote(
       dstTokenAmount: v10Result.body.dstTokenAmount as string,
       presets: v10Result.body.presets as Record<string, unknown>,
       recommendedPreset: v10Result.body.recommendedPreset as string,
-      rawQuote: v10Result.body,
+      rawQuote: enriched10,
       _apiVersion: "v1.0",
     };
   }

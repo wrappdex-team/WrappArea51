@@ -119,6 +119,7 @@ import {
   sdkSubmitCrossChainOrder,
 } from "../utils/oneinch/fusion-plus";
 import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse, SdkOrderResponse } from "../utils/oneinch/fusion-plus";
+import { buildCrossChainOrderClientSide, preloadSdk, getSdkDiagnostics } from "../utils/oneinch/cross-chain-builder";
 import {
   getChainById as getModuleChainById,
 } from "../utils/oneinch/chains";
@@ -870,6 +871,14 @@ export function OneInchWidget() {
     setCrossChainQuoteLoading(false);
   }, [evmAccount, fromToken, crossChainDstToken, selectedChainId, dstChainId, selectedPreset]);
 
+  // IMPLEMENTATION NOTE: Pre-load the 1inch cross-chain SDK from CDN when
+  // cross-chain mode is activated, so it's ready by the time the user swaps.
+  useEffect(() => {
+    if (swapMode === "crossChain" && chainSupportsFusionPlus) {
+      preloadSdk().then(ok => log.info("1inch", `[FUSION+SDK] CDN preload: ${ok ? "success" : "failed"}`));
+    }
+  }, [swapMode, chainSupportsFusionPlus]);
+
   // Debounced cross-chain quote
   useEffect(() => {
     if (swapMode !== "crossChain" || !chainSupportsFusionPlus) return;
@@ -1325,28 +1334,48 @@ export function OneInchWidget() {
       }
 
       if (!sdkResult.typedData || sdkResult.needsClientConstruction) {
-        // IMPLEMENTATION NOTE (SDK Adoption Fix): The server got a valid quote
-        // from the v1.2/v1.0 quoter, but the @1inch/cross-chain-sdk couldn't be
-        // imported in Deno, so the EIP-712 order wasn't constructed server-side.
-        // The quoter only returns pricing data — order construction requires the
-        // SDK's createEvmOrder({hashLock}) which does complex bit-packing for
-        // MakerTraits, extension encoding, and resolver whitelist. This is a
-        // known limitation until the SDK can run server-side or client-side.
-        const quoteInfo = sdkResult.quoteId
-          ? `Quote obtained (${sdkResult.method}): quoteId=${sdkResult.quoteId.slice(0, 20)}... dst=${sdkResult.dstTokenAmount ?? "?"}`
-          : "No quote available";
-        const sdkStatus = (sdkResult._diagnostics as any)?.sdkImportError
-          ? `SDK import error: ${(sdkResult._diagnostics as any).sdkImportError.slice(0, 100)}`
-          : "SDK not available in runtime";
-        log.warn("1inch", `[FUSION+SDK] Order construction blocked: ${quoteInfo}. ${sdkStatus}`);
-        setSwapError(
-          `Cross-chain quote obtained, but order construction requires the 1inch SDK which isn't available in this runtime. ` +
-          `${quoteInfo}. ${sdkStatus}. ` +
-          `This is a known limitation — the SDK handles complex order encoding (MakerTraits, auction params, resolver whitelist) ` +
-          `that can't be replicated without it.`
+        // IMPLEMENTATION NOTE (SDK Client-Side Migration): Server got a valid quote
+        // but couldn't construct the order (SDK not available in Deno). We now
+        // attempt client-side order construction using the SDK loaded from esm.sh CDN.
+        log.info("1inch", `[FUSION+SDK] Step B2: Server returned needsClientConstruction=true. Attempting client-side order construction...`);
+
+        const clientOrder = await buildCrossChainOrderClientSide(
+          sdkResult.rawQuote || {},
+          htlc.hashLock,
+          evmAccount,
+          selectedChainId,
+          dstChainId,
         );
-        setSwapStatus("error");
-        return;
+
+        if (clientOrder) {
+          log.info("1inch", `[FUSION+SDK] Client-side order built via ${clientOrder.method}: orderHash=${clientOrder.orderHash.slice(0, 14)}...`);
+          // Override buildResult with client-constructed data
+          buildResult.typedData = clientOrder.typedData;
+          buildResult.order = clientOrder.order;
+          buildResult.orderHash = clientOrder.orderHash;
+          buildResult.extension = clientOrder.extension;
+          setCrossChainBuildData(buildResult);
+        } else {
+          // Both server and client construction failed — show diagnostic info
+          const quoteInfo = sdkResult.quoteId
+            ? `Quote obtained (${sdkResult.method}): quoteId=${sdkResult.quoteId.slice(0, 20)}... dst=${sdkResult.dstTokenAmount ?? "?"}`
+            : "No quote available";
+          const cdnDiag = getSdkDiagnostics();
+          const cdnStatus = cdnDiag.sdkLoadError
+            ? `CDN import error: ${cdnDiag.sdkLoadError.slice(0, 100)}`
+            : "SDK CDN not loaded";
+          const serverStatus = (sdkResult._diagnostics as any)?.sdkImportError
+            ? `Server SDK error: ${(sdkResult._diagnostics as any).sdkImportError.slice(0, 100)}`
+            : "Server SDK unavailable";
+          log.warn("1inch", `[FUSION+SDK] Order construction failed on both server and client. ${quoteInfo}. ${serverStatus}. ${cdnStatus}`);
+          setSwapError(
+            `Cross-chain quote obtained but order construction failed. ` +
+            `${quoteInfo}. ${serverStatus}. ${cdnStatus}. ` +
+            `The 1inch cross-chain SDK is needed to encode the order (MakerTraits, auction params, resolver whitelist).`
+          );
+          setSwapStatus("error");
+          return;
+        }
       }
 
       // Step C: Sign the EIP-712 typed data — gasless signature
