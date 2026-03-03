@@ -703,13 +703,32 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
+    // IMPLEMENTATION NOTE: EIP-55 checksum the wallet address — the 1inch
+    // Fusion Relayer v2.0 is strict about address format. The quote route
+    // already checksums, but the build route was sending as-is. This fixes
+    // "invalid address" errors at the build step.
+    const cleanBody: Record<string, unknown> = {
+      quoteId: body.quoteId,
+      walletAddress: eip55Checksum(body.walletAddress as string),
+    };
+    // Only include optional fields the relayer actually supports
+    if (body.preset) cleanBody.preset = body.preset;
+    if (typeof body.secretsCount === "number") cleanBody.secretsCount = body.secretsCount;
+    if (body.receiver && isValidEthAddress(body.receiver)) {
+      cleanBody.receiver = eip55Checksum(body.receiver as string);
+    }
+    if (body.source) cleanBody.source = body.source;
+    if (typeof body.nonce === "string" || typeof body.nonce === "number") cleanBody.nonce = body.nonce;
+    if (typeof body.permit === "string") cleanBody.permit = body.permit;
+    if (typeof body.isPermit2 === "boolean") cleanBody.isPermit2 = body.isPermit2;
+
     const relayerUrl = fusionRelayerUrl(chainId, "/order/build");
-    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${body.quoteId} wallet=${body.walletAddress} preset=${body.preset} url=${relayerUrl}`);
+    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${body.quoteId} wallet=${cleanBody.walletAddress} preset=${cleanBody.preset} url=${relayerUrl} bodyKeys=[${Object.keys(cleanBody).join(",")}]`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
       relayerUrl,
-      JSON.stringify(body),
+      JSON.stringify(cleanBody),
     );
 
     // IMPLEMENTATION NOTE — Fusion Build Endpoint Fallback Strategy:
@@ -727,7 +746,7 @@ export function registerOneInchRoutes(app: Hono) {
       const fallback = await upstreamFetch(
         "POST",
         quoterUrl,
-        JSON.stringify(body),
+        JSON.stringify(cleanBody),
       );
       if (fallback.status !== 200) {
         console.log(`${TAG} Fusion build quoter fallback ALSO FAILED: status=${fallback.status} response=${JSON.stringify(fallback.body).slice(0, 500)}`);
@@ -1136,7 +1155,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-03a-fusion-activation",
+      serverBuild: "2026-03-03b-build-checksum-fix",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)

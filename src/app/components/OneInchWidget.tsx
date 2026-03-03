@@ -1085,7 +1085,7 @@ export function OneInchWidget() {
       // then re-fetch with estimation when the user clicks "Swap".
 
       setSwapStatus("building");
-      log.info("1inch", `Re-fetching Fusion quote with enableEstimate=true for execution...`);
+      log.info("1inch", `[STEP-B] Phase 1 quoteId=${fusionQuote.quoteId || "(EMPTY)"} — will ${fusionQuote.quoteId ? "SKIP" : "ATTEMPT"} Phase 2 (enableEstimate=true)`);
 
       let execQuoteId = fusionQuote.quoteId;
 
@@ -1121,7 +1121,7 @@ export function OneInchWidget() {
         return;
       }
 
-      log.info("1inch", `Building Fusion order: quoteId=${execQuoteId} preset=${selectedPreset}`);
+      log.info("1inch", `[STEP-C] Building Fusion order: quoteId=${execQuoteId} wallet=${evmAccount} preset=${selectedPreset} chain=${selectedChainId}`);
 
       // Step C: Sign the typed data — eth_signTypedData_v4 (NO gas!)
       setSwapStatus("signing");
@@ -1207,7 +1207,7 @@ export function OneInchWidget() {
         setSwapStatus("error");
         setSwapError(fullMsg);
       }
-      log.warn("1inch", `Fusion swap error: ${fullMsg}`, err);
+      log.warn("1inch", `[STEP-FAIL] Fusion swap error at swapStatus="${swapStatus}": ${fullMsg}`, err);
       stopFusionPolling();
     }
   }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, fromBalance, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);
