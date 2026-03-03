@@ -374,14 +374,12 @@ export interface FusionPlusBuildResponse {
  * so the user pays ZERO gas.
  */
 export async function buildCrossChainOrder(
-  srcChainId: number,
   quoteId: string,
   walletAddress: string,
   secretsCount: number = 1,
   signal?: AbortSignal,
 ): Promise<FusionPlusBuildResponse> {
   const body = {
-    srcChainId,
     quoteId,
     walletAddress,
     secretsCount,
@@ -411,7 +409,6 @@ export async function buildCrossChainOrder(
  */
 export async function submitCrossChainOrder(
   params: {
-    srcChainId: number;
     quoteId: string;
     orderHash: string;
     signature: string;
@@ -422,7 +419,7 @@ export async function submitCrossChainOrder(
   },
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  log.info(TAG, `Submitting Fusion+ order: orderHash=${params.orderHash} srcChain=${params.srcChainId}`);
+  log.info(TAG, `Submitting Fusion+ order: orderHash=${params.orderHash}`);
 
   const res = await oneInchApi.post<Record<string, unknown>>(
     `/fusion-plus/submit`,
@@ -442,16 +439,15 @@ export async function submitCrossChainOrder(
  * Submit a secret to resolve an HTLC fill for a Fusion+ order.
  */
 export async function submitSecret(
-  srcChainId: number,
   orderHash: string,
   secret: string,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  log.info(TAG, `Submitting secret for Fusion+ order: orderHash=${orderHash} srcChain=${srcChainId}`);
+  log.info(TAG, `Submitting secret for Fusion+ order: orderHash=${orderHash}`);
 
   const res = await oneInchApi.post<Record<string, unknown>>(
     `/fusion-plus/submit-secret`,
-    { srcChainId, orderHash, secret },
+    { orderHash, secret },
     { signal },
   );
 
@@ -479,12 +475,11 @@ export interface FusionPlusOrderStatusResponse {
  * Poll the status of a cross-chain Fusion+ order.
  */
 export async function getCrossChainOrderStatus(
-  srcChainId: number,
   orderHash: string,
   signal?: AbortSignal,
 ): Promise<FusionPlusOrderStatusResponse> {
   const res = await oneInchApi.get<FusionPlusOrderStatusResponse>(
-    `/fusion-plus/status/${srcChainId}/${orderHash}`,
+    `/fusion-plus/status/${orderHash}`,
     { signal },
   );
   return res;
@@ -494,12 +489,11 @@ export async function getCrossChainOrderStatus(
  * Check if a cross-chain order is ready to accept secret fills.
  */
 export async function getReadyFills(
-  srcChainId: number,
   orderHash: string,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   return oneInchApi.get<Record<string, unknown>>(
-    `/fusion-plus/ready-fills/${srcChainId}/${orderHash}`,
+    `/fusion-plus/ready-fills/${orderHash}`,
     { signal },
   );
 }
@@ -508,12 +502,11 @@ export async function getReadyFills(
  * Get the secrets associated with an order (for debugging/status).
  */
 export async function getOrderSecrets(
-  srcChainId: number,
   orderHash: string,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   return oneInchApi.get<Record<string, unknown>>(
-    `/fusion-plus/secrets/${srcChainId}/${orderHash}`,
+    `/fusion-plus/secrets/${orderHash}`,
     { signal },
   );
 }
@@ -527,7 +520,6 @@ export async function getOrderSecrets(
  * @returns Final status response
  */
 export async function pollCrossChainOrder(
-  srcChainId: number,
   orderHash: string,
   onStatusChange?: (status: FusionPlusOrderStatus, response: FusionPlusOrderStatusResponse) => void,
   signal?: AbortSignal,
@@ -539,7 +531,7 @@ export async function pollCrossChainOrder(
     if (signal?.aborted) throw new DOMException("Polling aborted", "AbortError");
 
     try {
-      const res = await getCrossChainOrderStatus(srcChainId, orderHash, signal);
+      const res = await getCrossChainOrderStatus(orderHash, signal);
 
       if (res.status !== lastStatus) {
         lastStatus = res.status;

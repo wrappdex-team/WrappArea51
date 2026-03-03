@@ -77,9 +77,13 @@ const API = {
   fusionQuoter:   "https://api.1inch.dev/fusion/quoter/v2.0",
   fusionRelayer:  "https://api.1inch.dev/fusion/relayer/v2.0",
   fusionOrders:   "https://api.1inch.dev/fusion/orders/v2.0",
-  fusionPlusQuoter:  "https://api.1inch.dev/fusion-plus/quoter/v1.2",
-  fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.2",
-  fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.2",
+  // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ uses v1.0, NOT v1.2.
+  // The 1inch Fusion+ SDK and Developer Portal both use v1.0 endpoints.
+  // v1.2 returned INVALID_CHAIN_ID (quote) and 404 (with chainId in path)
+  // because the version doesn't exist for the Fusion+ quoter/relayer/orders.
+  fusionPlusQuoter:  "https://api.1inch.dev/fusion-plus/quoter/v1.0",
+  fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.0",
+  fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.0",
   token:          "https://api.1inch.dev/token/v1.2",
   balance:        "https://api.1inch.dev/balance/v1.2",
   price:          "https://api.1inch.dev/price/v1.1",
@@ -427,25 +431,25 @@ function fusionOrdersUrl(chainId: number, path: string, qs?: string): string {
 }
 
 /**
- * Build a Fusion+ Quoter URL: /fusion-plus/quoter/v1.2/{chainId}/{path}?{query}
+ * Build a Fusion+ Quoter URL: /fusion-plus/quoter/v1.0/{path}?{query}
  *
- * IMPLEMENTATION NOTE (2026-03-03h): Fusion+ v1.2 endpoints require {chainId}
- * in the URL path (same pattern as Fusion v2.0). The v1.0 SDK omitted it
- * (chain IDs were only in body/params), but v1.2 added it to the path.
- * Without it, the API returns INVALID_CHAIN_ID.
+ * IMPLEMENTATION NOTE (2026-03-03i): Fusion+ v1.0 endpoints do NOT include
+ * chainId in the URL path. Cross-chain IDs (srcChainId, dstChainId) go in
+ * the request body (POST) or query params (GET). This differs from Fusion v2.0
+ * which has {chainId} in the path for single-chain operations.
  */
-function fusionPlusQuoterUrl(chainId: number, path: string, qs?: string): string {
-  return `${API.fusionPlusQuoter}/${chainId}${path}${qs ? `?${qs}` : ""}`;
+function fusionPlusQuoterUrl(path: string, qs?: string): string {
+  return `${API.fusionPlusQuoter}${path}${qs ? `?${qs}` : ""}`;
 }
 
-/** Build a Fusion+ Relayer URL: /fusion-plus/relayer/v1.2/{chainId}/{path}?{query} */
-function fusionPlusRelayerUrl(chainId: number, path: string, qs?: string): string {
-  return `${API.fusionPlusRelayer}/${chainId}${path}${qs ? `?${qs}` : ""}`;
+/** Build a Fusion+ Relayer URL: /fusion-plus/relayer/v1.0/{path}?{query} */
+function fusionPlusRelayerUrl(path: string, qs?: string): string {
+  return `${API.fusionPlusRelayer}${path}${qs ? `?${qs}` : ""}`;
 }
 
-/** Build a Fusion+ Orders URL: /fusion-plus/orders/v1.2/{chainId}/{path}?{query} */
-function fusionPlusOrdersUrl(chainId: number, path: string, qs?: string): string {
-  return `${API.fusionPlusOrders}/${chainId}${path}${qs ? `?${qs}` : ""}`;
+/** Build a Fusion+ Orders URL: /fusion-plus/orders/v1.0/{path}?{query} */
+function fusionPlusOrdersUrl(path: string, qs?: string): string {
+  return `${API.fusionPlusOrders}${path}${qs ? `?${qs}` : ""}`;
 }
 
 /** Build a Token API v1.2 URL: /token/v1.2/{chainId}/{path}?{query} */
@@ -895,9 +899,9 @@ export function registerOneInchRoutes(app: Hono) {
   //
   // Body: { srcChainId, dstChainId, srcTokenAddress, dstTokenAddress, amount, walletAddress, ... }
   //
-  // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ v1.2 URLs now include {srcChainId}
-  // in the path (like Fusion v2.0). dstChainId goes in query params.
-  // Client POSTs body to our proxy; we convert to upstream GET with path+query.
+  // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ v1.0 URLs do NOT include chainId
+  // in the path (unlike Fusion v2.0). Both srcChainId and dstChainId go in query
+  // params. Client POSTs body to our proxy; we convert to upstream GET with query.
   app.post(`${PREFIX}/fusion-plus/quote`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -928,14 +932,22 @@ export function registerOneInchRoutes(app: Hono) {
     // endpoint is a **GET** endpoint with **query parameters** — identical pattern
     // to Fusion v2.0 /quote/receive. Sending POST causes 1inch to ignore the JSON
     // body, see empty query params, and return "walletAddress has not provided".
-    // Apply EIP-55 checksumming to ALL addresses for strict validation.
-    const checksummedSrc = eip55Checksum(body.srcTokenAddress as string);
-    const checksummedDst = eip55Checksum(body.dstTokenAddress as string);
-    const checksummedWallet = eip55Checksum(body.walletAddress as string);
+    // Apply EIP-55 checksumming — with keccak self-test fallback.
+    // If keccak is broken in this Deno env, use the raw (client-checksummed) addresses.
+    const knownTest = eip55Checksum("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+    const keccakOk = knownTest === "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+    const rawSrc = body.srcTokenAddress as string;
+    const rawDst = body.dstTokenAddress as string;
+    const rawWallet = body.walletAddress as string;
+    const checksummedSrc = keccakOk ? eip55Checksum(rawSrc) : rawSrc;
+    const checksummedDst = keccakOk ? eip55Checksum(rawDst) : rawDst;
+    const checksummedWallet = keccakOk ? eip55Checksum(rawWallet) : rawWallet;
+    console.log(`${TAG} [DIAG] Fusion+ quote keccak=${keccakOk ? "PASS" : "FAIL"} wallet: raw=${rawWallet} checksum=${checksummedWallet}`);
 
-    // IMPLEMENTATION NOTE (2026-03-03i): srcChainId is now in the URL path
-    // (e.g. /quoter/v1.2/{srcChainId}/quote/receive). Only dstChainId goes in query params.
+    // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ v1.0 does NOT have chainId in
+    // the URL path. Both srcChainId and dstChainId go in query params for GET.
     const quoteParams = new URLSearchParams();
+    quoteParams.set("srcChainId", String(srcChainId));
     quoteParams.set("dstChainId", String(dstChainId));
     quoteParams.set("srcTokenAddress", checksummedSrc);
     quoteParams.set("dstTokenAddress", checksummedDst);
@@ -944,7 +956,7 @@ export function registerOneInchRoutes(app: Hono) {
     if (typeof body.enableEstimate === "boolean") quoteParams.set("enableEstimate", String(body.enableEstimate));
     if (typeof body.fee === "number") quoteParams.set("fee", String(body.fee));
 
-    const upstreamUrl = fusionPlusQuoterUrl(srcChainId, "/quote/receive", quoteParams.toString());
+    const upstreamUrl = fusionPlusQuoterUrl("/quote/receive", quoteParams.toString());
     console.log(
       `${TAG} Fusion+ quote: ${srcChainId}→${dstChainId}` +
       ` src=${checksummedSrc} dst=${checksummedDst}` +
@@ -985,8 +997,6 @@ export function registerOneInchRoutes(app: Hono) {
       return c.json({ error: "Missing or invalid quoteId" }, 400);
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
-    const srcChainId = typeof body.srcChainId === "number" ? body.srcChainId : NaN;
-    if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ build requires valid srcChainId (got ${srcChainId})` }, 400);
 
     // IMPLEMENTATION NOTE: Fusion+ build is on the QUOTER at /quote/build/evm
     // (NOT /order/build — that doesn't exist). The body needs quoteId + walletAddress.
@@ -1003,7 +1013,7 @@ export function registerOneInchRoutes(app: Hono) {
     };
     if (typeof body.secretsCount === "number") buildBody.secretsCount = body.secretsCount;
 
-    const buildUrl = fusionPlusQuoterUrl(srcChainId, "/quote/build/evm");
+    const buildUrl = fusionPlusQuoterUrl("/quote/build/evm");
     console.log(`${TAG} Fusion+ build: quoteId=${body.quoteId} rawWallet=${rawWallet} checksummedWallet=${checksummedWallet} bodyKeys=[${Object.keys(buildBody).join(",")}] url=${buildUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
@@ -1046,35 +1056,30 @@ export function registerOneInchRoutes(app: Hono) {
     if (typeof body.signature !== "string" || !body.signature) {
       return c.json({ error: "Missing or invalid signature" }, 400);
     }
-    const srcChainId = typeof body.srcChainId === "number" ? body.srcChainId : NaN;
-    if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ submit requires valid srcChainId (got ${srcChainId})` }, 400);
-
-    console.log(`${TAG} Fusion+ submit: orderHash=${body.orderHash} srcChain=${srcChainId}`);
+    console.log(`${TAG} Fusion+ submit: orderHash=${body.orderHash}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionPlusRelayerUrl(srcChainId, "/submit"),
+      fusionPlusRelayerUrl("/submit"),
       JSON.stringify(body),
       FUSION_SUBMIT_TIMEOUT_MS,
     );
     return c.json(resBody, status as any);
   });
 
-  // ── GET /1inch/fusion-plus/status/:chainId/:orderHash ─────────────
+  // ── GET /1inch/fusion-plus/status/:orderHash ──────────────────────
   // Poll the status of a cross-chain Fusion+ order.
   // Status lifecycle: SrcPending → SrcFilled → DstPending → DstFilled
-  app.get(`${PREFIX}/fusion-plus/status/:chainId/:orderHash`, async (c) => {
+  app.get(`${PREFIX}/fusion-plus/status/:orderHash`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    const chainId = parseChainId(c.req.param("chainId"), FUSION_PLUS_CHAINS);
-    if (!chainId) return c.json({ error: "Fusion+ not supported on this chain" }, 400);
     const orderHash = c.req.param("orderHash");
     if (!isValidOrderHash(orderHash)) return c.json({ error: "Invalid orderHash — must be 0x + 64 hex chars" }, 400);
 
     const { status, body } = await upstreamFetch(
       "GET",
-      fusionPlusOrdersUrl(chainId, `/order/status/${orderHash}`),
+      fusionPlusOrdersUrl(`/order/status/${orderHash}`),
     );
     return c.json(body, status as any);
   });
@@ -1101,52 +1106,45 @@ export function registerOneInchRoutes(app: Hono) {
     if (typeof body.secret !== "string" || !body.secret) {
       return c.json({ error: "Missing or invalid secret" }, 400);
     }
-    const srcChainId = typeof body.srcChainId === "number" ? body.srcChainId : NaN;
-    if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ submit-secret requires valid srcChainId (got ${srcChainId})` }, 400);
-
-    console.log(`${TAG} Fusion+ submit-secret: orderHash=${body.orderHash} srcChain=${srcChainId}`);
+    console.log(`${TAG} Fusion+ submit-secret: orderHash=${body.orderHash}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionPlusRelayerUrl(srcChainId, "/submit/secret"),
+      fusionPlusRelayerUrl("/submit/secret"),
       JSON.stringify(body),
       FUSION_SUBMIT_TIMEOUT_MS,
     );
     return c.json(resBody, status as any);
   });
 
-  // ── GET /1inch/fusion-plus/secrets/:chainId/:orderHash ────────────
+  // ── GET /1inch/fusion-plus/secrets/:orderHash ─────────────────────
   // Get the secrets associated with a cross-chain order.
-  app.get(`${PREFIX}/fusion-plus/secrets/:chainId/:orderHash`, async (c) => {
+  app.get(`${PREFIX}/fusion-plus/secrets/:orderHash`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    const chainId = parseChainId(c.req.param("chainId"), FUSION_PLUS_CHAINS);
-    if (!chainId) return c.json({ error: "Fusion+ not supported on this chain" }, 400);
     const orderHash = c.req.param("orderHash");
     if (!isValidOrderHash(orderHash)) return c.json({ error: "Invalid orderHash" }, 400);
 
     const { status, body } = await upstreamFetch(
       "GET",
-      fusionPlusOrdersUrl(chainId, `/order/secrets/${orderHash}`),
+      fusionPlusOrdersUrl(`/order/secrets/${orderHash}`),
     );
     return c.json(body, status as any);
   });
 
-  // ── GET /1inch/fusion-plus/ready-fills/:chainId/:orderHash ────────
+  // ── GET /1inch/fusion-plus/ready-fills/:orderHash ───────────────
   // Check if a cross-chain order is ready to accept secret fills.
-  app.get(`${PREFIX}/fusion-plus/ready-fills/:chainId/:orderHash`, async (c) => {
+  app.get(`${PREFIX}/fusion-plus/ready-fills/:orderHash`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    const chainId = parseChainId(c.req.param("chainId"), FUSION_PLUS_CHAINS);
-    if (!chainId) return c.json({ error: "Fusion+ not supported on this chain" }, 400);
     const orderHash = c.req.param("orderHash");
     if (!isValidOrderHash(orderHash)) return c.json({ error: "Invalid orderHash" }, 400);
 
     const { status, body } = await upstreamFetch(
       "GET",
-      fusionPlusOrdersUrl(chainId, `/order/ready-to-accept-secret-fills/${orderHash}`),
+      fusionPlusOrdersUrl(`/order/ready-to-accept-secret-fills/${orderHash}`),
     );
     return c.json(body, status as any);
   });
