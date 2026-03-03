@@ -8,7 +8,7 @@
 // API domains proxied (6 total):
 //   Swap API v6.0        — Classic on-chain aggregated swaps
 //   Fusion API v2.0      — Gasless intent-based swaps (resolvers pay gas)
-//   Fusion+ API v1.0     — Cross-chain intent-based swaps
+//   Fusion+ API          — Cross-chain intent-based swaps (multi-trial URL discovery)
 //   Token API v1.2       — Token metadata, search, custom import
 //   Balance API v1.2     — Multi-token wallet balances
 //   Price API v1.1       — USD token prices
@@ -29,14 +29,14 @@
 //   GET  /1inch/fusion/status/:chainId/:hash   → /fusion/orders/v2.0/{chainId}/order/status/{hash}
 //   GET  /1inch/fusion/active/:chainId         → /fusion/orders/v2.0/{chainId}/order/active
 //
-//   ── Fusion+ API v1.2 (cross-chain) ──
-//   POST /1inch/fusion-plus/quote              → GET /fusion-plus/quoter/v1.2/quote/receive (query params)
-//   POST /1inch/fusion-plus/build              → /fusion-plus/quoter/v1.2/quote/build/evm
-//   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.2/submit
-//   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.2/order/status/{hash}
-//   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.2/submit/secret
-//   GET  /1inch/fusion-plus/secrets/:hash      → /fusion-plus/orders/v1.2/order/secrets/{hash}
-//   GET  /1inch/fusion-plus/ready-fills/:hash  → /fusion-plus/orders/v1.2/order/ready-to-accept-secret-fills/{hash}
+//   ── Fusion+ API (cross-chain) — multi-trial URL discovery ──
+//   POST /1inch/fusion-plus/quote              → MULTI-TRIAL: v2.0+v1.0 patterns (see handler)
+//   POST /1inch/fusion-plus/build              → /fusion-plus/quoter/v1.0/quote/build/evm
+//   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.0/submit
+//   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.0/order/status/{hash}
+//   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.0/submit/secret
+//   GET  /1inch/fusion-plus/secrets/:hash      → /fusion-plus/orders/v1.0/order/secrets/{hash}
+//   GET  /1inch/fusion-plus/ready-fills/:hash  → /fusion-plus/orders/v1.0/order/ready-to-accept-secret-fills/{hash}
 //
 //   ── Token / Balance / Price APIs (new) ──
 //   GET  /1inch/balance/:chainId/:wallet       → /balance/v1.2/{chainId}/balances/{wallet}
@@ -77,10 +77,10 @@ const API = {
   fusionQuoter:   "https://api.1inch.dev/fusion/quoter/v2.0",
   fusionRelayer:  "https://api.1inch.dev/fusion/relayer/v2.0",
   fusionOrders:   "https://api.1inch.dev/fusion/orders/v2.0",
-  // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ uses v1.0, NOT v1.2.
-  // The 1inch Fusion+ SDK and Developer Portal both use v1.0 endpoints.
-  // v1.2 returned INVALID_CHAIN_ID (quote) and 404 (with chainId in path)
-  // because the version doesn't exist for the Fusion+ quoter/relayer/orders.
+  // IMPLEMENTATION NOTE (2026-03-03j): The quote handler uses a multi-trial
+  // approach (tries v2.0 + v1.0 patterns). These v1.0 base URLs are used by
+  // the build/submit/status routes only. Once the multi-trial reveals the
+  // correct URL pattern, all endpoints will be updated to match.
   fusionPlusQuoter:  "https://api.1inch.dev/fusion-plus/quoter/v1.0",
   fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.0",
   fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.0",
@@ -899,83 +899,123 @@ export function registerOneInchRoutes(app: Hono) {
   //
   // Body: { srcChainId, dstChainId, srcTokenAddress, dstTokenAddress, amount, walletAddress, ... }
   //
-  // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ v1.0 URLs do NOT include chainId
-  // in the path (unlike Fusion v2.0). Both srcChainId and dstChainId go in query
-  // params. Client POSTs body to our proxy; we convert to upstream GET with query.
+  // IMPLEMENTATION NOTE (2026-03-03j): Multi-trial diagnostic approach.
+  //
+  // The 1inch Fusion+ API version & URL pattern has been uncertain:
+  //   - v1.0 GET (no chain in path)  → "wrong chain id" / INVALID_CHAIN_ID
+  //   - v1.2 GET (chain in path)     → 404
+  //   - v1.0 POST                    → "walletAddress has not provided"
+  //
+  // Hypothesis: Fusion+ upgraded to v2.0 (same pattern as Fusion same-chain)
+  // with srcChainId in URL path + fromTokenAddress/toTokenAddress field names.
+  // OR: Fusion+ merged into the main Fusion v2.0 API with dstChainId param.
+  //
+  // This handler tries the 4 most likely URL patterns and returns the first
+  // 200 response. Detailed logging reveals which pattern works.
   app.post(`${PREFIX}/fusion-plus/quote`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
     let body: Record<string, unknown>;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
+    try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
 
-    // Validate chain IDs
     const srcChainId = typeof body.srcChainId === "number" ? body.srcChainId : NaN;
     const dstChainId = typeof body.dstChainId === "number" ? body.dstChainId : NaN;
     if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ not supported on source chain ${srcChainId}` }, 400);
     if (!FUSION_PLUS_CHAINS.has(dstChainId)) return c.json({ error: `Fusion+ not supported on destination chain ${dstChainId}` }, 400);
-    if (srcChainId === dstChainId) return c.json({ error: "Source and destination chains must differ for cross-chain swaps — use Fusion for same-chain" }, 400);
-
-    // Validate required token/amount/wallet fields
+    if (srcChainId === dstChainId) return c.json({ error: "Source and destination chains must differ" }, 400);
     if (!isValidEthAddress(body.srcTokenAddress)) return c.json({ error: "Invalid srcTokenAddress" }, 400);
     if (!isValidEthAddress(body.dstTokenAddress)) return c.json({ error: "Invalid dstTokenAddress" }, 400);
-    if (typeof body.amount !== "string" || !/^\d+$/.test(body.amount)) {
-      return c.json({ error: "Invalid amount — must be a non-negative integer string" }, 400);
-    }
+    if (typeof body.amount !== "string" || !/^\d+$/.test(body.amount)) return c.json({ error: "Invalid amount" }, 400);
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE (2026-03-03h): The Fusion+ Quoter v1.2 /quote/receive
-    // endpoint is a **GET** endpoint with **query parameters** — identical pattern
-    // to Fusion v2.0 /quote/receive. Sending POST causes 1inch to ignore the JSON
-    // body, see empty query params, and return "walletAddress has not provided".
-    // Apply EIP-55 checksumming — with keccak self-test fallback.
-    // If keccak is broken in this Deno env, use the raw (client-checksummed) addresses.
-    const knownTest = eip55Checksum("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
-    const keccakOk = knownTest === "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+    // EIP-55 checksum with keccak self-test fallback
+    const keccakOk = eip55Checksum("0xd8da6bf26964af9d7eed9e03e53415d37aa96045") === "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
     const rawSrc = body.srcTokenAddress as string;
     const rawDst = body.dstTokenAddress as string;
     const rawWallet = body.walletAddress as string;
-    const checksummedSrc = keccakOk ? eip55Checksum(rawSrc) : rawSrc;
-    const checksummedDst = keccakOk ? eip55Checksum(rawDst) : rawDst;
-    const checksummedWallet = keccakOk ? eip55Checksum(rawWallet) : rawWallet;
-    console.log(`${TAG} [DIAG] Fusion+ quote keccak=${keccakOk ? "PASS" : "FAIL"} wallet: raw=${rawWallet} checksum=${checksummedWallet}`);
+    const cSrc = keccakOk ? eip55Checksum(rawSrc) : rawSrc;
+    const cDst = keccakOk ? eip55Checksum(rawDst) : rawDst;
+    const cWallet = keccakOk ? eip55Checksum(rawWallet) : rawWallet;
+    console.log(`${TAG} [DIAG] Fusion+ quote keccak=${keccakOk ? "PASS" : "FAIL"} wallet=${cWallet}`);
 
-    // IMPLEMENTATION NOTE (2026-03-03i): Fusion+ v1.0 does NOT have chainId in
-    // the URL path. Both srcChainId and dstChainId go in query params for GET.
-    const quoteParams = new URLSearchParams();
-    quoteParams.set("srcChainId", String(srcChainId));
-    quoteParams.set("dstChainId", String(dstChainId));
-    quoteParams.set("srcTokenAddress", checksummedSrc);
-    quoteParams.set("dstTokenAddress", checksummedDst);
-    quoteParams.set("amount", body.amount as string);
-    quoteParams.set("walletAddress", checksummedWallet);
-    if (typeof body.enableEstimate === "boolean") quoteParams.set("enableEstimate", String(body.enableEstimate));
-    if (typeof body.fee === "number") quoteParams.set("fee", String(body.fee));
+    const enableEst = typeof body.enableEstimate === "boolean" ? String(body.enableEstimate) : undefined;
+    const feeStr = typeof body.fee === "number" ? String(body.fee) : undefined;
+    const amt = body.amount as string;
 
-    const upstreamUrl = fusionPlusQuoterUrl("/quote/receive", quoteParams.toString());
-    console.log(
-      `${TAG} Fusion+ quote: ${srcChainId}→${dstChainId}` +
-      ` src=${checksummedSrc} dst=${checksummedDst}` +
-      ` wallet=${checksummedWallet} amt=${body.amount}` +
-      ` method=GET (query params) url=${upstreamUrl}`
-    );
+    // Helper: build query string from key-value pairs (skips undefined)
+    const qs = (p: [string, string | undefined][]) => {
+      const u = new URLSearchParams();
+      for (const [k, v] of p) { if (v !== undefined) u.set(k, v); }
+      return u.toString();
+    };
 
-    const { status, body: resBody } = await upstreamFetch(
-      "GET",
-      upstreamUrl,
-      null,
-    );
-    if (status !== 200) {
-      console.log(`${TAG} Fusion+ quote upstream error: status=${status} body=${JSON.stringify(resBody).slice(0, 500)}`);
-    } else {
-      const keys = Object.keys(resBody);
-      console.log(`${TAG} Fusion+ quote SUCCESS: keys=[${keys.join(",")}] quoteId=${JSON.stringify(resBody.quoteId)} first500=${JSON.stringify(resBody).slice(0, 500)}`);
+    // ── 4 trial URL patterns (most-to-least likely) ──
+    const trials: { label: string; method: "GET" | "POST"; url: string; body?: string }[] = [
+      // T1: Fusion+ v2.0, srcChainId in path, Fusion v2.0 field names
+      {
+        label: "fusion-plus/v2.0/chain-path/v2-fields",
+        method: "GET",
+        url: `https://api.1inch.dev/fusion-plus/quoter/v2.0/${srcChainId}/quote/receive?${qs([
+          ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["toTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
+      },
+      // T2: Fusion+ v2.0, srcChainId in path, Fusion+ field names (srcToken/dstToken)
+      {
+        label: "fusion-plus/v2.0/chain-path/plus-fields",
+        method: "GET",
+        url: `https://api.1inch.dev/fusion-plus/quoter/v2.0/${srcChainId}/quote/receive?${qs([
+          ["dstChainId", String(dstChainId)], ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
+      },
+      // T3: Cross-chain via MAIN Fusion v2.0 (Fusion+ merged into Fusion)
+      {
+        label: "fusion/v2.0/cross-chain-merged",
+        method: "GET",
+        url: `https://api.1inch.dev/fusion/quoter/v2.0/${srcChainId}/quote/receive?${qs([
+          ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["toTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
+      },
+      // T4: Original v1.0 POST with JSON body
+      {
+        label: "fusion-plus/v1.0/POST-body",
+        method: "POST",
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive`,
+        body: JSON.stringify({
+          srcChainId, dstChainId, srcTokenAddress: cSrc, dstTokenAddress: cDst,
+          amount: amt, walletAddress: cWallet,
+          ...(enableEst ? { enableEstimate: body.enableEstimate } : {}),
+          ...(feeStr ? { fee: body.fee } : {}),
+        }),
+      },
+    ];
+
+    console.log(`${TAG} Fusion+ MULTI-TRIAL: ${srcChainId}→${dstChainId} src=${cSrc.slice(0,10)}... dst=${cDst.slice(0,10)}... trials=4`);
+
+    const results: { label: string; status: number; snippet: string }[] = [];
+    for (const t of trials) {
+      console.log(`${TAG} [TRIAL] ${t.label}: ${t.method} ${t.url.slice(0, 140)}...`);
+      const { status: s, body: b } = await upstreamFetch(t.method, t.url, t.body ?? null);
+      const snip = JSON.stringify(b).slice(0, 300);
+      results.push({ label: t.label, status: s, snippet: snip });
+      if (s === 200) {
+        console.log(`${TAG} [TRIAL] ✓ SUCCESS [${t.label}] keys=[${Object.keys(b).join(",")}] quoteId=${JSON.stringify(b.quoteId)}`);
+        console.log(`${TAG} [TRIAL] ✓ WINNER: ${t.method} ${t.url}`);
+        return c.json({ ...b, _trialWinner: t.label }, 200);
+      }
+      console.log(`${TAG} [TRIAL] ✗ ${t.label}: HTTP ${s} — ${snip}`);
     }
-    return c.json(resBody, status as any);
+
+    console.log(`${TAG} [TRIAL] ALL 4 FAILED: ${JSON.stringify(results)}`);
+    return c.json({
+      error: "All Fusion+ quote URL patterns failed",
+      details: "The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.",
+      statusCode: 502,
+      _trials: results,
+    }, 502);
   });
 
   // ── POST /1inch/fusion-plus/build ────────────────────────────────

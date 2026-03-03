@@ -327,11 +327,19 @@ export async function getCrossChainQuote(
 
   log.info(TAG, `Requesting cross-chain quote: ${srcChain.name} -> ${dstChain.name} src=${resolvedSrc.slice(0, 10)}... dst=${resolvedDst.slice(0, 10)}... amount=${amount}`);
 
-  const res = await oneInchApi.post<FusionPlusQuoteResponse>(
+  const res = await oneInchApi.post<FusionPlusQuoteResponse & { _trialWinner?: string; _trials?: unknown[] }>(
     `/fusion-plus/quote`,
     body,
     { signal, cacheKey, cacheTtlMs: QUOTE_CACHE_TTL_MS },
   );
+
+  // IMPLEMENTATION NOTE (2026-03-03j): Log multi-trial diagnostic fields from server
+  if (res._trialWinner) {
+    log.info(TAG, `[MULTI-TRIAL] ✓ Winning URL pattern: ${res._trialWinner}`);
+  }
+  if ((res as any)._trials) {
+    log.warn(TAG, `[MULTI-TRIAL] All trials failed:`, JSON.stringify((res as any)._trials));
+  }
 
   return parseCrossChainQuote(res);
 }
