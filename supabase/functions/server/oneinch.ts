@@ -1040,38 +1040,58 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: Fusion+ build is on the QUOTER at /quote/build/evm
-    // (NOT /order/build — that doesn't exist). The body needs quoteId + walletAddress.
-    // Use raw wallet (already checksummed by viem on client) if keccak self-test fails.
+    // IMPLEMENTATION NOTE: Multi-trial for build endpoint — /quote/build/evm
+    // returned 404 in production. Same discovery approach as the quote fix.
     const rawWallet = body.walletAddress as string;
-    let checksummedWallet: string;
-    try { checksummedWallet = eip55Checksum(rawWallet); } catch { checksummedWallet = rawWallet; }
-    const knownTest = eip55Checksum("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
-    const keccakOk = knownTest === "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
-    console.log(`${TAG} [DIAG] Fusion+ build: raw=${rawWallet} checksum=${checksummedWallet} keccak=${keccakOk ? "PASS" : "FAIL"}`);
-    const buildBody: Record<string, unknown> = {
+    let cWallet: string;
+    try { cWallet = eip55Checksum(rawWallet); } catch { cWallet = rawWallet; }
+
+    const bJson = JSON.stringify({
       quoteId: body.quoteId,
-      walletAddress: keccakOk ? checksummedWallet : rawWallet,
-    };
-    if (typeof body.secretsCount === "number") buildBody.secretsCount = body.secretsCount;
+      walletAddress: cWallet,
+      ...(typeof body.secretsCount === "number" ? { secretsCount: body.secretsCount } : {}),
+    });
+    const bQs = new URLSearchParams({
+      quoteId: body.quoteId as string,
+      walletAddress: cWallet,
+      ...(typeof body.secretsCount === "number" ? { secretsCount: String(body.secretsCount) } : {}),
+    }).toString();
 
-    const buildUrl = fusionPlusQuoterUrl("/quote/build/evm");
-    console.log(`${TAG} Fusion+ build: quoteId=${body.quoteId} rawWallet=${rawWallet} checksummedWallet=${checksummedWallet} bodyKeys=[${Object.keys(buildBody).join(",")}] url=${buildUrl}`);
+    const buildTrials: { label: string; method: "GET" | "POST"; url: string; sendBody: boolean }[] = [
+      { label: "quoter/POST/quote/build", method: "POST", url: `${API.fusionPlusQuoter}/quote/build`, sendBody: true },
+      { label: "quoter/GET/quote/build", method: "GET", url: `${API.fusionPlusQuoter}/quote/build?${bQs}`, sendBody: false },
+      { label: "relayer/POST/order/build", method: "POST", url: `${API.fusionPlusRelayer}/order/build`, sendBody: true },
+      { label: "quoter/POST/quote/build/evm(ctrl)", method: "POST", url: `${API.fusionPlusQuoter}/quote/build/evm`, sendBody: true },
+      { label: "relayer/POST/order/create", method: "POST", url: `${API.fusionPlusRelayer}/order/create`, sendBody: true },
+      { label: "orders/POST/order/build", method: "POST", url: `${API.fusionPlusOrders}/order/build`, sendBody: true },
+      { label: "quoter/GET/quote/build/evm", method: "GET", url: `${API.fusionPlusQuoter}/quote/build/evm?${bQs}`, sendBody: false },
+      { label: "relayer/POST/order/submit(prebuild)", method: "POST", url: `${API.fusionPlusRelayer}/order/submit`, sendBody: true },
+    ];
 
-    const { status, body: resBody } = await upstreamFetch(
-      "POST",
-      buildUrl,
-      JSON.stringify(buildBody),
-    );
+    console.log(`${TAG} Fusion+ BUILD MULTI-TRIAL: quoteId=${(body.quoteId as string).slice(0, 20)}... wallet=${cWallet} trials=${buildTrials.length}`);
 
-    if (status !== 200) {
-      console.log(`${TAG} Fusion+ build FAILED: status=${status} resp=${JSON.stringify(resBody).slice(0, 500)}`);
-      console.log(`${TAG} Fusion+ build sent body: ${JSON.stringify(buildBody)}`);
-      return c.json({ ...resBody, _debug: { sentBody: buildBody, buildUrl, rawWallet, checksummedWallet } }, status as any);
+    const buildResults: { label: string; status: number; snippet: string }[] = [];
+    for (const t of buildTrials) {
+      const reqBody = t.sendBody ? bJson : null;
+      console.log(`${TAG} [BUILD-TRIAL] ${t.label}: ${t.method} ${t.url.slice(0, 140)}...`);
+      const { status: s, body: b } = await upstreamFetch(t.method, t.url, reqBody);
+      const snip = JSON.stringify(b).slice(0, 300);
+      buildResults.push({ label: t.label, status: s, snippet: snip });
+      if (s === 200) {
+        console.log(`${TAG} [BUILD-TRIAL] ✓ SUCCESS [${t.label}] keys=[${Object.keys(b).join(",")}]`);
+        console.log(`${TAG} [BUILD-TRIAL] ✓ WINNER: ${t.method} ${t.url}`);
+        return c.json({ ...b, _buildTrialWinner: t.label }, 200);
+      }
+      console.log(`${TAG} [BUILD-TRIAL] ✗ ${t.label}: HTTP ${s} — ${snip}`);
     }
 
-    console.log(`${TAG} Fusion+ build SUCCESS`);
-    return c.json(resBody);
+    console.log(`${TAG} [BUILD-TRIAL] ALL ${buildTrials.length} FAILED: ${JSON.stringify(buildResults)}`);
+    return c.json({
+      error: "All Fusion+ build URL patterns failed",
+      details: `Tried ${buildTrials.length} URL patterns. See _trials for diagnostics.`,
+      statusCode: 502,
+      _trials: buildResults,
+    }, 502);
   });
 
   // ── POST /1inch/fusion-plus/submit ───────────────────────────────

@@ -395,13 +395,21 @@ export async function buildCrossChainOrder(
 
   log.info(TAG, `Building Fusion+ order: quoteId=${quoteId.slice(0, 20)}... wallet=${walletAddress}`);
 
-  const res = await oneInchApi.post<FusionPlusBuildResponse>(
+  const res = await oneInchApi.post<FusionPlusBuildResponse & { _buildTrialWinner?: string; _trials?: unknown[] }>(
     `/fusion-plus/build`,
     body,
     { signal },
   );
 
-  log.info(TAG, `Fusion+ build response: orderHash=${res.orderHash ?? "none"} hasTypedData=${!!res.typedData}`);
+  // IMPLEMENTATION NOTE: Log multi-trial diagnostic fields from server
+  if ((res as any)._buildTrialWinner) {
+    log.info(TAG, `[BUILD-TRIAL] ✓ Winning URL pattern: ${(res as any)._buildTrialWinner}`);
+  }
+  if ((res as any)._trials) {
+    log.warn(TAG, `[BUILD-TRIAL] All trials failed:`, JSON.stringify((res as any)._trials));
+  }
+
+  log.info(TAG, `Fusion+ build response: orderHash=${res.orderHash ?? "none"} hasTypedData=${!!res.typedData} keys=[${Object.keys(res).join(",")}]`);
   return res;
 }
 
