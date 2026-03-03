@@ -664,9 +664,13 @@ function buildServerSideOrder(
     console.log(`${TAG} [EXT] Address-like fields: ${JSON.stringify(addressLikeFields)}`);
 
     if (!escrowFactoryAddr) {
-      diag.error = "No escrow factory address found in quote response";
-      console.log(`${TAG} [EXT] ${diag.error}. Keys: [${allQuoteKeys.join(", ")}]`);
-      return null;
+      // IMPLEMENTATION NOTE: Hardcoded fallback from SDK's deployments.js.
+      // All chains except zkSync (324) use the same escrow factory address.
+      escrowFactoryAddr = srcChainId === 324
+        ? "0xd9085ac07da21bd6eb003a530a524ab054ca8652"
+        : "0x03a25b3215a0e5c15cf23ac4d2e5cf86c0ff7efa";
+      diag.escrowSource = "hardcoded-fallback";
+      console.log(`${TAG} [EXT] No escrow factory in quote, using hardcoded fallback: ${escrowFactoryAddr}`);
     }
 
     console.log(`${TAG} [EXT] Using escrow factory: ${escrowFactoryAddr} (from ${diag.escrowSource})`);
@@ -734,19 +738,23 @@ function buildServerSideOrder(
     let integratorFeeVal = 0, integratorShareVal = 0, resolverFeeVal = 0, whitelistDiscountNum = 100;
     let integratorReceiver = "0x0000000000000000000000000000000000000000";
     let protocolReceiver = "0x0000000000000000000000000000000000000000";
-    const hasFees = !!feeInfo?.resolverFee || !!feeInfo?.integratorFee;
-
     if (feeInfo?.resolverFee) {
-      resolverFeeVal = Number(feeInfo.resolverFee.bps) || 0;
-      if (feeInfo.resolverFee.receiver) protocolReceiver = feeInfo.resolverFee.receiver;
+      // IMPLEMENTATION NOTE: SDK's Bps.toFraction(BASE_1E5) = bps_value * 100000 / 10000 = bps * 10
+      resolverFeeVal = (Number(feeInfo.resolverFee.bps) || 0) * 10;
+      if (feeInfo.resolverFee.receiver) protocolReceiver = feeInfo.resolverFee.receiver.toLowerCase();
       const discountPercent = Number(feeInfo.resolverFee.whitelistDiscountPercent) || 0;
       whitelistDiscountNum = 100 - Math.round(discountPercent);
     }
     if (feeInfo?.integratorFee) {
-      integratorFeeVal = Number(feeInfo.integratorFee.bps) || 0;
+      // IMPLEMENTATION NOTE: SDK's Bps.toFraction(BASE_1E5) = bps * 10
+      integratorFeeVal = (Number(feeInfo.integratorFee.bps) || 0) * 10;
       integratorShareVal = Math.round(Number(feeInfo.integratorFee.share) || 0);
-      if (feeInfo.integratorFee.receiver) integratorReceiver = feeInfo.integratorFee.receiver;
+      if (feeInfo.integratorFee.receiver) integratorReceiver = feeInfo.integratorFee.receiver.toLowerCase();
     }
+
+    // IMPLEMENTATION NOTE: SDK's buildFees() returns undefined if BOTH fee values are zero.
+    // FusionOrder sets receiver=escrowFactory only when buildFees() is truthy.
+    const hasFees = resolverFeeVal > 0 || integratorFeeVal > 0;
 
     const feeBytes = encodeFeeBytes(integratorFeeVal, integratorShareVal, resolverFeeVal, whitelistDiscountNum);
     diag.feeBytes = { integratorFeeVal, integratorShareVal, resolverFeeVal, whitelistDiscountNum, hasFees };
@@ -883,17 +891,21 @@ function buildServerSideOrder(
       ? "0xd66097c27eb8dee404bac235737932260edc6f3b"
       : "0xda0000d4000015a526378bb6fafc650cea5966f8";
 
+    // IMPLEMENTATION NOTE: SDK's Address class ALWAYS lowercases (this.val = val.toLowerCase()).
+    // The relayer may do exact string matching against its quote database.
+    // All address fields in the order struct MUST be lowercase to match SDK behavior.
+
     // Receiver: if fees exist → escrowFactory; else → 0x0 (optimized, same as maker)
     const orderReceiver = hasFees
-      ? eip55Checksum(escrowFactoryAddr)
+      ? escrowFactoryAddr.toLowerCase()
       : "0x0000000000000000000000000000000000000000";
 
     const order: Record<string, string> = {
       salt: salt.toString(),  // DECIMAL string (SDK: this.salt.toString())
-      maker: eip55Checksum(walletAddress),
+      maker: walletAddress.toLowerCase(),
       receiver: orderReceiver,
-      makerAsset: eip55Checksum(srcTokenAddress),
-      takerAsset: eip55Checksum(TRUE_ERC20),
+      makerAsset: srcTokenAddress.toLowerCase(),
+      takerAsset: TRUE_ERC20,  // already lowercase constant
       makingAmount: srcTokenAmount,
       takingAmount: takingAmountStr,
       makerTraits: makerTraits.toString(),  // DECIMAL string (SDK: asBigInt().toString())
@@ -951,6 +963,8 @@ function buildServerSideOrder(
     console.log(`${TAG} [EXT-v6] PostInteraction breakdown: escrow(20) + integrator(20) + protocol(20) + fees(${feeBytes.length}) + whitelist(${whitelistEncoded.length}) + cc(${crossChainData.length}) = ${postLen}`);
     console.log(`${TAG} [EXT-v6] Salt: baseSalt=${baseSalt.toString(16).slice(0, 12)}... extHash=${toHex(extensionHash).slice(0, 18)}... verified=true final=${order.salt.slice(0, 20)}...`);
     console.log(`${TAG} [EXT-v6] MakerTraits: ${order.makerTraits.slice(0, 20)}... takerAsset=${order.takerAsset} receiver=${order.receiver}`);
+    console.log(`${TAG} [EXT-v6] Addresses (all lowercase): maker=${order.maker} makerAsset=${order.makerAsset} takerAsset=${order.takerAsset}`);
+    console.log(`${TAG} [EXT-v6] Fees: intFee=${integratorFeeVal} intShare=${integratorShareVal} resFee=${resolverFeeVal} wlDiscount=${whitelistDiscountNum} hasFees=${hasFees}`);
     console.log(`${TAG} [EXT-v6] EIP-712 orderHash: ${orderHash}`);
 
     return { order, extension, typedData, orderHash, diagnostics: diag };
@@ -1378,11 +1392,12 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
     if (!isValidHashLock(body.hashLock)) return c.json({ error: "Invalid hashLock — must be 0x + 64 hex chars" }, 400);
 
-    // EIP-55 checksum all addresses
-    let cWallet: string, cSrc: string, cDst: string;
-    try { cWallet = eip55Checksum(body.walletAddress as string); } catch { cWallet = body.walletAddress as string; }
-    try { cSrc = eip55Checksum(body.srcTokenAddress as string); } catch { cSrc = body.srcTokenAddress as string; }
-    try { cDst = eip55Checksum(body.dstTokenAddress as string); } catch { cDst = body.dstTokenAddress as string; }
+    // Lowercase all addresses (matching SDK's Address class behavior)
+    // IMPLEMENTATION NOTE: SDK's Address class always lowercases. The quote API may store
+    // the wallet address and later compare it against the order's maker field. Both must match.
+    const cWallet = (body.walletAddress as string).toLowerCase();
+    const cSrc = (body.srcTokenAddress as string).toLowerCase();
+    const cDst = (body.dstTokenAddress as string).toLowerCase();
 
     const amt = body.amount as string;
     const hashLock = body.hashLock as string;
