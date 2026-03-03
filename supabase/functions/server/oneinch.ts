@@ -729,80 +729,77 @@ export function registerOneInchRoutes(app: Hono) {
     if (typeof body.permit === "string") cleanBody.permit = body.permit;
     if (typeof body.isPermit2 === "boolean") cleanBody.isPermit2 = body.isPermit2;
 
-    const relayerUrl = fusionRelayerUrl(chainId, "/order/build");
-    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${body.quoteId} wallet=${cleanBody.walletAddress} preset=${cleanBody.preset} url=${relayerUrl} bodyKeys=[${Object.keys(cleanBody).join(",")}]`);
-
-    const { status, body: resBody } = await upstreamFetch(
-      "POST",
-      relayerUrl,
-      JSON.stringify(cleanBody),
-    );
-
-    // IMPLEMENTATION NOTE — Fusion Build Endpoint Fallback Strategy:
+    // IMPLEMENTATION NOTE — CRITICAL DISCOVERY (2026-03-03):
     //
-    // The 1inch Fusion v2.0 API has two possible build endpoint locations:
-    //   1. Relayer:  POST /fusion/relayer/v2.0/{chain}/order/build  (primary/documented)
-    //   2. Quoter:   POST /fusion/quoter/v2.0/{chain}/quote/build   (fallback — some API versions)
+    // The 1inch Fusion Relayer v2.0 /order/build endpoint reads parameters
+    // from the URL QUERY STRING, not the JSON body. We confirmed this by
+    // observing the error response meta: {"type":"string.empty","value":"",
+    // "path":["walletAddress"]} — 1inch received an empty walletAddress
+    // despite our JSON body containing a valid checksummed address.
     //
-    // If the relayer endpoint returns 404 (endpoint removed/deprecated), we
-    // automatically fall back to the quoter endpoint.
-    if (status === 404) {
-      const quoterUrl = fusionQuoterUrl(chainId, "/quote/build");
-      console.log(`${TAG} Fusion build relayer returned 404 — trying quoter fallback: url=${quoterUrl}`);
+    // Strategy: Try 4 approaches to find which one the relayer accepts:
+    //   1. POST with query params + JSON body (belt-and-suspenders)
+    //   2. POST with query params only (no body)
+    //   3. POST with JSON body only (original approach — known to fail)
+    //   4. GET with query params (some build endpoints are GET)
 
-      const fallback = await upstreamFetch(
-        "POST",
-        quoterUrl,
-        JSON.stringify(cleanBody),
-      );
-      if (fallback.status !== 200) {
-        console.log(`${TAG} Fusion build quoter fallback ALSO FAILED: status=${fallback.status} response=${JSON.stringify(fallback.body).slice(0, 500)}`);
-        return c.json({
-          ...fallback.body,
-          _debug: {
-            relayerUrl,
-            relayerStatus: 404,
-            quoterUrl,
-            quoterStatus: fallback.status,
-            hint: "Both relayer and quoter build endpoints failed. Check https://portal.1inch.dev for current Fusion API endpoints.",
-          },
-        }, fallback.status as any);
-      }
-      console.log(`${TAG} Fusion build quoter fallback SUCCESS`);
-      return c.json(fallback.body);
+    const queryParams = new URLSearchParams();
+    queryParams.set("quoteId", cleanBody.quoteId as string);
+    queryParams.set("walletAddress", cleanBody.walletAddress as string);
+    if (cleanBody.secretsCount != null) queryParams.set("secretsCount", String(cleanBody.secretsCount));
+    if (cleanBody.preset) queryParams.set("preset", cleanBody.preset as string);
+    if (cleanBody.receiver) queryParams.set("receiver", cleanBody.receiver as string);
+    if (cleanBody.nonce != null) queryParams.set("nonce", String(cleanBody.nonce));
+    if (cleanBody.permit) queryParams.set("permit", cleanBody.permit as string);
+    if (cleanBody.isPermit2 != null) queryParams.set("isPermit2", String(cleanBody.isPermit2));
+
+    const relayerBaseUrl = fusionRelayerUrl(chainId, "/order/build");
+    const relayerUrlWithQuery = `${relayerBaseUrl}?${queryParams.toString()}`;
+    console.log(`${TAG} Fusion build: chain=${chainId} queryKeys=[${[...queryParams.keys()].join(",")}] baseUrl=${relayerBaseUrl}`);
+
+    // Attempt 1: POST with query params + JSON body
+    const a1 = await upstreamFetch("POST", relayerUrlWithQuery, JSON.stringify(cleanBody));
+    if (a1.status === 200) {
+      console.log(`${TAG} Fusion build SUCCESS (attempt 1: POST query+body)`);
+      return c.json(a1.body);
     }
+    console.log(`${TAG} Fusion build attempt 1 FAILED: status=${a1.status} resp=${JSON.stringify(a1.body).slice(0, 300)}`);
 
-    if (status !== 200) {
-      console.log(`${TAG} Fusion build FAILED: status=${status} response=${JSON.stringify(resBody).slice(0, 500)} sentBody=${JSON.stringify(cleanBody)}`);
-
-      // IMPLEMENTATION NOTE: If the relayer returns 400, try a minimal body
-      // with ONLY quoteId — some Fusion v2.0 API versions reject unknown fields
-      // and the walletAddress is already encoded in the quoteId.
-      if (status === 400) {
-        const minimalBody = { quoteId: body.quoteId };
-        console.log(`${TAG} Fusion build retrying with MINIMAL body (quoteId only): url=${relayerUrl}`);
-        const retryRes = await upstreamFetch("POST", relayerUrl, JSON.stringify(minimalBody));
-        if (retryRes.status === 200) {
-          console.log(`${TAG} Fusion build MINIMAL body SUCCEEDED — the relayer rejects walletAddress/preset fields`);
-          return c.json(retryRes.body);
-        }
-        console.log(`${TAG} Fusion build MINIMAL body ALSO FAILED: status=${retryRes.status} response=${JSON.stringify(retryRes.body).slice(0, 500)}`);
-
-        // Also try quoter build endpoint as last resort
-        const quoterBuildUrl = fusionQuoterUrl(chainId, "/order/build");
-        console.log(`${TAG} Fusion build trying quoter /order/build: url=${quoterBuildUrl}`);
-        const quoterRes = await upstreamFetch("POST", quoterBuildUrl, JSON.stringify(cleanBody));
-        if (quoterRes.status === 200) {
-          console.log(`${TAG} Fusion build quoter /order/build SUCCEEDED`);
-          return c.json(quoterRes.body);
-        }
-        console.log(`${TAG} Fusion build quoter /order/build FAILED: status=${quoterRes.status} response=${JSON.stringify(quoterRes.body).slice(0, 500)}`);
-      }
-
-      // Return the original error with debug info
-      return c.json({ ...resBody, _debug: { sentBody: cleanBody, relayerUrl } }, status as any);
+    // Attempt 2: POST with query params only (no body)
+    const a2 = await upstreamFetch("POST", relayerUrlWithQuery, null);
+    if (a2.status === 200) {
+      console.log(`${TAG} Fusion build SUCCESS (attempt 2: POST query only)`);
+      return c.json(a2.body);
     }
-    return c.json(resBody, status as any);
+    console.log(`${TAG} Fusion build attempt 2 FAILED: status=${a2.status} resp=${JSON.stringify(a2.body).slice(0, 300)}`);
+
+    // Attempt 3: POST with JSON body only (no query) — known to fail
+    const a3 = await upstreamFetch("POST", relayerBaseUrl, JSON.stringify(cleanBody));
+    if (a3.status === 200) {
+      console.log(`${TAG} Fusion build SUCCESS (attempt 3: POST body only)`);
+      return c.json(a3.body);
+    }
+    console.log(`${TAG} Fusion build attempt 3 FAILED: status=${a3.status} resp=${JSON.stringify(a3.body).slice(0, 300)}`);
+
+    // Attempt 4: GET with query params
+    const a4 = await upstreamFetch("GET", relayerUrlWithQuery);
+    if (a4.status === 200) {
+      console.log(`${TAG} Fusion build SUCCESS (attempt 4: GET query)`);
+      return c.json(a4.body);
+    }
+    console.log(`${TAG} Fusion build attempt 4 FAILED: status=${a4.status} resp=${JSON.stringify(a4.body).slice(0, 300)}`);
+
+    // All 4 attempts failed — return detailed debug info
+    return c.json({
+      ...a1.body,
+      _debug: {
+        sentBody: cleanBody,
+        relayerBaseUrl,
+        queryString: queryParams.toString().slice(0, 200),
+        attempts: { "1_POST_query+body": a1.status, "2_POST_query_only": a2.status, "3_POST_body_only": a3.status, "4_GET_query": a4.status },
+        hint: "All 4 build strategies failed. The _upstream field shows 1inch raw error.",
+      },
+    }, a1.status as any);
   });
 
   // ── POST /1inch/fusion/submit/:chainId ───────────────────────────
@@ -1189,7 +1186,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-03c-build-debug-secrets",
+      serverBuild: "2026-03-03d-build-query-params",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)
