@@ -1,0 +1,265 @@
+[WC] Pre-connect relay keepalive stopped
+swap:1 Access to fetch at 'https://api.binance.com/api/v3/klines?symbol=HYPEUSDT&interval=1d&limit=200' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.binance.com/api/v3/klines?symbol=HYPEUSDT&interval=1d&limit=200:1  Failed to load resource: net::ERR_FAILED
+2App-ChKu6qd8.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-7ciwWcQw.js:23:14341)
+    at SwapPage-7ciwWcQw.js:51:26319
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-ChKu6qd8.js:2
+swap:1 Access to fetch at 'https://api.coingecko.com/api/v3/coins/hyperliquid/ohlc?vs_currency=usd&days=7' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/coins/hyperliquid/ohlc?vs_currency=usd&days=7:1  Failed to load resource: net::ERR_FAILED
+2App-ChKu6qd8.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-7ciwWcQw.js:23:14341)
+    at SwapPage-7ciwWcQw.js:51:26319
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ChKu6qd8.js:2
+App-ChKu6qd8.js:2 [HBAR.h][1inch:tokens] Balance fetch failed: chain=1 wallet=0x4bd5190073e6d2e23ac278a7b7f540753fe6981f AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-7ciwWcQw.js:23:14341)
+    at SwapPage-7ciwWcQw.js:51:26319
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-ChKu6qd8.js:2
+App-ChKu6qd8.js:2 [HBAR.h][1inch] Token list fetch failed AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-7ciwWcQw.js:23:14341)
+    at SwapPage-7ciwWcQw.js:51:25957
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-ChKu6qd8.js:2
+2App-ChKu6qd8.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-7ciwWcQw.js:23:14341)
+    at SwapPage-7ciwWcQw.js:51:26319
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-ChKu6qd8.js:2
+2App-ChKu6qd8.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-7ciwWcQw.js:23:14341)
+    at SwapPage-7ciwWcQw.js:51:26319
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-ChKu6qd8.js:2
+App-ChKu6qd8.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+swap:1 Access to fetch at 'https://api.binance.com/api/v3/klines?symbol=HYPEUSDT&interval=1h&limit=168' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.binance.com/api/v3/klines?symbol=HYPEUSDT&interval=1h&limit=168:1  Failed to load resource: net::ERR_FAILED
+App-ChKu6qd8.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/coincap-proxy?path=%2Fassets%2Fmonero%2Fhistory%3Finterval%3Dm30%26start%3D1771913941533%26end%3D1772518741533:1  Failed to load resource: the server responded with a status of 502 ()
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/coincap-proxy?path=%2Fassets%2Fhyperliquid%2Fhistory%3Finterval%3Dm30%26start%3D1771913942004%26end%3D1772518742004:1  Failed to load resource: the server responded with a status of 502 ()
+swap:1 Access to fetch at 'https://api.coingecko.com/api/v3/coins/canton-network/ohlc?vs_currency=usd&days=7' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/coins/canton-network/ohlc?vs_currency=usd&days=7:1  Failed to load resource: net::ERR_FAILED
+App-ChKu6qd8.js:2 [HBAR.h] Live token prices updated: 38 tokens {HBAR: 0.09611656000000002, WHBAR: 0.09611656000000002, SAUCE: 0.017267409699568692, AAVE: 16.60367957, BTC.ℏ: 0.00420345, …}
+SwapPage-7ciwWcQw.js:23  POST https://ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/build 502 (Bad Gateway)
+p @ SwapPage-7ciwWcQw.js:23
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/build → HTTP 502: {"error":"All Fusion+ build URL patterns failed","details":"Tried 8 URL patterns. See _trials for diagnostics.","statusCode":502,"_trials":[{"label":"quoter/POST/quote/build","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"},{"label":"quoter/GET/quote/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v1.0/quote/build?quoteId=79b2fe6d-7a68-416a-a72f-57caf4e01553&walletAddress=0x4Bd5190073E6D2E23ac278a7B7f540753fe6981f&secretsCount=1\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"relayer/POST/order/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/build\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"quoter/POST/quote/build/evm(ctrl)","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/quote/build/evm\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"relayer/POST/order/create","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/create\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"orders/POST/order/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/build\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"quoter/GET/quote/build/evm","status":404,"s 
+console.warn @ App-ChKu6qd8.js:2
+SV @ App-ChKu6qd8.js:192
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch:client] Retryable error (attempt 1/3): All Fusion+ build URL patterns failed 
+console.warn @ App-ChKu6qd8.js:2
+SV @ App-ChKu6qd8.js:192
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+SwapPage-7ciwWcQw.js:23  POST https://ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/build 502 (Bad Gateway)
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/build → HTTP 502: {"error":"All Fusion+ build URL patterns failed","details":"Tried 8 URL patterns. See _trials for diagnostics.","statusCode":502,"_trials":[{"label":"quoter/POST/quote/build","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"},{"label":"quoter/GET/quote/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v1.0/quote/build?quoteId=79b2fe6d-7a68-416a-a72f-57caf4e01553&walletAddress=0x4Bd5190073E6D2E23ac278a7B7f540753fe6981f&secretsCount=1\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"relayer/POST/order/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/build\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"quoter/POST/quote/build/evm(ctrl)","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/quote/build/evm\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"relayer/POST/order/create","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/create\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"orders/POST/order/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/build\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"quoter/GET/quote/build/evm","status":404,"s 
+console.warn @ App-ChKu6qd8.js:2
+SV @ App-ChKu6qd8.js:192
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch:client] Retryable error (attempt 2/3): All Fusion+ build URL patterns failed 
+console.warn @ App-ChKu6qd8.js:2
+SV @ App-ChKu6qd8.js:192
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+SwapPage-7ciwWcQw.js:23  POST https://ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/build 502 (Bad Gateway)
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/build → HTTP 502: {"error":"All Fusion+ build URL patterns failed","details":"Tried 8 URL patterns. See _trials for diagnostics.","statusCode":502,"_trials":[{"label":"quoter/POST/quote/build","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"},{"label":"quoter/GET/quote/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v1.0/quote/build?quoteId=79b2fe6d-7a68-416a-a72f-57caf4e01553&walletAddress=0x4Bd5190073E6D2E23ac278a7B7f540753fe6981f&secretsCount=1\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"relayer/POST/order/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/build\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"quoter/POST/quote/build/evm(ctrl)","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/quote/build/evm\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"relayer/POST/order/create","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/create\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"orders/POST/order/build","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot POST /v1.0/order/build\\\",\\\"error\\\":\\\"Not Found\\\",\\\"statusCode\\\":404}\"}"},{"label":"quoter/GET/quote/build/evm","status":404,"s 
+console.warn @ App-ChKu6qd8.js:2
+SV @ App-ChKu6qd8.js:192
+p @ SwapPage-7ciwWcQw.js:23
+await in p
+gr @ SwapPage-7ciwWcQw.js:23
+Wn @ SwapPage-7ciwWcQw.js:23
+Jo @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch] [FUSION+] Swap error: 1inch API is temporarily unavailable. Please try again shortly. — Tried 8 URL patterns. See _trials for diagnostics. 
+console.warn @ App-ChKu6qd8.js:2
+SV @ App-ChKu6qd8.js:192
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+await in (anonymous)
+(anonymous) @ SwapPage-7ciwWcQw.js:51
+P @ vendor-react-b7-JL9ua.js:37
+le @ vendor-react-b7-JL9ua.js:37
+ue @ vendor-react-b7-JL9ua.js:37
+qs @ vendor-react-b7-JL9ua.js:37
+bs @ vendor-react-b7-JL9ua.js:37
+(anonymous) @ vendor-react-b7-JL9ua.js:37
+Su @ vendor-react-b7-JL9ua.js:40
+kl @ vendor-react-b7-JL9ua.js:37
+Sa @ vendor-react-b7-JL9ua.js:37
+na @ vendor-react-b7-JL9ua.js:37
+Op @ vendor-react-b7-JL9ua.js:37
+App-ChKu6qd8.js:2 [HBAR.h][1inch] [FUSION+] Full error: {
+  "kind": "UPSTREAM_ERROR",
+  "status": 502,
+  "details": "Tried 8 URL patterns. See _trials for diagnostics.",
+  "message": "All Fusion+ build URL patterns failed"

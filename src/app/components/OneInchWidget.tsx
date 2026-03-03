@@ -1266,43 +1266,24 @@ export function OneInchWidget() {
     stopCrossChainPolling();
 
     try {
-      // Step A: Get a fresh quote with enableEstimate=true for a valid quoteId
+      // Step A: Build the order — /quote/build needs FULL swap params
+      // (same as /quote/receive), not just quoteId. The build endpoint
+      // returns typedData + orderHash in one shot.
       setSwapStatus("building");
-      log.info("1inch", `[FUSION+] Step A: Requesting Fusion+ quote with enableEstimate=true`);
+      const amountWei = toWei(fromAmount, fromToken.decimals);
+      log.info("1inch", `[FUSION+] Step A: Building cross-chain order with full params: ${selectedChainId}→${dstChainId} amt=${amountWei}`);
 
-      let execQuoteId = crossChainQuote.quoteId;
-
-      if (!execQuoteId) {
-        const amountWei = toWei(fromAmount, fromToken.decimals);
-        const freshQuote = await getCrossChainQuote(
-          selectedChainId,
-          dstChainId,
-          fromToken.address,
-          crossChainDstToken.address,
-          amountWei,
-          evmAccount,
-        );
-        execQuoteId = freshQuote.quoteId;
-        log.info("1inch", `[FUSION+] Fresh quote received: quoteId=${execQuoteId || "(EMPTY)"}`);
-      }
-
-      if (!execQuoteId) {
-        setSwapError(
-          "Unable to get a Fusion+ cross-chain quote ID. The trade amount may be too small " +
-          "for cross-chain resolvers, or there is insufficient liquidity on the route."
-        );
-        setSwapStatus("error");
-        return;
-      }
-
-      // Step B: Build the order — returns EIP-712 typed data for signing
-      log.info("1inch", `[FUSION+] Step B: Building cross-chain order: quoteId=${execQuoteId}`);
-
-      const buildResult = await buildCrossChainOrder(
-        execQuoteId,
-        evmAccount,
-        1, // secretsCount — 1 for simple swaps
-      );
+      const buildResult = await buildCrossChainOrder({
+        srcChainId: selectedChainId,
+        dstChainId,
+        srcTokenAddress: fromToken.address,
+        dstTokenAddress: crossChainDstToken.address,
+        amount: amountWei,
+        walletAddress: evmAccount,
+        enableEstimate: true,
+        quoteId: crossChainQuote.quoteId || undefined,
+        preset: crossChainQuote.recommendedPreset || undefined,
+      });
 
       log.info("1inch", `[FUSION+] Build success: orderHash=${buildResult.orderHash} hasTypedData=${!!buildResult.typedData}`);
       setCrossChainBuildData(buildResult);

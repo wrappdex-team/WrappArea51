@@ -1023,75 +1023,76 @@ export function registerOneInchRoutes(app: Hono) {
   // ── POST /1inch/fusion-plus/build ────────────────────────────────
   // Build a cross-chain order — returns EIP-712 typed data for signing.
   //
-  // Body: { quoteId, walletAddress, preset, ... }
+  // IMPLEMENTATION NOTE (Round 3): Diagnostics proved /quote/build is LIVE
+  // (400 not 404) but needs FULL swap params — same as /quote/receive — not
+  // just quoteId. R1: "walletAddress not provided" (body ignored). R2: "amount
+  // cannot be empty" (qs worked but only had quoteId/wallet/secretsCount).
+  // Fix: forward ALL swap params as query string using srcChain/dstChain names.
+  //
+  // Client sends: { srcChainId, dstChainId, srcTokenAddress, dstTokenAddress,
+  //                  amount, walletAddress, enableEstimate?, quoteId? }
   app.post(`${PREFIX}/fusion-plus/build`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
     let body: Record<string, unknown>;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
+    try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
 
-    if (typeof body.quoteId !== "string" || !body.quoteId) {
-      return c.json({ error: "Missing or invalid quoteId" }, 400);
-    }
+    const srcChainId = typeof body.srcChainId === "number" ? body.srcChainId : NaN;
+    const dstChainId = typeof body.dstChainId === "number" ? body.dstChainId : NaN;
+    if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ not supported on src chain ${srcChainId}` }, 400);
+    if (!FUSION_PLUS_CHAINS.has(dstChainId)) return c.json({ error: `Fusion+ not supported on dst chain ${dstChainId}` }, 400);
+    if (srcChainId === dstChainId) return c.json({ error: "Source and destination chains must differ" }, 400);
+    if (!isValidEthAddress(body.srcTokenAddress)) return c.json({ error: "Invalid srcTokenAddress" }, 400);
+    if (!isValidEthAddress(body.dstTokenAddress)) return c.json({ error: "Invalid dstTokenAddress" }, 400);
+    if (typeof body.amount !== "string" || !/^\d+$/.test(body.amount)) return c.json({ error: "Invalid amount" }, 400);
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: Multi-trial for build endpoint — /quote/build/evm
-    // returned 404 in production. Same discovery approach as the quote fix.
-    const rawWallet = body.walletAddress as string;
-    let cWallet: string;
-    try { cWallet = eip55Checksum(rawWallet); } catch { cWallet = rawWallet; }
+    let cWallet: string; try { cWallet = eip55Checksum(body.walletAddress as string); } catch { cWallet = body.walletAddress as string; }
+    let cSrc: string; try { cSrc = eip55Checksum(body.srcTokenAddress as string); } catch { cSrc = body.srcTokenAddress as string; }
+    let cDst: string; try { cDst = eip55Checksum(body.dstTokenAddress as string); } catch { cDst = body.dstTokenAddress as string; }
+    const amt = body.amount as string;
 
-    const bJson = JSON.stringify({
-      quoteId: body.quoteId,
-      walletAddress: cWallet,
-      ...(typeof body.secretsCount === "number" ? { secretsCount: body.secretsCount } : {}),
-    });
-    const bQs = new URLSearchParams({
-      quoteId: body.quoteId as string,
-      walletAddress: cWallet,
-      ...(typeof body.secretsCount === "number" ? { secretsCount: String(body.secretsCount) } : {}),
-    }).toString();
+    // Build query string — srcChain/dstChain (proven for /quote/receive)
+    const bQs = new URLSearchParams();
+    bQs.set("srcChain", String(srcChainId));
+    bQs.set("dstChain", String(dstChainId));
+    bQs.set("srcTokenAddress", cSrc);
+    bQs.set("dstTokenAddress", cDst);
+    bQs.set("amount", amt);
+    bQs.set("walletAddress", cWallet);
+    bQs.set("enableEstimate", typeof body.enableEstimate === "boolean" ? String(body.enableEstimate) : "true");
+    if (typeof body.quoteId === "string" && body.quoteId) bQs.set("quoteId", body.quoteId);
+    if (typeof body.preset === "string") bQs.set("preset", body.preset);
+    if (typeof body.source === "string") bQs.set("source", body.source);
 
-    const buildTrials: { label: string; method: "GET" | "POST"; url: string; sendBody: boolean }[] = [
-      { label: "quoter/POST/quote/build", method: "POST", url: `${API.fusionPlusQuoter}/quote/build`, sendBody: true },
-      { label: "quoter/GET/quote/build", method: "GET", url: `${API.fusionPlusQuoter}/quote/build?${bQs}`, sendBody: false },
-      { label: "relayer/POST/order/build", method: "POST", url: `${API.fusionPlusRelayer}/order/build`, sendBody: true },
-      { label: "quoter/POST/quote/build/evm(ctrl)", method: "POST", url: `${API.fusionPlusQuoter}/quote/build/evm`, sendBody: true },
-      { label: "relayer/POST/order/create", method: "POST", url: `${API.fusionPlusRelayer}/order/create`, sendBody: true },
-      { label: "orders/POST/order/build", method: "POST", url: `${API.fusionPlusOrders}/order/build`, sendBody: true },
-      { label: "quoter/GET/quote/build/evm", method: "GET", url: `${API.fusionPlusQuoter}/quote/build/evm?${bQs}`, sendBody: false },
-      { label: "relayer/POST/order/submit(prebuild)", method: "POST", url: `${API.fusionPlusRelayer}/order/submit`, sendBody: true },
-    ];
+    const buildUrl = `${API.fusionPlusQuoter}/quote/build?${bQs.toString()}`;
+    console.log(`${TAG} Fusion+ BUILD R3: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet} url=${buildUrl.slice(0,180)}...`);
 
-    console.log(`${TAG} Fusion+ BUILD MULTI-TRIAL: quoteId=${(body.quoteId as string).slice(0, 20)}... wallet=${cWallet} trials=${buildTrials.length}`);
-
-    const buildResults: { label: string; status: number; snippet: string }[] = [];
-    for (const t of buildTrials) {
-      const reqBody = t.sendBody ? bJson : null;
-      console.log(`${TAG} [BUILD-TRIAL] ${t.label}: ${t.method} ${t.url.slice(0, 140)}...`);
-      const { status: s, body: b } = await upstreamFetch(t.method, t.url, reqBody);
-      const snip = JSON.stringify(b).slice(0, 300);
-      buildResults.push({ label: t.label, status: s, snippet: snip });
-      if (s === 200) {
-        console.log(`${TAG} [BUILD-TRIAL] ✓ SUCCESS [${t.label}] keys=[${Object.keys(b).join(",")}]`);
-        console.log(`${TAG} [BUILD-TRIAL] ✓ WINNER: ${t.method} ${t.url}`);
-        return c.json({ ...b, _buildTrialWinner: t.label }, 200);
-      }
-      console.log(`${TAG} [BUILD-TRIAL] ✗ ${t.label}: HTTP ${s} — ${snip}`);
+    // Try POST first (like /quote/receive uses GET, /quote/build may prefer POST)
+    const { status, body: resBody } = await upstreamFetch("POST", buildUrl, null);
+    if (status === 200) {
+      console.log(`${TAG} Fusion+ BUILD SUCCESS (POST): keys=[${Object.keys(resBody).join(",")}] orderHash=${JSON.stringify(resBody.orderHash)}`);
+      return c.json(resBody, 200);
     }
 
-    console.log(`${TAG} [BUILD-TRIAL] ALL ${buildTrials.length} FAILED: ${JSON.stringify(buildResults)}`);
+    // Fallback: try GET
+    console.log(`${TAG} Fusion+ BUILD POST failed (${status}), trying GET...`);
+    const { status: s2, body: b2 } = await upstreamFetch("GET", buildUrl, null);
+    if (s2 === 200) {
+      console.log(`${TAG} Fusion+ BUILD SUCCESS (GET): keys=[${Object.keys(b2).join(",")}] orderHash=${JSON.stringify(b2.orderHash)}`);
+      return c.json(b2, 200);
+    }
+
+    console.log(`${TAG} Fusion+ BUILD FAILED: POST=${status} GET=${s2}`);
+    console.log(`${TAG} POST resp: ${JSON.stringify(resBody).slice(0,500)}`);
+    console.log(`${TAG} GET resp: ${JSON.stringify(b2).slice(0,500)}`);
     return c.json({
-      error: "All Fusion+ build URL patterns failed",
-      details: `Tried ${buildTrials.length} URL patterns. See _trials for diagnostics.`,
-      statusCode: 502,
-      _trials: buildResults,
-    }, 502);
+      error: "Fusion+ build failed",
+      details: `POST=${status} GET=${s2}`,
+      _postResp: resBody,
+      _getResp: b2,
+    }, status as any);
   });
 
   // ── POST /1inch/fusion-plus/submit ───────────────────────────────

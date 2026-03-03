@@ -374,40 +374,53 @@ export interface FusionPlusBuildResponse {
 /**
  * Build a Fusion+ cross-chain order — returns EIP-712 typed data for signing.
  *
- * Calls POST /fusion-plus/build via our server proxy which forwards to
- * /fusion-plus/quoter/v1.2/quote/build/evm.
+ * IMPLEMENTATION NOTE (Round 3): The /quote/build endpoint needs the FULL
+ * swap params (same as /quote/receive), NOT just quoteId. Diagnostics proved
+ * that sending only quoteId+walletAddress gets "amount cannot be empty".
  *
  * The response contains typedData that must be signed with
  * eth_signTypedData_v4 — this is a signature, NOT a transaction,
  * so the user pays ZERO gas.
  */
+export interface BuildCrossChainParams {
+  srcChainId: number;
+  dstChainId: number;
+  srcTokenAddress: string;
+  dstTokenAddress: string;
+  amount: string;          // in smallest unit (wei)
+  walletAddress: string;
+  enableEstimate?: boolean;
+  quoteId?: string;        // optional — may help with price locking
+  preset?: string;         // fast/medium/slow
+}
+
 export async function buildCrossChainOrder(
-  quoteId: string,
-  walletAddress: string,
-  secretsCount: number = 1,
+  params: BuildCrossChainParams,
   signal?: AbortSignal,
 ): Promise<FusionPlusBuildResponse> {
+  // Resolve native tokens to wrapped equivalents (same as getCrossChainQuote)
+  const resolvedSrc = resolveTokenForFusionPlus(params.srcTokenAddress, params.srcChainId);
+  const resolvedDst = resolveTokenForFusionPlus(params.dstTokenAddress, params.dstChainId);
+
   const body = {
-    quoteId,
-    walletAddress,
-    secretsCount,
+    srcChainId: params.srcChainId,
+    dstChainId: params.dstChainId,
+    srcTokenAddress: resolvedSrc,
+    dstTokenAddress: resolvedDst,
+    amount: params.amount,
+    walletAddress: params.walletAddress,
+    enableEstimate: params.enableEstimate ?? true,
+    ...(params.quoteId ? { quoteId: params.quoteId } : {}),
+    ...(params.preset ? { preset: params.preset } : {}),
   };
 
-  log.info(TAG, `Building Fusion+ order: quoteId=${quoteId.slice(0, 20)}... wallet=${walletAddress}`);
+  log.info(TAG, `Building Fusion+ order: ${params.srcChainId}→${params.dstChainId} amt=${params.amount} wallet=${params.walletAddress}`);
 
-  const res = await oneInchApi.post<FusionPlusBuildResponse & { _buildTrialWinner?: string; _trials?: unknown[] }>(
+  const res = await oneInchApi.post<FusionPlusBuildResponse>(
     `/fusion-plus/build`,
     body,
     { signal },
   );
-
-  // IMPLEMENTATION NOTE: Log multi-trial diagnostic fields from server
-  if ((res as any)._buildTrialWinner) {
-    log.info(TAG, `[BUILD-TRIAL] ✓ Winning URL pattern: ${(res as any)._buildTrialWinner}`);
-  }
-  if ((res as any)._trials) {
-    log.warn(TAG, `[BUILD-TRIAL] All trials failed:`, JSON.stringify((res as any)._trials));
-  }
 
   log.info(TAG, `Fusion+ build response: orderHash=${res.orderHash ?? "none"} hasTypedData=${!!res.typedData} keys=[${Object.keys(res).join(",")}]`);
   return res;
