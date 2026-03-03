@@ -31,7 +31,7 @@
 //
 //   ── Fusion+ API (cross-chain) — multi-trial URL discovery ──
 //   POST /1inch/fusion-plus/quote              → MULTI-TRIAL: v2.0+v1.0 patterns (see handler)
-//   POST /1inch/fusion-plus/build              → /fusion-plus/quoter/v1.0/quote/build/evm
+//   POST /1inch/fusion-plus/build              → MULTI-TRIAL R6: /quote/build[/evm] + /relayer/v1.2/submit (SDK path)
 //   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.0/submit
 //   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.0/order/status/{hash}
 //   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.0/submit/secret
@@ -81,8 +81,12 @@ const API = {
   // approach (tries v2.0 + v1.0 patterns). These v1.0 base URLs are used by
   // the build/submit/status routes only. Once the multi-trial reveals the
   // correct URL pattern, all endpoints will be updated to match.
+  // IMPLEMENTATION NOTE (Round 6, 2026-03-03): Updated to v1.2 based on
+  // the official @1inch/cross-chain-sdk source code which uses v1.2 for
+  // both QuoterApi.Version and RelayerApi.Version. The build handler uses
+  // explicit full URLs with multi-trial, so this only affects submit/status/secrets routes.
   fusionPlusQuoter:  "https://api.1inch.dev/fusion-plus/quoter/v1.0",
-  fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.0",
+  fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.2",
   fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.0",
   token:          "https://api.1inch.dev/token/v1.2",
   balance:        "https://api.1inch.dev/balance/v1.2",
@@ -1070,72 +1074,115 @@ export function registerOneInchRoutes(app: Hono) {
     const quoteId = typeof body.quoteId === "string" && body.quoteId ? body.quoteId : null;
     const BASE = "https://api.1inch.dev/fusion-plus/quoter";
 
-    // ── Round 5 Multi-trial ──
-    // Docs: "Build EVM order by given quoteId (v1.2)" POST
-    // R1-R4 all used v1.0. Now trying v1.2 with POST body.
+    // ── Round 6 Multi-trial ──
+    //
+    // IMPLEMENTATION NOTE (Round 6, 2026-03-03): SDK analysis reveals:
+    //
+    // 1) The official @1inch/cross-chain-sdk has NO /quote/build endpoint.
+    //    The SDK flow is: quote → client-side order construction → EIP-712 sign → POST /relayer/v1.2/submit.
+    //    However, the 1inch API Portal docs DO list /quote/build as a convenience endpoint.
+    //
+    // 2) Round 5 results:
+    //    - v1.2/quote/build → 404 (doesn't exist)
+    //    - v1.0/quote/build POST body → 400 "walletAddress not provided" (ignores body, reads QS)
+    //    - v1.0/quote/build QS → 400 "invalid secretHashes" INVALID_ARRAY (reads QS but can't parse array)
+    //
+    // 3) Key insights for Round 6:
+    //    a) Route header says "/quote/build/evm" — the /evm suffix may be required!
+    //    b) SDK omits secretHashes for single fill: `secretHashes.length === 1 ? undefined : secretHashes`
+    //    c) Hybrid: QS for scalar params + POST body for arrays
+    //    d) The SDK uses v1.2 for quoter AND relayer, not v1.0
+    //
+    // Round 6 tests these 3 insights systematically.
     const trials: { label: string; method: "GET" | "POST"; url: string; body: string | null }[] = [];
 
-    if (quoteId) {
-      // T1: v1.2 POST body {quoteId, walletAddress, hashLock, secretHashes}
-      trials.push({
-        label: "v1.2/POST/body{quoteId+hashLock}",
-        method: "POST",
-        url: `${BASE}/v1.2/quote/build`,
-        body: JSON.stringify({ quoteId, walletAddress: cWallet, hashLock, secretHashes: [secretHash] }),
-      });
-      // T2: v1.0 POST body {quoteId, walletAddress, hashLock, secretHashes}
-      trials.push({
-        label: "v1.0/POST/body{quoteId+hashLock}",
-        method: "POST",
-        url: `${BASE}/v1.0/quote/build`,
-        body: JSON.stringify({ quoteId, walletAddress: cWallet, hashLock, secretHashes: [secretHash] }),
-      });
-      // T3: v1.2 POST body with raw secretHash as hashLock (no zeroed byte)
-      trials.push({
-        label: "v1.2/POST/body{rawHash}",
-        method: "POST",
-        url: `${BASE}/v1.2/quote/build`,
-        body: JSON.stringify({ quoteId, walletAddress: cWallet, hashLock: secretHash, secretHashes: [secretHash] }),
-      });
-    }
-    // T4: v1.2 POST QS with full swap params + hashLock
-    const qs12 = new URLSearchParams();
-    qs12.set("srcChain", String(srcChainId)); qs12.set("dstChain", String(dstChainId));
-    qs12.set("srcTokenAddress", cSrc); qs12.set("dstTokenAddress", cDst);
-    qs12.set("amount", amt); qs12.set("walletAddress", cWallet);
-    qs12.set("enableEstimate", "true"); qs12.set("hashLock", hashLock);
-    if (quoteId) qs12.set("quoteId", quoteId);
+    // Build shared QS with all scalar params (NO secretHashes — single fill omits it per SDK)
+    const qsBase = new URLSearchParams();
+    qsBase.set("srcChain", String(srcChainId)); qsBase.set("dstChain", String(dstChainId));
+    qsBase.set("srcTokenAddress", cSrc); qsBase.set("dstTokenAddress", cDst);
+    qsBase.set("amount", amt); qsBase.set("walletAddress", cWallet);
+    qsBase.set("enableEstimate", "true"); qsBase.set("hashLock", hashLock);
+    if (quoteId) qsBase.set("quoteId", quoteId);
+
+    // T1: /evm suffix + v1.0 + QS only (no secretHashes — single fill)
+    // HYPOTHESIS: The "/evm" suffix is required AND secretHashes should be omitted for single fill
     trials.push({
-      label: "v1.2/POST/qs{fullParams+hashLock}",
-      method: "POST", url: `${BASE}/v1.2/quote/build?${qs12.toString()}`, body: null,
-    });
-    // T5: v1.0 POST QS control
-    trials.push({
-      label: "v1.0/POST/qs{fullParams+hashLock}",
-      method: "POST", url: `${BASE}/v1.0/quote/build?${qs12.toString()}`, body: null,
+      label: "v1.0/build/evm/QS-noSecrets",
+      method: "POST",
+      url: `${BASE}/v1.0/quote/build/evm?${qsBase.toString()}`,
+      body: null,
     });
 
-    console.log(`${TAG} BUILD R5: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet} quoteId=${quoteId?.slice(0,20) ?? "NONE"} trials=${trials.length}`);
+    // T2: /evm suffix + v1.0 + QS + body{secretHashes} (hybrid)
+    // HYPOTHESIS: QS for scalars, body for arrays
+    trials.push({
+      label: "v1.0/build/evm/QS+body{secrets}",
+      method: "POST",
+      url: `${BASE}/v1.0/quote/build/evm?${qsBase.toString()}`,
+      body: JSON.stringify({ secretHashes: [secretHash] }),
+    });
+
+    // T3: No /evm suffix + v1.0 + QS only (no secretHashes — single fill)
+    // HYPOTHESIS: Maybe just omitting secretHashes fixes the INVALID_ARRAY error
+    trials.push({
+      label: "v1.0/build/QS-noSecrets",
+      method: "POST",
+      url: `${BASE}/v1.0/quote/build?${qsBase.toString()}`,
+      body: null,
+    });
+
+    // T4: /evm suffix + v1.0 + full body (all params including secretHashes)
+    // HYPOTHESIS: /evm suffix enables POST body reading
+    trials.push({
+      label: "v1.0/build/evm/body{allParams}",
+      method: "POST",
+      url: `${BASE}/v1.0/quote/build/evm`,
+      body: JSON.stringify({
+        srcChain: srcChainId, dstChain: dstChainId,
+        srcTokenAddress: cSrc, dstTokenAddress: cDst,
+        amount: amt, walletAddress: cWallet, enableEstimate: true,
+        hashLock, ...(quoteId ? { quoteId } : {}),
+      }),
+    });
+
+    // T5: No /evm suffix + v1.0 + QS + body{secretHashes} (hybrid)
+    trials.push({
+      label: "v1.0/build/QS+body{secrets}",
+      method: "POST",
+      url: `${BASE}/v1.0/quote/build?${qsBase.toString()}`,
+      body: JSON.stringify({ secretHashes: [secretHash] }),
+    });
+
+    // T6: /evm suffix + v1.2 (just in case v1.2 exists with /evm)
+    trials.push({
+      label: "v1.2/build/evm/QS-noSecrets",
+      method: "POST",
+      url: `${BASE}/v1.2/quote/build/evm?${qsBase.toString()}`,
+      body: null,
+    });
+
+    console.log(`${TAG} BUILD R6: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet} quoteId=${quoteId?.slice(0,20) ?? "NONE"} hashLock=${hashLock.slice(0,18)}... trials=${trials.length}`);
 
     const results: { label: string; status: number; snippet: string }[] = [];
     for (const t of trials) {
-      console.log(`${TAG} [BUILD-R5] ${t.label}: ${t.method} ${t.url.slice(0, 120)}... body=${t.body ? t.body.slice(0,100) : "null"}`);
+      console.log(`${TAG} [BUILD-R6] ${t.label}: ${t.method} ${t.url.slice(0, 140)}... body=${t.body ? t.body.slice(0,120) : "null"}`);
       const { status: s, body: b } = await upstreamFetch(t.method, t.url, t.body);
-      const snip = JSON.stringify(b).slice(0, 400);
+      const snip = JSON.stringify(b).slice(0, 500);
       results.push({ label: t.label, status: s, snippet: snip });
       if (s === 200) {
-        console.log(`${TAG} [BUILD-R5] ✓ WINNER [${t.label}] keys=[${Object.keys(b).join(",")}]`);
+        console.log(`${TAG} [BUILD-R6] ✓ WINNER [${t.label}] keys=[${Object.keys(b).join(",")}]`);
         return c.json({ ...b, _secret: secret, _hashLock: hashLock, _buildTrialWinner: t.label }, 200);
       }
-      console.log(`${TAG} [BUILD-R5] ✗ ${t.label}: HTTP ${s} — ${snip}`);
+      console.log(`${TAG} [BUILD-R6] ✗ ${t.label}: HTTP ${s} — ${snip}`);
     }
 
-    console.log(`${TAG} [BUILD-R5] ALL ${trials.length} FAILED`);
+    console.log(`${TAG} [BUILD-R6] ALL ${trials.length} FAILED`);
     return c.json({
       error: "All Fusion+ build patterns failed",
-      details: `Tried ${trials.length} patterns. See _trials.`,
+      details: `Round 6: Tried ${trials.length} patterns including /evm suffix, omitting secretHashes, and hybrid QS+body. The official SDK does NOT use /quote/build — it constructs orders client-side from quote data. If all R6 patterns fail, we should adopt the SDK approach (quote → client-side createEvmOrder → sign → POST /relayer/v1.2/submit). See _trials for per-trial diagnostics.`,
       statusCode: 502,
       _trials: results,
+      _sdkNote: "The @1inch/cross-chain-sdk builds orders client-side from quote data. There is no /quote/build in the SDK. If this endpoint doesn't work, the next step is to adopt the SDK's approach: quote → createOrder(client) → sign(MetaMask) → submit(relayer).",
     }, 502);
   });
 

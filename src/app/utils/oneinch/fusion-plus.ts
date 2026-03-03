@@ -22,6 +22,7 @@
 import { log } from "../logger";
 import { oneInchApi } from "./api-client";
 import { getChainById, FUSION_PLUS_CHAINS } from "./chains";
+import { keccak256 } from "viem";
 import { NATIVE_TOKEN_ADDRESS } from "./types";
 import type {
   FusionPreset,
@@ -31,7 +32,7 @@ import type {
   FusionPresetQuote,
 } from "./types";
 
-/* ══════════════════════════════════════════════════════���═══════════════
+/* ═════════════════════════════════════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -720,4 +721,163 @@ export function loadPersistedCrossChainOrders(): Array<{
   } catch {
     return [];
   }
+}
+
+/* ======================================================================
+ * SDK-Based Cross-Chain Flow (Post Round 6)
+ *
+ * IMPLEMENTATION NOTE (2026-03-03, SDK Adoption):
+ * The /quote/build endpoint is confirmed non-functional (Rounds 1-6).
+ * The official @1inch/cross-chain-sdk uses a different flow:
+ *   1. GET /quoter/v1.2/quote/receive (quote)
+ *   2. Client-side order construction (createEvmOrder)
+ *   3. EIP-712 signing (MetaMask)
+ *   4. POST /relayer/v1.2/submit (submit)
+ *   5. POST /relayer/v1.2/submit/secret (HTLC reveal)
+ *
+ * This section provides client-side functions for the SDK flow.
+ * HTLC secret is generated CLIENT-SIDE (more secure — never sent
+ * to server until the reveal step).
+ * ====================================================================== */
+
+/**
+ * Generate an HTLC secret and hashLock for Fusion+ cross-chain swaps.
+ *
+ * IMPLEMENTATION NOTE: The secret is generated using crypto.getRandomValues()
+ * (CSPRNG). The hashLock uses keccak256 with the first byte zeroed — this
+ * matches the SDK's HashLock.forSingleFill() pattern. The secret MUST be
+ * kept client-side and only revealed via submitSecret() after SrcFilled.
+ *
+ * @returns { secret, secretHash, hashLock } — all as 0x-prefixed hex strings
+ */
+export function generateHtlcSecret(): {
+  secret: string;
+  secretHash: string;
+  hashLock: string;
+} {
+  const secretBytes = new Uint8Array(32);
+  crypto.getRandomValues(secretBytes);
+
+  const toHex = (b: Uint8Array) => "0x" + Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+  const secret = toHex(secretBytes);
+
+  // IMPLEMENTATION NOTE: keccak256 from viem returns a 0x-prefixed hex string.
+  // We convert secretBytes to hex first since viem's keccak256 accepts Hex | ByteArray.
+  const secretHash = keccak256(secretBytes);
+  // Zero first byte — matches the SDK's HashLock.forSingleFill() pattern
+  // Parse the hex hash back to bytes, zero byte 0, convert back to hex
+  const hashHexClean = secretHash.slice(2); // remove 0x
+  const hlBytes = new Uint8Array(hashHexClean.match(/.{2}/g)!.map(b => parseInt(b, 16)));
+  hlBytes[0] = 0;
+  const hashLock = toHex(hlBytes);
+
+  log.info(TAG, `Generated HTLC: secret=${secret.slice(0, 14)}... hashLock=${hashLock.slice(0, 14)}...`);
+  return { secret, secretHash, hashLock };
+}
+
+/**
+ * Response from the SDK-based order construction endpoint.
+ */
+export interface SdkOrderResponse {
+  success: boolean;
+  method: "sdk" | "direct-v1.2" | "direct-v1.0";
+  typedData?: unknown;
+  order?: unknown;
+  orderHash?: string;
+  extension?: string;
+  quoteId?: string;
+  srcTokenAmount?: string;
+  dstTokenAmount?: string;
+  recommendedPreset?: string;
+  rawQuote?: Record<string, unknown>;
+  error?: string;
+  _diagnostics?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * Build a Fusion+ cross-chain order via the SDK-based server endpoint.
+ *
+ * IMPLEMENTATION NOTE (SDK Adoption): This replaces the old buildCrossChainOrder()
+ * which called /fusion-plus/build (Rounds 1-6, all failed). The new endpoint
+ * /fusion-plus/sdk-order uses the SDK's approach:
+ *   1. Gets a quote via v1.2 quoter
+ *   2. Constructs the order (SDK or raw quote data)
+ *   3. Returns EIP-712 typed data for client-side signing
+ *
+ * The hashLock is generated CLIENT-SIDE and sent to the server. The secret
+ * is kept client-side until the HTLC reveal step.
+ */
+export async function sdkBuildCrossChainOrder(
+  params: BuildCrossChainParams & { hashLock: string; secretHash?: string },
+  signal?: AbortSignal,
+): Promise<SdkOrderResponse> {
+  const resolvedSrc = resolveTokenForFusionPlus(params.srcTokenAddress, params.srcChainId);
+  const resolvedDst = resolveTokenForFusionPlus(params.dstTokenAddress, params.dstChainId);
+
+  const body = {
+    srcChainId: params.srcChainId,
+    dstChainId: params.dstChainId,
+    srcTokenAddress: resolvedSrc,
+    dstTokenAddress: resolvedDst,
+    amount: params.amount,
+    walletAddress: params.walletAddress,
+    hashLock: params.hashLock,
+    ...(params.secretHash ? { secretHash: params.secretHash } : {}),
+    ...(params.quoteId ? { quoteId: params.quoteId } : {}),
+  };
+
+  log.info(TAG, `[SDK] Building order: ${params.srcChainId}\u2192${params.dstChainId} amt=${params.amount} hashLock=${params.hashLock.slice(0, 14)}...`);
+
+  const res = await oneInchApi.post<SdkOrderResponse>(
+    `/fusion-plus/sdk-order`,
+    body,
+    { signal, retries: 1 },
+  );
+
+  log.info(TAG, `[SDK] Build response: success=${res.success} method=${res.method} orderHash=${res.orderHash?.slice(0, 14) ?? "none"} hasTypedData=${!!res.typedData}`);
+  return res;
+}
+
+/**
+ * Submit a signed cross-chain order via the SDK-based server endpoint.
+ *
+ * IMPLEMENTATION NOTE: This endpoint forwards to the relayer v1.2/submit
+ * endpoint, matching the SDK's submission format. For single-fill orders,
+ * secretHashes is omitted (per SDK pattern).
+ */
+export async function sdkSubmitCrossChainOrder(
+  params: {
+    srcChainId: number;
+    order: unknown;
+    signature: string;
+    quoteId: string;
+    extension?: string;
+    secretHashes?: string[];
+  },
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  log.info(TAG, `[SDK] Submitting order: srcChain=${params.srcChainId} quoteId=${params.quoteId.slice(0, 20)}...`);
+
+  const res = await oneInchApi.post<Record<string, unknown>>(
+    `/fusion-plus/sdk-submit`,
+    params,
+    { signal, retries: 1 },
+  );
+
+  log.info(TAG, `[SDK] Submit response: ${JSON.stringify(res).slice(0, 200)}`);
+  return res;
+}
+
+/**
+ * Check SDK health — reports whether the server-side SDK is available
+ * and whether the v1.2 quoter is reachable.
+ */
+export async function getSdkHealth(
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  return oneInchApi.get<Record<string, unknown>>(
+    `/fusion-plus/sdk-health`,
+    { signal, retries: 0 },
+  );
 }

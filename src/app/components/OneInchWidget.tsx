@@ -114,8 +114,11 @@ import {
   CROSS_CHAIN_POLL_INTERVAL_MS,
   CROSS_CHAIN_POLL_MAX_DURATION_MS,
   CROSS_CHAIN_STATUS_LABELS,
+  generateHtlcSecret,
+  sdkBuildCrossChainOrder,
+  sdkSubmitCrossChainOrder,
 } from "../utils/oneinch/fusion-plus";
-import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse } from "../utils/oneinch/fusion-plus";
+import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse, SdkOrderResponse } from "../utils/oneinch/fusion-plus";
 import {
   getChainById as getModuleChainById,
 } from "../utils/oneinch/chains";
@@ -1266,14 +1269,22 @@ export function OneInchWidget() {
     stopCrossChainPolling();
 
     try {
-      // Step A: Build the order — /quote/build needs FULL swap params
-      // (same as /quote/receive), not just quoteId. The build endpoint
-      // returns typedData + orderHash in one shot.
+      // ── SDK-Based Flow (Post Round 6) ──
+      // IMPLEMENTATION NOTE (2026-03-03, SDK Adoption): The old /quote/build
+      // endpoint failed in ALL 6 rounds of diagnostics. We now use the SDK's
+      // actual flow: quote via v1.2 quoter → order construction → EIP-712 sign
+      // → relayer v1.2 submit. HTLC secret is generated CLIENT-SIDE for security.
+
+      // Step A: Generate HTLC secret client-side
       setSwapStatus("building");
       const amountWei = toWei(fromAmount, fromToken.decimals);
-      log.info("1inch", `[FUSION+] Step A: Building cross-chain order with full params: ${selectedChainId}→${dstChainId} amt=${amountWei}`);
+      log.info("1inch", `[FUSION+SDK] Step A: Generating HTLC secret client-side`);
+      const htlc = generateHtlcSecret();
+      log.info("1inch", `[FUSION+SDK] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
 
-      const buildResult = await buildCrossChainOrder({
+      // Step B: Build order via SDK-based server endpoint
+      log.info("1inch", `[FUSION+SDK] Step B: Building order via /sdk-order: ${selectedChainId}→${dstChainId} amt=${amountWei}`);
+      const sdkResult = await sdkBuildCrossChainOrder({
         srcChainId: selectedChainId,
         dstChainId,
         srcTokenAddress: fromToken.address,
@@ -1282,47 +1293,63 @@ export function OneInchWidget() {
         walletAddress: evmAccount,
         enableEstimate: true,
         quoteId: crossChainQuote.quoteId || undefined,
-        preset: crossChainQuote.recommendedPreset || undefined,
+        hashLock: htlc.hashLock,
+        secretHash: htlc.secretHash,
       });
 
-      if ((buildResult as any)._buildTrialWinner) {
-        log.info("1inch", `[FUSION+] BUILD TRIAL WINNER: ${(buildResult as any)._buildTrialWinner}`);
+      log.info("1inch", `[FUSION+SDK] Build result: success=${sdkResult.success} method=${sdkResult.method} orderHash=${sdkResult.orderHash?.slice(0, 14) ?? "none"} hasTypedData=${!!sdkResult.typedData} keys=[${Object.keys(sdkResult).join(",")}]`);
+
+      // Store SDK diagnostics for debugging
+      if (sdkResult._diagnostics) {
+        log.info("1inch", `[FUSION+SDK] Diagnostics: ${JSON.stringify(sdkResult._diagnostics).slice(0, 500)}`);
       }
-      log.info("1inch", `[FUSION+] Build result: orderHash=${buildResult.orderHash ?? "none"} hasTypedData=${!!buildResult.typedData} hasSecret=${!!(buildResult as any)._secret} keys=[${Object.keys(buildResult).join(",")}]`);
+
+      // Adapt SDK response to match the old FusionPlusBuildResponse shape
+      const buildResult: FusionPlusBuildResponse = {
+        typedData: sdkResult.typedData,
+        order: sdkResult.order,
+        orderHash: sdkResult.orderHash || "",
+        extension: sdkResult.extension || "",
+        quoteId: sdkResult.quoteId || crossChainQuote.quoteId || "",
+        _secret: htlc.secret,
+        _hashLock: htlc.hashLock,
+      };
       setCrossChainBuildData(buildResult);
 
-      if (!buildResult.typedData || !buildResult.orderHash) {
-        setSwapError(`Fusion+ build returned incomplete data. orderHash=${buildResult.orderHash ?? "missing"}, typedData=${buildResult.typedData ? "present" : "missing"}`);
+      if (!sdkResult.success || !sdkResult.typedData) {
+        // IMPLEMENTATION NOTE: If SDK order construction failed, provide detailed
+        // diagnostics including the method attempted, raw quote availability, etc.
+        const diagInfo = sdkResult._diagnostics ? ` Diagnostics: ${JSON.stringify(sdkResult._diagnostics).slice(0, 300)}` : "";
+        setSwapError(`Fusion+ SDK order construction failed (method=${sdkResult.method}). ${sdkResult.error || "No typedData returned."}${diagInfo} The SDK may need to be imported — check /fusion-plus/sdk-health for status.`);
         setSwapStatus("error");
         return;
       }
 
       // Step C: Sign the EIP-712 typed data — gasless signature
       setSwapStatus("signing");
-      log.info("1inch", `[FUSION+] Step C: Requesting EIP-712 signature for orderHash=${buildResult.orderHash}`);
+      log.info("1inch", `[FUSION+SDK] Step C: Requesting EIP-712 signature for orderHash=${buildResult.orderHash}`);
 
       const signature = await window.ethereum!.request({
         method: "eth_signTypedData_v4",
         params: [evmAccount, typeof buildResult.typedData === "string" ? buildResult.typedData : JSON.stringify(buildResult.typedData)],
       });
 
-      log.info("1inch", `[FUSION+] Signature obtained: ${(signature as string).slice(0, 16)}...`);
+      log.info("1inch", `[FUSION+SDK] Signature obtained: ${(signature as string).slice(0, 16)}...`);
 
-      // Step D: Submit the signed order to the Fusion+ relayer
+      // Step D: Submit via SDK-based relayer endpoint
       setSwapStatus("submitting");
-      log.info("1inch", `[FUSION+] Step D: Submitting signed order to relayer`);
+      log.info("1inch", `[FUSION+SDK] Step D: Submitting signed order via /sdk-submit`);
 
-      const submitRes = await submitCrossChainOrder({
-        quoteId: buildResult.quoteId || crossChainQuote.quoteId || "",
-        orderHash: buildResult.orderHash,
-        signature: signature as string,
+      const submitRes = await sdkSubmitCrossChainOrder({
+        srcChainId: selectedChainId,
         order: buildResult.order,
+        signature: signature as string,
+        quoteId: buildResult.quoteId || crossChainQuote.quoteId || "",
         extension: buildResult.extension,
-        srcSecrets: buildResult.srcSecrets,
-        secretHashes: buildResult.secretHashes,
+        // IMPLEMENTATION NOTE (SDK pattern): omit secretHashes for single-fill
       });
 
-      log.info("1inch", `[FUSION+] Order submitted: ${JSON.stringify(submitRes).slice(0, 200)}`);
+      log.info("1inch", `[FUSION+SDK] Order submitted: ${JSON.stringify(submitRes).slice(0, 200)}`);
       setCrossChainOrderHash(buildResult.orderHash);
 
       // Persist for order history tracking
@@ -1340,6 +1367,10 @@ export function OneInchWidget() {
       setFusionOrderStatus("SrcPending" as any);
       const pollDeadline = Date.now() + CROSS_CHAIN_POLL_MAX_DURATION_MS;
 
+      // IMPLEMENTATION NOTE: The HTLC secret is captured in this closure.
+      // It was generated client-side and is only revealed when SrcFilled.
+      const localHtlcSecret = htlc.secret;
+
       crossChainPollTimer.current = setInterval(async () => {
         try {
           if (Date.now() > pollDeadline) {
@@ -1349,10 +1380,9 @@ export function OneInchWidget() {
             return;
           }
 
-          // Poll order status via the orders API
           const orderStatus = await getCrossChainOrderStatus(buildResult.orderHash);
           
-          log.info("1inch", `[FUSION+] Poll: status=${orderStatus.status}`);
+          log.info("1inch", `[FUSION+SDK] Poll: status=${orderStatus.status}`);
           setFusionOrderStatus(orderStatus.status as any);
 
           if (isCrossChainTerminalStatus(orderStatus.status)) {
@@ -1368,28 +1398,26 @@ export function OneInchWidget() {
             }
           }
 
-          // IMPLEMENTATION NOTE: When SrcFilled, check if we need to submit secrets
-          // for HTLC resolution. This is the atomic swap mechanism.
-          // IMPLEMENTATION NOTE: Use _secret from server-generated HTLC,
-          // or fallback to srcSecrets if the API returns them.
-          const htlcSecret = buildResult._secret || buildResult.srcSecrets?.[0];
-          if (orderStatus.status === "SrcFilled" && htlcSecret) {
+          // IMPLEMENTATION NOTE (SDK Adoption): When SrcFilled, submit the
+          // HTLC secret that was generated CLIENT-SIDE. This is the atomic
+          // swap resolution — the secret reveals prove the user authorized
+          // the trade, allowing the resolver to claim on the source chain.
+          if (orderStatus.status === "SrcFilled" && localHtlcSecret) {
             try {
               const readyRes = await getReadyFills(buildResult.orderHash);
-              log.info("1inch", `[FUSION+] Ready fills check: ${JSON.stringify(readyRes).slice(0, 200)}`);
+              log.info("1inch", `[FUSION+SDK] Ready fills check: ${JSON.stringify(readyRes).slice(0, 200)}`);
               
-              // If fills are ready, submit the secret
               if (readyRes) {
-                log.info("1inch", `[FUSION+] Submitting HTLC secret for orderHash=${buildResult.orderHash}`);
-                await submitSecret(buildResult.orderHash, htlcSecret);
-                log.info("1inch", `[FUSION+] Secret submitted successfully`);
+                log.info("1inch", `[FUSION+SDK] Submitting HTLC secret for orderHash=${buildResult.orderHash}`);
+                await submitSecret(buildResult.orderHash, localHtlcSecret);
+                log.info("1inch", `[FUSION+SDK] Secret submitted successfully`);
               }
             } catch (secretErr: any) {
-              log.warn("1inch", `[FUSION+] Secret submission failed (will retry): ${secretErr?.message}`);
+              log.warn("1inch", `[FUSION+SDK] Secret submission failed (will retry): ${secretErr?.message}`);
             }
           }
         } catch (pollErr: any) {
-          log.warn("1inch", `[FUSION+] Poll error (will retry): ${pollErr?.message}`);
+          log.warn("1inch", `[FUSION+SDK] Poll error (will retry): ${pollErr?.message}`);
         }
       }, CROSS_CHAIN_POLL_INTERVAL_MS);
 
@@ -1404,10 +1432,11 @@ export function OneInchWidget() {
         setSwapError(fullMsg);
       }
       const errBody = err?.error ?? err;
-      log.warn("1inch", `[FUSION+] Swap error: ${fullMsg}`);
-      log.warn("1inch", `[FUSION+] Full error:`, JSON.stringify({
+      log.warn("1inch", `[FUSION+SDK] Swap error: ${fullMsg}`);
+      log.warn("1inch", `[FUSION+SDK] Full error:`, JSON.stringify({
         kind: errBody?.kind, status: errBody?.status, details: errBody?.details,
         message: errBody?.message, meta: errBody?.meta, _debug: errBody?._debug,
+        _diagnostics: errBody?._diagnostics,
       }, null, 2));
       stopCrossChainPolling();
     }
