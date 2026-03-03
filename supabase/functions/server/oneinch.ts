@@ -30,7 +30,7 @@
 //   GET  /1inch/fusion/active/:chainId         → /fusion/orders/v2.0/{chainId}/order/active
 //
 //   ── Fusion+ API v1.2 (cross-chain) ──
-//   POST /1inch/fusion-plus/quote              → /fusion-plus/quoter/v1.2/quote/receive
+//   POST /1inch/fusion-plus/quote              → GET /fusion-plus/quoter/v1.2/quote/receive (query params)
 //   POST /1inch/fusion-plus/build              → /fusion-plus/quoter/v1.2/quote/build/evm
 //   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.2/submit
 //   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.2/order/status/{hash}
@@ -722,18 +722,28 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: EIP-55 checksum the wallet address — the 1inch
-    // Fusion Relayer v2.0 is strict about address format. The quote route
-    // already checksums, but the build route was sending as-is. This fixes
-    // "invalid address" errors at the build step.
+    // IMPLEMENTATION NOTE (2026-03-03h): Build body construction.
+    // The Fusion Quoter v2.0 /quote/build endpoint accepts POST with JSON body.
+    // Field names: quoteId, walletAddress, preset, receiver, nonce, permit, isPermit2, source.
+    // REMOVED secretsCount from default — it's only required for HTLC-based flows
+    // and may confuse the quoter v2.0 build endpoint into returning "invalid address".
+    const rawWallet = body.walletAddress as string;
+    const checksummedWallet = eip55Checksum(rawWallet);
+
+    // DIAGNOSTIC: Log both raw and checksummed wallet + a known-address self-test
+    // to verify our keccak-based EIP-55 implementation is correct in Deno.
+    const knownTest = eip55Checksum("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+    const knownExpected = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+    console.log(
+      `${TAG} [DIAG] Address check: raw=${rawWallet} checksummed=${checksummedWallet}` +
+      ` keccakTest=${knownTest === knownExpected ? "PASS" : "FAIL"} (got ${knownTest} expected ${knownExpected})`
+    );
+
     const cleanBody: Record<string, unknown> = {
       quoteId: body.quoteId,
-      walletAddress: eip55Checksum(body.walletAddress as string),
-      // IMPLEMENTATION NOTE: secretsCount is required by the 1inch Fusion
-      // Relayer v2.0 — defaults to 1 if not provided.
-      secretsCount: typeof body.secretsCount === "number" ? body.secretsCount : 1,
+      walletAddress: checksummedWallet,
     };
-    // Only include optional fields the relayer actually supports
+    // Only include optional fields the quoter actually supports
     if (body.preset) cleanBody.preset = body.preset;
     if (typeof body.secretsCount === "number") cleanBody.secretsCount = body.secretsCount;
     if (body.receiver && isValidEthAddress(body.receiver)) {
@@ -754,7 +764,7 @@ export function registerOneInchRoutes(app: Hono) {
     // /quote/receive (quotes) and /quote/build (order construction).
 
     const buildUrl = fusionQuoterUrl(chainId, "/quote/build");
-    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${(cleanBody.quoteId as string).slice(0, 20)}... wallet=${cleanBody.walletAddress} url=${buildUrl}`);
+    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${(cleanBody.quoteId as string).slice(0, 20)}... wallet=${cleanBody.walletAddress} bodyKeys=[${Object.keys(cleanBody).join(",")}] url=${buildUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
@@ -764,7 +774,8 @@ export function registerOneInchRoutes(app: Hono) {
 
     if (status !== 200) {
       console.log(`${TAG} Fusion build FAILED: status=${status} resp=${JSON.stringify(resBody).slice(0, 500)}`);
-      return c.json({ ...resBody, _debug: { sentBody: cleanBody, buildUrl } }, status as any);
+      console.log(`${TAG} Fusion build sent body: ${JSON.stringify(cleanBody)}`);
+      return c.json({ ...resBody, _debug: { sentBody: cleanBody, buildUrl, rawWallet, checksummedWallet, keccakSelfTest: knownTest === knownExpected } }, status as any);
     }
 
     console.log(`${TAG} Fusion build SUCCESS`);
@@ -895,30 +906,43 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: Apply EIP-55 checksumming to ALL addresses.
-    // The 1inch Fusion+ v1.2 API requires properly checksummed addresses.
-    // Hedera-derived EVM wallets may send lowercase addresses — must fix.
-    const upstreamBody: Record<string, unknown> = {
-      srcChainId,
-      dstChainId,
-      srcTokenAddress: eip55Checksum(body.srcTokenAddress as string),
-      dstTokenAddress: eip55Checksum(body.dstTokenAddress as string),
-      amount: body.amount,
-      walletAddress: eip55Checksum(body.walletAddress as string),
-    };
-    if (typeof body.enableEstimate === "boolean") upstreamBody.enableEstimate = body.enableEstimate;
-    if (typeof body.fee === "number") upstreamBody.fee = body.fee;
+    // IMPLEMENTATION NOTE (2026-03-03h): The Fusion+ Quoter v1.2 /quote/receive
+    // endpoint is a **GET** endpoint with **query parameters** — identical pattern
+    // to Fusion v2.0 /quote/receive. Sending POST causes 1inch to ignore the JSON
+    // body, see empty query params, and return "walletAddress has not provided".
+    // Apply EIP-55 checksumming to ALL addresses for strict validation.
+    const checksummedSrc = eip55Checksum(body.srcTokenAddress as string);
+    const checksummedDst = eip55Checksum(body.dstTokenAddress as string);
+    const checksummedWallet = eip55Checksum(body.walletAddress as string);
 
-    const upstreamUrl = fusionPlusQuoterUrl("/quote/receive");
-    console.log(`${TAG} Fusion+ quote: ${srcChainId}→${dstChainId} src=${upstreamBody.srcTokenAddress} dst=${upstreamBody.dstTokenAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
+    const quoteParams = new URLSearchParams();
+    quoteParams.set("srcChainId", String(srcChainId));
+    quoteParams.set("dstChainId", String(dstChainId));
+    quoteParams.set("srcTokenAddress", checksummedSrc);
+    quoteParams.set("dstTokenAddress", checksummedDst);
+    quoteParams.set("amount", body.amount as string);
+    quoteParams.set("walletAddress", checksummedWallet);
+    if (typeof body.enableEstimate === "boolean") quoteParams.set("enableEstimate", String(body.enableEstimate));
+    if (typeof body.fee === "number") quoteParams.set("fee", String(body.fee));
+
+    const upstreamUrl = fusionPlusQuoterUrl("/quote/receive", quoteParams.toString());
+    console.log(
+      `${TAG} Fusion+ quote: ${srcChainId}→${dstChainId}` +
+      ` src=${checksummedSrc} dst=${checksummedDst}` +
+      ` wallet=${checksummedWallet} amt=${body.amount}` +
+      ` method=GET (query params) url=${upstreamUrl}`
+    );
 
     const { status, body: resBody } = await upstreamFetch(
-      "POST",
+      "GET",
       upstreamUrl,
-      JSON.stringify(upstreamBody),
+      null,
     );
     if (status !== 200) {
       console.log(`${TAG} Fusion+ quote upstream error: status=${status} body=${JSON.stringify(resBody).slice(0, 500)}`);
+    } else {
+      const keys = Object.keys(resBody);
+      console.log(`${TAG} Fusion+ quote SUCCESS: keys=[${keys.join(",")}] quoteId=${JSON.stringify(resBody.quoteId)} first500=${JSON.stringify(resBody).slice(0, 500)}`);
     }
     return c.json(resBody, status as any);
   });
@@ -945,14 +969,16 @@ export function registerOneInchRoutes(app: Hono) {
 
     // IMPLEMENTATION NOTE: Fusion+ build is on the QUOTER at /quote/build/evm
     // (NOT /order/build — that doesn't exist). The body needs quoteId + walletAddress.
+    const rawWallet = body.walletAddress as string;
+    const checksummedWallet = eip55Checksum(rawWallet);
     const buildBody: Record<string, unknown> = {
       quoteId: body.quoteId,
-      walletAddress: eip55Checksum(body.walletAddress as string),
+      walletAddress: checksummedWallet,
     };
     if (typeof body.secretsCount === "number") buildBody.secretsCount = body.secretsCount;
 
     const buildUrl = fusionPlusQuoterUrl("/quote/build/evm");
-    console.log(`${TAG} Fusion+ build: quoteId=${body.quoteId} wallet=${buildBody.walletAddress} url=${buildUrl}`);
+    console.log(`${TAG} Fusion+ build: quoteId=${body.quoteId} rawWallet=${rawWallet} checksummedWallet=${checksummedWallet} bodyKeys=[${Object.keys(buildBody).join(",")}] url=${buildUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
@@ -962,7 +988,8 @@ export function registerOneInchRoutes(app: Hono) {
 
     if (status !== 200) {
       console.log(`${TAG} Fusion+ build FAILED: status=${status} resp=${JSON.stringify(resBody).slice(0, 500)}`);
-      return c.json({ ...resBody, _debug: { sentBody: buildBody, buildUrl } }, status as any);
+      console.log(`${TAG} Fusion+ build sent body: ${JSON.stringify(buildBody)}`);
+      return c.json({ ...resBody, _debug: { sentBody: buildBody, buildUrl, rawWallet, checksummedWallet } }, status as any);
     }
 
     console.log(`${TAG} Fusion+ build SUCCESS`);
