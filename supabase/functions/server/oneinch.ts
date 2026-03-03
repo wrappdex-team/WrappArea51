@@ -1053,6 +1053,16 @@ export function registerOneInchRoutes(app: Hono) {
     let cDst: string; try { cDst = eip55Checksum(body.dstTokenAddress as string); } catch { cDst = body.dstTokenAddress as string; }
     const amt = body.amount as string;
 
+    // IMPLEMENTATION NOTE: Fusion+ uses HTLC (Hash Time-Locked Contracts).
+    // The build endpoint requires hashLock = keccak256(secret). The user
+    // reveals the secret later to settle the swap on the destination chain.
+    const secretBytes = new Uint8Array(32);
+    crypto.getRandomValues(secretBytes);
+    const secret = "0x" + Array.from(secretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    const hashBytes = keccak_256(secretBytes);
+    const hashLock = "0x" + Array.from(hashBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    console.log(`${TAG} Fusion+ HTLC: secret=${secret.slice(0,18)}... hashLock=${hashLock.slice(0,18)}...`);
+
     // Build query string — srcChain/dstChain (proven for /quote/receive)
     const bQs = new URLSearchParams();
     bQs.set("srcChain", String(srcChainId));
@@ -1062,18 +1072,20 @@ export function registerOneInchRoutes(app: Hono) {
     bQs.set("amount", amt);
     bQs.set("walletAddress", cWallet);
     bQs.set("enableEstimate", typeof body.enableEstimate === "boolean" ? String(body.enableEstimate) : "true");
+    bQs.set("hashLock", hashLock);
     if (typeof body.quoteId === "string" && body.quoteId) bQs.set("quoteId", body.quoteId);
     if (typeof body.preset === "string") bQs.set("preset", body.preset);
     if (typeof body.source === "string") bQs.set("source", body.source);
 
     const buildUrl = `${API.fusionPlusQuoter}/quote/build?${bQs.toString()}`;
-    console.log(`${TAG} Fusion+ BUILD R3: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet} url=${buildUrl.slice(0,180)}...`);
+    console.log(`${TAG} Fusion+ BUILD R4: ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet}`);
+    console.log(`${TAG} BUILD URL: ${buildUrl.slice(0,250)}...`);
 
-    // Try POST first (like /quote/receive uses GET, /quote/build may prefer POST)
+    // Try POST first (build endpoint is POST per the SDK)
     const { status, body: resBody } = await upstreamFetch("POST", buildUrl, null);
     if (status === 200) {
       console.log(`${TAG} Fusion+ BUILD SUCCESS (POST): keys=[${Object.keys(resBody).join(",")}] orderHash=${JSON.stringify(resBody.orderHash)}`);
-      return c.json(resBody, 200);
+      return c.json({ ...resBody, _secret: secret, _hashLock: hashLock }, 200);
     }
 
     // Fallback: try GET
@@ -1081,12 +1093,14 @@ export function registerOneInchRoutes(app: Hono) {
     const { status: s2, body: b2 } = await upstreamFetch("GET", buildUrl, null);
     if (s2 === 200) {
       console.log(`${TAG} Fusion+ BUILD SUCCESS (GET): keys=[${Object.keys(b2).join(",")}] orderHash=${JSON.stringify(b2.orderHash)}`);
-      return c.json(b2, 200);
+      return c.json({ ...b2, _secret: secret, _hashLock: hashLock }, 200);
     }
 
+    const postSnip = JSON.stringify(resBody).slice(0, 600);
+    const getSnip = JSON.stringify(b2).slice(0, 600);
     console.log(`${TAG} Fusion+ BUILD FAILED: POST=${status} GET=${s2}`);
-    console.log(`${TAG} POST resp: ${JSON.stringify(resBody).slice(0,500)}`);
-    console.log(`${TAG} GET resp: ${JSON.stringify(b2).slice(0,500)}`);
+    console.log(`${TAG} POST resp: ${postSnip}`);
+    console.log(`${TAG} GET resp: ${getSnip}`);
     return c.json({
       error: "Fusion+ build failed",
       details: `POST=${status} GET=${s2}`,

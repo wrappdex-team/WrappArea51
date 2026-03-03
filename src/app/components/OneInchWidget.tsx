@@ -1310,7 +1310,7 @@ export function OneInchWidget() {
       log.info("1inch", `[FUSION+] Step D: Submitting signed order to relayer`);
 
       const submitRes = await submitCrossChainOrder({
-        quoteId: execQuoteId,
+        quoteId: buildResult.quoteId || crossChainQuote.quoteId || "",
         orderHash: buildResult.orderHash,
         signature: signature as string,
         order: buildResult.order,
@@ -1367,15 +1367,18 @@ export function OneInchWidget() {
 
           // IMPLEMENTATION NOTE: When SrcFilled, check if we need to submit secrets
           // for HTLC resolution. This is the atomic swap mechanism.
-          if (orderStatus.status === "SrcFilled" && buildResult.srcSecrets?.length) {
+          // IMPLEMENTATION NOTE: Use _secret from server-generated HTLC,
+          // or fallback to srcSecrets if the API returns them.
+          const htlcSecret = buildResult._secret || buildResult.srcSecrets?.[0];
+          if (orderStatus.status === "SrcFilled" && htlcSecret) {
             try {
               const readyRes = await getReadyFills(buildResult.orderHash);
               log.info("1inch", `[FUSION+] Ready fills check: ${JSON.stringify(readyRes).slice(0, 200)}`);
               
               // If fills are ready, submit the secret
-              if (readyRes && buildResult.srcSecrets[0]) {
+              if (readyRes) {
                 log.info("1inch", `[FUSION+] Submitting HTLC secret for orderHash=${buildResult.orderHash}`);
-                await submitSecret(buildResult.orderHash, buildResult.srcSecrets[0]);
+                await submitSecret(buildResult.orderHash, htlcSecret);
                 log.info("1inch", `[FUSION+] Secret submitted successfully`);
               }
             } catch (secretErr: any) {
