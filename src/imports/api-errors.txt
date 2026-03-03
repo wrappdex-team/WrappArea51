@@ -1,0 +1,112 @@
+[WC] Pre-connect relay keepalive stopped
+App-CXPHS2ip.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-Dy8cdBsN.js:23:14341)
+    at SwapPage-Dy8cdBsN.js:51:26107
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-CXPHS2ip.js:2
+2App-CXPHS2ip.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-Dy8cdBsN.js:23:14341)
+    at SwapPage-Dy8cdBsN.js:51:26107
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:tokens] Balance fetch failed: chain=1 wallet=0x4bd5190073e6d2e23ac278a7b7f540753fe6981f AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-Dy8cdBsN.js:23:14341)
+    at SwapPage-Dy8cdBsN.js:51:26107
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-Dy8cdBsN.js:23:14341)
+    at SwapPage-Dy8cdBsN.js:51:26107
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-Dy8cdBsN.js:23:14341)
+    at SwapPage-Dy8cdBsN.js:51:26107
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-CXPHS2ip.js:2
+2App-CXPHS2ip.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.P (SwapPage-Dy8cdBsN.js:23:14341)
+    at SwapPage-Dy8cdBsN.js:51:26107
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+App-CXPHS2ip.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/quote:1  Failed to load resource: the server responded with a status of 502 ()
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/quote → HTTP 502: {"error":"All Fusion+ quote URL patterns failed","details":"The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.","statusCode":502,"_trials":[{"label":"fusion-plus/v2.0/chain-path/v2-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=42161&fromTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&toTokenAddress=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&amount=37850000000000000&walletAddress"},{"label":"fusion-plus/v2.0/chain-path/plus-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=42161&srcTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&dstTokenAddress=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&amount=37850000000000000&walletAddress"},{"label":"fusion/v2.0/cross-chain-merged","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"cannot sync token\",\"statusCode\":400,\"meta\":[{\"type\":\"address\",\"value\":\"0xaf88d065e77c8cc2239327c5edb3a432268e5831\"}],\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"cannot sync token\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"CANNOT_SYNC_TOKEN\\\",\\\"meta\\\":[{\\\"type"},{"label":"fusion-plus/v1.0/POST-body","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"}]} 
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] Retryable error (attempt 1/3): All Fusion+ quote URL patterns failed 
+console.warn @ App-CXPHS2ip.js:2
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/quote:1  Failed to load resource: the server responded with a status of 502 ()
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/quote → HTTP 502: {"error":"All Fusion+ quote URL patterns failed","details":"The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.","statusCode":502,"_trials":[{"label":"fusion-plus/v2.0/chain-path/v2-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=42161&fromTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&toTokenAddress=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&amount=37850000000000000&walletAddress"},{"label":"fusion-plus/v2.0/chain-path/plus-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=42161&srcTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&dstTokenAddress=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&amount=37850000000000000&walletAddress"},{"label":"fusion/v2.0/cross-chain-merged","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"cannot sync token\",\"statusCode\":400,\"meta\":[{\"type\":\"address\",\"value\":\"0xaf88d065e77c8cc2239327c5edb3a432268e5831\"}],\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"cannot sync token\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"CANNOT_SYNC_TOKEN\\\",\\\"meta\\\":[{\\\"type"},{"label":"fusion-plus/v1.0/POST-body","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"}]} 
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] Retryable error (attempt 2/3): All Fusion+ quote URL patterns failed 
+console.warn @ App-CXPHS2ip.js:2
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/quote:1  Failed to load resource: the server responded with a status of 502 ()
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/quote → HTTP 502: {"error":"All Fusion+ quote URL patterns failed","details":"The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.","statusCode":502,"_trials":[{"label":"fusion-plus/v2.0/chain-path/v2-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=42161&fromTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&toTokenAddress=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&amount=37850000000000000&walletAddress"},{"label":"fusion-plus/v2.0/chain-path/plus-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=42161&srcTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&dstTokenAddress=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&amount=37850000000000000&walletAddress"},{"label":"fusion/v2.0/cross-chain-merged","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"cannot sync token\",\"statusCode\":400,\"meta\":[{\"type\":\"address\",\"value\":\"0xaf88d065e77c8cc2239327c5edb3a432268e5831\"}],\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"cannot sync token\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"CANNOT_SYNC_TOKEN\\\",\\\"meta\\\":[{\\\"type"},{"label":"fusion-plus/v1.0/POST-body","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"}]} 
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch] Cross-chain quote error: 1inch API is temporarily unavailable. Please try again shortly. OneInchApiError: All Fusion+ quote URL patterns failed
+    at p (SwapPage-Dy8cdBsN.js:23:15170)
+    at async er (SwapPage-Dy8cdBsN.js:51:17122)
+    at async SwapPage-Dy8cdBsN.js:51:29531
+console.warn @ App-CXPHS2ip.js:2
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/quote:1  Failed to load resource: the server responded with a status of 502 ()
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/quote → HTTP 502: {"error":"All Fusion+ quote URL patterns failed","details":"The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.","statusCode":502,"_trials":[{"label":"fusion-plus/v2.0/chain-path/v2-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=8453&fromTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&toTokenAddress=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&amount=37850000000000000&walletAddress="},{"label":"fusion-plus/v2.0/chain-path/plus-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=8453&srcTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&dstTokenAddress=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&amount=37850000000000000&walletAddress="},{"label":"fusion/v2.0/cross-chain-merged","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"cannot sync token\",\"statusCode\":400,\"meta\":[{\"type\":\"address\",\"value\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\"}],\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"cannot sync token\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"CANNOT_SYNC_TOKEN\\\",\\\"meta\\\":[{\\\"type"},{"label":"fusion-plus/v1.0/POST-body","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"}]} 
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] Retryable error (attempt 1/3): All Fusion+ quote URL patterns failed 
+console.warn @ App-CXPHS2ip.js:2
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/quote:1  Failed to load resource: the server responded with a status of 502 ()
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/quote → HTTP 502: {"error":"All Fusion+ quote URL patterns failed","details":"The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.","statusCode":502,"_trials":[{"label":"fusion-plus/v2.0/chain-path/v2-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=8453&fromTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&toTokenAddress=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&amount=37850000000000000&walletAddress="},{"label":"fusion-plus/v2.0/chain-path/plus-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=8453&srcTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&dstTokenAddress=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&amount=37850000000000000&walletAddress="},{"label":"fusion/v2.0/cross-chain-merged","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"cannot sync token\",\"statusCode\":400,\"meta\":[{\"type\":\"address\",\"value\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\"}],\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"cannot sync token\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"CANNOT_SYNC_TOKEN\\\",\\\"meta\\\":[{\\\"type"},{"label":"fusion-plus/v1.0/POST-body","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"}]} 
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] Retryable error (attempt 2/3): All Fusion+ quote URL patterns failed 
+console.warn @ App-CXPHS2ip.js:2
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/quote:1  Failed to load resource: the server responded with a status of 502 ()
+App-CXPHS2ip.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/quote → HTTP 502: {"error":"All Fusion+ quote URL patterns failed","details":"The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.","statusCode":502,"_trials":[{"label":"fusion-plus/v2.0/chain-path/v2-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=8453&fromTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&toTokenAddress=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&amount=37850000000000000&walletAddress="},{"label":"fusion-plus/v2.0/chain-path/plus-fields","status":404,"snippet":"{\"error\":\"1inch API error\",\"details\":\"Not Found\",\"statusCode\":404,\"_upstream\":\"{\\\"message\\\":\\\"Cannot GET /v2.0/1/quote/receive?dstChainId=8453&srcTokenAddress=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&dstTokenAddress=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&amount=37850000000000000&walletAddress="},{"label":"fusion/v2.0/cross-chain-merged","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"cannot sync token\",\"statusCode\":400,\"meta\":[{\"type\":\"address\",\"value\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\"}],\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"cannot sync token\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"CANNOT_SYNC_TOKEN\\\",\\\"meta\\\":[{\\\"type"},{"label":"fusion-plus/v1.0/POST-body","status":400,"snippet":"{\"error\":\"1inch API error\",\"details\":\"walletAddress has not provided\",\"statusCode\":400,\"_upstream\":\"{\\\"error\\\":\\\"Bad Request\\\",\\\"description\\\":\\\"walletAddress has not provided\\\",\\\"statusCode\\\":400,\\\"code\\\":\\\"REQUIRED_FIELD_MISSING\\\"}\"}"}]} 
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h][1inch] Cross-chain quote error: 1inch API is temporarily unavailable. Please try again shortly. OneInchApiError: All Fusion+ quote URL patterns failed
+    at p (SwapPage-Dy8cdBsN.js:23:15170)
+    at async er (SwapPage-Dy8cdBsN.js:51:17122)
+    at async SwapPage-Dy8cdBsN.js:51:29531
+console.warn @ App-CXPHS2ip.js:2
+App-CXPHS2ip.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+swap:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+swap:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED

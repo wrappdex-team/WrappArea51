@@ -950,50 +950,76 @@ export function registerOneInchRoutes(app: Hono) {
       return u.toString();
     };
 
-    // ── 4 trial URL patterns (most-to-least likely) ──
+    // ── 6 trial URL patterns (Round 2 — informed by Round 1 diagnostics) ──
+    //
+    // Round 1 eliminated:
+    //   ✗ fusion-plus/v2.0/{chain}/... → 404 (v2.0 doesn't exist for fusion-plus)
+    //   ✗ fusion/v2.0/{chain}/?dstChainId=...&toTokenAddress=... → 400 CANNOT_SYNC_TOKEN
+    //   ✗ fusion-plus/v1.0/ POST body → 400 REQUIRED_FIELD_MISSING (GET-only)
+    //
+    // Key: v1.0 IS alive. We never tried v1.0 + chain-in-path (the "wrong chain id"
+    // was v1.0 without chain; the 404 was v1.2 with chain).
     const trials: { label: string; method: "GET" | "POST"; url: string; body?: string }[] = [
-      // T1: Fusion+ v2.0, srcChainId in path, Fusion v2.0 field names
+      // T1: v1.0 + srcChainId IN PATH + Fusion+ fields — the untested combo!
       {
-        label: "fusion-plus/v2.0/chain-path/v2-fields",
+        label: "v1.0/chain-path/plus-fields",
         method: "GET",
-        url: `https://api.1inch.dev/fusion-plus/quoter/v2.0/${srcChainId}/quote/receive?${qs([
-          ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["toTokenAddress", cDst],
-          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
-        ])}`,
-      },
-      // T2: Fusion+ v2.0, srcChainId in path, Fusion+ field names (srcToken/dstToken)
-      {
-        label: "fusion-plus/v2.0/chain-path/plus-fields",
-        method: "GET",
-        url: `https://api.1inch.dev/fusion-plus/quoter/v2.0/${srcChainId}/quote/receive?${qs([
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/${srcChainId}/quote/receive?${qs([
           ["dstChainId", String(dstChainId)], ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
           ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
         ])}`,
       },
-      // T3: Cross-chain via MAIN Fusion v2.0 (Fusion+ merged into Fusion)
+      // T2: v1.0 + chain in path + v2 field names
       {
-        label: "fusion/v2.0/cross-chain-merged",
+        label: "v1.0/chain-path/v2-fields",
         method: "GET",
-        url: `https://api.1inch.dev/fusion/quoter/v2.0/${srcChainId}/quote/receive?${qs([
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/${srcChainId}/quote/receive?${qs([
           ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["toTokenAddress", cDst],
           ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
         ])}`,
       },
-      // T4: Original v1.0 POST with JSON body
+      // T3: v1.0 NO chain in path (the original — re-confirm "wrong chain id")
       {
-        label: "fusion-plus/v1.0/POST-body",
+        label: "v1.0/no-chain/query-only",
+        method: "GET",
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${qs([
+          ["srcChainId", String(srcChainId)], ["dstChainId", String(dstChainId)],
+          ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
+      },
+      // T4: Fusion v2.0 merged — use dstTokenAddress instead of toTokenAddress
+      {
+        label: "fusion-v2.0/merged/dstTokenAddress",
+        method: "GET",
+        url: `https://api.1inch.dev/fusion/quoter/v2.0/${srcChainId}/quote/receive?${qs([
+          ["dstChainId", String(dstChainId)], ["fromTokenAddress", cSrc], ["dstTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
+      },
+      // T5: v1.0 POST with query params (not body)
+      {
+        label: "v1.0/POST-query-params",
         method: "POST",
-        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive`,
-        body: JSON.stringify({
-          srcChainId, dstChainId, srcTokenAddress: cSrc, dstTokenAddress: cDst,
-          amount: amt, walletAddress: cWallet,
-          ...(enableEst ? { enableEstimate: body.enableEstimate } : {}),
-          ...(feeStr ? { fee: body.fee } : {}),
-        }),
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/quote/receive?${qs([
+          ["srcChainId", String(srcChainId)], ["dstChainId", String(dstChainId)],
+          ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
+      },
+      // T6: v1.0 chain in path + both chainIds also in query (belt + suspenders)
+      {
+        label: "v1.0/chain-path/both-chains-in-query",
+        method: "GET",
+        url: `https://api.1inch.dev/fusion-plus/quoter/v1.0/${srcChainId}/quote/receive?${qs([
+          ["srcChainId", String(srcChainId)], ["dstChainId", String(dstChainId)],
+          ["srcTokenAddress", cSrc], ["dstTokenAddress", cDst],
+          ["amount", amt], ["walletAddress", cWallet], ["enableEstimate", enableEst], ["fee", feeStr],
+        ])}`,
       },
     ];
 
-    console.log(`${TAG} Fusion+ MULTI-TRIAL: ${srcChainId}→${dstChainId} src=${cSrc.slice(0,10)}... dst=${cDst.slice(0,10)}... trials=4`);
+    console.log(`${TAG} Fusion+ MULTI-TRIAL R2: ${srcChainId}→${dstChainId} src=${cSrc.slice(0,10)}... dst=${cDst.slice(0,10)}... trials=${trials.length}`);
 
     const results: { label: string; status: number; snippet: string }[] = [];
     for (const t of trials) {
@@ -1009,10 +1035,10 @@ export function registerOneInchRoutes(app: Hono) {
       console.log(`${TAG} [TRIAL] ✗ ${t.label}: HTTP ${s} — ${snip}`);
     }
 
-    console.log(`${TAG} [TRIAL] ALL 4 FAILED: ${JSON.stringify(results)}`);
+    console.log(`${TAG} [TRIAL] ALL ${trials.length} FAILED: ${JSON.stringify(results)}`);
     return c.json({
       error: "All Fusion+ quote URL patterns failed",
-      details: "The 1inch Fusion+ API rejected all 4 URL pattern trials. See _trials for per-trial diagnostics.",
+      details: `The 1inch Fusion+ API rejected all ${trials.length} URL pattern trials. See _trials for per-trial diagnostics.`,
       statusCode: 502,
       _trials: results,
     }, 502);
