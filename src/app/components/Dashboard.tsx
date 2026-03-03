@@ -22,8 +22,12 @@ import { playVipButtonChime } from "../utils/sounds";
 import { SiteActivity } from "./SiteActivity";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { TOKEN_LOGOS } from "../utils/coingecko";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId } from "/utils/supabase/info";
 import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
+import { Tip } from "./Tip";
+import { PriceFlash } from "./PriceFlash";
+import { MiniSparkline } from "./MiniSparkline";
+import { MarketListSkeleton } from "./Skeletons";
 
 // ── Icon-proxy base URL for production CDN fallback ──────────────
 // CoinGecko CDN blocks hotlinking from Vercel in production.
