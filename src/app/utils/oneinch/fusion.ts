@@ -511,6 +511,13 @@ export async function getFusionQuote(
   );
 
   const parsed = parseQuoteResponse(res);
+  // [DIAG] Log the quoteId value AND which field it came from — critical for debugging build failures
+  const _qidSource =
+    (typeof rawObj.quoteId === "string" && rawObj.quoteId) ? `quoteId="${rawObj.quoteId}"` :
+    (typeof rawObj.quote_id === "string" && rawObj.quote_id) ? `quote_id="${rawObj.quote_id}"` :
+    (typeof rawObj.id === "string" && rawObj.id) ? `id="${rawObj.id}" ← FALLBACK FIELD (might not be a real quoteId!)` :
+    "NONE";
+  log.info(TAG, `[DIAG] quoteId source: ${_qidSource} → parsed="${parsed.quoteId}"`);
   log.info(TAG, `Fusion quote received: quoteId=${parsed.quoteId || "(EMPTY)"} recommended=${parsed.recommendedPreset} presets=${parsed.presets.length}`);
 
   // IMPLEMENTATION NOTE: If quoteId is empty, the order build step will fail.

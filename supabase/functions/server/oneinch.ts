@@ -365,6 +365,10 @@ async function upstreamFetch(
           details: detail,
           statusCode: res.status,
           ...(meta ? { meta } : {}),
+          // IMPLEMENTATION NOTE: Include the full upstream response for debugging.
+          // The "detail" field is just one extracted string — the full response may
+          // contain additional context about which field failed validation.
+          _upstream: JSON.stringify(parsed).slice(0, 600),
         },
       };
     }
@@ -710,6 +714,9 @@ export function registerOneInchRoutes(app: Hono) {
     const cleanBody: Record<string, unknown> = {
       quoteId: body.quoteId,
       walletAddress: eip55Checksum(body.walletAddress as string),
+      // IMPLEMENTATION NOTE: secretsCount is required by the 1inch Fusion
+      // Relayer v2.0 — defaults to 1 if not provided.
+      secretsCount: typeof body.secretsCount === "number" ? body.secretsCount : 1,
     };
     // Only include optional fields the relayer actually supports
     if (body.preset) cleanBody.preset = body.preset;
@@ -1182,7 +1189,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-03b-build-checksum-fix",
+      serverBuild: "2026-03-03c-build-debug-secrets",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)
