@@ -538,8 +538,21 @@ function buildServerSideOrder(
     ];
 
     const offsetsHex = packExtOffsets(fields.map(f => f.length));
-    const dataHex = fields.map(f => bHex(f)).join("");
-    const extension = "0x" + offsetsHex + dataHex;
+    const fieldsHex = fields.map(f => bHex(f)).join("");
+
+    // ── CustomData: cross-chain routing (appended AFTER the 8 fields) ──
+    // IMPLEMENTATION NOTE (2026-03-03, 8-byte gap fix):
+    // The relayer expects 160 bytes but we produce 152 — exactly 8 bytes short.
+    // In LOP v4, customData sits after field 7's boundary and is NOT tracked
+    // by the offsets word. For Fusion+ cross-chain orders, the SDK encodes
+    // routing information here: uint32(srcChainId) + uint32(dstChainId).
+    // The settlement/escrow contract reads this to know which chains are involved.
+    const customData = catBytes(u32be(srcChainId), u32be(dstChainId));
+    const customDataHex = bHex(customData);
+    diag.customDataBytes = customData.length;
+    diag.customDataHex = customDataHex;
+
+    const extension = "0x" + offsetsHex + fieldsHex + customDataHex;
 
     diag.extensionLength = extension.length;
     diag.fieldLengths = fields.map(f => f.length);
@@ -607,7 +620,7 @@ function buildServerSideOrder(
     const totalDataBytes = fields.reduce((s, f) => s + f.length, 0);
     console.log(`${TAG} [EXT] Field bytes: making=${makingAmountData.length} taking=${takingAmountData.length} post=${fullPostInteraction.length} total_data=${totalDataBytes}`);
     console.log(`${TAG} [EXT] Auction: header=10 + ${points.length}*5pts = ${auctionBytes.length} bytes. Whitelist: ${whitelist.length}*12 = ${wlBytes.length} bytes. CC suffix: ${crossChainSuffix.length} bytes`);
-    console.log(`${TAG} [EXT] Extension: 32(offsets) + ${totalDataBytes}(data) = ${32 + totalDataBytes} total bytes`);
+    console.log(`${TAG} [EXT] CustomData: ${customData.length} bytes (srcChain=${srcChainId} dstChain=${dstChainId}). Extension total: 32(offsets) + ${totalDataBytes}(fields) + ${customData.length}(custom) = ${32 + totalDataBytes + customData.length} bytes`);
 
     return { order, extension, typedData, orderHash, diagnostics: diag };
   } catch (err: any) {
