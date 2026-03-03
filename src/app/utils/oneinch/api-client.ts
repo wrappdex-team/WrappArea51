@@ -391,6 +391,10 @@ async function request<T>(
                 ? parsed.details
                 : `HTTP ${res.status}: ${res.statusText}`;
 
+          // [DIAG] Log full response body for non-OK responses so we can trace
+          // exactly what 1inch/server returned (especially _debug and meta fields)
+          log.warn(TAG, `[DIAG] ${method} ${path} → HTTP ${res.status}: ${JSON.stringify(parsed).slice(0, 600)}`);
+
           const classified = classifyError(res.status, msg, parsed);
 
           if (classified.retryable && attempt < retries) {

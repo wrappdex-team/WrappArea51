@@ -766,7 +766,34 @@ export function registerOneInchRoutes(app: Hono) {
     }
 
     if (status !== 200) {
-      console.log(`${TAG} Fusion build FAILED: status=${status} response=${JSON.stringify(resBody).slice(0, 500)}`);
+      console.log(`${TAG} Fusion build FAILED: status=${status} response=${JSON.stringify(resBody).slice(0, 500)} sentBody=${JSON.stringify(cleanBody)}`);
+
+      // IMPLEMENTATION NOTE: If the relayer returns 400, try a minimal body
+      // with ONLY quoteId — some Fusion v2.0 API versions reject unknown fields
+      // and the walletAddress is already encoded in the quoteId.
+      if (status === 400) {
+        const minimalBody = { quoteId: body.quoteId };
+        console.log(`${TAG} Fusion build retrying with MINIMAL body (quoteId only): url=${relayerUrl}`);
+        const retryRes = await upstreamFetch("POST", relayerUrl, JSON.stringify(minimalBody));
+        if (retryRes.status === 200) {
+          console.log(`${TAG} Fusion build MINIMAL body SUCCEEDED — the relayer rejects walletAddress/preset fields`);
+          return c.json(retryRes.body);
+        }
+        console.log(`${TAG} Fusion build MINIMAL body ALSO FAILED: status=${retryRes.status} response=${JSON.stringify(retryRes.body).slice(0, 500)}`);
+
+        // Also try quoter build endpoint as last resort
+        const quoterBuildUrl = fusionQuoterUrl(chainId, "/order/build");
+        console.log(`${TAG} Fusion build trying quoter /order/build: url=${quoterBuildUrl}`);
+        const quoterRes = await upstreamFetch("POST", quoterBuildUrl, JSON.stringify(cleanBody));
+        if (quoterRes.status === 200) {
+          console.log(`${TAG} Fusion build quoter /order/build SUCCEEDED`);
+          return c.json(quoterRes.body);
+        }
+        console.log(`${TAG} Fusion build quoter /order/build FAILED: status=${quoterRes.status} response=${JSON.stringify(quoterRes.body).slice(0, 500)}`);
+      }
+
+      // Return the original error with debug info
+      return c.json({ ...resBody, _debug: { sentBody: cleanBody, relayerUrl } }, status as any);
     }
     return c.json(resBody, status as any);
   });

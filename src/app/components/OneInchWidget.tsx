@@ -1207,7 +1207,13 @@ export function OneInchWidget() {
         setSwapStatus("error");
         setSwapError(fullMsg);
       }
-      log.warn("1inch", `[STEP-FAIL] Fusion swap error at swapStatus="${swapStatus}": ${fullMsg}`, err);
+      // IMPLEMENTATION NOTE: Log full error including _debug from server for tracing build failures
+      const errBody = err?.error ?? err;
+      log.warn("1inch", `[STEP-FAIL] Fusion swap error at swapStatus="${swapStatus}": ${fullMsg}`);
+      log.warn("1inch", `[STEP-FAIL] Full error object:`, JSON.stringify({
+        kind: errBody?.kind, status: errBody?.status, details: errBody?.details,
+        message: errBody?.message, meta: errBody?.meta, _debug: errBody?._debug,
+      }, null, 2));
       stopFusionPolling();
     }
   }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, fromBalance, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);
