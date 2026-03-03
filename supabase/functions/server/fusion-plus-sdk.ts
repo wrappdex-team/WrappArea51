@@ -164,8 +164,15 @@ async function apiFetch(
         : typeof parsed.error === "string" ? parsed.error
         : typeof parsed.message === "string" ? parsed.message
         : JSON.stringify(parsed);
-      console.log(`${TAG} Upstream ${res.status} for ${method} ${url}: ${detail} | full=${JSON.stringify(parsed).slice(0, 500)}`);
-      return { status: res.status, body: { error: "1inch API error", details: detail, statusCode: res.status, _upstream: JSON.stringify(parsed).slice(0, 600) } };
+      const fullJson = JSON.stringify(parsed);
+      console.log(`${TAG} Upstream ${res.status} for ${method} ${url}: ${detail}`);
+      console.log(`${TAG} Upstream FULL response (${fullJson.length} chars): ${fullJson.slice(0, 2000)}`);
+      // IMPLEMENTATION NOTE: Log validationErrors separately for ORDER_VALIDATION_ERROR
+      const meta = parsed.meta as Record<string, unknown> | undefined;
+      if (meta?.validationErrors) {
+        console.log(`${TAG} Upstream validationErrors: ${JSON.stringify(meta.validationErrors).slice(0, 2000)}`);
+      }
+      return { status: res.status, body: { error: "1inch API error", details: detail, statusCode: res.status, _upstream: fullJson.slice(0, 2000), _validationErrors: meta?.validationErrors } };
     }
 
     return { status: 200, body: parsed };
@@ -472,6 +479,15 @@ function randomBaseSalt(): bigint {
   return salt;
 }
 
+/** Generate a random 40-bit nonce (matching SDK's randBigInt(UINT_40_MAX)) */
+function randomNonce40(): bigint {
+  const bytes = new Uint8Array(5); // 40 bits
+  crypto.getRandomValues(bytes);
+  let n = 0n;
+  for (let i = 0; i < 5; i++) n = (n << 8n) | BigInt(bytes[i]);
+  return n;
+}
+
 /** LOP v4 Aggregation Router v6 address (same on all chains) */
 const AGG_ROUTER_V6 = "0x111111125421ca6dc452d289314280a0f8842a65";
 
@@ -591,7 +607,7 @@ function computeEIP712OrderHash(
  *   5. crossChainData = ABI-encoded [hashLock, dstChainId, dstToken, packedDeposits, timeLocks] = 160 bytes
  *   6. takerAsset = TRUE_ERC20 (0xda0000d4000015a526378bb6fafc650cea5966f8), NOT dstToken
  *   7. salt = (random96 << 160) | (keccak256(extension.encode()) & UINT_160_MAX)
- *   8. MakerTraits: bits 254, 251, 249 set; expiration in [80,120)
+ *   8. MakerTraits: bits 251, 249 always; 254 only if allowMultipleFills=true (default false); nonce in [120,160) if bitInvalidatorMode
  *   9. All order struct fields are decimal strings (not hex for salt/makerTraits)
  *  10. receiver = escrowFactory (if fees) or 0x0 (if receiver==maker, no fees)
  *  11. customData = '0x' (empty for EVM→EVM)
@@ -853,14 +869,20 @@ function buildServerSideOrder(
     diag.saltVerified = true;
 
     // ── Build MakerTraits ──
-    const allowMultipleFills = preset.allowMultipleFills !== false; // default true
-    const allowPartialFills = preset.allowPartialFills !== false; // default true
+    // IMPLEMENTATION NOTE (SDK-verified): FusionOrder.defaultExtra.allowMultipleFills = false.
+    // Preset class assigns directly from API: this.allowMultipleFills = preset.allowMultipleFills.
+    // The previous default of `true` was WRONG — caused bit 254 to be set incorrectly and
+    // nonce to be omitted, producing a makerTraits mismatch vs relayer expectations.
+    const allowMultipleFills = preset.allowMultipleFills === true; // default false (SDK verified)
+    const allowPartialFills = preset.allowPartialFills !== false; // default true (SDK verified)
     const orderExpirationDelay = 12n; // SDK default
     const deadline = BigInt(startTime) + BigInt(duration) + orderExpirationDelay;
 
     // Nonce: required when partial or multiple fills disallowed (bit invalidator mode)
+    // IMPLEMENTATION NOTE (SDK-verified): createEvmOrder uses randBigInt(UINT_40_MAX) for nonce.
+    // Previous code used nowSec % 65535 (16-bit) — insufficient for the 40-bit nonce field.
     const isBitInvalidatorMode = !allowPartialFills || !allowMultipleFills;
-    const nonce = isBitInvalidatorMode ? BigInt(nowSec % 65535) : undefined;
+    const nonce = isBitInvalidatorMode ? randomNonce40() : undefined;
 
     const makerTraits = packMakerTraits(deadline, nonce, allowMultipleFills, allowPartialFills);
 
@@ -870,7 +892,10 @@ function buildServerSideOrder(
       allowMultipleFills,
       allowPartialFills,
       isBitInvalidatorMode,
+      presetAllowMultipleFills: preset.allowMultipleFills,
+      presetAllowPartialFills: preset.allowPartialFills,
     };
+    console.log(`${TAG} [EXT-v6] MakerTraits flags: allowMulti=${allowMultipleFills}(preset=${preset.allowMultipleFills}) allowPartial=${allowPartialFills}(preset=${preset.allowPartialFills}) bitInvalidator=${isBitInvalidatorMode} nonce=${nonce?.toString() ?? "none"} deadline=${deadline}`);
 
     // ── Build order struct ──
     // IMPLEMENTATION NOTE (Step 5): LimitOrder.build() produces ALL decimal strings.
@@ -1463,6 +1488,9 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
 
     const submitUrl = `${RELAYER_BASE}/submit`;
     console.log(`${TAG} [SDK-SUBMIT] POST ${submitUrl} payload keys=[${Object.keys(submitPayload).join(",")}] srcChain=${body.srcChainId} quoteId=${(body.quoteId as string).slice(0, 20)}...`);
+    // IMPLEMENTATION NOTE: Log full order struct for debugging makerTraits/receiver/salt mismatches
+    console.log(`${TAG} [SDK-SUBMIT] Order struct: ${JSON.stringify(body.order).slice(0, 1500)}`);
+    console.log(`${TAG} [SDK-SUBMIT] Signature (first 40): ${(body.signature as string).slice(0, 40)}...`);
 
     // IMPLEMENTATION NOTE: Log the extension hex for debugging byte count mismatches.
     // The relayer error "Can not consume X bytes, have only Y" refers to extension data size.
@@ -1477,7 +1505,7 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     if (status === 200) {
       console.log(`${TAG} [SDK-SUBMIT] SUCCESS: ${JSON.stringify(resBody).slice(0, 300)}`);
     } else {
-      console.log(`${TAG} [SDK-SUBMIT] FAILED (${status}): ${JSON.stringify(resBody).slice(0, 500)}`);
+      console.log(`${TAG} [SDK-SUBMIT] FAILED (${status}): ${JSON.stringify(resBody).slice(0, 2000)}`);
 
       // IMPLEMENTATION NOTE: If v1.2 submit fails, try v1.0 as fallback
       const v10SubmitUrl = `https://api.1inch.dev/fusion-plus/relayer/v1.0/submit`;
@@ -1487,7 +1515,7 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
         console.log(`${TAG} [SDK-SUBMIT] v1.0 SUCCESS: ${JSON.stringify(v10Result.body).slice(0, 300)}`);
         return c.json({ ...v10Result.body, _relayerVersion: "v1.0" }, 200);
       }
-      console.log(`${TAG} [SDK-SUBMIT] v1.0 also FAILED (${v10Result.status}): ${JSON.stringify(v10Result.body).slice(0, 500)}`);
+      console.log(`${TAG} [SDK-SUBMIT] v1.0 also FAILED (${v10Result.status}): ${JSON.stringify(v10Result.body).slice(0, 2000)}`);
 
       // IMPLEMENTATION NOTE: Surface the relayer's actual rejection reason so the
       // frontend can display it — previously this was lost in the error chain.
@@ -1506,6 +1534,7 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
       return c.json({
         error: "Relayer submission failed",
         details: `v1.2 (${status}): ${v12Reason} | v1.0 (${v10Result.status}): ${v10Reason}`,
+        _validationErrors: resBody?._validationErrors ?? v10Result.body?._validationErrors ?? null,
         v12: { status, body: resBody },
         v10: { status: v10Result.status, body: v10Result.body },
       }, status as any);

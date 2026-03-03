@@ -1505,6 +1505,8 @@ export function OneInchWidget() {
         kind: errBody?.kind, status: errBody?.status, details: errBody?.details,
         message: errBody?.message, meta: errBody?.meta, _debug: errBody?._debug,
         _diagnostics: errBody?._diagnostics,
+        _validationErrors: errBody?._validationErrors,
+        v12: errBody?.v12, v10: errBody?.v10,
       }, null, 2));
       stopCrossChainPolling();
     }
