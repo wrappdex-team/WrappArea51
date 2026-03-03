@@ -1333,6 +1333,14 @@ export function OneInchWidget() {
         return;
       }
 
+      // IMPLEMENTATION NOTE: If the server built the order with extension
+      // (serverOrderBuilt=true in diagnostics), we skip client-side construction
+      // entirely. The extension encoding was done server-side from the quote data.
+      if (sdkResult.typedData && !sdkResult.needsClientConstruction) {
+        const extLen = sdkResult.extension?.length || 0;
+        log.info("1inch", `[FUSION+SDK] Server provided complete order with extension (${extLen} chars). Skipping client-side construction.`);
+      }
+
       if (!sdkResult.typedData || sdkResult.needsClientConstruction) {
         // IMPLEMENTATION NOTE (SDK Client-Side Migration): Server got a valid quote
         // but couldn't construct the order (SDK not available in Deno). We now
@@ -1398,7 +1406,7 @@ export function OneInchWidget() {
 
       // Step D: Submit via SDK-based relayer endpoint
       setSwapStatus("submitting");
-      log.info("1inch", `[FUSION+SDK] Step D: Submitting signed order via /sdk-submit`);
+      log.info("1inch", `[FUSION+SDK] Step D: Submitting signed order via /sdk-submit (ext=${buildResult.extension?.length || 0} chars)`);
 
       const submitRes = await sdkSubmitCrossChainOrder({
         srcChainId: selectedChainId,

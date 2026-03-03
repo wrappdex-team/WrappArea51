@@ -59,12 +59,17 @@ async function loadSdkFromCdn(): Promise<SdkExports | null> {
     // IMPLEMENTATION NOTE: esm.sh ?bundle inlines all deps into one file,
     // avoiding transitive import failures. We also try jsdelivr which has
     // good browser compatibility, and unpkg as last resort.
-    "https://esm.sh/@1inch/cross-chain-sdk@2?bundle&target=es2022",
-    "https://esm.sh/@1inch/cross-chain-sdk?bundle&target=es2022",
+    // The ?no-check flag skips type-checking which can cause failures.
+    "https://esm.sh/@1inch/cross-chain-sdk@2?bundle&target=es2022&no-check",
+    "https://esm.sh/@1inch/cross-chain-sdk?bundle&target=es2022&no-check",
     "https://cdn.jsdelivr.net/npm/@1inch/cross-chain-sdk@2/+esm",
     "https://cdn.skypack.dev/@1inch/cross-chain-sdk",
-    // Also try the same-chain fusion-sdk which shares LOP v4 utilities
-    "https://esm.sh/@1inch/fusion-sdk?bundle&target=es2022",
+    // Same-chain fusion-sdk shares Extension/AuctionDetails utilities
+    "https://esm.sh/@1inch/fusion-sdk?bundle&target=es2022&no-check",
+    // limit-order-sdk is smallest — may succeed where others fail
+    "https://esm.sh/@1inch/limit-order-sdk?bundle&target=es2022&no-check",
+    // Try pinned older versions that may have fewer deps
+    "https://esm.sh/@1inch/cross-chain-sdk@1?bundle&target=es2022&no-check",
   ];
 
   for (const url of cdnUrls) {
@@ -400,13 +405,18 @@ function buildManualOrder(
     );
 
     log.info(TAG, `Manual order constructed: maker=${walletAddress.slice(0, 10)}... salt=${order.salt.slice(0, 14)}... expiry=${expiration}`);
-    log.warn(TAG, "IMPLEMENTATION NOTE: Manual order construction is EXPERIMENTAL. The relayer may reject it.");
+    log.warn(TAG, "IMPLEMENTATION NOTE: Client-side manual fallback used. If the server also failed to build the extension, this order will be rejected.");
+    log.warn(TAG, "Check server logs for the raw quote dump — the settlement address field name is logged there.");
 
     return {
       typedData,
       order,
       orderHash,
-      extension: "0x", // Empty extension — this is the main risk point
+      // IMPLEMENTATION NOTE: The extension should be built server-side now.
+      // This client fallback only fires if the server couldn't find the
+      // settlement address in the quote response. The empty extension will
+      // be rejected with "extension can not be empty" — that's expected.
+      extension: "0x",
       method: "manual-lop4",
     };
   } catch (err: any) {
