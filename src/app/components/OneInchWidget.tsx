@@ -96,14 +96,26 @@ import type { ParsedFusionQuote, ParsedPreset, FusionSignedOrder } from "../util
 import type { FusionOrderStatus, FusionOrderStatusResponse } from "../utils/oneinch/types";
 import {
   getCrossChainQuote,
+  getCrossChainOrderStatus,
+  buildCrossChainOrder,
+  submitCrossChainOrder,
+  pollCrossChainOrder,
+  submitSecret,
+  getReadyFills,
   isFusionPlusSupported,
+  isCrossChainTerminalStatus,
+  isCrossChainSuccessStatus,
   getDestinationChains,
   formatCrossChainRoute,
   formatEstimatedTime,
   formatCrossChainAmount,
+  persistCrossChainOrderHash,
   CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS,
+  CROSS_CHAIN_POLL_INTERVAL_MS,
+  CROSS_CHAIN_POLL_MAX_DURATION_MS,
+  CROSS_CHAIN_STATUS_LABELS,
 } from "../utils/oneinch/fusion-plus";
-import type { ParsedCrossChainQuote } from "../utils/oneinch/fusion-plus";
+import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse } from "../utils/oneinch/fusion-plus";
 import {
   getChainById as getModuleChainById,
 } from "../utils/oneinch/chains";
@@ -297,6 +309,17 @@ export function OneInchWidget() {
   const [fusionOrderStatus, setFusionOrderStatus] = useState<FusionOrderStatus | null>(null);
   const [fusionFillTxHash, setFusionFillTxHash] = useState<string | null>(null);
   const fusionPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Fusion+ Step 11: cross-chain order lifecycle tracking
+  const [crossChainOrderHash, setCrossChainOrderHash] = useState<string | null>(null);
+  const [crossChainBuildData, setCrossChainBuildData] = useState<FusionPlusBuildResponse | null>(null);
+  const crossChainPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopCrossChainPolling = useCallback(() => {
+    if (crossChainPollTimer.current) {
+      clearInterval(crossChainPollTimer.current);
+      crossChainPollTimer.current = null;
+    }
+  }, []);
 
   // ── Settings ──
   const [slippage, setSlippage] = useState(1);
@@ -1028,8 +1051,8 @@ export function OneInchWidget() {
 
   // Clean up polling on unmount
   useEffect(() => {
-    return () => { stopFusionPolling(); };
-  }, [stopFusionPolling]);
+    return () => { stopFusionPolling(); stopCrossChainPolling(); };
+  }, [stopFusionPolling, stopCrossChainPolling]);
 
   // ── Execute FUSION swap (gasless — full lifecycle) ─────────────────
   const handleFusionSwap = useCallback(async () => {
@@ -1218,15 +1241,198 @@ export function OneInchWidget() {
     }
   }, [evmAccount, selectedChainId, fromAmount, fromToken, toToken, fromBalance, fusionQuote, selectedPreset, stopFusionPolling, fetchBalance]);
 
-  // ── Unified swap handler — dispatches to Classic or Fusion ─────────
+  // ── Execute FUSION+ cross-chain swap (full lifecycle) ───────────────
+  const handleCrossChainSwap = useCallback(async () => {
+    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0 || !crossChainQuote) return;
+
+    // Safety-net balance check
+    if (fromBalance) {
+      const walletBal = parseFloat(fromBalance.replace(/,/g, ""));
+      if (!isNaN(walletBal) && parseFloat(fromAmount) > walletBal) {
+        setSwapError(`Insufficient ${fromToken.symbol} balance. You have ${fromBalance} but tried to swap ${fromAmount}.`);
+        setSwapStatus("error");
+        return;
+      }
+    }
+
+    playVipCashRegister();
+    setSwapError(null);
+    setLastTxHash(null);
+    setLastSignedOrder(null);
+    setFusionOrderStatus(null);
+    setFusionFillTxHash(null);
+    setCrossChainOrderHash(null);
+    setCrossChainBuildData(null);
+    stopCrossChainPolling();
+
+    try {
+      // Step A: Get a fresh quote with enableEstimate=true for a valid quoteId
+      setSwapStatus("building");
+      log.info("1inch", `[FUSION+] Step A: Requesting Fusion+ quote with enableEstimate=true`);
+
+      let execQuoteId = crossChainQuote.quoteId;
+
+      if (!execQuoteId) {
+        const amountWei = toWei(fromAmount, fromToken.decimals);
+        const freshQuote = await getCrossChainQuote(
+          selectedChainId,
+          dstChainId,
+          fromToken.address,
+          crossChainDstToken.address,
+          amountWei,
+          evmAccount,
+        );
+        execQuoteId = freshQuote.quoteId;
+        log.info("1inch", `[FUSION+] Fresh quote received: quoteId=${execQuoteId || "(EMPTY)"}`);
+      }
+
+      if (!execQuoteId) {
+        setSwapError(
+          "Unable to get a Fusion+ cross-chain quote ID. The trade amount may be too small " +
+          "for cross-chain resolvers, or there is insufficient liquidity on the route."
+        );
+        setSwapStatus("error");
+        return;
+      }
+
+      // Step B: Build the order — returns EIP-712 typed data for signing
+      log.info("1inch", `[FUSION+] Step B: Building cross-chain order: quoteId=${execQuoteId}`);
+
+      const buildResult = await buildCrossChainOrder(
+        execQuoteId,
+        evmAccount,
+        1, // secretsCount — 1 for simple swaps
+      );
+
+      log.info("1inch", `[FUSION+] Build success: orderHash=${buildResult.orderHash} hasTypedData=${!!buildResult.typedData}`);
+      setCrossChainBuildData(buildResult);
+
+      if (!buildResult.typedData || !buildResult.orderHash) {
+        setSwapError(`Fusion+ build returned incomplete data. orderHash=${buildResult.orderHash ?? "missing"}, typedData=${buildResult.typedData ? "present" : "missing"}`);
+        setSwapStatus("error");
+        return;
+      }
+
+      // Step C: Sign the EIP-712 typed data — gasless signature
+      setSwapStatus("signing");
+      log.info("1inch", `[FUSION+] Step C: Requesting EIP-712 signature for orderHash=${buildResult.orderHash}`);
+
+      const signature = await window.ethereum!.request({
+        method: "eth_signTypedData_v4",
+        params: [evmAccount, typeof buildResult.typedData === "string" ? buildResult.typedData : JSON.stringify(buildResult.typedData)],
+      });
+
+      log.info("1inch", `[FUSION+] Signature obtained: ${(signature as string).slice(0, 16)}...`);
+
+      // Step D: Submit the signed order to the Fusion+ relayer
+      setSwapStatus("submitting");
+      log.info("1inch", `[FUSION+] Step D: Submitting signed order to relayer`);
+
+      const submitRes = await submitCrossChainOrder({
+        quoteId: execQuoteId,
+        orderHash: buildResult.orderHash,
+        signature: signature as string,
+        order: buildResult.order,
+        extension: buildResult.extension,
+        srcSecrets: buildResult.srcSecrets,
+        secretHashes: buildResult.secretHashes,
+      });
+
+      log.info("1inch", `[FUSION+] Order submitted: ${JSON.stringify(submitRes).slice(0, 200)}`);
+      setCrossChainOrderHash(buildResult.orderHash);
+
+      // Persist for order history tracking
+      persistCrossChainOrderHash(
+        buildResult.orderHash,
+        selectedChainId,
+        dstChainId,
+        fromToken.symbol,
+        crossChainDstToken.symbol,
+        fromAmount,
+      );
+
+      // Step E: Poll for status until terminal
+      setSwapStatus("polling");
+      setFusionOrderStatus("SrcPending" as any);
+      const pollDeadline = Date.now() + CROSS_CHAIN_POLL_MAX_DURATION_MS;
+
+      crossChainPollTimer.current = setInterval(async () => {
+        try {
+          if (Date.now() > pollDeadline) {
+            stopCrossChainPolling();
+            setSwapStatus("error");
+            setSwapError("Cross-chain order timed out after 10 minutes. Check your active orders.");
+            return;
+          }
+
+          // Poll order status via the orders API
+          const orderStatus = await getCrossChainOrderStatus(buildResult.orderHash);
+          
+          log.info("1inch", `[FUSION+] Poll: status=${orderStatus.status}`);
+          setFusionOrderStatus(orderStatus.status as any);
+
+          if (isCrossChainTerminalStatus(orderStatus.status)) {
+            stopCrossChainPolling();
+
+            if (isCrossChainSuccessStatus(orderStatus.status)) {
+              setSwapStatus("success");
+              playVipConfirm();
+              fetchBalance();
+            } else {
+              setSwapStatus("error");
+              setSwapError(CROSS_CHAIN_STATUS_LABELS[orderStatus.status] || orderStatus.status);
+            }
+          }
+
+          // IMPLEMENTATION NOTE: When SrcFilled, check if we need to submit secrets
+          // for HTLC resolution. This is the atomic swap mechanism.
+          if (orderStatus.status === "SrcFilled" && buildResult.srcSecrets?.length) {
+            try {
+              const readyRes = await getReadyFills(buildResult.orderHash);
+              log.info("1inch", `[FUSION+] Ready fills check: ${JSON.stringify(readyRes).slice(0, 200)}`);
+              
+              // If fills are ready, submit the secret
+              if (readyRes && buildResult.srcSecrets[0]) {
+                log.info("1inch", `[FUSION+] Submitting HTLC secret for orderHash=${buildResult.orderHash}`);
+                await submitSecret(buildResult.orderHash, buildResult.srcSecrets[0]);
+                log.info("1inch", `[FUSION+] Secret submitted successfully`);
+              }
+            } catch (secretErr: any) {
+              log.warn("1inch", `[FUSION+] Secret submission failed (will retry): ${secretErr?.message}`);
+            }
+          }
+        } catch (pollErr: any) {
+          log.warn("1inch", `[FUSION+] Poll error (will retry): ${pollErr?.message}`);
+        }
+      }, CROSS_CHAIN_POLL_INTERVAL_MS);
+
+    } catch (err: any) {
+      const msg = friendlyErrorMessage(err);
+      const detail = (err?.error?.details ?? err?.details ?? "") as string;
+      const fullMsg = detail && !msg.includes(detail) ? `${msg} — ${detail}` : msg;
+      if (msg.includes("User rejected") || msg.includes("user rejected") || msg.includes("denied")) {
+        setSwapStatus("idle");
+      } else {
+        setSwapStatus("error");
+        setSwapError(fullMsg);
+      }
+      const errBody = err?.error ?? err;
+      log.warn("1inch", `[FUSION+] Swap error: ${fullMsg}`);
+      log.warn("1inch", `[FUSION+] Full error:`, JSON.stringify({
+        kind: errBody?.kind, status: errBody?.status, details: errBody?.details,
+        message: errBody?.message, meta: errBody?.meta, _debug: errBody?._debug,
+      }, null, 2));
+      stopCrossChainPolling();
+    }
+  }, [evmAccount, selectedChainId, dstChainId, fromAmount, fromToken, toToken, crossChainDstToken, fromBalance, crossChainQuote, selectedPreset, stopCrossChainPolling, fetchBalance]);
+
+  // ── Unified swap handler — dispatches to Classic, Fusion, or Fusion+ ──
   const handleSwap = useCallback(async () => {
     if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
     if (evmChainId !== selectedChainId) { await switchChain(chain); return; }
 
     if (swapMode === "crossChain") {
-      // IMPLEMENTATION NOTE: Cross-chain order building & signing will be
-      // implemented in Step 11. For now, show a placeholder message.
-      setSwapError("Cross-chain swaps are not yet enabled — order building comes in Step 11.");
+      await handleCrossChainSwap();
       return;
     }
     if (swapMode === "fusion" && fusionQuote) {
@@ -1234,7 +1440,7 @@ export function OneInchWidget() {
     } else {
       await handleClassicSwap();
     }
-  }, [evmAccount, evmChainId, selectedChainId, fromAmount, swapMode, fusionQuote, chain, switchChain, handleClassicSwap, handleFusionSwap]);
+  }, [evmAccount, evmChainId, selectedChainId, fromAmount, swapMode, fusionQuote, chain, switchChain, handleClassicSwap, handleFusionSwap, handleCrossChainSwap]);
 
   // ── Rate calculation ───────────────────────────────────────────────
 
@@ -2406,7 +2612,7 @@ export function OneInchWidget() {
                 <span className="break-all">{swapError}</span>
               </div>
             )}
-            <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); stopFusionPolling(); }}
+            <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); setCrossChainOrderHash(null); setCrossChainBuildData(null); stopFusionPolling(); stopCrossChainPolling(); }}
               className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${
                 isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
               }`}>

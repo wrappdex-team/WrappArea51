@@ -24,16 +24,19 @@
 //
 //   ── Fusion API v2.0 (new) ──
 //   POST /1inch/fusion/quote/:chainId          → GET /fusion/quoter/v2.0/{chainId}/quote/receive (query params)
-//   POST /1inch/fusion/build/:chainId          → /fusion/relayer/v2.0/{chainId}/order/build
+//   POST /1inch/fusion/build/:chainId          → /fusion/quoter/v2.0/{chainId}/quote/build
 //   POST /1inch/fusion/submit/:chainId         → /fusion/relayer/v2.0/{chainId}/order/submit
 //   GET  /1inch/fusion/status/:chainId/:hash   → /fusion/orders/v2.0/{chainId}/order/status/{hash}
 //   GET  /1inch/fusion/active/:chainId         → /fusion/orders/v2.0/{chainId}/order/active
 //
-//   ── Fusion+ API v1.0 (new) ──
-//   POST /1inch/fusion-plus/quote              → /fusion-plus/v1.0/quote/receive
-//   POST /1inch/fusion-plus/build              → /fusion-plus/v1.0/order/build
-//   POST /1inch/fusion-plus/submit             → /fusion-plus/v1.0/order/submit
-//   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/v1.0/order/status/{hash}
+//   ── Fusion+ API v1.2 (cross-chain) ──
+//   POST /1inch/fusion-plus/quote              → /fusion-plus/quoter/v1.2/quote/receive
+//   POST /1inch/fusion-plus/build              → /fusion-plus/quoter/v1.2/quote/build/evm
+//   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.2/submit
+//   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.2/order/status/{hash}
+//   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.2/submit/secret
+//   GET  /1inch/fusion-plus/secrets/:hash      → /fusion-plus/orders/v1.2/order/secrets/{hash}
+//   GET  /1inch/fusion-plus/ready-fills/:hash  → /fusion-plus/orders/v1.2/order/ready-to-accept-secret-fills/{hash}
 //
 //   ── Token / Balance / Price APIs (new) ──
 //   GET  /1inch/balance/:chainId/:wallet       → /balance/v1.2/{chainId}/balances/{wallet}
@@ -74,7 +77,9 @@ const API = {
   fusionQuoter:   "https://api.1inch.dev/fusion/quoter/v2.0",
   fusionRelayer:  "https://api.1inch.dev/fusion/relayer/v2.0",
   fusionOrders:   "https://api.1inch.dev/fusion/orders/v2.0",
-  fusionPlus:     "https://api.1inch.dev/fusion-plus/v1.0",
+  fusionPlusQuoter:  "https://api.1inch.dev/fusion-plus/quoter/v1.2",
+  fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.2",
+  fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.2",
   token:          "https://api.1inch.dev/token/v1.2",
   balance:        "https://api.1inch.dev/balance/v1.2",
   price:          "https://api.1inch.dev/price/v1.1",
@@ -421,9 +426,19 @@ function fusionOrdersUrl(chainId: number, path: string, qs?: string): string {
   return `${API.fusionOrders}/${chainId}${path}${qs ? `?${qs}` : ""}`;
 }
 
-/** Build a Fusion+ API v1.0 URL: /fusion-plus/v1.0/{path}?{query} (no chainId) */
-function fusionPlusUrl(path: string, qs?: string): string {
-  return `${API.fusionPlus}${path}${qs ? `?${qs}` : ""}`;
+/** Build a Fusion+ Quoter URL: /fusion-plus/quoter/v1.2/{path}?{query} */
+function fusionPlusQuoterUrl(path: string, qs?: string): string {
+  return `${API.fusionPlusQuoter}${path}${qs ? `?${qs}` : ""}`;
+}
+
+/** Build a Fusion+ Relayer URL: /fusion-plus/relayer/v1.2/{path}?{query} */
+function fusionPlusRelayerUrl(path: string, qs?: string): string {
+  return `${API.fusionPlusRelayer}${path}${qs ? `?${qs}` : ""}`;
+}
+
+/** Build a Fusion+ Orders URL: /fusion-plus/orders/v1.2/{path}?{query} */
+function fusionPlusOrdersUrl(path: string, qs?: string): string {
+  return `${API.fusionPlusOrders}${path}${qs ? `?${qs}` : ""}`;
 }
 
 /** Build a Token API v1.2 URL: /token/v1.2/{chainId}/{path}?{query} */
@@ -729,81 +744,31 @@ export function registerOneInchRoutes(app: Hono) {
     if (typeof body.permit === "string") cleanBody.permit = body.permit;
     if (typeof body.isPermit2 === "boolean") cleanBody.isPermit2 = body.isPermit2;
 
-    // IMPLEMENTATION NOTE — CRITICAL DISCOVERY (2026-03-03):
+    // IMPLEMENTATION NOTE — ROOT CAUSE FIX (2026-03-03):
     //
-    // The 1inch Fusion Relayer v2.0 /order/build endpoint returned 400 with
-    // meta: {"type":"string.empty","value":"","path":["walletAddress"]} when
-    // we sent a JSON body containing a valid walletAddress. This means the
-    // relayer's body parser does NOT read application/json — it likely expects
-    // application/x-www-form-urlencoded (or reads from query string).
+    // The Fusion v2.0 build endpoint is on the QUOTER service, NOT the relayer:
+    //   CORRECT: POST /fusion/quoter/v2.0/{chain}/quote/build
+    //   WRONG:   POST /fusion/relayer/v2.0/{chain}/order/build  (404 — doesn't exist)
     //
-    // Strategy: Try 3 approaches (1 at a time, stop on first success):
-    //   1. POST with application/x-www-form-urlencoded body (most likely fix)
-    //   2. POST with application/json body (original — returns 400)
-    //   3. POST with query string params (no body)
+    // The relayer only handles /order/submit. The quoter handles both
+    // /quote/receive (quotes) and /quote/build (order construction).
 
-    const relayerUrl = fusionRelayerUrl(chainId, "/order/build");
-    const jsonBody = JSON.stringify(cleanBody);
-    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${(cleanBody.quoteId as string).slice(0, 20)}... wallet=${cleanBody.walletAddress} url=${relayerUrl}`);
+    const buildUrl = fusionQuoterUrl(chainId, "/quote/build");
+    console.log(`${TAG} Fusion build: chain=${chainId} quoteId=${(cleanBody.quoteId as string).slice(0, 20)}... wallet=${cleanBody.walletAddress} url=${buildUrl}`);
 
-    // ── Attempt 1: form-encoded body ──────────────────────────────────
-    // Many API gateways default to parsing form-encoded bodies. If 1inch
-    // uses express.urlencoded() but NOT express.json(), this would explain
-    // why walletAddress arrives as "" with JSON content-type.
-    const formBody = new URLSearchParams();
-    for (const [k, v] of Object.entries(cleanBody)) {
-      if (v != null) formBody.set(k, String(v));
-    }
-    const apiKey = getApiKey();
-    let a1Status = 0;
-    let a1Body: Record<string, unknown> = {};
-    try {
-      const res1 = await fetch(relayerUrl, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Accept": "application/json",
-        },
-        body: formBody.toString(),
-      });
-      a1Status = res1.status;
-      try { a1Body = await res1.json(); } catch { a1Body = { error: `Non-JSON (${res1.status})` }; }
-      console.log(`${TAG} Fusion build attempt 1 (form-encoded): status=${a1Status} resp=${JSON.stringify(a1Body).slice(0, 400)}`);
-      if (a1Status === 200) return c.json(a1Body);
-    } catch (e: any) {
-      console.log(`${TAG} Fusion build attempt 1 (form-encoded) THREW: ${e.message}`);
-      a1Body = { error: e.message };
+    const { status, body: resBody } = await upstreamFetch(
+      "POST",
+      buildUrl,
+      JSON.stringify(cleanBody),
+    );
+
+    if (status !== 200) {
+      console.log(`${TAG} Fusion build FAILED: status=${status} resp=${JSON.stringify(resBody).slice(0, 500)}`);
+      return c.json({ ...resBody, _debug: { sentBody: cleanBody, buildUrl } }, status as any);
     }
 
-    // ── Attempt 2: JSON body (original approach) ──────────────────────
-    const a2 = await upstreamFetch("POST", relayerUrl, jsonBody);
-    console.log(`${TAG} Fusion build attempt 2 (JSON body): status=${a2.status} resp=${JSON.stringify(a2.body).slice(0, 400)}`);
-    if (a2.status === 200) return c.json(a2.body);
-
-    // ── Attempt 3: query string (no body) ─────────────────────────────
-    const qs = formBody.toString();
-    const urlWithQs = `${relayerUrl}?${qs}`;
-    const a3 = await upstreamFetch("POST", urlWithQs, null);
-    console.log(`${TAG} Fusion build attempt 3 (query string): status=${a3.status} resp=${JSON.stringify(a3.body).slice(0, 400)}`);
-    if (a3.status === 200) return c.json(a3.body);
-
-    // All failed — return comprehensive debug
-    return c.json({
-      ...a2.body,
-      _debug: {
-        sentBody: cleanBody,
-        relayerUrl,
-        attempts: {
-          "1_form_encoded": a1Status,
-          "2_json_body": a2.status,
-          "3_query_string": a3.status,
-        },
-        a1_upstream: JSON.stringify(a1Body).slice(0, 300),
-        a2_upstream: (a2.body as any)?._upstream ?? "none",
-        a3_upstream: (a3.body as any)?._upstream ?? "none",
-      },
-    }, a2.status as any);
+    console.log(`${TAG} Fusion build SUCCESS`);
+    return c.json(resBody);
   });
 
   // ── POST /1inch/fusion/submit/:chainId ───────────────────────────
@@ -893,7 +858,7 @@ export function registerOneInchRoutes(app: Hono) {
   });
 
   // ╔══════════════════════════════════════════════════════════════════╗
-  // ║  FUSION+ API v1.0 — Cross-Chain Intent-Based Swaps (4 routes)  ║
+  // ║  FUSION+ API v1.2 — Cross-Chain Intent-Based Swaps (7 routes)  ║
   // ╚══════════════════════════════════════════════════════════════════╝
 
   // ── POST /1inch/fusion-plus/quote ────────────────────────────────
@@ -930,20 +895,21 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    // IMPLEMENTATION NOTE: Pass addresses through as-is (EIP-55 checksummed).
-    // Same as the Fusion quote route — do NOT lowercase.
+    // IMPLEMENTATION NOTE: Apply EIP-55 checksumming to ALL addresses.
+    // The 1inch Fusion+ v1.2 API requires properly checksummed addresses.
+    // Hedera-derived EVM wallets may send lowercase addresses — must fix.
     const upstreamBody: Record<string, unknown> = {
       srcChainId,
       dstChainId,
-      srcTokenAddress: body.srcTokenAddress as string,
-      dstTokenAddress: body.dstTokenAddress as string,
+      srcTokenAddress: eip55Checksum(body.srcTokenAddress as string),
+      dstTokenAddress: eip55Checksum(body.dstTokenAddress as string),
       amount: body.amount,
-      walletAddress: body.walletAddress as string,
+      walletAddress: eip55Checksum(body.walletAddress as string),
     };
     if (typeof body.enableEstimate === "boolean") upstreamBody.enableEstimate = body.enableEstimate;
     if (typeof body.fee === "number") upstreamBody.fee = body.fee;
 
-    const upstreamUrl = fusionPlusUrl("/quote/receive");
+    const upstreamUrl = fusionPlusQuoterUrl("/quote/receive");
     console.log(`${TAG} Fusion+ quote: ${srcChainId}→${dstChainId} src=${upstreamBody.srcTokenAddress} dst=${upstreamBody.dstTokenAddress} amt=${upstreamBody.amount} url=${upstreamUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
@@ -977,14 +943,30 @@ export function registerOneInchRoutes(app: Hono) {
     }
     if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
 
-    console.log(`${TAG} Fusion+ build: quoteId=${body.quoteId}`);
+    // IMPLEMENTATION NOTE: Fusion+ build is on the QUOTER at /quote/build/evm
+    // (NOT /order/build — that doesn't exist). The body needs quoteId + walletAddress.
+    const buildBody: Record<string, unknown> = {
+      quoteId: body.quoteId,
+      walletAddress: eip55Checksum(body.walletAddress as string),
+    };
+    if (typeof body.secretsCount === "number") buildBody.secretsCount = body.secretsCount;
+
+    const buildUrl = fusionPlusQuoterUrl("/quote/build/evm");
+    console.log(`${TAG} Fusion+ build: quoteId=${body.quoteId} wallet=${buildBody.walletAddress} url=${buildUrl}`);
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionPlusUrl("/order/build"),
-      JSON.stringify(body),
+      buildUrl,
+      JSON.stringify(buildBody),
     );
-    return c.json(resBody, status as any);
+
+    if (status !== 200) {
+      console.log(`${TAG} Fusion+ build FAILED: status=${status} resp=${JSON.stringify(resBody).slice(0, 500)}`);
+      return c.json({ ...resBody, _debug: { sentBody: buildBody, buildUrl } }, status as any);
+    }
+
+    console.log(`${TAG} Fusion+ build SUCCESS`);
+    return c.json(resBody);
   });
 
   // ── POST /1inch/fusion-plus/submit ───────────────────────────────
@@ -1016,7 +998,7 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body: resBody } = await upstreamFetch(
       "POST",
-      fusionPlusUrl("/order/submit"),
+      fusionPlusRelayerUrl("/submit"),
       JSON.stringify(body),
       FUSION_SUBMIT_TIMEOUT_MS,
     );
@@ -1035,7 +1017,73 @@ export function registerOneInchRoutes(app: Hono) {
 
     const { status, body } = await upstreamFetch(
       "GET",
-      fusionPlusUrl(`/order/status/${orderHash}`),
+      fusionPlusOrdersUrl(`/order/status/${orderHash}`),
+    );
+    return c.json(body, status as any);
+  });
+
+  // ── POST /1inch/fusion-plus/submit-secret ───────────────────────
+  // Reveal an HTLC secret for a cross-chain order fill.
+  // Used in the Fusion+ atomic swap resolution flow.
+  //
+  // Body: { orderHash, secret }
+  app.post(`${PREFIX}/fusion-plus/submit-secret`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    if (typeof body.orderHash !== "string" || !body.orderHash) {
+      return c.json({ error: "Missing or invalid orderHash" }, 400);
+    }
+    if (typeof body.secret !== "string" || !body.secret) {
+      return c.json({ error: "Missing or invalid secret" }, 400);
+    }
+
+    console.log(`${TAG} Fusion+ submit-secret: orderHash=${body.orderHash}`);
+
+    const { status, body: resBody } = await upstreamFetch(
+      "POST",
+      fusionPlusRelayerUrl("/submit/secret"),
+      JSON.stringify(body),
+      FUSION_SUBMIT_TIMEOUT_MS,
+    );
+    return c.json(resBody, status as any);
+  });
+
+  // ── GET /1inch/fusion-plus/secrets/:orderHash ───────────────────
+  // Get the secrets associated with a cross-chain order.
+  app.get(`${PREFIX}/fusion-plus/secrets/:orderHash`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const orderHash = c.req.param("orderHash");
+    if (!isValidOrderHash(orderHash)) return c.json({ error: "Invalid orderHash" }, 400);
+
+    const { status, body } = await upstreamFetch(
+      "GET",
+      fusionPlusOrdersUrl(`/order/secrets/${orderHash}`),
+    );
+    return c.json(body, status as any);
+  });
+
+  // ── GET /1inch/fusion-plus/ready-fills/:orderHash ───────────────
+  // Check if a cross-chain order is ready to accept secret fills.
+  app.get(`${PREFIX}/fusion-plus/ready-fills/:orderHash`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const orderHash = c.req.param("orderHash");
+    if (!isValidOrderHash(orderHash)) return c.json({ error: "Invalid orderHash" }, 400);
+
+    const { status, body } = await upstreamFetch(
+      "GET",
+      fusionPlusOrdersUrl(`/order/ready-to-accept-secret-fills/${orderHash}`),
     );
     return c.json(body, status as any);
   });
@@ -1190,7 +1238,7 @@ export function registerOneInchRoutes(app: Hono) {
   app.get(`${PREFIX}/ping`, (c) => {
     return c.json({
       ok: true,
-      serverBuild: "2026-03-03e-build-form-encoded",
+      serverBuild: "2026-03-03f-correct-api-urls-v1.2",
       fusionFieldMapping: "v2",      // fromTokenAddress / toTokenAddress (NOT src/dst)
       fusionChecksumming: "eip55",   // EIP-55 via keccak256
       fusionQuoteMethod: "GET",      // GET with query params (NOT POST with JSON body)
@@ -1381,7 +1429,7 @@ export function registerOneInchRoutes(app: Hono) {
   // ── Startup log ──────────────────────────────────────────────────
   const apiKey = getApiKey();
   console.log(
-    `${TAG} Routes registered (20 routes, 6 API domains). ` +
+    `${TAG} Routes registered (23 routes, 8 API domains). ` +
     `API key: ${apiKey ? "configured \u2713" : "NOT SET \u2717"} | ` +
     `Chains: ${SUPPORTED_CHAINS.size} classic, ${FUSION_CHAINS.size} fusion, ${FUSION_PLUS_CHAINS.size} fusion+ | ` +
     `Fusion field mapping: v2 (fromTokenAddress/toTokenAddress) \u2713`,

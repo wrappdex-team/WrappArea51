@@ -1,5 +1,5 @@
 /**
- * 1inch Fusion+ v1.0 — Cross-Chain Intent-Based Swap Engine
+ * 1inch Fusion+ v1.2 — Cross-Chain Intent-Based Swap Engine
  *
  * Provides the full lifecycle for Fusion+ cross-chain swaps:
  *   1. getCrossChainQuote()      — Request a cross-chain quote
@@ -12,8 +12,9 @@
  * cross-chain messaging and execution.
  *
  * IMPLEMENTATION NOTE: This module mirrors fusion.ts but targets the
- * Fusion+ API v1.0 endpoints. Cross-chain quotes include chainId pairs
- * in the request body (no chainId in URL path).
+ * Fusion+ API v1.2 endpoints (quoter/relayer/orders services).
+ * Cross-chain quotes include chainId pairs in the request body
+ * (no chainId in URL path).
  *
  * @module oneinch/fusion-plus
  */
@@ -333,6 +334,229 @@ export async function getCrossChainQuote(
   );
 
   return parseCrossChainQuote(res);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Build — Construct EIP-712 typed data for the user to sign
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Response from the Fusion+ build endpoint.
+ * Contains EIP-712 typed data that the user signs (gasless).
+ */
+export interface FusionPlusBuildResponse {
+  /** EIP-712 typed data to sign with eth_signTypedData_v4 */
+  typedData: unknown;
+  /** Order struct for submission */
+  order: unknown;
+  /** Order hash (used for status tracking) */
+  orderHash: string;
+  /** Extension data */
+  extension: string;
+  /** Source secrets for HTLC resolution */
+  srcSecrets?: string[];
+  /** Secret hashes */
+  secretHashes?: string[];
+  /** Quote ID (echoed back) */
+  quoteId: string;
+  /** Raw response for debugging */
+  [key: string]: unknown;
+}
+
+/**
+ * Build a Fusion+ cross-chain order — returns EIP-712 typed data for signing.
+ *
+ * Calls POST /fusion-plus/build via our server proxy which forwards to
+ * /fusion-plus/quoter/v1.2/quote/build/evm.
+ *
+ * The response contains typedData that must be signed with
+ * eth_signTypedData_v4 — this is a signature, NOT a transaction,
+ * so the user pays ZERO gas.
+ */
+export async function buildCrossChainOrder(
+  quoteId: string,
+  walletAddress: string,
+  secretsCount: number = 1,
+  signal?: AbortSignal,
+): Promise<FusionPlusBuildResponse> {
+  const body = {
+    quoteId,
+    walletAddress,
+    secretsCount,
+  };
+
+  log.info(TAG, `Building Fusion+ order: quoteId=${quoteId.slice(0, 20)}... wallet=${walletAddress}`);
+
+  const res = await oneInchApi.post<FusionPlusBuildResponse>(
+    `/fusion-plus/build`,
+    body,
+    { signal },
+  );
+
+  log.info(TAG, `Fusion+ build response: orderHash=${res.orderHash ?? "none"} hasTypedData=${!!res.typedData}`);
+  return res;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Submit — Send the signed order to resolvers
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Submit a signed Fusion+ cross-chain order to the resolver network.
+ *
+ * Calls POST /fusion-plus/submit via our server proxy which forwards to
+ * /fusion-plus/relayer/v1.2/submit.
+ */
+export async function submitCrossChainOrder(
+  params: {
+    quoteId: string;
+    orderHash: string;
+    signature: string;
+    order: unknown;
+    extension: string;
+    srcSecrets?: string[];
+    secretHashes?: string[];
+  },
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  log.info(TAG, `Submitting Fusion+ order: orderHash=${params.orderHash}`);
+
+  const res = await oneInchApi.post<Record<string, unknown>>(
+    `/fusion-plus/submit`,
+    params,
+    { signal },
+  );
+
+  log.info(TAG, `Fusion+ submit response: ${JSON.stringify(res).slice(0, 200)}`);
+  return res;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Submit Secret — Reveal HTLC secret for cross-chain settlement
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Submit a secret to resolve an HTLC fill for a Fusion+ order.
+ */
+export async function submitSecret(
+  orderHash: string,
+  secret: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  log.info(TAG, `Submitting secret for Fusion+ order: orderHash=${orderHash}`);
+
+  const res = await oneInchApi.post<Record<string, unknown>>(
+    `/fusion-plus/submit-secret`,
+    { orderHash, secret },
+    { signal },
+  );
+
+  log.info(TAG, `Fusion+ submit-secret response: ${JSON.stringify(res).slice(0, 200)}`);
+  return res;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Poll Status — Track order progress across chains
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Parsed order status response.
+ */
+export interface FusionPlusOrderStatusResponse {
+  status: FusionPlusOrderStatus;
+  orderHash: string;
+  srcChainId?: number;
+  dstChainId?: number;
+  fills?: unknown[];
+  [key: string]: unknown;
+}
+
+/**
+ * Poll the status of a cross-chain Fusion+ order.
+ */
+export async function getCrossChainOrderStatus(
+  orderHash: string,
+  signal?: AbortSignal,
+): Promise<FusionPlusOrderStatusResponse> {
+  const res = await oneInchApi.get<FusionPlusOrderStatusResponse>(
+    `/fusion-plus/status/${orderHash}`,
+    { signal },
+  );
+  return res;
+}
+
+/**
+ * Check if a cross-chain order is ready to accept secret fills.
+ */
+export async function getReadyFills(
+  orderHash: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  return oneInchApi.get<Record<string, unknown>>(
+    `/fusion-plus/ready-fills/${orderHash}`,
+    { signal },
+  );
+}
+
+/**
+ * Get the secrets associated with an order (for debugging/status).
+ */
+export async function getOrderSecrets(
+  orderHash: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  return oneInchApi.get<Record<string, unknown>>(
+    `/fusion-plus/secrets/${orderHash}`,
+    { signal },
+  );
+}
+
+/**
+ * Poll a cross-chain order until terminal status or timeout.
+ *
+ * @param orderHash - The order hash to poll
+ * @param onStatusChange - Callback for each status change
+ * @param signal - Optional abort signal
+ * @returns Final status response
+ */
+export async function pollCrossChainOrder(
+  orderHash: string,
+  onStatusChange?: (status: FusionPlusOrderStatus, response: FusionPlusOrderStatusResponse) => void,
+  signal?: AbortSignal,
+): Promise<FusionPlusOrderStatusResponse> {
+  const startTime = Date.now();
+  let lastStatus: FusionPlusOrderStatus | null = null;
+
+  while (Date.now() - startTime < CROSS_CHAIN_POLL_MAX_DURATION_MS) {
+    if (signal?.aborted) throw new DOMException("Polling aborted", "AbortError");
+
+    try {
+      const res = await getCrossChainOrderStatus(orderHash, signal);
+
+      if (res.status !== lastStatus) {
+        lastStatus = res.status;
+        log.info(TAG, `Order ${orderHash.slice(0, 10)}... status: ${res.status}`);
+        onStatusChange?.(res.status, res);
+      }
+
+      if (isCrossChainTerminalStatus(res.status)) {
+        return res;
+      }
+
+      // IMPLEMENTATION NOTE: If order is ready for secret fills, we could
+      // auto-submit secrets here. For now, log it for manual handling.
+      if (res.status === "SrcFilled") {
+        log.info(TAG, `Order SrcFilled — checking if ready for secret submission...`);
+      }
+    } catch (err) {
+      // Don't abort polling on transient errors
+      log.warn(TAG, `Poll error for ${orderHash.slice(0, 10)}...: ${err}`);
+    }
+
+    await new Promise(r => setTimeout(r, CROSS_CHAIN_POLL_INTERVAL_MS));
+  }
+
+  throw new Error(`Cross-chain order polling timed out after ${CROSS_CHAIN_POLL_MAX_DURATION_MS / 1000}s`);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
