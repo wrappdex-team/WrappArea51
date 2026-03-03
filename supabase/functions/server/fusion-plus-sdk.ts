@@ -4,8 +4,8 @@
 //
 // IMPLEMENTATION NOTE (2026-03-03, SDK Adoption):
 // Rounds 1-6 of /quote/build endpoint diagnostics ALL failed. The official
-// @1inch/cross-chain-sdk NEVER calls /quote/build — it constructs orders
-// client-side from quote data. This module adopts the SDK's actual flow:
+// @1inch/cross-chain-sdk NEVER calls /quote/build — it constructs
+// orders client-side from quote data. This module adopts the SDK's actual flow:
 //
 //   1. GET  /quoter/v1.2/quote/receive     → full cross-chain quote
 //   2. SDK: quote.createEvmOrder({hashLock}) → order construction (server-side)
@@ -312,6 +312,8 @@ async function getDirectQuote(
 
 interface SdkOrderResult {
   success: boolean;
+  /** True when quote was obtained but order/typedData must be constructed client-side */
+  needsClientConstruction?: boolean;
   method: "sdk" | "direct-v1.2" | "direct-v1.0";
   // Order data for signing
   typedData?: unknown;
@@ -475,15 +477,12 @@ async function buildOrderViaSdk(
     };
   }
 
-  // IMPLEMENTATION NOTE: Without the SDK, we cannot construct the order
-  // server-side. We return the raw quote data and let the client handle
-  // order construction. The client can either:
-  // a) Import @1inch/cross-chain-sdk in the browser (if available)
-  // b) Use a simplified order struct (risky — may not match contract expectations)
-  //
-  // For maximum compatibility, we also try to extract any pre-built order
-  // data from the quote response (some API versions include it).
-
+  // IMPLEMENTATION NOTE (SDK Adoption Fix): The quoter API returns quote data
+  // but NOT pre-built order/typedData. That's expected — the SDK constructs
+  // orders client-side from the quote. We return success=true with the raw
+  // quote so the client can handle order construction via the SDK.
+  // A separate flag `needsClientConstruction` indicates the client must use
+  // the @1inch/cross-chain-sdk to call createEvmOrder() locally.
   const rawQuote = quoteResult.rawQuote || {};
   const hasOrder = !!rawQuote.order;
   const hasTypedData = !!rawQuote.typedData;
@@ -492,7 +491,8 @@ async function buildOrderViaSdk(
   console.log(`${TAG} [SDK-ORDER] Direct quote has pre-built data: order=${hasOrder} typedData=${hasTypedData} extension=${hasExtension}`);
 
   return {
-    success: hasOrder && hasTypedData,
+    success: true,
+    needsClientConstruction: !(hasOrder && hasTypedData),
     method: quoteResult._apiVersion === "v1.2" ? "direct-v1.2" : "direct-v1.0",
     typedData: rawQuote.typedData || null,
     order: rawQuote.order || null,
@@ -513,7 +513,7 @@ async function buildOrderViaSdk(
       hasPreBuiltExtension: hasExtension,
       note: hasOrder
         ? "Quote response includes pre-built order data. Using it directly."
-        : "Quote response does NOT include pre-built order data. Client must construct the order using @1inch/cross-chain-sdk or equivalent logic.",
+        : "Quote data obtained successfully. Client must construct the order using @1inch/cross-chain-sdk createEvmOrder({hashLock}).",
     },
   };
 }
@@ -578,7 +578,8 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     );
 
     if (result.success) {
-      console.log(`${TAG} [SDK-ORDER] SUCCESS via ${result.method}: quoteId=${result.quoteId?.slice(0, 20)}... orderHash=${result.orderHash?.slice(0, 18) ?? "pending"}`);
+      const clientNote = result.needsClientConstruction ? " (needsClientConstruction=true, no typedData)" : "";
+      console.log(`${TAG} [SDK-ORDER] SUCCESS via ${result.method}: quoteId=${result.quoteId?.slice(0, 20)}... orderHash=${result.orderHash?.slice(0, 18) ?? "pending"}${clientNote}`);
       return c.json(result, 200);
     }
 

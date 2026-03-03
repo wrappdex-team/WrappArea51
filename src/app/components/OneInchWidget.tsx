@@ -1316,11 +1316,35 @@ export function OneInchWidget() {
       };
       setCrossChainBuildData(buildResult);
 
-      if (!sdkResult.success || !sdkResult.typedData) {
-        // IMPLEMENTATION NOTE: If SDK order construction failed, provide detailed
-        // diagnostics including the method attempted, raw quote availability, etc.
+      if (!sdkResult.success) {
+        // IMPLEMENTATION NOTE: Server failed to get a quote at all.
         const diagInfo = sdkResult._diagnostics ? ` Diagnostics: ${JSON.stringify(sdkResult._diagnostics).slice(0, 300)}` : "";
-        setSwapError(`Fusion+ SDK order construction failed (method=${sdkResult.method}). ${sdkResult.error || "No typedData returned."}${diagInfo} The SDK may need to be imported — check /fusion-plus/sdk-health for status.`);
+        setSwapError(`Fusion+ quote request failed (method=${sdkResult.method}). ${sdkResult.error || "Unknown error."}${diagInfo}`);
+        setSwapStatus("error");
+        return;
+      }
+
+      if (!sdkResult.typedData || sdkResult.needsClientConstruction) {
+        // IMPLEMENTATION NOTE (SDK Adoption Fix): The server got a valid quote
+        // from the v1.2/v1.0 quoter, but the @1inch/cross-chain-sdk couldn't be
+        // imported in Deno, so the EIP-712 order wasn't constructed server-side.
+        // The quoter only returns pricing data — order construction requires the
+        // SDK's createEvmOrder({hashLock}) which does complex bit-packing for
+        // MakerTraits, extension encoding, and resolver whitelist. This is a
+        // known limitation until the SDK can run server-side or client-side.
+        const quoteInfo = sdkResult.quoteId
+          ? `Quote obtained (${sdkResult.method}): quoteId=${sdkResult.quoteId.slice(0, 20)}... dst=${sdkResult.dstTokenAmount ?? "?"}`
+          : "No quote available";
+        const sdkStatus = (sdkResult._diagnostics as any)?.sdkImportError
+          ? `SDK import error: ${(sdkResult._diagnostics as any).sdkImportError.slice(0, 100)}`
+          : "SDK not available in runtime";
+        log.warn("1inch", `[FUSION+SDK] Order construction blocked: ${quoteInfo}. ${sdkStatus}`);
+        setSwapError(
+          `Cross-chain quote obtained, but order construction requires the 1inch SDK which isn't available in this runtime. ` +
+          `${quoteInfo}. ${sdkStatus}. ` +
+          `This is a known limitation — the SDK handles complex order encoding (MakerTraits, auction params, resolver whitelist) ` +
+          `that can't be replicated without it.`
+        );
         setSwapStatus("error");
         return;
       }

@@ -780,6 +780,8 @@ export function generateHtlcSecret(): {
  */
 export interface SdkOrderResponse {
   success: boolean;
+  /** True when the quote was obtained but order/typedData must be constructed client-side */
+  needsClientConstruction?: boolean;
   method: "sdk" | "direct-v1.2" | "direct-v1.0";
   typedData?: unknown;
   order?: unknown;
