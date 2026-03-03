@@ -1299,6 +1299,7 @@ export function OneInchWidget() {
       log.info("1inch", `[FUSION+] Step B: Building cross-chain order: quoteId=${execQuoteId}`);
 
       const buildResult = await buildCrossChainOrder(
+        selectedChainId,
         execQuoteId,
         evmAccount,
         1, // secretsCount — 1 for simple swaps
@@ -1329,6 +1330,7 @@ export function OneInchWidget() {
       log.info("1inch", `[FUSION+] Step D: Submitting signed order to relayer`);
 
       const submitRes = await submitCrossChainOrder({
+        srcChainId: selectedChainId,
         quoteId: execQuoteId,
         orderHash: buildResult.orderHash,
         signature: signature as string,
@@ -1366,7 +1368,7 @@ export function OneInchWidget() {
           }
 
           // Poll order status via the orders API
-          const orderStatus = await getCrossChainOrderStatus(buildResult.orderHash);
+          const orderStatus = await getCrossChainOrderStatus(selectedChainId, buildResult.orderHash);
           
           log.info("1inch", `[FUSION+] Poll: status=${orderStatus.status}`);
           setFusionOrderStatus(orderStatus.status as any);
@@ -1388,13 +1390,13 @@ export function OneInchWidget() {
           // for HTLC resolution. This is the atomic swap mechanism.
           if (orderStatus.status === "SrcFilled" && buildResult.srcSecrets?.length) {
             try {
-              const readyRes = await getReadyFills(buildResult.orderHash);
+              const readyRes = await getReadyFills(selectedChainId, buildResult.orderHash);
               log.info("1inch", `[FUSION+] Ready fills check: ${JSON.stringify(readyRes).slice(0, 200)}`);
               
               // If fills are ready, submit the secret
               if (readyRes && buildResult.srcSecrets[0]) {
                 log.info("1inch", `[FUSION+] Submitting HTLC secret for orderHash=${buildResult.orderHash}`);
-                await submitSecret(buildResult.orderHash, buildResult.srcSecrets[0]);
+                await submitSecret(selectedChainId, buildResult.orderHash, buildResult.srcSecrets[0]);
                 log.info("1inch", `[FUSION+] Secret submitted successfully`);
               }
             } catch (secretErr: any) {
