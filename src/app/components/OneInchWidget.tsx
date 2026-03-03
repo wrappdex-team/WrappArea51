@@ -119,7 +119,7 @@ import {
   sdkSubmitCrossChainOrder,
 } from "../utils/oneinch/fusion-plus";
 import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse, SdkOrderResponse } from "../utils/oneinch/fusion-plus";
-import { buildCrossChainOrderClientSide, preloadSdk, getSdkDiagnostics } from "../utils/oneinch/cross-chain-builder";
+import { buildCrossChainOrderClientSide, preloadSdk, getSdkDiagnostics, resetSdkCache } from "../utils/oneinch/cross-chain-builder";
 import {
   getChainById as getModuleChainById,
 } from "../utils/oneinch/chains";
@@ -1349,6 +1349,13 @@ export function OneInchWidget() {
 
         if (clientOrder) {
           log.info("1inch", `[FUSION+SDK] Client-side order built via ${clientOrder.method}: orderHash=${clientOrder.orderHash.slice(0, 14)}...`);
+          // IMPLEMENTATION NOTE: If manual-lop4, warn that the order may be rejected.
+          // The manual path lacks proper extension encoding (auction params, hashlock,
+          // resolver whitelist) which the 1inch relayer requires. The signature is
+          // gasless so no funds are at risk — the relayer simply rejects the order.
+          if (clientOrder.method === "manual-lop4") {
+            log.warn("1inch", `[FUSION+SDK] Using EXPERIMENTAL manual LOP v4 order. CDN SDK import failed. The relayer may reject this.`);
+          }
           // Override buildResult with client-constructed data
           buildResult.typedData = clientOrder.typedData;
           buildResult.order = clientOrder.order;
@@ -2681,7 +2688,7 @@ export function OneInchWidget() {
                 <span className="break-all">{swapError}</span>
               </div>
             )}
-            <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); setCrossChainOrderHash(null); setCrossChainBuildData(null); stopFusionPolling(); stopCrossChainPolling(); }}
+            <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); setCrossChainOrderHash(null); setCrossChainBuildData(null); stopFusionPolling(); stopCrossChainPolling(); resetSdkCache(); }}
               className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${
                 isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
               }`}>

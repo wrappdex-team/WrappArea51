@@ -56,9 +56,15 @@ async function loadSdkFromCdn(): Promise<SdkExports | null> {
 
   // Try multiple CDN sources in order of reliability
   const cdnUrls = [
-    "https://esm.sh/@1inch/cross-chain-sdk@2?bundle",
-    "https://esm.sh/@1inch/cross-chain-sdk?bundle",
+    // IMPLEMENTATION NOTE: esm.sh ?bundle inlines all deps into one file,
+    // avoiding transitive import failures. We also try jsdelivr which has
+    // good browser compatibility, and unpkg as last resort.
+    "https://esm.sh/@1inch/cross-chain-sdk@2?bundle&target=es2022",
+    "https://esm.sh/@1inch/cross-chain-sdk?bundle&target=es2022",
+    "https://cdn.jsdelivr.net/npm/@1inch/cross-chain-sdk@2/+esm",
     "https://cdn.skypack.dev/@1inch/cross-chain-sdk",
+    // Also try the same-chain fusion-sdk which shares LOP v4 utilities
+    "https://esm.sh/@1inch/fusion-sdk?bundle&target=es2022",
   ];
 
   for (const url of cdnUrls) {
@@ -322,8 +328,17 @@ function buildManualOrder(
 
     if (!srcTokenAmount || !dstTokenAmount || !srcTokenAddress || !dstTokenAddress) {
       log.warn(TAG, "Missing required fields in raw quote for manual order construction");
+      log.warn(TAG, `  srcTokenAmount=${srcTokenAmount} dstTokenAmount=${dstTokenAmount}`);
+      log.warn(TAG, `  srcTokenAddress=${srcTokenAddress} dstTokenAddress=${dstTokenAddress}`);
+      log.warn(TAG, `  rawQuote keys: [${Object.keys(rawQuote).join(", ")}]`);
       return null;
     }
+
+    // IMPLEMENTATION NOTE: Log raw quote data for diagnostics — this helps
+    // identify if amounts are in wei or decimal, and what preset data looks like.
+    log.info(TAG, `[DIAG] Raw quote: srcAmt=${srcTokenAmount} dstAmt=${dstTokenAmount} preset=${recommended}`);
+    log.info(TAG, `[DIAG] Preset keys: [${Object.keys(preset).join(", ")}]`);
+    log.info(TAG, `[DIAG] Preset data: auctionDuration=${preset.auctionDuration} auctionStartAmount=${preset.auctionStartAmount} auctionEndAmount=${preset.auctionEndAmount}`);
 
     // Calculate expiration (auction duration + buffer)
     const auctionDuration = preset.auctionDuration || 300; // 5 min default
@@ -337,10 +352,14 @@ function buildManualOrder(
     });
 
     // Construct the order
+    // IMPLEMENTATION NOTE (Fix 2026-03-03): Previous version set receiver to
+    // zero address (0x000...000), which is WRONG for Fusion+. The receiver
+    // should be the maker's own wallet — they receive the destination tokens.
+    // The zero address caused relayer rejection because it means "burn tokens".
     const order = {
       salt: "0x" + salt.toString(16),
       maker: walletAddress,
-      receiver: "0x0000000000000000000000000000000000000000", // Resolver fills in
+      receiver: walletAddress, // Fixed: was 0x000...000 — maker receives dst tokens
       makerAsset: srcTokenAddress,
       takerAsset: dstTokenAddress,
       makingAmount: srcTokenAmount,
@@ -465,4 +484,15 @@ export function getSdkDiagnostics(): {
 export async function preloadSdk(): Promise<boolean> {
   const sdk = await loadSdkFromCdn();
   return !!sdk;
+}
+
+/**
+ * Reset the SDK cache so the next call to loadSdkFromCdn will retry all CDNs.
+ * Useful if the first load failed due to a transient network issue.
+ */
+export function resetSdkCache(): void {
+  cachedSdk = null;
+  sdkLoadError = null;
+  sdkLoadAttempted = false;
+  log.info(TAG, "SDK cache reset — next preload/build will retry CDN imports");
 }

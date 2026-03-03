@@ -215,8 +215,8 @@ interface DirectQuoteResult {
   dstTokenAmount?: string;
   presets?: Record<string, unknown>;
   recommendedPreset?: string;
-  // IMPLEMENTATION NOTE: The full raw response is included so the client
-  // (or future SDK integration) can extract all needed fields.
+  // IMPLEMENTATION NOTE: The full raw response is included so the client-side
+  // order builder always has token addresses even if the API doesn't echo them.
   rawQuote?: Record<string, unknown>;
   // Fields for order construction (if available in v1.2 response)
   order?: unknown;
@@ -652,8 +652,23 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
       }
       console.log(`${TAG} [SDK-SUBMIT] v1.0 also FAILED (${v10Result.status}): ${JSON.stringify(v10Result.body).slice(0, 500)}`);
 
+      // IMPLEMENTATION NOTE: Surface the relayer's actual rejection reason so the
+      // frontend can display it — previously this was lost in the error chain.
+      // Priority: details (extracted by apiFetch) > description > message > error (generic wrapper)
+      const v12Reason = typeof resBody?.details === "string" ? resBody.details
+        : typeof resBody?.description === "string" ? resBody.description
+        : typeof resBody?.message === "string" ? resBody.message
+        : typeof resBody?.error === "string" && resBody.error !== "1inch API error" ? resBody.error
+        : JSON.stringify(resBody).slice(0, 300);
+      const v10Reason = typeof v10Result.body?.details === "string" ? v10Result.body.details
+        : typeof v10Result.body?.description === "string" ? v10Result.body.description
+        : typeof v10Result.body?.message === "string" ? v10Result.body.message
+        : typeof v10Result.body?.error === "string" && v10Result.body.error !== "1inch API error" ? v10Result.body.error
+        : JSON.stringify(v10Result.body).slice(0, 300);
+
       return c.json({
         error: "Relayer submission failed",
+        details: `v1.2 (${status}): ${v12Reason} | v1.0 (${v10Result.status}): ${v10Reason}`,
         v12: { status, body: resBody },
         v10: { status: v10Result.status, body: v10Result.body },
       }, status as any);
