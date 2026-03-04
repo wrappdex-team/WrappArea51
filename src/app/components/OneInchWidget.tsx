@@ -117,7 +117,8 @@ import {
   CROSS_CHAIN_STATUS_LABELS,
   CROSS_CHAIN_STATUS_ICONS,
   generateHtlcSecret,
-  getCreateTx,
+  sdkBuildCrossChainOrder,
+  sdkSubmitCrossChainOrder,
   persistHtlcSecret,
   loadPendingHtlcOrder,
   clearPendingHtlcOrder,
@@ -1454,23 +1455,30 @@ export function OneInchWidget() {
     stopCrossChainPolling();
 
     try {
-      // ── On-Chain Escrow Flow (matching 1inch.com) ──
-      // IMPLEMENTATION NOTE (2026-03-04, Clean Single-TX Flow):
-      // 1inch.com sends a single `create()` tx to the escrow contract.
-      // No WETH wrapping, no approval, no EIP-712, no relayer.
-      // ONE click, ONE transaction, ~60 seconds.
+      // ── Gasless EIP-712 Sign + Relayer Submit (correct Fusion+ flow) ──
+      // IMPLEMENTATION NOTE (2026-03-04, Corrected Architecture):
+      // The previous approach tried to call create() on the EscrowFactory contract
+      // directly. That function is for RESOLVERS, not end users, which is why it
+      // always reverted with astronomical gas estimates.
+      //
+      // The correct Fusion+ flow is GASLESS:
+      //   1. Build order server-side (sdk-order endpoint)
+      //   2. Sign EIP-712 typed data via MetaMask (no gas!)
+      //   3. Submit signed order to 1inch relayer (sdk-submit endpoint)
+      //   4. Resolvers pick up the order and handle on-chain execution
+      //   5. Poll for status + reveal HTLC secret when SrcFilled
 
       const amountWei = toWei(fromAmount, fromToken.decimals);
 
       // Step 1: Generate HTLC secret
       setSwapStatus("building");
-      log.info("1inch", `[CREATE-TX] Step 1: Generating HTLC secret`);
+      log.info("1inch", `[FUSION+] Step 1: Generating HTLC secret`);
       const htlc = generateHtlcSecret();
-      log.info("1inch", `[CREATE-TX] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
+      log.info("1inch", `[FUSION+] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
 
-      // Step 2: Get create() tx data from server
-      log.info("1inch", `[CREATE-TX] Step 2: Getting create() tx from server`);
-      const createResult = await getCreateTx({
+      // Step 2: Build order via server (gets quote + constructs EIP-712 typed data)
+      log.info("1inch", `[FUSION+] Step 2: Building order via sdk-order endpoint`);
+      const buildResult = await sdkBuildCrossChainOrder({
         srcChainId: selectedChainId,
         dstChainId,
         srcTokenAddress: fromToken.address,
@@ -1480,56 +1488,49 @@ export function OneInchWidget() {
         hashLock: htlc.hashLock,
       });
 
-      if (!createResult.success || !createResult.tx) {
-        log.warn("1inch", `[CREATE-TX] Failed: ${createResult.error}`);
-        setSwapError(`Cross-chain order construction failed: ${createResult.error || "No tx data returned"}`);
+      if (!buildResult.success || !buildResult.typedData || !buildResult.order) {
+        log.warn("1inch", `[FUSION+] Order build failed: ${buildResult.error}`);
+        setSwapError(`Cross-chain order construction failed: ${buildResult.error || "No typed data returned"}`);
         setSwapStatus("error");
         return;
       }
 
-      // Validate tx fields
-      const { tx } = createResult;
-      if (!/^0x[0-9a-fA-F]{40}$/.test(tx.to)) {
-        log.warn("1inch", `[CREATE-TX] Invalid contract address: ${tx.to}`);
-        setSwapError(`Invalid escrow contract address: ${tx.to}`);
-        setSwapStatus("error");
-        return;
-      }
+      log.info("1inch", `[FUSION+] Order built: method=${buildResult.method} orderHash=${buildResult.orderHash?.slice(0, 14)}... quoteId=${buildResult.quoteId?.slice(0, 14)}...`);
 
-      log.info("1inch", `[CREATE-TX] Got tx: to=${tx.to} dataLen=${tx.data.length} value=${tx.value}`);
-      log.info("1inch", `[CREATE-TX] orderHash=${createResult.orderHash} dstAmt=${createResult.dstTokenAmount}`);
+      // Step 3: Sign EIP-712 typed data via MetaMask (GASLESS — no transaction!)
+      setSwapStatus("signing");
+      log.info("1inch", `[FUSION+] Step 3: Requesting EIP-712 signature via MetaMask...`);
 
-      // Step 3: Send the create() transaction via MetaMask (SINGLE TX!)
-      setSwapStatus("swapping");
-      const txParams: Record<string, string> = {
-        from: evmAccount,
-        to: tx.to,
-        data: tx.data,
-      };
-      if (tx.value && tx.value !== "0") {
-        txParams.value = "0x" + BigInt(tx.value).toString(16);
-      }
-
-      log.info("1inch", `[CREATE-TX] Step 3: Sending create() tx via MetaMask...`);
-      const txHash = await window.ethereum!.request({
-        method: "eth_sendTransaction",
-        params: [txParams],
+      const typedData = buildResult.typedData as Record<string, unknown>;
+      const signature = await window.ethereum!.request({
+        method: "eth_signTypedData_v4",
+        params: [evmAccount, JSON.stringify(typedData)],
       }) as string;
 
-      log.info("1inch", `[CREATE-TX] Tx submitted: ${txHash}`);
-      setLastTxHash(txHash);
+      log.info("1inch", `[FUSION+] Signed: sig=${signature.slice(0, 14)}...`);
 
-      // Wait for confirmation
-      const mined = await waitForTxReceipt(txHash, 120000);
-      if (!mined) {
-        setSwapError("Create transaction reverted. Check Etherscan for details.");
+      // Step 4: Submit signed order to 1inch relayer
+      setSwapStatus("submitting");
+      log.info("1inch", `[FUSION+] Step 4: Submitting to relayer...`);
+
+      const submitResult = await sdkSubmitCrossChainOrder({
+        srcChainId: selectedChainId,
+        order: buildResult.order,
+        signature,
+        quoteId: buildResult.quoteId || "",
+        extension: buildResult.extension,
+      });
+
+      if (submitResult.error) {
+        log.warn("1inch", `[FUSION+] Relayer submit failed: ${JSON.stringify(submitResult).slice(0, 500)}`);
+        setSwapError(`Relayer submission failed: ${submitResult.error as string || "Unknown error"}`);
         setSwapStatus("error");
         return;
       }
 
-      log.info("1inch", `[CREATE-TX] Tx confirmed! Escrow created on-chain.`);
+      log.info("1inch", `[FUSION+] Order submitted to relayer! Response: ${JSON.stringify(submitResult).slice(0, 300)}`);
 
-      const orderHashForPoll = createResult.orderHash || txHash;
+      const orderHashForPoll = buildResult.orderHash || "";
       setCrossChainOrderHash(orderHashForPoll);
 
       // Persist for history
@@ -1564,14 +1565,14 @@ export function OneInchWidget() {
             setSwapStatus("error");
             setSwapError(
               "Cross-chain order timed out — no resolver filled within the polling window. " +
-              "Your funds are locked in the on-chain escrow and will be refunded after the HTLC timelock expires. " +
+              "Your order may still be active on the 1inch network. " +
               "The HTLC secret is saved — polling will resume if you refresh the page."
             );
             return;
           }
 
           const orderStatus = await getCrossChainOrderStatus(orderHashForPoll);
-          log.info("1inch", `[CREATE-TX] Poll: status=${orderStatus.status}`);
+          log.info("1inch", `[FUSION+] Poll: status=${orderStatus.status}`);
           setFusionOrderStatus(orderStatus.status as any);
 
           if (isCrossChainTerminalStatus(orderStatus.status)) {
@@ -1592,16 +1593,16 @@ export function OneInchWidget() {
             try {
               const readyRes = await getReadyFills(orderHashForPoll);
               if (readyRes) {
-                log.info("1inch", `[CREATE-TX] Submitting HTLC secret...`);
+                log.info("1inch", `[FUSION+] Submitting HTLC secret...`);
                 await submitSecret(orderHashForPoll, localHtlcSecret);
-                log.info("1inch", `[CREATE-TX] Secret submitted!`);
+                log.info("1inch", `[FUSION+] Secret submitted!`);
               }
             } catch (secretErr: any) {
-              log.warn("1inch", `[CREATE-TX] Secret submission failed (will retry): ${secretErr?.message}`);
+              log.warn("1inch", `[FUSION+] Secret submission failed (will retry): ${secretErr?.message}`);
             }
           }
         } catch (pollErr: any) {
-          log.warn("1inch", `[CREATE-TX] Poll error (will retry): ${pollErr?.message}`);
+          log.warn("1inch", `[FUSION+] Poll error (will retry): ${pollErr?.message}`);
         }
       }, CROSS_CHAIN_POLL_INTERVAL_MS);
     } catch (err: any) {
@@ -1615,8 +1616,8 @@ export function OneInchWidget() {
         setSwapError(fullMsg);
       }
       const errBody = err?.error ?? err;
-      log.warn("1inch", `[CREATE-TX] Swap error: ${fullMsg}`);
-      log.warn("1inch", `[CREATE-TX] Full error:`, JSON.stringify({
+      log.warn("1inch", `[FUSION+] Swap error: ${fullMsg}`);
+      log.warn("1inch", `[FUSION+] Full error:`, JSON.stringify({
         kind: errBody?.kind, status: errBody?.status, details: errBody?.details,
         message: errBody?.message, meta: errBody?.meta, _debug: errBody?._debug,
         _diagnostics: errBody?._diagnostics,
@@ -2217,7 +2218,7 @@ export function OneInchWidget() {
                     }`}>
                       <Info className="w-3 h-3 shrink-0" />
                       <span>
-                        Cross-chain swap via on-chain escrow — single transaction, no wrapping needed.
+                        Cross-chain swap via 1inch Fusion+ — gasless signature, resolvers handle execution.
                       </span>
                     </div>
                   );
@@ -2698,7 +2699,7 @@ export function OneInchWidget() {
           <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              {swapMode === "crossChain" ? "Creating escrow on-chain..." : "Awaiting wallet signature..."}
+              Awaiting wallet signature...
             </div>
           </button>
         ) : swapStatus === "building" ? (
