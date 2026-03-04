@@ -1639,12 +1639,22 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
       return c.json({ error: "Quote failed", details: `${qr.status}`, quoteResponse: qr.body }, 502);
     }
     const rq = qr.body as Record<string, unknown>;
-    console.log(`${TAG} [CREATE-TX] Quote OK: quoteId=${(rq.quoteId as string || "").slice(0,20)}...`);
+    console.log(`${TAG} [CREATE-TX] Quote OK: quoteId=${(rq.quoteId as string || "").slice(0,20)}... keys=[${Object.keys(rq).join(",")}]`);
+
+    // IMPLEMENTATION NOTE: Enrich quote with request params — the quoter API does NOT
+    // echo back srcTokenAddress/dstTokenAddress, so buildServerSideOrder would fail without this.
+    // This matches the enrichment done in the /fusion-plus/quote endpoint (line ~1077).
+    if (!rq.srcTokenAddress) rq.srcTokenAddress = cSrc;
+    if (!rq.dstTokenAddress) rq.dstTokenAddress = cDst;
+    if (!rq.srcChain) rq.srcChain = srcChainId;
+    if (!rq.dstChain) rq.dstChain = dstChainId;
+    if (!rq.walletAddress) rq.walletAddress = cWallet;
 
     // Step 2: Build order + extension
     const built = buildServerSideOrder(rq, hl, cWallet.toLowerCase(), srcChainId, dstChainId);
     if (!built) {
-      console.log(`${TAG} [CREATE-TX] Order build FAILED`);
+      console.log(`${TAG} [CREATE-TX] Order build FAILED. Quote keys: [${Object.keys(rq).join(",")}]`);
+      console.log(`${TAG} [CREATE-TX] Quote dump (2000ch): ${JSON.stringify(rq).slice(0, 2000)}`);
       return c.json({ error: "Order construction failed", rawQuoteKeys: Object.keys(rq) }, 500);
     }
     const { order: ord, extension: ext, orderHash: oh, diagnostics: diag } = built;
