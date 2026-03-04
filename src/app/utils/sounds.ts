@@ -863,3 +863,91 @@ export function playVipWalletWave(): void {
     foamSrc.start(now + dur * 0.25);
   } catch { /* audio not supported */ }
 }
+
+// ── Swap Success Celebration ─────────────────────────────────────────
+// IMPLEMENTATION NOTE — Session 10, Step 2: Dopamine pulse sound.
+// A triumphant 3-layer chime: sub-bass punch (55Hz), ascending sparkle
+// chord (C6→E6→G6→C7), and a shimmering tail. Designed to feel like a
+// slot-machine win crossed with a premium banking app confirmation.
+
+/** Triumphant swap-success celebration chime */
+export function playSwapSuccess(): void {
+  if (isMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // ── Layer 1: Sub-bass punch — chest-thump satisfaction ──
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(55, now);
+    sub.frequency.exponentialRampToValueAtTime(40, now + 0.25);
+    subG.gain.setValueAtTime(0, now);
+    subG.gain.linearRampToValueAtTime(0.22, now + 0.015);
+    subG.gain.setValueAtTime(0.18, now + 0.06);
+    subG.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    sub.connect(subG);
+    subG.connect(getMasterOutput());
+    sub.start(now);
+    sub.stop(now + 0.5);
+
+    // ── Layer 2: Ascending sparkle chord ──
+    const chord = [1046.5, 1318.5, 1568, 2093]; // C6 E6 G6 C7
+    chord.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      osc.type = "sine";
+      const t = now + 0.04 + i * 0.065;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.998, t + 0.5);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(4500, t);
+      filter.Q.setValueAtTime(0.8, t);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.10 - i * 0.012, t + 0.012);
+      gain.gain.setValueAtTime(0.08 - i * 0.01, t + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(getMasterOutput());
+      osc.start(t);
+      osc.stop(t + 0.6);
+    });
+
+    // ── Layer 3: Shimmer tail — airy triangle wave sweep ──
+    const shim = ctx.createOscillator();
+    const shimG = ctx.createGain();
+    const shimLp = ctx.createBiquadFilter();
+    shim.type = "triangle";
+    shim.frequency.setValueAtTime(2093, now + 0.28);
+    shim.frequency.exponentialRampToValueAtTime(4186, now + 0.65);
+    shim.frequency.exponentialRampToValueAtTime(3500, now + 0.9);
+    shimLp.type = "lowpass";
+    shimLp.frequency.setValueAtTime(5000, now + 0.28);
+    shimLp.Q.setValueAtTime(0.5, now + 0.28);
+    shimG.gain.setValueAtTime(0, now + 0.28);
+    shimG.gain.linearRampToValueAtTime(0.03, now + 0.32);
+    shimG.gain.exponentialRampToValueAtTime(0.001, now + 0.95);
+    shim.connect(shimLp);
+    shimLp.connect(shimG);
+    shimG.connect(getMasterOutput());
+    shim.start(now + 0.28);
+    shim.stop(now + 1.0);
+
+    // ── Layer 4: Bell ping — confirmation clarity ──
+    const bell = ctx.createOscillator();
+    const bellG = ctx.createGain();
+    bell.type = "sine";
+    bell.frequency.setValueAtTime(2637, now + 0.08); // E7
+    bell.frequency.exponentialRampToValueAtTime(2620, now + 0.6);
+    bellG.gain.setValueAtTime(0, now + 0.08);
+    bellG.gain.linearRampToValueAtTime(0.07, now + 0.09);
+    bellG.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    bell.connect(bellG);
+    bellG.connect(getMasterOutput());
+    bell.start(now + 0.08);
+    bell.stop(now + 0.7);
+  } catch { /* audio not supported */ }
+}

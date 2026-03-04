@@ -41,6 +41,13 @@
   50% { opacity: 0.8; }
 }
 
+/* Session 10 — SwapSuccessOverlay brand gradient border animation */
+@keyframes successBorderShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
 :root {
   --font-size: 16px;
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
