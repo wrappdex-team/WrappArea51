@@ -32,6 +32,7 @@
 //   ── Fusion+ API (cross-chain) — multi-trial URL discovery ──
 //   POST /1inch/fusion-plus/quote              → MULTI-TRIAL: v2.0+v1.0 patterns (see handler)
 //   POST /1inch/fusion-plus/build              → MULTI-TRIAL R6: /quote/build[/evm] + /relayer/v1.2/submit (SDK path)
+//   POST /1inch/fusion-plus/place-order        → MULTI-TRIAL: v2.0/v1.2/v1.0 × place-order/build (on-chain tx)
 //   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.0/submit
 //   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.0/order/status/{hash}
 //   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.0/submit/secret
@@ -1183,6 +1184,81 @@ export function registerOneInchRoutes(app: Hono) {
       statusCode: 502,
       _trials: results,
       _sdkNote: "The @1inch/cross-chain-sdk builds orders client-side from quote data. There is no /quote/build in the SDK. If this endpoint doesn't work, the next step is to adopt the SDK's approach: quote → createOrder(client) → sign(MetaMask) → submit(relayer).",
+    }, 502);
+  });
+
+  // ── POST /1inch/fusion-plus/place-order ──────────────────────────
+  // IMPLEMENTATION NOTE (2026-03-04): On-chain escrow creation discovery.
+  //
+  // 1inch.com uses an ON-CHAIN `create()` tx for cross-chain Fusion+.
+  // MetaMask shows: NativeOrders contract, Method: Create, sends ETH value.
+  // This endpoint discovers which API endpoint returns the tx data.
+  app.post(`${PREFIX}/fusion-plus/place-order`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    let body: Record<string, unknown>;
+    try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
+
+    const srcChainId = typeof body.srcChainId === "number" ? body.srcChainId : NaN;
+    const dstChainId = typeof body.dstChainId === "number" ? body.dstChainId : NaN;
+    if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ not supported on source chain ${srcChainId}` }, 400);
+    if (!FUSION_PLUS_CHAINS.has(dstChainId)) return c.json({ error: `Fusion+ not supported on dst chain ${dstChainId}` }, 400);
+    if (!isValidEthAddress(body.srcTokenAddress)) return c.json({ error: "Invalid srcTokenAddress" }, 400);
+    if (!isValidEthAddress(body.dstTokenAddress)) return c.json({ error: "Invalid dstTokenAddress" }, 400);
+    if (typeof body.amount !== "string" || !/^\d+$/.test(body.amount)) return c.json({ error: "Invalid amount" }, 400);
+    if (!isValidWalletAddress(body.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
+    if (typeof body.hashLock !== "string") return c.json({ error: "Missing hashLock" }, 400);
+
+    let cWallet: string; try { cWallet = eip55Checksum(body.walletAddress as string); } catch { cWallet = body.walletAddress as string; }
+    let cSrc: string; try { cSrc = eip55Checksum(body.srcTokenAddress as string); } catch { cSrc = body.srcTokenAddress as string; }
+    let cDst: string; try { cDst = eip55Checksum(body.dstTokenAddress as string); } catch { cDst = body.dstTokenAddress as string; }
+    const amt = body.amount as string;
+    const hashLock = body.hashLock as string;
+
+    const BASE = "https://api.1inch.dev/fusion-plus/quoter";
+    const params: Record<string, string> = {
+      srcChain: String(srcChainId), dstChain: String(dstChainId),
+      srcTokenAddress: cSrc, dstTokenAddress: cDst,
+      amount: amt, walletAddress: cWallet,
+      enableEstimate: "true", hashLock,
+    };
+    const qs = new URLSearchParams(params);
+
+    const trials: { label: string; method: "GET" | "POST"; url: string; body: string | null }[] = [
+      { label: "v2.0/place-order/POST-body", method: "POST", url: `${BASE}/v2.0/quote/place-order`, body: JSON.stringify(params) },
+      { label: "v2.0/place-order/POST-QS", method: "POST", url: `${BASE}/v2.0/quote/place-order?${qs}`, body: null },
+      { label: "v1.0/place-order/POST-body", method: "POST", url: `${BASE}/v1.0/quote/place-order`, body: JSON.stringify(params) },
+      { label: "v1.0/place-order/POST-QS", method: "POST", url: `${BASE}/v1.0/quote/place-order?${qs}`, body: null },
+      { label: "v1.2/place-order/POST-body", method: "POST", url: `${BASE}/v1.2/quote/place-order`, body: JSON.stringify(params) },
+      { label: "v2.0/build/POST-body", method: "POST", url: `${BASE}/v2.0/quote/build`, body: JSON.stringify(params) },
+      { label: "v2.0/build/POST-QS", method: "POST", url: `${BASE}/v2.0/quote/build?${qs}`, body: null },
+      { label: "v2.0/build/evm/POST-QS", method: "POST", url: `${BASE}/v2.0/quote/build/evm?${qs}`, body: null },
+    ];
+
+    console.log(`${TAG} [PLACE-ORDER] ${srcChainId}→${dstChainId} amt=${amt} wallet=${cWallet} hashLock=${hashLock.slice(0,18)}... trials=${trials.length}`);
+
+    const results: { label: string; status: number; snippet: string; keys: string[] }[] = [];
+    for (const t of trials) {
+      console.log(`${TAG} [PLACE-ORDER] ${t.label}: ${t.method} ${t.url.slice(0, 140)}...`);
+      const { status: s, body: b } = await upstreamFetch(t.method, t.url, t.body);
+      const snip = JSON.stringify(b).slice(0, 800);
+      const keys = typeof b === "object" && b ? Object.keys(b) : [];
+      results.push({ label: t.label, status: s, snippet: snip, keys });
+      if (s === 200) {
+        const hasTx = b && (b.tx || b.transaction || b.to || b.data);
+        const hasTypedData = b && (b.typedData || b.typed_data);
+        console.log(`${TAG} [PLACE-ORDER] ✓ WINNER [${t.label}] keys=[${keys.join(",")}] hasTx=${!!hasTx} hasTypedData=${!!hasTypedData}`);
+        return c.json({ ...b, _placeOrderTrial: t.label, _hasTx: !!hasTx, _hasTypedData: !!hasTypedData }, 200);
+      }
+      console.log(`${TAG} [PLACE-ORDER] ✗ ${t.label}: HTTP ${s} — ${snip.slice(0, 200)}`);
+    }
+
+    console.log(`${TAG} [PLACE-ORDER] ALL ${trials.length} FAILED`);
+    return c.json({
+      error: "All Fusion+ place-order patterns failed",
+      details: `Tried ${trials.length} API patterns (v2.0/v1.2/v1.0 × place-order/build). None returned 200.`,
+      _trials: results,
     }, 502);
   });
 

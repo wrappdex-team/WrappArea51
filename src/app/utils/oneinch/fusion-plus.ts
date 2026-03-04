@@ -872,6 +872,81 @@ export async function sdkSubmitCrossChainOrder(
 }
 
 /**
+ * Try the on-chain place-order path — returns tx data for direct escrow creation.
+ *
+ * IMPLEMENTATION NOTE (2026-03-04): 1inch.com uses an on-chain `create()` tx
+ * to the NativeOrders/EscrowFactory contract. This is MORE RELIABLE than the
+ * gasless relayer submit path because:
+ *   1. Funds are locked on-chain immediately (resolvers can see them)
+ *   2. No need for resolver to "discover" the order via relayer
+ *   3. Works for small amounts (even $2-3 swaps on 1inch.com)
+ *   4. Native ETH sent directly (no WETH wrapping needed)
+ *
+ * This tries the /quote/place-order and /quote/build endpoints across API versions.
+ */
+export async function placeOnChainOrder(
+  params: {
+    srcChainId: number;
+    dstChainId: number;
+    srcTokenAddress: string;
+    dstTokenAddress: string;
+    amount: string;
+    walletAddress: string;
+    hashLock: string;
+  },
+  signal?: AbortSignal,
+): Promise<{
+  success: boolean;
+  tx?: { to: string; data: string; value: string; gas?: string };
+  orderHash?: string;
+  _placeOrderTrial?: string;
+  _hasTx?: boolean;
+  _hasTypedData?: boolean;
+  _trials?: unknown[];
+  error?: string;
+  [key: string]: unknown;
+}> {
+  const resolvedSrc = resolveTokenForFusionPlus(params.srcTokenAddress, params.srcChainId);
+  const resolvedDst = resolveTokenForFusionPlus(params.dstTokenAddress, params.dstChainId);
+
+  const body = {
+    srcChainId: params.srcChainId,
+    dstChainId: params.dstChainId,
+    srcTokenAddress: resolvedSrc,
+    dstTokenAddress: resolvedDst,
+    amount: params.amount,
+    walletAddress: params.walletAddress,
+    hashLock: params.hashLock,
+  };
+
+  log.info(TAG, `[PLACE-ORDER] Requesting on-chain tx: ${params.srcChainId}→${params.dstChainId} amt=${params.amount}`);
+
+  try {
+    const res = await oneInchApi.post<Record<string, unknown>>(
+      `/fusion-plus/place-order`,
+      body,
+      { signal, retries: 0 },
+    );
+
+    const hasTx = !!(res.tx || res.transaction || res.to || res.data);
+    log.info(TAG, `[PLACE-ORDER] Response: hasTx=${hasTx} keys=[${Object.keys(res).join(",")}] trial=${res._placeOrderTrial ?? "?"}`);
+
+    if (hasTx) {
+      // Extract tx data from whichever field it's in
+      const txObj = (res.tx || res.transaction || { to: res.to, data: res.data, value: res.value }) as { to: string; data: string; value: string; gas?: string };
+      return { success: true, tx: txObj, orderHash: res.orderHash as string | undefined, ...res };
+    }
+
+    // No tx data — return full response for diagnostics
+    return { success: false, error: "place-order returned 200 but no tx data", ...res };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(TAG, `[PLACE-ORDER] Failed: ${msg}`);
+    return { success: false, error: msg, _trials: (err as any)?.error?._trials };
+  }
+}
+
+/**
  * Check SDK health — reports whether the server-side SDK is available
  * and whether the v1.2 quoter is reachable.
  */

@@ -115,9 +115,11 @@ import {
   CROSS_CHAIN_POLL_INTERVAL_MS,
   CROSS_CHAIN_POLL_MAX_DURATION_MS,
   CROSS_CHAIN_STATUS_LABELS,
+  CROSS_CHAIN_STATUS_ICONS,
   generateHtlcSecret,
   sdkBuildCrossChainOrder,
   sdkSubmitCrossChainOrder,
+  placeOnChainOrder,
 } from "../utils/oneinch/fusion-plus";
 import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse, SdkOrderResponse } from "../utils/oneinch/fusion-plus";
 import { buildCrossChainOrderClientSide, preloadSdk, getSdkDiagnostics, resetSdkCache } from "../utils/oneinch/cross-chain-builder";
@@ -1359,11 +1361,138 @@ export function OneInchWidget() {
 
       const amountWei = toWei(fromAmount, fromToken.decimals);
 
-      // Step 0: Wrap native token & approve ERC-20 for the router
-      // IMPLEMENTATION NOTE: Fusion+ uses LOP v4 (limit orders) which ONLY work
-      // with ERC-20 tokens. The relayer checks on-chain balanceOf(maker, srcToken).
-      // If the user selected native ETH, we must wrap it to WETH first, then
-      // approve the Aggregation Router v6 to spend the WETH.
+      // Step A: Generate HTLC secret client-side (needed for both paths)
+      setSwapStatus("building");
+      log.info("1inch", `[FUSION+SDK] Step A: Generating HTLC secret client-side`);
+      const htlc = generateHtlcSecret();
+      log.info("1inch", `[FUSION+SDK] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
+
+      // Step A2: Try on-chain place-order path (like 1inch.com uses)
+      // IMPLEMENTATION NOTE (2026-03-04): 1inch.com sends an on-chain `create()` tx
+      // to the NativeOrders/EscrowFactory contract instead of the gasless EIP-712 +
+      // relayer submit path. This is more reliable because funds are locked on-chain
+      // immediately and resolvers can see them. We try this path FIRST.
+      log.info("1inch", `[FUSION+SDK] Step A2: Trying on-chain place-order path...`);
+      const placeResult = await placeOnChainOrder({
+        srcChainId: selectedChainId,
+        dstChainId,
+        srcTokenAddress: fromToken.address,
+        dstTokenAddress: crossChainDstToken.address,
+        amount: amountWei,
+        walletAddress: evmAccount,
+        hashLock: htlc.hashLock,
+      });
+
+      if (placeResult.success && placeResult.tx) {
+        // ON-CHAIN PATH: Send the create() transaction directly
+        log.info("1inch", `[FUSION+SDK] ✓ On-chain path available! tx.to=${placeResult.tx.to} dataLen=${placeResult.tx.data?.length ?? 0} value=${placeResult.tx.value ?? "0"}`);
+
+        setSwapStatus("swapping");
+        try {
+          const txParams: Record<string, string> = {
+            from: evmAccount,
+            to: placeResult.tx.to,
+            data: placeResult.tx.data,
+          };
+          // Include ETH value if specified (native token escrow)
+          if (placeResult.tx.value && placeResult.tx.value !== "0") {
+            txParams.value = "0x" + BigInt(placeResult.tx.value).toString(16);
+          }
+          if (placeResult.tx.gas) {
+            txParams.gas = "0x" + BigInt(placeResult.tx.gas).toString(16);
+          }
+
+          log.info("1inch", `[FUSION+SDK] Sending create() tx via MetaMask...`);
+          const txHash = await window.ethereum!.request({
+            method: "eth_sendTransaction",
+            params: [txParams],
+          }) as string;
+
+          log.info("1inch", `[FUSION+SDK] Create tx submitted: ${txHash}. Waiting for confirmation...`);
+          setLastTxHash(txHash);
+
+          const mined = await waitForTxReceipt(txHash, 120000);
+          if (!mined) {
+            setSwapError("On-chain order creation reverted. Check the transaction on Etherscan.");
+            setSwapStatus("error");
+            return;
+          }
+
+          log.info("1inch", `[FUSION+SDK] Create tx confirmed! Escrow created on-chain. Now polling for resolver fill...`);
+
+          // Use orderHash from place-order response, or derive from tx
+          const orderHashForPoll = placeResult.orderHash || txHash;
+          setCrossChainOrderHash(orderHashForPoll);
+
+          // Poll for resolver fill (same as relayer path)
+          setSwapStatus("polling");
+          setFusionOrderStatus("SrcPending" as any);
+          const pollDeadline = Date.now() + CROSS_CHAIN_POLL_MAX_DURATION_MS;
+          const localHtlcSecret = htlc.secret;
+
+          crossChainPollTimer.current = setInterval(async () => {
+            try {
+              if (Date.now() > pollDeadline) {
+                stopCrossChainPolling();
+                setSwapStatus("error");
+                setSwapError(
+                  "Cross-chain order timed out — no resolver filled your order. " +
+                  "Your funds are SAFE and will be refunded by the HTLC escrow timeout. " +
+                  "Check the transaction on Etherscan for details."
+                );
+                return;
+              }
+
+              const orderStatus = await getCrossChainOrderStatus(orderHashForPoll);
+              log.info("1inch", `[FUSION+SDK] Poll (on-chain): status=${orderStatus.status}`);
+              setFusionOrderStatus(orderStatus.status as any);
+
+              if (isCrossChainTerminalStatus(orderStatus.status)) {
+                stopCrossChainPolling();
+                if (isCrossChainSuccessStatus(orderStatus.status)) {
+                  setSwapStatus("success");
+                  playVipConfirm();
+                  fetchBalance();
+                } else {
+                  setSwapStatus("error");
+                  setSwapError(CROSS_CHAIN_STATUS_LABELS[orderStatus.status] || orderStatus.status);
+                }
+              }
+
+              if (orderStatus.status === "SrcFilled" && localHtlcSecret) {
+                try {
+                  const readyRes = await getReadyFills(orderHashForPoll);
+                  log.info("1inch", `[FUSION+SDK] Ready fills (on-chain): ${JSON.stringify(readyRes).slice(0, 200)}`);
+                  if (readyRes) {
+                    log.info("1inch", `[FUSION+SDK] Submitting HTLC secret for on-chain order...`);
+                    await submitSecret(orderHashForPoll, localHtlcSecret);
+                    log.info("1inch", `[FUSION+SDK] Secret submitted successfully`);
+                  }
+                } catch (secretErr: any) {
+                  log.warn("1inch", `[FUSION+SDK] Secret submission failed (will retry): ${secretErr?.message}`);
+                }
+              }
+            } catch (pollErr: any) {
+              log.warn("1inch", `[FUSION+SDK] Poll error (on-chain, will retry): ${pollErr?.message}`);
+            }
+          }, CROSS_CHAIN_POLL_INTERVAL_MS);
+
+          return; // Done — on-chain path complete
+        } catch (txErr: any) {
+          if (txErr?.message?.includes("rejected") || txErr?.code === 4001) {
+            setSwapStatus("idle");
+            return;
+          }
+          throw txErr;
+        }
+      }
+
+      // ON-CHAIN PATH NOT AVAILABLE — fall back to EIP-712 + relayer path
+      log.info("1inch", `[FUSION+SDK] On-chain place-order not available (${placeResult.error ?? "no tx data"}). Falling back to EIP-712 + relayer path.`);
+
+      // Step 0 (FALLBACK ONLY): Wrap native token & approve ERC-20 for the router
+      // IMPLEMENTATION NOTE: The relayer path requires ERC-20 tokens (LOP v4).
+      // The on-chain path sends native ETH directly, so wrapping is only needed here.
       const srcTokenIsNative = fromToken.isNative || false;
       const wethAddress = WRAPPED_NATIVE_FOR_FUSION[selectedChainId];
 
@@ -1373,59 +1502,30 @@ export function OneInchWidget() {
           setSwapStatus("error");
           return;
         }
-
-        // Step 0a: Wrap native ETH → WETH
         setSwapStatus("approving");
-        log.info("1inch", `[FUSION+SDK] Step 0a: Wrapping ${fromAmount} native → WETH (${wethAddress}) on chain ${selectedChainId}`);
+        log.info("1inch", `[FUSION+SDK] Step 0a (fallback): Wrapping ${fromAmount} native → WETH`);
         try {
           const wrapTxHash = await wrapNativeToken(selectedChainId, amountWei, evmAccount);
-          log.info("1inch", `[FUSION+SDK] Wrap tx: ${wrapTxHash}. Waiting for confirmation...`);
           const mined = await waitForTxReceipt(wrapTxHash, 90000);
-          if (!mined) {
-            setSwapError("WETH wrap transaction reverted. Please try again.");
-            setSwapStatus("error");
-            return;
-          }
-          log.info("1inch", `[FUSION+SDK] Wrap confirmed. Now have WETH balance.`);
+          if (!mined) { setSwapError("WETH wrap transaction reverted."); setSwapStatus("error"); return; }
+          log.info("1inch", `[FUSION+SDK] Wrap confirmed.`);
         } catch (wrapErr: any) {
-          if (wrapErr?.message?.includes("rejected") || wrapErr?.code === 4001) {
-            setSwapStatus("idle");
-            return;
-          }
+          if (wrapErr?.message?.includes("rejected") || wrapErr?.code === 4001) { setSwapStatus("idle"); return; }
           throw wrapErr;
         }
-
-        // Step 0b: Approve WETH for the Aggregation Router v6
-        log.info("1inch", `[FUSION+SDK] Step 0b: Ensuring WETH approval for Fusion+ router`);
-        await ensureFusionApproval(
-          selectedChainId, wethAddress, evmAccount, amountWei,
-          (status) => {
-            if (status === "checking" || status === "approving" || status === "waiting")
-              setSwapStatus("approving");
-          },
-        );
-        log.info("1inch", `[FUSION+SDK] WETH approved for router.`);
+        log.info("1inch", `[FUSION+SDK] Step 0b (fallback): Ensuring WETH approval`);
+        await ensureFusionApproval(selectedChainId, wethAddress, evmAccount, amountWei,
+          (status) => { if (status !== "approved") setSwapStatus("approving"); });
       } else {
-        // Step 0: Non-native ERC-20 — just ensure approval
-        log.info("1inch", `[FUSION+SDK] Step 0: Ensuring ERC-20 approval for ${fromToken.symbol}`);
         setSwapStatus("approving");
-        await ensureFusionApproval(
-          selectedChainId, fromToken.address, evmAccount, amountWei,
-          (status) => {
-            if (status === "checking" || status === "approving" || status === "waiting")
-              setSwapStatus("approving");
-          },
-        );
-        log.info("1inch", `[FUSION+SDK] ${fromToken.symbol} approved for router.`);
+        log.info("1inch", `[FUSION+SDK] Step 0 (fallback): Ensuring ${fromToken.symbol} approval`);
+        await ensureFusionApproval(selectedChainId, fromToken.address, evmAccount, amountWei,
+          (status) => { if (status !== "approved") setSwapStatus("approving"); });
       }
 
-      // Step A: Generate HTLC secret client-side
       setSwapStatus("building");
-      log.info("1inch", `[FUSION+SDK] Step A: Generating HTLC secret client-side`);
-      const htlc = generateHtlcSecret();
-      log.info("1inch", `[FUSION+SDK] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
 
-      // Step B: Build order via SDK-based server endpoint
+      // Step B: Build order via SDK-based server endpoint (FALLBACK)
       log.info("1inch", `[FUSION+SDK] Step B: Building order via /sdk-order: ${selectedChainId}→${dstChainId} amt=${amountWei}`);
       const sdkResult = await sdkBuildCrossChainOrder({
         srcChainId: selectedChainId,
@@ -2724,7 +2824,7 @@ export function OneInchWidget() {
           <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Awaiting wallet signature...
+              {swapMode === "crossChain" ? "Creating escrow on-chain..." : "Awaiting wallet signature..."}
             </div>
           </button>
         ) : swapStatus === "building" ? (
@@ -2773,12 +2873,32 @@ export function OneInchWidget() {
             <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
               <div className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {FUSION_STATUS_ICONS[fusionOrderStatus || "pending"]}{" "}
-                {FUSION_STATUS_LABELS[fusionOrderStatus || "pending"]}
+                {(swapMode === "crossChain"
+                  ? (CROSS_CHAIN_STATUS_ICONS as Record<string, string>)[fusionOrderStatus || "SrcPending"] ?? "⏳"
+                  : FUSION_STATUS_ICONS[fusionOrderStatus || "pending"]
+                )}{" "}
+                {(swapMode === "crossChain"
+                  ? (CROSS_CHAIN_STATUS_LABELS as Record<string, string>)[fusionOrderStatus || "SrcPending"] ?? "Waiting for resolver..."
+                  : FUSION_STATUS_LABELS[fusionOrderStatus || "pending"]
+                )}
               </div>
             </button>
 
             {/* Order details panel */}
+            {!lastSignedOrder && crossChainOrderHash && (
+              <div className={`mt-2 p-2.5 rounded-lg text-xs space-y-1.5 ${
+                isDark ? "bg-emerald-900/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"
+              }`}>
+                <div className="flex justify-between">
+                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>Order / Tx</span>
+                  <span className="font-mono">{crossChainOrderHash.slice(0, 10)}...{crossChainOrderHash.slice(-6)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>Path</span>
+                  <span className={`font-medium ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>On-chain escrow</span>
+                </div>
+              </div>
+            )}
             {lastSignedOrder && (
               <div className={`mt-2 p-2.5 rounded-lg text-xs space-y-1.5 ${
                 isDark ? "bg-emerald-900/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"
