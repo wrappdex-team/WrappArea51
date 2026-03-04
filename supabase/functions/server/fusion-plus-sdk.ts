@@ -1586,10 +1586,19 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     console.log(`${TAG} [SDK-SUBMIT] Extension: ${extHex.length} hex chars, ${extDataBytes} total bytes, ${extBodyBytes} body bytes (after offsets)`);
     console.log(`${TAG} [SDK-SUBMIT] Extension hex (first 300 chars): ${extHex.slice(0, 300)}`);
 
+    // IMPLEMENTATION NOTE: Log signature length to verify native vs ERC20 format.
+    // Native: ABI-encoded 8×uint256 = 256 bytes = 514 hex chars ("0x"+512).
+    // ERC20: EIP-712 sig = 65 bytes = 132 hex chars ("0x"+130).
+    const sigHex = body.signature as string;
+    const sigBytes = sigHex.startsWith("0x") ? (sigHex.length - 2) / 2 : sigHex.length / 2;
+    const sigType = sigBytes === 256 ? "NATIVE(ABI-order)" : sigBytes === 65 ? "ERC20(EIP-712)" : `UNEXPECTED(${sigBytes}b)`;
+    console.log(`${TAG} [SDK-SUBMIT] Signature: ${sigBytes} bytes = ${sigType}`);
+    console.log(`${TAG} [SDK-SUBMIT] Full payload JSON (3000ch): ${JSON.stringify(submitPayload).slice(0, 3000)}`);
+
     const { status, body: resBody } = await apiFetch("POST", submitUrl, JSON.stringify(submitPayload), 25_000);
 
     if (status === 200) {
-      console.log(`${TAG} [SDK-SUBMIT] SUCCESS: ${JSON.stringify(resBody).slice(0, 300)}`);
+      console.log(`${TAG} [SDK-SUBMIT] SUCCESS (v1.2): ${JSON.stringify(resBody).slice(0, 500)}`);
     } else {
       console.log(`${TAG} [SDK-SUBMIT] FAILED (${status}): ${JSON.stringify(resBody).slice(0, 2000)}`);
 
@@ -1651,6 +1660,29 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
       fusionPlusChains: Array.from(FUSION_PLUS_CHAINS),
       timestamp: new Date().toISOString(),
     };
+
+    // IMPLEMENTATION NOTE: Self-test CREATE2 proxy address computation against SDK test vectors.
+    // Confirms computeProxyBytecodeHash + computeCreate2Address match the SDK's ProxyFactory.
+    try {
+      const tv1Factory = "0x4bc5a9d205adf1091d596bc2e1aa0d6b9dc3b12c";
+      const tv1Impl = "0xfbc2d33fc6c7fadb155974b847dc04f39010caa9";
+      const tv1Salt = "0x3fccfe0035a1010d48c1573e1fc78290082e778619ddb01429af83b5f3faf29c";
+      const tv1Expected = "0x762bef5aa97185121b080f6cacb58901fe1e7751";
+      const tv1Bytecode = computeProxyBytecodeHash(tv1Impl);
+      const tv1Result = computeCreate2Address(tv1Factory, tv1Salt, tv1Bytecode);
+      const tv2Factory = "0x584aeab186d81dbb52a8a14820c573480c3d4773";
+      const tv2Impl = "0xddc60c7babfc55d8030f51910b157e179f7a41fc";
+      const tv2Salt = "0x7d1798e1fe1eef8c94c50886f476477781a4d56f4126ae8a3a88f5546649d153";
+      const tv2Expected = "0xf81af95bb417a82923e5fa001b1e052034026e64";
+      const tv2Bytecode = computeProxyBytecodeHash(tv2Impl);
+      const tv2Result = computeCreate2Address(tv2Factory, tv2Salt, tv2Bytecode);
+      health.create2SelfTest = {
+        test1: { expected: tv1Expected, got: tv1Result, pass: tv1Result === tv1Expected },
+        test2: { expected: tv2Expected, got: tv2Result, pass: tv2Result === tv2Expected },
+      };
+    } catch (e: any) {
+      health.create2SelfTest = { error: e?.message };
+    }
 
     // Test v1.2 quoter connectivity (lightweight: just check if endpoint responds)
     if (apiKey) {

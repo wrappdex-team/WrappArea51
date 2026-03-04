@@ -1577,11 +1577,27 @@ export function OneInchWidget() {
             extension: result.extension || "",
             secretHashes: [htlc.hashLock],
           });
-          log.info("1inch", `[FUSION+] Relayer submit OK: ${JSON.stringify(submitResult).slice(0, 200)}`);
+          log.info("1inch", `[FUSION+] Relayer submit OK: ${JSON.stringify(submitResult).slice(0, 500)}`);
+          log.info("1inch", `[FUSION+] Relayer accepted order — resolvers should begin matching.`);
         } catch (submitErr: any) {
-          log.warn("1inch", `[FUSION+] Relayer submit FAILED (non-fatal, create() already on-chain): ${submitErr?.message}`);
-          // The create() tx is already confirmed, so the order exists on-chain.
-          // Resolvers may still discover it. Don't fail — proceed to polling.
+          // IMPLEMENTATION NOTE: Extract full error details from OneInchApiError.
+          // submitErr.message is generic ("Relayer submission failed"),
+          // but submitErr.details / submitErr.error?.details contains the
+          // actual v1.2/v1.0 rejection reasons from our server proxy.
+          const errDetails = submitErr?.details || submitErr?.error?.details || "";
+          const errStatus = submitErr?.status || submitErr?.error?.status || "?";
+          const errKind = submitErr?.kind || submitErr?.error?.kind || "UNKNOWN";
+          log.warn("1inch", `[FUSION+] Relayer submit FAILED (non-fatal, create() already on-chain)`);
+          log.warn("1inch", `[FUSION+] Relayer rejection: status=${errStatus} kind=${errKind} msg=${submitErr?.message}`);
+          log.warn("1inch", `[FUSION+] Relayer details: ${errDetails || "(no details)"}`);
+          log.warn("1inch", `[FUSION+] Full error obj: ${JSON.stringify(submitErr?.error || submitErr, null, 0)?.slice(0, 1000)}`);
+          // Show warning in UI — order exists on-chain but may not be discovered
+          // by resolvers without a valid relayer submission.
+          setSwapError(
+            `Relayer did not accept order (${errKind}): ${errDetails || submitErr?.message || "unknown"}. ` +
+            `The create() tx is confirmed on-chain — resolvers may still discover it. Polling continues.`
+          );
+          // Don't set status to "error" — proceed to polling since create() succeeded.
         }
       } else {
         // ── ERC20 FLOW: approve → EIP-712 sign → relayer submit ──
@@ -1656,10 +1672,18 @@ export function OneInchWidget() {
             extension: result.extension || "",
             secretHashes: [htlc.hashLock],
           });
-          log.info("1inch", `[FUSION+] Relayer submit OK: ${JSON.stringify(submitResult).slice(0, 200)}`);
+          log.info("1inch", `[FUSION+] Relayer submit OK: ${JSON.stringify(submitResult).slice(0, 500)}`);
+          log.info("1inch", `[FUSION+] Relayer accepted ERC20 order — resolvers should begin matching.`);
         } catch (submitErr: any) {
-          log.warn("1inch", `[FUSION+] Relayer submit FAILED: ${submitErr?.message}`);
-          setSwapError(`Failed to submit order to relayer: ${submitErr?.message || "Unknown error"}`);
+          // IMPLEMENTATION NOTE: Extract full rejection details for ERC20 flow.
+          const errDetails = submitErr?.details || submitErr?.error?.details || "";
+          const errKind = submitErr?.kind || submitErr?.error?.kind || "UNKNOWN";
+          const errStatus = submitErr?.status || submitErr?.error?.status || "?";
+          log.warn("1inch", `[FUSION+] Relayer submit FAILED for ERC20 order`);
+          log.warn("1inch", `[FUSION+] Relayer rejection: status=${errStatus} kind=${errKind} msg=${submitErr?.message}`);
+          log.warn("1inch", `[FUSION+] Relayer details: ${errDetails || "(no details)"}`);
+          log.warn("1inch", `[FUSION+] Full error obj: ${JSON.stringify(submitErr?.error || submitErr, null, 0)?.slice(0, 1000)}`);
+          setSwapError(`Relayer rejected order (${errKind}): ${errDetails || submitErr?.message || "Unknown error"}`);
           setSwapStatus("error");
           return;
         }
@@ -1686,12 +1710,18 @@ export function OneInchWidget() {
       });
 
       // Step 4: Poll for resolver fill
+      // IMPLEMENTATION NOTE: Log full orderHash + flow type so we can verify
+      // the polling hash matches what the relayer indexed.
+      const flowType = (buildResult as any).isNative ? "NATIVE" : "ERC20";
+      log.info("1inch", `[FUSION+] Step 4: Begin polling orderHash=${orderHashForPoll} flow=${flowType} srcChain=${selectedChainId} dstChain=${dstChainId}`);
       setSwapStatus("polling");
       setFusionOrderStatus("SrcPending" as any);
       const pollDeadline = Date.now() + CROSS_CHAIN_POLL_MAX_DURATION_MS;
       const localHtlcSecret = htlc.secret;
+      let pollCount = 0;
 
       crossChainPollTimer.current = setInterval(async () => {
+        pollCount++;
         try {
           if (Date.now() > pollDeadline) {
             stopCrossChainPolling();
@@ -1705,7 +1735,7 @@ export function OneInchWidget() {
           }
 
           const orderStatus = await getCrossChainOrderStatus(orderHashForPoll);
-          log.info("1inch", `[FUSION+] Poll: status=${orderStatus.status}`);
+          log.info("1inch", `[FUSION+] Poll #${pollCount}: status=${orderStatus.status} hash=${orderHashForPoll.slice(0, 14)}...`);
           setFusionOrderStatus(orderStatus.status as any);
 
           if (isCrossChainTerminalStatus(orderStatus.status)) {
@@ -1735,7 +1765,7 @@ export function OneInchWidget() {
             }
           }
         } catch (pollErr: any) {
-          log.warn("1inch", `[FUSION+] Poll error (will retry): ${pollErr?.message}`);
+          log.warn("1inch", `[FUSION+] Poll #${pollCount} error (will retry): status=${pollErr?.status ?? "?"} kind=${pollErr?.kind ?? "?"} msg=${pollErr?.message}`);
         }
       }, CROSS_CHAIN_POLL_INTERVAL_MS);
     } catch (err: any) {
@@ -2327,7 +2357,7 @@ export function OneInchWidget() {
                   ? parseFloat(fromAmount) * fromPriceUsd
                   : (crossChainQuote.volumeUsd ?? 0);
                 const isL1Source = selectedChainId === 1;
-                const minUsd = isL1Source ? 15 : 5;
+                const minUsd = isL1Source ? 20 : 8;
                 const warnings: React.ReactNode[] = [];
                 if (usdValue > 0 && usdValue < minUsd) {
                   warnings.push(
@@ -2337,8 +2367,8 @@ export function OneInchWidget() {
                       <AlertCircle className="w-3 h-3 shrink-0" />
                       <span>
                         {isL1Source
-                          ? `Small amount (~$${usdValue.toFixed(2)}). Ethereum L1 gas costs may prevent resolvers from filling orders under ~$15. Try a larger amount for reliable fills.`
-                          : `Small amount (~$${usdValue.toFixed(2)}). Cross-chain resolvers may not fill orders under ~$5.`
+                          ? `Small amount (~$${usdValue.toFixed(2)}). Ethereum L1 resolver gas costs require orders ≥~$20 for profitable fills. Your order may time out with no resolver matching.`
+                          : `Small amount (~$${usdValue.toFixed(2)}). Cross-chain resolvers may not fill orders under ~$8 due to gas costs.`
                         }
                       </span>
                     </div>

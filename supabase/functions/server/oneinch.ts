@@ -33,11 +33,11 @@
 //   POST /1inch/fusion-plus/quote              → MULTI-TRIAL: v2.0+v1.0 patterns (see handler)
 //   POST /1inch/fusion-plus/build              → MULTI-TRIAL R6: /quote/build[/evm] + /relayer/v1.2/submit (SDK path)
 //   POST /1inch/fusion-plus/place-order        → MULTI-TRIAL: v2.0/v1.2/v1.0 × place-order/build (on-chain tx)
-//   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.0/submit
-//   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.0/order/status/{hash}
-//   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.0/submit/secret
-//   GET  /1inch/fusion-plus/secrets/:hash      → /fusion-plus/orders/v1.0/order/secrets/{hash}
-//   GET  /1inch/fusion-plus/ready-fills/:hash  → /fusion-plus/orders/v1.0/order/ready-to-accept-secret-fills/{hash}
+//   POST /1inch/fusion-plus/submit             → /fusion-plus/relayer/v1.2/submit
+//   GET  /1inch/fusion-plus/status/:hash       → /fusion-plus/orders/v1.2/order/status/{hash}
+//   POST /1inch/fusion-plus/submit-secret      → /fusion-plus/relayer/v1.2/submit/secret
+//   GET  /1inch/fusion-plus/secrets/:hash      → /fusion-plus/orders/v1.2/order/secrets/{hash}
+//   GET  /1inch/fusion-plus/ready-fills/:hash  → /fusion-plus/orders/v1.2/order/ready-to-accept-secret-fills/{hash}
 //
 //   ── Token / Balance / Price APIs (new) ──
 //   GET  /1inch/balance/:chainId/:wallet       → /balance/v1.2/{chainId}/balances/{wallet}
@@ -88,7 +88,8 @@ const API = {
   // explicit full URLs with multi-trial, so this only affects submit/status/secrets routes.
   fusionPlusQuoter:  "https://api.1inch.dev/fusion-plus/quoter/v1.0",
   fusionPlusRelayer: "https://api.1inch.dev/fusion-plus/relayer/v1.2",
-  fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.0",
+  // IMPLEMENTATION NOTE: SDK uses OrdersApi.Version = 'v1.2' for status/secrets/ready-fills
+  fusionPlusOrders:  "https://api.1inch.dev/fusion-plus/orders/v1.2",
   token:          "https://api.1inch.dev/token/v1.2",
   balance:        "https://api.1inch.dev/balance/v1.2",
   price:          "https://api.1inch.dev/price/v1.1",
