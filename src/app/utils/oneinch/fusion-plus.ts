@@ -872,16 +872,17 @@ export async function sdkSubmitCrossChainOrder(
 }
 
 /**
- * Get create() tx data for a direct on-chain escrow creation.
+ * Get cross-chain order data from the server.
  *
- * IMPLEMENTATION NOTE (2026-03-04, On-Chain Escrow):
- * This is the CORRECT flow matching 1inch.com's own frontend:
- *   1. Server gets a quote + builds order + ABI-encodes create(Order, bytes) calldata
- *   2. Returns { to, data, value } for a SINGLE MetaMask transaction
- *   3. No WETH wrapping, no approval, no EIP-712 signing, no relayer
- *   4. Native ETH sent directly — contract wraps internally
+ * IMPLEMENTATION NOTE (2026-03-04, SDK-verified rewrite):
+ * The server now returns DIFFERENT responses for native vs ERC20:
  *
- * This replaces the old multi-step flow (wrap → approve → sign → relayer → poll).
+ * NATIVE ETH: { isNative: true, tx: {to, data, value}, relayerOrder, relayerOrderHash,
+ *              nativeSignature, extension, quoteId }
+ *   → Client calls NativeOrderFactory.create() on-chain, then submits to relayer
+ *
+ * ERC20: { isNative: false, order, orderHash, typedData, extension, quoteId, approvalTarget }
+ *   → Client approves, signs EIP-712, then submits to relayer
  */
 export async function getCreateTx(
   params: {
@@ -894,19 +895,7 @@ export async function getCreateTx(
     hashLock: string;
   },
   signal?: AbortSignal,
-): Promise<{
-  success: boolean;
-  tx?: { to: string; data: string; value: string };
-  orderHash?: string;
-  quoteId?: string;
-  srcTokenAmount?: string;
-  dstTokenAmount?: string;
-  error?: string;
-  _diagnostics?: unknown;
-}> {
-  const resolvedSrc = params.srcTokenAddress; // Don't resolve native — server handles it
-  const resolvedDst = params.dstTokenAddress;
-
+): Promise<Record<string, unknown> & { success: boolean; error?: string }> {
   log.info(TAG, `[CREATE-TX] Requesting: ${params.srcChainId}→${params.dstChainId} amt=${params.amount}`);
 
   try {
@@ -915,8 +904,8 @@ export async function getCreateTx(
       {
         srcChainId: params.srcChainId,
         dstChainId: params.dstChainId,
-        srcTokenAddress: resolvedSrc,
-        dstTokenAddress: resolvedDst,
+        srcTokenAddress: params.srcTokenAddress,
+        dstTokenAddress: params.dstTokenAddress,
         amount: params.amount,
         walletAddress: params.walletAddress,
         hashLock: params.hashLock,
@@ -924,22 +913,16 @@ export async function getCreateTx(
       { signal, retries: 0 },
     );
 
+    const isNative = !!(res.isNative);
     const hasTx = !!(res.tx && (res.tx as any).to && (res.tx as any).data);
-    log.info(TAG, `[CREATE-TX] Response: success=${res.success} hasTx=${hasTx} orderHash=${(res.orderHash as string || "").slice(0, 14)}...`);
+    const hasTypedData = !!(res.typedData);
+    log.info(TAG, `[CREATE-TX] Response: success=${res.success} isNative=${isNative} hasTx=${hasTx} hasTypedData=${hasTypedData}`);
 
-    if (res.success && hasTx) {
-      return {
-        success: true,
-        tx: res.tx as { to: string; data: string; value: string },
-        orderHash: res.orderHash as string,
-        quoteId: res.quoteId as string,
-        srcTokenAmount: res.srcTokenAmount as string,
-        dstTokenAmount: res.dstTokenAmount as string,
-        _diagnostics: res._diagnostics,
-      };
+    if (res.success && (hasTx || hasTypedData)) {
+      return { ...res, success: true } as Record<string, unknown> & { success: boolean };
     }
 
-    return { success: false, error: res.error as string || "No tx data returned", _diagnostics: res._diagnostics };
+    return { success: false, error: res.error as string || "No tx/typedData data returned", _diagnostics: res._diagnostics };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(TAG, `[CREATE-TX] Failed: ${msg}`);

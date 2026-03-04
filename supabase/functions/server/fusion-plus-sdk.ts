@@ -488,8 +488,69 @@ function randomNonce40(): bigint {
   return n;
 }
 
+/**
+ * Compute CREATE2 proxy address for NativeOrderFactory.
+ *
+ * IMPLEMENTATION NOTE (2026-03-04, SDK-verified):
+ * Source: @1inch/limit-order-sdk/proxy-factory.js → getProxyAddress(salt)
+ * The proxy bytecode hash is computed from the EIP-1167 minimal proxy bytecode
+ * for the NativeOrderImpl contract. CREATE2 formula:
+ *   address = keccak256(0xff + factory + salt + bytecodeHash)[12:]
+ *
+ * Proxy bytecode: 0x3d602d80600a3d3981f3363d3d373d3d3d363d73{impl}5af43d82803e903d91602b57fd5bf3
+ * @see https://github.com/1inch/cross-chain-swap/blob/03d99b96/contracts/libraries/ProxyHashLib.sol#L14
+ */
+function computeProxyBytecodeHash(implAddress: string): Uint8Array {
+  const impl = implAddress.replace(/^0x/i, "").toLowerCase();
+  const bytecode = hexBytes("3d602d80600a3d3981f3363d3d373d3d3d363d73" + impl + "5af43d82803e903d91602b57fd5bf3");
+  return keccak_256(bytecode);
+}
+
+function computeCreate2Address(factory: string, salt: string, bytecodeHash: Uint8Array): string {
+  const factoryBytes = hexBytes(factory.replace(/^0x/i, "").toLowerCase());
+  const saltBytes = hexBytes(salt.replace(/^0x/i, ""));
+  const input = catBytes(
+    new Uint8Array([0xff]),
+    factoryBytes,  // 20 bytes
+    saltBytes,     // 32 bytes
+    bytecodeHash,  // 32 bytes
+  );
+  const hash = keccak_256(input);
+  // Take last 20 bytes
+  return "0x" + bHex(new Uint8Array(hash.slice(12)));
+}
+
 /** LOP v4 Aggregation Router v6 address (same on all chains) */
 const AGG_ROUTER_V6 = "0x111111125421ca6dc452d289314280a0f8842a65";
+
+// =======================================================================
+// NativeOrderFactory addresses (from @1inch/limit-order-sdk/constants.js)
+//
+// IMPLEMENTATION NOTE (2026-03-04, SDK-verified):
+// Native ETH cross-chain orders use NativeOrderFactory.create(), NOT
+// EscrowFactory.create(). The NativeOrderFactory deploys a minimal
+// CREATE2 proxy per order that holds WETH on behalf of the maker.
+// =======================================================================
+const NATIVE_ORDER_FACTORY: Record<number, string> = {
+  1: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  56: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  137: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  42161: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  10: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  8453: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  43114: "0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01",
+  324: "0xfd1d18173d2f179a45bf21f755a261aae7c2d769",
+};
+const NATIVE_ORDER_IMPL: Record<number, string> = {
+  1: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  56: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  137: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  42161: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  10: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  8453: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  43114: "0xf3eaf3c54f1ef887914b9c19e1ab9d3e581557eb",
+  324: "0xf850a926554fc7898d1bda051bc206942909b8f2",
+};
 
 /** EIP-712 types for LOP v4 Order */
 const LOP_ORDER_TYPES = {
@@ -1615,12 +1676,34 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
   });
 
   // ── POST /1inch/fusion-plus/create-tx ──────────────────────────────
-  // IMPLEMENTATION NOTE (2026-03-04, On-Chain Escrow):
-  // This is the CORRECT flow matching 1inch.com: single create() tx.
-  //   1. Quote from v1.2 quoter
-  //   2. Build order + extension (same as sdk-order)
-  //   3. ABI-encode create(Order, bytes) for escrow contract
-  //   4. Return { to, data, value } for ONE MetaMask tx
+  // IMPLEMENTATION NOTE (2026-03-04, SDK-verified rewrite):
+  //
+  // After studying every file in the 1inch SDKs (cross-chain-sdk, limit-order-sdk,
+  // fusion-sdk), the root cause of the "likely to fail" revert was identified:
+  //
+  // WRONG: We were calling create(Order, bytes extension) on EscrowFactory (0x03a25b...)
+  // RIGHT: Native ETH orders call create(Order) on NativeOrderFactory (0xe12e0f...)
+  //        ERC20 orders don't use create() at all — they use EIP-712 sign + relayer submit
+  //
+  // SDK flow for NATIVE ETH cross-chain:
+  //   1. Build order with user as maker, makerAsset = WETH
+  //   2. Compute EIP-712 order hash (temp order)
+  //   3. Compute proxy address = CREATE2(NativeOrderFactory, orderHash, proxyBytecodeHash)
+  //   4. Build FINAL order with maker = proxy address (for relayer)
+  //   5. NativeOrderFactory.create(orderWithUserAsMaker) payable — locks ETH
+  //   6. Submit FINAL order to relayer with nativeSignature = ABI-encoded original order
+  //
+  // NativeOrderFactory ABI (from @1inch/limit-order-sdk):
+  //   create(tuple(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256))
+  //   ALL fields are uint256 (not address), NO extension parameter
+  //   Contract checks: maker == msg.sender, makingAmount == msg.value
+  //
+  // SDK flow for ERC20 cross-chain:
+  //   1. Build order normally (user as maker)
+  //   2. User signs via eth_signTypedData_v4 (EIP-712)
+  //   3. Submit order + signature to relayer
+  //   (no on-chain create() call)
+  //
   app.post(`${PREFIX}/fusion-plus/create-tx`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
@@ -1643,8 +1726,9 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     let cDst: string; try { cDst = eip55Checksum(reqBody.dstTokenAddress as string); } catch { cDst = reqBody.dstTokenAddress as string; }
     const amt = reqBody.amount as string;
     const hl = reqBody.hashLock as string;
+    const isNative = (reqBody.srcTokenAddress as string).toLowerCase() === NATIVE_ADDRESS.toLowerCase();
 
-    console.log(`${TAG} [CREATE-TX] ${srcChainId}->${dstChainId} amt=${amt} wallet=${cWallet.slice(0,10)}... hl=${hl.slice(0,18)}...`);
+    console.log(`${TAG} [CREATE-TX] ${srcChainId}->${dstChainId} amt=${amt} native=${isNative} wallet=${cWallet.slice(0,10)}... hl=${hl.slice(0,18)}...`);
 
     // Step 1: Quote (GET with query params — 1inch quoter ignores POST bodies)
     const quoteQs = new URLSearchParams({
@@ -1666,64 +1750,158 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     const rq = qr.body as Record<string, unknown>;
     console.log(`${TAG} [CREATE-TX] Quote OK: quoteId=${(rq.quoteId as string || "").slice(0,20)}... keys=[${Object.keys(rq).join(",")}]`);
 
-    // IMPLEMENTATION NOTE: Enrich quote with request params — the quoter API does NOT
-    // echo back srcTokenAddress/dstTokenAddress, so buildServerSideOrder would fail without this.
-    // This matches the enrichment done in the /fusion-plus/quote endpoint (line ~1077).
+    // Enrich quote with request params (API doesn't echo these back)
     if (!rq.srcTokenAddress) rq.srcTokenAddress = cSrc;
     if (!rq.dstTokenAddress) rq.dstTokenAddress = cDst;
     if (!rq.srcChain) rq.srcChain = srcChainId;
     if (!rq.dstChain) rq.dstChain = dstChainId;
     if (!rq.walletAddress) rq.walletAddress = cWallet;
 
-    // Step 2: Build order + extension
+    // Step 2: Build order + extension (user as maker, makerAsset already WETH for native)
     const built = buildServerSideOrder(rq, hl, cWallet.toLowerCase(), srcChainId, dstChainId);
     if (!built) {
       console.log(`${TAG} [CREATE-TX] Order build FAILED. Quote keys: [${Object.keys(rq).join(",")}]`);
       console.log(`${TAG} [CREATE-TX] Quote dump (2000ch): ${JSON.stringify(rq).slice(0, 2000)}`);
       return c.json({ error: "Order construction failed", rawQuoteKeys: Object.keys(rq) }, 500);
     }
-    const { order: ord, extension: ext, orderHash: oh, diagnostics: diag } = built;
-    console.log(`${TAG} [CREATE-TX] Order OK: hash=${oh.slice(0,18)}... ext=${ext.length}ch`);
+    const { order: ord, extension: ext, typedData, orderHash: tempOrderHash, diagnostics: diag } = built;
+    console.log(`${TAG} [CREATE-TX] Order OK: tempHash=${tempOrderHash.slice(0,18)}... ext=${ext.length}ch`);
 
-    // Step 3: Contract address
-    let contract = "";
-    for (const k of ["srcEscrowFactory", "settlementAddress", "escrowFactory"]) {
-      const v = rq[k]; if (typeof v === "string" && ETH_ADDRESS_RE.test(v)) { contract = v; break; }
+    // ── NATIVE ETH FLOW ──
+    // IMPLEMENTATION NOTE (SDK-verified): For native ETH, we must:
+    // 1. Use the temp order hash to compute the CREATE2 proxy address
+    // 2. Build a FINAL order with maker = proxy (for relayer submission)
+    // 3. Generate create() calldata for NativeOrderFactory with user as maker
+    // 4. Generate nativeSignature = ABI-encoded order with user as maker
+    if (isNative) {
+      // Get NativeOrderFactory + impl addresses (from quote or hardcoded)
+      let nofAddr = (rq.nativeOrderFactoryAddress as string) || NATIVE_ORDER_FACTORY[srcChainId] || "";
+      let noiAddr = (rq.nativeOrderImplAddress as string) || NATIVE_ORDER_IMPL[srcChainId] || "";
+      if (!nofAddr || !noiAddr) {
+        console.log(`${TAG} [CREATE-TX] No NativeOrderFactory addresses for chain ${srcChainId}`);
+        return c.json({ error: `NativeOrderFactory not available for chain ${srcChainId}` }, 500);
+      }
+      nofAddr = nofAddr.toLowerCase();
+      noiAddr = noiAddr.toLowerCase();
+
+      console.log(`${TAG} [CREATE-TX] Native flow: NativeOrderFactory=${nofAddr} impl=${noiAddr}`);
+
+      // Compute proxy address = CREATE2(factory, tempOrderHash, bytecodeHash(impl))
+      const bytecodeHash = computeProxyBytecodeHash(noiAddr);
+      const proxyAddress = computeCreate2Address(nofAddr, tempOrderHash, bytecodeHash);
+      console.log(`${TAG} [CREATE-TX] Proxy address: ${proxyAddress}`);
+
+      // Build FINAL order for relayer: maker = proxy, everything else same
+      const relayerOrder: Record<string, string> = {
+        ...ord,
+        maker: proxyAddress.toLowerCase(),
+      };
+
+      // Recompute order hash for the relayer order (with proxy as maker)
+      const relayerOrderHash = computeEIP712OrderHash(relayerOrder, srcChainId);
+      console.log(`${TAG} [CREATE-TX] Relayer order hash: ${relayerOrderHash.slice(0,18)}...`);
+
+      // Generate nativeSignature = ABI-encoded original order (user as maker)
+      // IMPLEMENTATION NOTE (SDK-verified): LimitOrder.nativeSignature() calls toCalldata()
+      // which is AbiCoder.encode([Web3Type], [order.build()]). For our manual encoding,
+      // this is 8 × uint256 = 256 bytes (addresses padded to 32 bytes).
+      function abiU256(a: string): Uint8Array {
+        // For addresses: pad left to 32 bytes. For numbers: BigInt → 32 bytes
+        if (/^0x/i.test(a)) {
+          const b = new Uint8Array(32);
+          const ab = hexBytes(a.replace(/^0x/i, "").toLowerCase());
+          b.set(ab, 32 - ab.length);
+          return b;
+        }
+        return u256be(BigInt(a));
+      }
+      const nativeSig = "0x" + bHex(catBytes(
+        abiU256(ord.salt), abiU256(ord.maker), abiU256(ord.receiver),
+        abiU256(ord.makerAsset), abiU256(ord.takerAsset),
+        abiU256(ord.makingAmount), abiU256(ord.takingAmount), abiU256(ord.makerTraits),
+      ));
+
+      // Generate create() calldata for NativeOrderFactory
+      // IMPLEMENTATION NOTE (SDK-verified): The NativeOrderFactory ABI has ALL uint256 fields:
+      //   create((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256))
+      // The create() call passes the order with USER as maker (not proxy).
+      // Contract checks: order.maker == msg.sender, order.makingAmount == msg.value
+      const createSig = "create((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256))";
+      const createSel = bHex(new Uint8Array(keccak_256(new TextEncoder().encode(createSig)).slice(0, 4)));
+
+      // ABI-encode: all fields as uint256 (addresses are uint256 in this ABI)
+      const createOrderBytes = catBytes(
+        u256be(BigInt(ord.salt)),
+        u256be(BigInt(ord.maker)),         // user address as uint256
+        u256be(BigInt(ord.receiver)),      // receiver as uint256
+        u256be(BigInt(ord.makerAsset)),    // WETH as uint256
+        u256be(BigInt(ord.takerAsset)),    // TRUE_ERC20 as uint256
+        u256be(BigInt(ord.makingAmount)),
+        u256be(BigInt(ord.takingAmount)),
+        u256be(BigInt(ord.makerTraits)),
+      );
+      const createCalldata = "0x" + createSel + bHex(createOrderBytes);
+
+      console.log(`${TAG} [CREATE-TX] Native OK: sel=0x${createSel} cd=${createCalldata.length}ch to=${nofAddr} val=${amt}`);
+      console.log(`${TAG} [CREATE-TX] nativeSig=${nativeSig.length}ch proxyMaker=${proxyAddress}`);
+
+      return c.json({
+        success: true,
+        isNative: true,
+        // The on-chain create() tx for MetaMask
+        tx: { to: nofAddr, data: createCalldata, value: amt },
+        // The RELAYER order (maker = proxy) + signature for off-chain submission
+        relayerOrder,
+        relayerOrderHash,
+        nativeSignature: nativeSig,
+        extension: ext,
+        quoteId: rq.quoteId || "",
+        srcTokenAmount: rq.srcTokenAmount,
+        dstTokenAmount: rq.dstTokenAmount,
+        // Original order for reference
+        originalOrder: ord,
+        tempOrderHash,
+        proxyAddress,
+        _diagnostics: {
+          ...diag,
+          flow: "native-NativeOrderFactory",
+          contractAddress: nofAddr,
+          implAddress: noiAddr,
+          selector: "0x" + createSel,
+          createSig,
+          calldataLen: createCalldata.length,
+          proxyAddress,
+        },
+      }, 200);
     }
-    if (!contract) contract = srcChainId === 324 ? "0xd9085ac07da21bd6eb003a530a524ab054ca8652" : "0x03a25b3215a0e5c15cf23ac4d2e5cf86c0ff7efa";
-    console.log(`${TAG} [CREATE-TX] Contract: ${contract}`);
 
-    // Step 4: ABI-encode create(Order,bytes)
-    const cSig = "create((uint256,address,address,address,address,uint256,uint256,uint256),bytes)";
-    const sel = bHex(new Uint8Array(keccak_256(new TextEncoder().encode(cSig)).slice(0, 4)));
-
-    const extRaw = hexBytes(ext);
-    function abiAddr(a: string): Uint8Array {
-      const b = new Uint8Array(32);
-      const ab = hexBytes("0x" + a.replace(/^0x/i, "").toLowerCase());
-      b.set(ab, 32 - ab.length);
-      return b;
-    }
-    const ow = catBytes(
-      u256be(BigInt(ord.salt)), abiAddr(ord.maker), abiAddr(ord.receiver),
-      abiAddr(ord.makerAsset), abiAddr(ord.takerAsset),
-      u256be(BigInt(ord.makingAmount)), u256be(BigInt(ord.takingAmount)), u256be(BigInt(ord.makerTraits)),
-    );
-    const pad = (32 - (extRaw.length % 32)) % 32;
-    const cd = "0x" + sel + bHex(catBytes(ow, u256be(288n), u256be(BigInt(extRaw.length)), catBytes(extRaw, new Uint8Array(pad))));
-
-    const isNative = (reqBody.srcTokenAddress as string).toLowerCase() === NATIVE_ADDRESS.toLowerCase();
-    const val = isNative ? amt : "0";
-
-    console.log(`${TAG} [CREATE-TX] OK: sel=0x${sel} cd=${cd.length}ch to=${contract} val=${val}`);
+    // ── ERC20 FLOW ──
+    // IMPLEMENTATION NOTE (SDK-verified): For ERC20 tokens, there is NO on-chain
+    // create() call. The flow is:
+    //   1. User approves tokens to the Aggregation Router
+    //   2. User signs the order via eth_signTypedData_v4 (EIP-712)
+    //   3. Client submits order + signature to relayer via sdk-submit endpoint
+    // The typedData for signing is already built by buildServerSideOrder().
+    console.log(`${TAG} [CREATE-TX] ERC20 flow: returning typedData for EIP-712 signing`);
 
     return c.json({
       success: true,
-      tx: { to: contract, data: cd, value: val },
-      orderHash: oh, quoteId: rq.quoteId || "",
-      srcTokenAmount: rq.srcTokenAmount, dstTokenAmount: rq.dstTokenAmount,
+      isNative: false,
+      // No on-chain tx — client signs with EIP-712 then submits to relayer
+      order: ord,
+      orderHash: tempOrderHash,
+      typedData,
       extension: ext,
-      _diagnostics: { ...diag, contractAddress: contract, selector: "0x" + sel, calldataLen: cd.length, isNative, cSig },
+      quoteId: rq.quoteId || "",
+      srcTokenAmount: rq.srcTokenAmount,
+      dstTokenAmount: rq.dstTokenAmount,
+      // Approval target: the Aggregation Router (where the order gets filled)
+      approvalTarget: AGG_ROUTER_V6,
+      _diagnostics: {
+        ...diag,
+        flow: "erc20-sign-submit",
+        approvalTarget: AGG_ROUTER_V6,
+      },
     }, 200);
   });
 }

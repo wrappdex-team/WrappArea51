@@ -118,6 +118,7 @@ import {
   CROSS_CHAIN_STATUS_ICONS,
   generateHtlcSecret,
   getCreateTx,
+  sdkSubmitCrossChainOrder,
   persistHtlcSecret,
   loadPendingHtlcOrder,
   clearPendingHtlcOrder,
@@ -1454,17 +1455,21 @@ export function OneInchWidget() {
     stopCrossChainPolling();
 
     try {
-      // ── On-Chain create() Transaction (matching 1inch.com flow) ──
-      // IMPLEMENTATION NOTE (2026-03-04, Corrected Architecture — Round 2):
-      // 1inch.com uses a single on-chain create() transaction on the
-      // NativeOrderSettlement/EscrowFactory contract. The user pays gas,
-      // but the tx locks source funds in the escrow immediately.
-      // Flow: build order server-side → create() tx via MetaMask → poll + reveal secret
+      // ── Fusion+ Cross-Chain Swap (SDK-Verified Architecture) ──
+      // IMPLEMENTATION NOTE (2026-03-04, SDK-verified rewrite):
+      // After studying every file in @1inch/cross-chain-sdk, @1inch/limit-order-sdk,
+      // and @1inch/fusion-sdk, two distinct flows were identified:
       //
-      // The gasless sign+relayer approach was WRONG — 1inch.com does NOT do that
-      // for Fusion+ cross-chain. The MetaMask comparison confirmed this:
-      //   1inch.com: "Method: Create" on NativeOrderSettlement (real tx with gas)
-      //   WRAPpDEX:  "Method: Order" on Aggregation Router (gasless signature)
+      // NATIVE ETH: NativeOrderFactory.create(order) on-chain → submit to relayer
+      //   - Contract: 0xe12e0f117d23a5ccc57f8935cd8c4e80cd91ff01 (NOT EscrowFactory!)
+      //   - ABI: create((uint256×8)) — ALL uint256, NO extension param
+      //   - Order submitted to relayer has maker = CREATE2 proxy address
+      //   - Signature = ABI-encoded original order (not EIP-712)
+      //
+      // ERC20: approve → EIP-712 sign → submit to relayer (NO on-chain create)
+      //   - Approve to Aggregation Router (0x1111...1a65)
+      //   - Sign via eth_signTypedData_v4
+      //   - Submit order + signature to relayer
 
       const amountWei = toWei(fromAmount, fromToken.decimals);
 
@@ -1474,8 +1479,8 @@ export function OneInchWidget() {
       const htlc = generateHtlcSecret();
       log.info("1inch", `[FUSION+] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
 
-      // Step 2: Build create() transaction via server (gets quote + constructs order + ABI-encodes create())
-      log.info("1inch", `[FUSION+] Step 2: Building create() tx via create-tx endpoint`);
+      // Step 2: Build order via server (gets quote + constructs order)
+      log.info("1inch", `[FUSION+] Step 2: Building order via create-tx endpoint`);
       const buildResult = await getCreateTx({
         srcChainId: selectedChainId,
         dstChainId,
@@ -1486,24 +1491,111 @@ export function OneInchWidget() {
         hashLock: htlc.hashLock,
       });
 
-      if (!buildResult.success || !buildResult.tx) {
+      if (!buildResult.success) {
         log.warn("1inch", `[FUSION+] create-tx build failed: ${buildResult.error}`);
-        setSwapError(`Cross-chain order construction failed: ${buildResult.error || "No tx data returned"}`);
+        setSwapError(`Cross-chain order construction failed: ${buildResult.error || "Unknown error"}`);
         setSwapStatus("error");
         return;
       }
 
-      log.info("1inch", `[FUSION+] create() tx built: to=${buildResult.tx.to} value=${buildResult.tx.value} data=${buildResult.tx.data.slice(0, 20)}... orderHash=${buildResult.orderHash?.slice(0, 14)}...`);
+      const isNativeFlow = !!(buildResult as any).isNative;
+      log.info("1inch", `[FUSION+] Order built: isNative=${isNativeFlow} quoteId=${(buildResult.quoteId || "").slice(0, 14)}...`);
 
-      // Step 2b: For ERC20 tokens, approve the escrow contract to spend tokens
-      if (!fromToken.isNative) {
+      let orderHashForPoll = "";
+      let txHash = "";
+
+      if (isNativeFlow) {
+        // ── NATIVE ETH FLOW: on-chain create() + relayer submit ──
+        const result = buildResult as any;
+        if (!result.tx) {
+          setSwapError("No create tx data returned for native flow");
+          setSwapStatus("error");
+          return;
+        }
+
+        log.info("1inch", `[FUSION+] Native flow: NativeOrderFactory.create() to=${result.tx.to} value=${result.tx.value}`);
+
+        // Step 3a: Send create() tx to NativeOrderFactory
+        setSwapStatus("swapping");
+        log.info("1inch", `[FUSION+] Step 3a: Sending NativeOrderFactory.create() via MetaMask...`);
+
+        txHash = await window.ethereum!.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: evmAccount,
+            to: result.tx.to,
+            data: result.tx.data,
+            value: result.tx.value !== "0" ? "0x" + BigInt(result.tx.value).toString(16) : "0x0",
+          }],
+        }) as string;
+
+        log.info("1inch", `[FUSION+] create() tx sent: ${txHash}`);
+        setLastTxHash(txHash);
+
+        // Wait for create() tx confirmation before submitting to relayer
+        log.info("1inch", `[FUSION+] Waiting for create() tx confirmation...`);
+        let createConfirmed = false;
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const receipt = await window.ethereum!.request({
+              method: "eth_getTransactionReceipt",
+              params: [txHash],
+            }) as any;
+            if (receipt) {
+              const status = typeof receipt.status === "string" ? parseInt(receipt.status, 16) : receipt.status;
+              if (status === 1 || receipt.status === "0x1") {
+                createConfirmed = true;
+                log.info("1inch", `[FUSION+] create() tx confirmed in block ${receipt.blockNumber}`);
+              } else {
+                log.warn("1inch", `[FUSION+] create() tx REVERTED: status=${receipt.status}`);
+                setSwapError("NativeOrderFactory.create() transaction reverted on-chain");
+                setSwapStatus("error");
+                return;
+              }
+              break;
+            }
+          } catch { /* retry */ }
+        }
+        if (!createConfirmed) {
+          log.warn("1inch", `[FUSION+] create() tx not confirmed after 120s`);
+          setSwapError("create() transaction not confirmed within 2 minutes");
+          setSwapStatus("error");
+          return;
+        }
+
+        // Step 3b: Submit RELAYER order (maker = proxy) with nativeSignature
+        log.info("1inch", `[FUSION+] Step 3b: Submitting order to relayer with nativeSignature...`);
+        orderHashForPoll = result.relayerOrderHash || result.tempOrderHash || "";
+
+        try {
+          const submitResult = await sdkSubmitCrossChainOrder({
+            srcChainId: selectedChainId,
+            order: result.relayerOrder,
+            signature: result.nativeSignature,
+            quoteId: result.quoteId || "",
+            extension: result.extension || "",
+            secretHashes: [htlc.hashLock],
+          });
+          log.info("1inch", `[FUSION+] Relayer submit OK: ${JSON.stringify(submitResult).slice(0, 200)}`);
+        } catch (submitErr: any) {
+          log.warn("1inch", `[FUSION+] Relayer submit FAILED (non-fatal, create() already on-chain): ${submitErr?.message}`);
+          // The create() tx is already confirmed, so the order exists on-chain.
+          // Resolvers may still discover it. Don't fail — proceed to polling.
+        }
+      } else {
+        // ── ERC20 FLOW: approve → EIP-712 sign → relayer submit ──
+        const result = buildResult as any;
+        log.info("1inch", `[FUSION+] ERC20 flow: approve → sign → submit`);
+
+        // Step 3a: Approve tokens to the Aggregation Router
+        const approvalTarget = result.approvalTarget || "0x111111125421ca6dc452d289314280a0f8842a65";
         setSwapStatus("approving");
-        log.info("1inch", `[FUSION+] Step 2b: Checking ERC20 approval for ${fromToken.symbol}...`);
-        const spender = buildResult.tx.to; // The escrow contract that will pull tokens
-        // ERC20 allowance check — call allowance(owner, spender) directly
-        const allowanceSel = "dd62ed3e"; // keccak256("allowance(address,address)") first 4 bytes
+        log.info("1inch", `[FUSION+] Step 3a: Checking ERC20 approval for ${fromToken.symbol} → ${approvalTarget}...`);
+
+        const allowanceSel = "dd62ed3e";
         const ownerPadded = evmAccount.replace(/^0x/, "").toLowerCase().padStart(64, "0");
-        const spenderPadded = spender.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+        const spenderPadded = approvalTarget.replace(/^0x/, "").toLowerCase().padStart(64, "0");
         const allowanceData = "0x" + allowanceSel + ownerPadded + spenderPadded;
         const allowanceHex = await window.ethereum!.request({
           method: "eth_call",
@@ -1513,8 +1605,7 @@ export function OneInchWidget() {
         const requiredAmount = BigInt(amountWei);
         if (currentAllowance < requiredAmount) {
           log.info("1inch", `[FUSION+] Approval needed: current=${currentAllowance} required=${requiredAmount}`);
-          // approve(spender, MAX_UINT256)
-          const approveSel = "095ea7b3"; // keccak256("approve(address,uint256)") first 4 bytes
+          const approveSel = "095ea7b3";
           const maxUint = "f".repeat(64);
           const approveCalldata = "0x" + approveSel + spenderPadded + maxUint;
           const approveTxHash = await window.ethereum!.request({
@@ -1522,7 +1613,6 @@ export function OneInchWidget() {
             params: [{ from: evmAccount, to: fromToken.address, data: approveCalldata, value: "0x0" }],
           });
           log.info("1inch", `[FUSION+] Approval tx sent: ${approveTxHash}`);
-          // Wait for approval confirmation
           for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 1000));
             try {
@@ -1536,26 +1626,44 @@ export function OneInchWidget() {
         } else {
           log.info("1inch", `[FUSION+] Approval sufficient: ${currentAllowance} >= ${requiredAmount}`);
         }
+
+        // Step 3b: Sign the order via EIP-712 (eth_signTypedData_v4)
+        setSwapStatus("swapping");
+        log.info("1inch", `[FUSION+] Step 3b: Signing order via eth_signTypedData_v4...`);
+
+        if (!result.typedData || !result.order) {
+          setSwapError("Server did not return typedData for ERC20 signing flow");
+          setSwapStatus("error");
+          return;
+        }
+
+        const signature = await window.ethereum!.request({
+          method: "eth_signTypedData_v4",
+          params: [evmAccount, JSON.stringify(result.typedData)],
+        }) as string;
+        log.info("1inch", `[FUSION+] EIP-712 signature obtained: ${signature.slice(0, 20)}...`);
+
+        orderHashForPoll = result.orderHash || "";
+
+        // Step 3c: Submit to relayer
+        log.info("1inch", `[FUSION+] Step 3c: Submitting signed order to relayer...`);
+        try {
+          const submitResult = await sdkSubmitCrossChainOrder({
+            srcChainId: selectedChainId,
+            order: result.order,
+            signature,
+            quoteId: result.quoteId || "",
+            extension: result.extension || "",
+            secretHashes: [htlc.hashLock],
+          });
+          log.info("1inch", `[FUSION+] Relayer submit OK: ${JSON.stringify(submitResult).slice(0, 200)}`);
+        } catch (submitErr: any) {
+          log.warn("1inch", `[FUSION+] Relayer submit FAILED: ${submitErr?.message}`);
+          setSwapError(`Failed to submit order to relayer: ${submitErr?.message || "Unknown error"}`);
+          setSwapStatus("error");
+          return;
+        }
       }
-
-      // Step 3: Send create() transaction via MetaMask (on-chain, with gas)
-      setSwapStatus("swapping");
-      log.info("1inch", `[FUSION+] Step 3: Sending create() transaction via MetaMask...`);
-
-      const txHash = await window.ethereum!.request({
-        method: "eth_sendTransaction",
-        params: [{
-          from: evmAccount,
-          to: buildResult.tx.to,
-          data: buildResult.tx.data,
-          value: buildResult.tx.value !== "0" ? "0x" + BigInt(buildResult.tx.value).toString(16) : "0x0",
-        }],
-      }) as string;
-
-      log.info("1inch", `[FUSION+] create() tx sent: ${txHash}`);
-      setLastTxHash(txHash);
-
-      const orderHashForPoll = buildResult.orderHash || "";
       setCrossChainOrderHash(orderHashForPoll);
 
       // Persist for history
