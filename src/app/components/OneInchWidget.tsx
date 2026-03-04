@@ -39,6 +39,7 @@ import {
   Timer,
   Fuel,
   Clock,
+  Info,
 } from "lucide-react";
 import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
@@ -374,6 +375,7 @@ export function OneInchWidget() {
   // ── Swap state ──
   // Classic:  idle → approving → swapping → success/error
   // Fusion:   idle → approving → building → signing → submitting → polling → success/error
+  // Cross:    idle → approving (wrap+approve) → building → signing → submitting → polling → success/error
   const [swapStatus, setSwapStatus] = useState<
     "idle" | "approving" | "swapping" | "building" | "signing" | "submitting" | "polling" | "success" | "error"
   >("idle");
@@ -1576,7 +1578,12 @@ export function OneInchWidget() {
           if (Date.now() > pollDeadline) {
             stopCrossChainPolling();
             setSwapStatus("error");
-            setSwapError("Cross-chain order timed out after 10 minutes. Check your active orders.");
+            setSwapError(
+              "Cross-chain order timed out — no resolver filled your order within the time limit. " +
+              "Your funds are SAFE: the HTLC escrow will automatically refund your wrapped tokens. " +
+              "This usually happens when the swap amount is too small for resolvers to profit from (Ethereum L1 gas is expensive). " +
+              "Try a larger amount (>$15 for Ethereum source) or try again later when gas is lower."
+            );
             return;
           }
 
@@ -2206,6 +2213,43 @@ export function OneInchWidget() {
                   )}
                 </div>
               )}
+              {/* Minimum amount warning for cross-chain swaps */}
+              {crossChainQuote && fromAmount && (() => {
+                const usdValue = (fromPriceUsd && parseFloat(fromAmount) > 0)
+                  ? parseFloat(fromAmount) * fromPriceUsd
+                  : (crossChainQuote.volumeUsd ?? 0);
+                const isL1Source = selectedChainId === 1;
+                const minUsd = isL1Source ? 15 : 5;
+                const warnings: React.ReactNode[] = [];
+                if (usdValue > 0 && usdValue < minUsd) {
+                  warnings.push(
+                    <div key="min-amt" className={`flex items-center gap-1.5 mt-2 text-[10px] ${
+                      isDark ? "text-amber-400" : "text-amber-600"
+                    }`}>
+                      <AlertCircle className="w-3 h-3 shrink-0" />
+                      <span>
+                        {isL1Source
+                          ? `Small amount (~$${usdValue.toFixed(2)}). Ethereum L1 gas costs may prevent resolvers from filling orders under ~$15. Try a larger amount for reliable fills.`
+                          : `Small amount (~$${usdValue.toFixed(2)}). Cross-chain resolvers may not fill orders under ~$5.`
+                        }
+                      </span>
+                    </div>
+                  );
+                }
+                if (fromToken.isNative) {
+                  warnings.push(
+                    <div key="wrap-info" className={`flex items-center gap-1.5 mt-1.5 text-[10px] ${
+                      isDark ? "text-cyan-400/70" : "text-cyan-600/70"
+                    }`}>
+                      <Info className="w-3 h-3 shrink-0" />
+                      <span>
+                        Native {fromToken.symbol} will be wrapped to W{fromToken.symbol} before the cross-chain order (requires 2 tx: wrap + approve).
+                      </span>
+                    </div>
+                  );
+                }
+                return warnings.length > 0 ? <>{warnings}</> : null;
+              })()}
               {crossChainQuoteError && (
                 <div className={`flex items-center gap-1.5 mt-2 text-[10px] ${
                   isDark ? "text-red-400" : "text-red-600"

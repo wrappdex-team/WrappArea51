@@ -47,8 +47,8 @@ export const CROSS_CHAIN_QUOTE_REFRESH_INTERVAL_MS = 20_000;
 /** Poll interval for cross-chain order status */
 export const CROSS_CHAIN_POLL_INTERVAL_MS = 8_000;
 
-/** Max time to poll cross-chain order status (10 minutes — cross-chain is slower) */
-export const CROSS_CHAIN_POLL_MAX_DURATION_MS = 600_000;
+/** Max time to poll cross-chain order status (15 minutes — HTLC resolver matching can take time) */
+export const CROSS_CHAIN_POLL_MAX_DURATION_MS = 900_000;
 
 /* ══════════════════════════════════════════════════════════════════════
  * Native → Wrapped Token Address Mapping (per chain)
