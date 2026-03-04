@@ -117,8 +117,7 @@ import {
   CROSS_CHAIN_STATUS_LABELS,
   CROSS_CHAIN_STATUS_ICONS,
   generateHtlcSecret,
-  sdkBuildCrossChainOrder,
-  sdkSubmitCrossChainOrder,
+  getCreateTx,
   persistHtlcSecret,
   loadPendingHtlcOrder,
   clearPendingHtlcOrder,
@@ -379,7 +378,7 @@ export function OneInchWidget() {
   // ── Swap state ──
   // Classic:  idle → approving → swapping → success/error
   // Fusion:   idle → approving → building → signing → submitting → polling → success/error
-  // Cross:    idle → building → swapping (create tx) → polling → success/error
+  // Cross:    idle → building → [approving →] swapping (create tx) → polling → success/error
   const [swapStatus, setSwapStatus] = useState<
     "idle" | "approving" | "swapping" | "building" | "signing" | "submitting" | "polling" | "success" | "error"
   >("idle");
@@ -1455,18 +1454,17 @@ export function OneInchWidget() {
     stopCrossChainPolling();
 
     try {
-      // ── Gasless EIP-712 Sign + Relayer Submit (correct Fusion+ flow) ──
-      // IMPLEMENTATION NOTE (2026-03-04, Corrected Architecture):
-      // The previous approach tried to call create() on the EscrowFactory contract
-      // directly. That function is for RESOLVERS, not end users, which is why it
-      // always reverted with astronomical gas estimates.
+      // ── On-Chain create() Transaction (matching 1inch.com flow) ──
+      // IMPLEMENTATION NOTE (2026-03-04, Corrected Architecture — Round 2):
+      // 1inch.com uses a single on-chain create() transaction on the
+      // NativeOrderSettlement/EscrowFactory contract. The user pays gas,
+      // but the tx locks source funds in the escrow immediately.
+      // Flow: build order server-side → create() tx via MetaMask → poll + reveal secret
       //
-      // The correct Fusion+ flow is GASLESS:
-      //   1. Build order server-side (sdk-order endpoint)
-      //   2. Sign EIP-712 typed data via MetaMask (no gas!)
-      //   3. Submit signed order to 1inch relayer (sdk-submit endpoint)
-      //   4. Resolvers pick up the order and handle on-chain execution
-      //   5. Poll for status + reveal HTLC secret when SrcFilled
+      // The gasless sign+relayer approach was WRONG — 1inch.com does NOT do that
+      // for Fusion+ cross-chain. The MetaMask comparison confirmed this:
+      //   1inch.com: "Method: Create" on NativeOrderSettlement (real tx with gas)
+      //   WRAPpDEX:  "Method: Order" on Aggregation Router (gasless signature)
 
       const amountWei = toWei(fromAmount, fromToken.decimals);
 
@@ -1476,9 +1474,9 @@ export function OneInchWidget() {
       const htlc = generateHtlcSecret();
       log.info("1inch", `[FUSION+] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
 
-      // Step 2: Build order via server (gets quote + constructs EIP-712 typed data)
-      log.info("1inch", `[FUSION+] Step 2: Building order via sdk-order endpoint`);
-      const buildResult = await sdkBuildCrossChainOrder({
+      // Step 2: Build create() transaction via server (gets quote + constructs order + ABI-encodes create())
+      log.info("1inch", `[FUSION+] Step 2: Building create() tx via create-tx endpoint`);
+      const buildResult = await getCreateTx({
         srcChainId: selectedChainId,
         dstChainId,
         srcTokenAddress: fromToken.address,
@@ -1488,47 +1486,74 @@ export function OneInchWidget() {
         hashLock: htlc.hashLock,
       });
 
-      if (!buildResult.success || !buildResult.typedData || !buildResult.order) {
-        log.warn("1inch", `[FUSION+] Order build failed: ${buildResult.error}`);
-        setSwapError(`Cross-chain order construction failed: ${buildResult.error || "No typed data returned"}`);
+      if (!buildResult.success || !buildResult.tx) {
+        log.warn("1inch", `[FUSION+] create-tx build failed: ${buildResult.error}`);
+        setSwapError(`Cross-chain order construction failed: ${buildResult.error || "No tx data returned"}`);
         setSwapStatus("error");
         return;
       }
 
-      log.info("1inch", `[FUSION+] Order built: method=${buildResult.method} orderHash=${buildResult.orderHash?.slice(0, 14)}... quoteId=${buildResult.quoteId?.slice(0, 14)}...`);
+      log.info("1inch", `[FUSION+] create() tx built: to=${buildResult.tx.to} value=${buildResult.tx.value} data=${buildResult.tx.data.slice(0, 20)}... orderHash=${buildResult.orderHash?.slice(0, 14)}...`);
 
-      // Step 3: Sign EIP-712 typed data via MetaMask (GASLESS — no transaction!)
-      setSwapStatus("signing");
-      log.info("1inch", `[FUSION+] Step 3: Requesting EIP-712 signature via MetaMask...`);
+      // Step 2b: For ERC20 tokens, approve the escrow contract to spend tokens
+      if (!fromToken.isNative) {
+        setSwapStatus("approving");
+        log.info("1inch", `[FUSION+] Step 2b: Checking ERC20 approval for ${fromToken.symbol}...`);
+        const spender = buildResult.tx.to; // The escrow contract that will pull tokens
+        // ERC20 allowance check — call allowance(owner, spender) directly
+        const allowanceSel = "dd62ed3e"; // keccak256("allowance(address,address)") first 4 bytes
+        const ownerPadded = evmAccount.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+        const spenderPadded = spender.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+        const allowanceData = "0x" + allowanceSel + ownerPadded + spenderPadded;
+        const allowanceHex = await window.ethereum!.request({
+          method: "eth_call",
+          params: [{ to: fromToken.address, data: allowanceData }, "latest"],
+        }) as string;
+        const currentAllowance = BigInt(allowanceHex || "0x0");
+        const requiredAmount = BigInt(amountWei);
+        if (currentAllowance < requiredAmount) {
+          log.info("1inch", `[FUSION+] Approval needed: current=${currentAllowance} required=${requiredAmount}`);
+          // approve(spender, MAX_UINT256)
+          const approveSel = "095ea7b3"; // keccak256("approve(address,uint256)") first 4 bytes
+          const maxUint = "f".repeat(64);
+          const approveCalldata = "0x" + approveSel + spenderPadded + maxUint;
+          const approveTxHash = await window.ethereum!.request({
+            method: "eth_sendTransaction",
+            params: [{ from: evmAccount, to: fromToken.address, data: approveCalldata, value: "0x0" }],
+          });
+          log.info("1inch", `[FUSION+] Approval tx sent: ${approveTxHash}`);
+          // Wait for approval confirmation
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            try {
+              const receipt = await window.ethereum!.request({
+                method: "eth_getTransactionReceipt",
+                params: [approveTxHash],
+              });
+              if (receipt) { log.info("1inch", `[FUSION+] Approval confirmed`); break; }
+            } catch { /* retry */ }
+          }
+        } else {
+          log.info("1inch", `[FUSION+] Approval sufficient: ${currentAllowance} >= ${requiredAmount}`);
+        }
+      }
 
-      const typedData = buildResult.typedData as Record<string, unknown>;
-      const signature = await window.ethereum!.request({
-        method: "eth_signTypedData_v4",
-        params: [evmAccount, JSON.stringify(typedData)],
+      // Step 3: Send create() transaction via MetaMask (on-chain, with gas)
+      setSwapStatus("swapping");
+      log.info("1inch", `[FUSION+] Step 3: Sending create() transaction via MetaMask...`);
+
+      const txHash = await window.ethereum!.request({
+        method: "eth_sendTransaction",
+        params: [{
+          from: evmAccount,
+          to: buildResult.tx.to,
+          data: buildResult.tx.data,
+          value: buildResult.tx.value !== "0" ? "0x" + BigInt(buildResult.tx.value).toString(16) : "0x0",
+        }],
       }) as string;
 
-      log.info("1inch", `[FUSION+] Signed: sig=${signature.slice(0, 14)}...`);
-
-      // Step 4: Submit signed order to 1inch relayer
-      setSwapStatus("submitting");
-      log.info("1inch", `[FUSION+] Step 4: Submitting to relayer...`);
-
-      const submitResult = await sdkSubmitCrossChainOrder({
-        srcChainId: selectedChainId,
-        order: buildResult.order,
-        signature,
-        quoteId: buildResult.quoteId || "",
-        extension: buildResult.extension,
-      });
-
-      if (submitResult.error) {
-        log.warn("1inch", `[FUSION+] Relayer submit failed: ${JSON.stringify(submitResult).slice(0, 500)}`);
-        setSwapError(`Relayer submission failed: ${submitResult.error as string || "Unknown error"}`);
-        setSwapStatus("error");
-        return;
-      }
-
-      log.info("1inch", `[FUSION+] Order submitted to relayer! Response: ${JSON.stringify(submitResult).slice(0, 300)}`);
+      log.info("1inch", `[FUSION+] create() tx sent: ${txHash}`);
+      setLastTxHash(txHash);
 
       const orderHashForPoll = buildResult.orderHash || "";
       setCrossChainOrderHash(orderHashForPoll);

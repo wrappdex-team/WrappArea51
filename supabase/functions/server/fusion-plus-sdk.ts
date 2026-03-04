@@ -904,11 +904,34 @@ function buildServerSideOrder(
     const srcTokenAmount = rawQuote.srcTokenAmount as string;
     const auctionEndAmount = preset.auctionEndAmount as string;
     const takingAmountStr = auctionEndAmount || rawQuote.dstTokenAmount as string;
-    const srcTokenAddress = rawQuote.srcTokenAddress as string;
+    let srcTokenAddress = rawQuote.srcTokenAddress as string;
 
     if (!srcTokenAmount || !takingAmountStr || !srcTokenAddress) {
       diag.error = `Missing order fields: srcAmt=${srcTokenAmount} takAmt=${takingAmountStr} srcTok=${srcTokenAddress}`;
       return null;
+    }
+
+    // IMPLEMENTATION NOTE (2026-03-04, Native ETH → WETH):
+    // The create() escrow contract works with ERC20 tokens, not native ETH.
+    // When the user swaps native ETH, the contract receives msg.value and wraps
+    // it internally. The order's makerAsset must be WETH, not the native sentinel.
+    // 1inch.com's MetaMask popup confirms: MakerAsset = WETH for native ETH swaps.
+    const WETH_BY_CHAIN: Record<number, string> = {
+      1: "0xc02aaa39b223fe8d0a0e5dea4148568532aa2b34",       // Ethereum
+      56: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",      // BNB Chain (WBNB)
+      137: "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",     // Polygon (WMATIC)
+      42161: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",    // Arbitrum
+      10: "0x4200000000000000000000000000000000000006",        // Optimism
+      8453: "0x4200000000000000000000000000000000000006",      // Base
+      43114: "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7",    // Avalanche (WAVAX)
+    };
+    if (srcTokenAddress.toLowerCase() === NATIVE_ADDRESS.toLowerCase()) {
+      const wrappedAddr = WETH_BY_CHAIN[srcChainId];
+      if (wrappedAddr) {
+        console.log(`${TAG} [EXT-v6] Replacing native sentinel with WETH: ${wrappedAddr}`);
+        srcTokenAddress = wrappedAddr;
+        diag.nativeToWrapped = true;
+      }
     }
 
     // TRUE_ERC20 address — same on all chains except zkSync
@@ -920,10 +943,12 @@ function buildServerSideOrder(
     // The relayer may do exact string matching against its quote database.
     // All address fields in the order struct MUST be lowercase to match SDK behavior.
 
-    // Receiver: if fees exist → escrowFactory; else → 0x0 (optimized, same as maker)
-    const orderReceiver = hasFees
-      ? escrowFactoryAddr.toLowerCase()
-      : "0x0000000000000000000000000000000000000000";
+    // IMPLEMENTATION NOTE (2026-03-04, Matching 1inch.com):
+    // 1inch.com sets Receiver == Maker (user's wallet) in all cases.
+    // The LOP v4 spec says 0x0 means "same as maker", but the NativeOrderSettlement
+    // create() contract may not implement this convention. Using explicit address
+    // for parity with 1inch.com's behavior.
+    const orderReceiver = walletAddress.toLowerCase();
 
     const order: Record<string, string> = {
       salt: salt.toString(),  // DECIMAL string (SDK: this.salt.toString())
