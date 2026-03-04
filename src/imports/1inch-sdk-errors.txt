@@ -1,0 +1,99 @@
+[WC] Pre-connect relay keepalive stopped
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://esm.sh/@1inch/cross-chain-sdk@2?bundle&target=es2022&no-check: Failed to fetch dynamically imported module: https://esm.sh/@1inch/cross-chain-sdk@2?bundle&target=es2022&no-check 
+console.warn @ App-BLb_90sa.js:2
+2App-BLb_90sa.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-DONkqpFm.js:23:14341)
+    at SwapPage-DONkqpFm.js:51:32725
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://esm.sh/@1inch/cross-chain-sdk?bundle&target=es2022&no-check: Failed to fetch dynamically imported module: https://esm.sh/@1inch/cross-chain-sdk?bundle&target=es2022&no-check 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://cdn.jsdelivr.net/npm/@1inch/cross-chain-sdk@2/+esm: Failed to fetch dynamically imported module: https://cdn.jsdelivr.net/npm/@1inch/cross-chain-sdk@2/+esm 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://cdn.skypack.dev/@1inch/cross-chain-sdk: Failed to fetch dynamically imported module: https://cdn.skypack.dev/@1inch/cross-chain-sdk 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://esm.sh/@1inch/fusion-sdk?bundle&target=es2022&no-check: Failed to fetch dynamically imported module: https://esm.sh/@1inch/fusion-sdk?bundle&target=es2022&no-check 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://esm.sh/@1inch/limit-order-sdk?bundle&target=es2022&no-check: Failed to fetch dynamically imported module: https://esm.sh/@1inch/limit-order-sdk?bundle&target=es2022&no-check 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] CDN import failed for https://esm.sh/@1inch/cross-chain-sdk@1?bundle&target=es2022&no-check: Failed to fetch dynamically imported module: https://esm.sh/@1inch/cross-chain-sdk@1?bundle&target=es2022&no-check 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:cc-builder] All CDN imports failed. Last error: Failed to fetch dynamically imported module: https://esm.sh/@1inch/cross-chain-sdk@1?bundle&target=es2022&no-check 
+console.warn @ App-BLb_90sa.js:2
+2App-BLb_90sa.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-DONkqpFm.js:23:14341)
+    at SwapPage-DONkqpFm.js:51:32725
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch:tokens] Balance fetch failed: chain=1 wallet=0x4bd5190073e6d2e23ac278a7b7f540753fe6981f AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-DONkqpFm.js:23:14341)
+    at SwapPage-DONkqpFm.js:51:32725
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch] Token list fetch failed AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-DONkqpFm.js:23:14341)
+    at SwapPage-DONkqpFm.js:51:32359
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:41999)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-BLb_90sa.js:2
+2App-BLb_90sa.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-DONkqpFm.js:23:14341)
+    at SwapPage-DONkqpFm.js:51:32725
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at kf (vendor-react-b7-JL9ua.js:40:36858)
+    at Xn (vendor-react-b7-JL9ua.js:38:3273)
+    at Yh (vendor-react-b7-JL9ua.js:40:41590)
+    at Tr (vendor-react-b7-JL9ua.js:40:40555)
+    at Rf (vendor-react-b7-JL9ua.js:40:35962)
+console.warn @ App-BLb_90sa.js:2
+2App-BLb_90sa.js:2 [HBAR.h][1inch:tokens] Price fetch failed: chain=1 AbortError: signal is aborted without reason
+    at AbortSignal.U (SwapPage-DONkqpFm.js:23:14341)
+    at SwapPage-DONkqpFm.js:51:32725
+    at su (vendor-react-b7-JL9ua.js:40:22527)
+    at bl (vendor-react-b7-JL9ua.js:40:24248)
+    at ul (vendor-react-b7-JL9ua.js:40:42464)
+    at vendor-react-b7-JL9ua.js:40:41013
+    at J (vendor-react-b7-JL9ua.js:25:1600)
+    at MessagePort.ke (vendor-react-b7-JL9ua.js:25:1973)
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+App-BLb_90sa.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+App-BLb_90sa.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/1inch/fusion-plus/sdk-submit:1  Failed to load resource: the server responded with a status of 400 ()
+App-BLb_90sa.js:2 [HBAR.h][1inch:client] [DIAG] POST /fusion-plus/sdk-submit → HTTP 400: {"error":"Relayer submission failed","details":"v1.2 (400): Invalid order | v1.0 (400): Invalid order","_validationErrors":null,"v12":{"status":400,"body":{"error":"1inch API error","details":"Invalid order","statusCode":400,"_upstream":"{\"error\":\"Bad Request\",\"description\":\"Invalid order\",\"statusCode\":400,\"code\":\"ORDER_VALIDATION_ERROR\",\"meta\":[{\"type\":\"orderHash\",\"value\":\"0xdc7614fdad94a074a73613cb72a2035ae1f32338eda06b17556644bb3eb17407\"},{\"type\":\"reason\",\"value\":\"not enough balance\"}]}"}},"v10":{"status":400,"body":{"error":"1inch API error","details":"Invalid order","statusCode":400,"_upstream":"{\"error\":\"Bad Request\",\"description\":\"Invalid order\",\"statusCode\":400,\"code\":\"ORDER_VALIDATION_ERROR\",\"meta\":[{\"type\":\"orderHash\",\"value\":\"0xdc7614fdad94a074a73613cb72a2035ae1f32338eda06b17556644bb3eb17407\"},{\"type\":\"reason\",\"value\":\"not enough balance\"}]}"}}} 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch] [FUSION+SDK] Swap error: v1.2 (400): Invalid order | v1.0 (400): Invalid order 
+console.warn @ App-BLb_90sa.js:2
+App-BLb_90sa.js:2 [HBAR.h][1inch] [FUSION+SDK] Full error: {
+  "kind": "INVALID_PARAMS",
+  "status": 400,
+  "details": "v1.2 (400): Invalid order | v1.0 (400): Invalid order",
+  "message": "Relayer submission failed"
+}

@@ -239,6 +239,77 @@ async function apiGet(path: string): Promise<any> {
   return data;
 }
 
+// ── WETH Wrapping for Fusion+ Cross-Chain ────────────────────────────
+// IMPLEMENTATION NOTE: Fusion+ uses LOP v4 which requires ERC-20 tokens.
+// When the source token is native ETH/BNB/etc, we must wrap to WETH first.
+// The relayer checks on-chain balanceOf(maker, WETH) — native balance won't work.
+
+const WRAPPED_NATIVE_FOR_FUSION: Record<number, string> = {
+  1:     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH (Ethereum)
+  56:    "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", // WBNB (BSC)
+  137:   "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", // WPOL (Polygon)
+  42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH (Arbitrum)
+  10:    "0x4200000000000000000000000000000000000006", // WETH (Optimism)
+  8453:  "0x4200000000000000000000000000000000000006", // WETH (Base)
+  43114: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", // WAVAX (Avalanche)
+};
+
+/** WETH deposit() function selector = keccak256("deposit()")[0:4] */
+const WETH_DEPOSIT_SELECTOR = "0xd0e30db0";
+
+/**
+ * Wrap native ETH/BNB/etc to their ERC-20 wrapped equivalent (WETH/WBNB/etc).
+ * Sends a deposit() call to the WETH contract with the specified value.
+ * Returns the tx hash once submitted.
+ */
+async function wrapNativeToken(
+  chainId: number,
+  amountWei: string,
+  walletAddress: string,
+): Promise<string> {
+  const wethAddress = WRAPPED_NATIVE_FOR_FUSION[chainId];
+  if (!wethAddress) throw new Error(`No wrapped native token for chain ${chainId}`);
+
+  const valueHex = "0x" + BigInt(amountWei).toString(16);
+
+  log.info("1inch", `[WRAP] Wrapping ${amountWei} wei native → ${wethAddress} on chain ${chainId}`);
+
+  const txHash = await window.ethereum!.request({
+    method: "eth_sendTransaction",
+    params: [{
+      from: walletAddress,
+      to: wethAddress,
+      data: WETH_DEPOSIT_SELECTOR,
+      value: valueHex,
+    }],
+  });
+
+  log.info("1inch", `[WRAP] Wrap tx submitted: ${txHash}`);
+  return txHash as string;
+}
+
+/**
+ * Wait for a transaction to be mined by polling eth_getTransactionReceipt.
+ * Returns true if mined with status=0x1, false if reverted.
+ * Throws on timeout.
+ */
+async function waitForTxReceipt(txHash: string, timeoutMs = 60000, pollMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const receipt = await window.ethereum!.request({
+        method: "eth_getTransactionReceipt",
+        params: [txHash],
+      }) as { status: string } | null;
+      if (receipt) {
+        return receipt.status === "0x1";
+      }
+    } catch { /* keep polling */ }
+    await new Promise(r => setTimeout(r, pollMs));
+  }
+  throw new Error(`Transaction ${txHash.slice(0, 12)}... not mined within ${timeoutMs / 1000}s`);
+}
+
 function formatTokenAmount(raw: string, decimals: number): string {
   if (!raw || raw === "0") return "0";
   const str = raw.padStart(decimals + 1, "0");
@@ -1284,9 +1355,70 @@ export function OneInchWidget() {
       // actual flow: quote via v1.2 quoter → order construction → EIP-712 sign
       // → relayer v1.2 submit. HTLC secret is generated CLIENT-SIDE for security.
 
+      const amountWei = toWei(fromAmount, fromToken.decimals);
+
+      // Step 0: Wrap native token & approve ERC-20 for the router
+      // IMPLEMENTATION NOTE: Fusion+ uses LOP v4 (limit orders) which ONLY work
+      // with ERC-20 tokens. The relayer checks on-chain balanceOf(maker, srcToken).
+      // If the user selected native ETH, we must wrap it to WETH first, then
+      // approve the Aggregation Router v6 to spend the WETH.
+      const srcTokenIsNative = fromToken.isNative || false;
+      const wethAddress = WRAPPED_NATIVE_FOR_FUSION[selectedChainId];
+
+      if (srcTokenIsNative) {
+        if (!wethAddress) {
+          setSwapError(`Fusion+ cross-chain requires wrapped native token, but no WETH address configured for chain ${selectedChainId}.`);
+          setSwapStatus("error");
+          return;
+        }
+
+        // Step 0a: Wrap native ETH → WETH
+        setSwapStatus("approving");
+        log.info("1inch", `[FUSION+SDK] Step 0a: Wrapping ${fromAmount} native → WETH (${wethAddress}) on chain ${selectedChainId}`);
+        try {
+          const wrapTxHash = await wrapNativeToken(selectedChainId, amountWei, evmAccount);
+          log.info("1inch", `[FUSION+SDK] Wrap tx: ${wrapTxHash}. Waiting for confirmation...`);
+          const mined = await waitForTxReceipt(wrapTxHash, 90000);
+          if (!mined) {
+            setSwapError("WETH wrap transaction reverted. Please try again.");
+            setSwapStatus("error");
+            return;
+          }
+          log.info("1inch", `[FUSION+SDK] Wrap confirmed. Now have WETH balance.`);
+        } catch (wrapErr: any) {
+          if (wrapErr?.message?.includes("rejected") || wrapErr?.code === 4001) {
+            setSwapStatus("idle");
+            return;
+          }
+          throw wrapErr;
+        }
+
+        // Step 0b: Approve WETH for the Aggregation Router v6
+        log.info("1inch", `[FUSION+SDK] Step 0b: Ensuring WETH approval for Fusion+ router`);
+        await ensureFusionApproval(
+          selectedChainId, wethAddress, evmAccount, amountWei,
+          (status) => {
+            if (status === "checking" || status === "approving" || status === "waiting")
+              setSwapStatus("approving");
+          },
+        );
+        log.info("1inch", `[FUSION+SDK] WETH approved for router.`);
+      } else {
+        // Step 0: Non-native ERC-20 — just ensure approval
+        log.info("1inch", `[FUSION+SDK] Step 0: Ensuring ERC-20 approval for ${fromToken.symbol}`);
+        setSwapStatus("approving");
+        await ensureFusionApproval(
+          selectedChainId, fromToken.address, evmAccount, amountWei,
+          (status) => {
+            if (status === "checking" || status === "approving" || status === "waiting")
+              setSwapStatus("approving");
+          },
+        );
+        log.info("1inch", `[FUSION+SDK] ${fromToken.symbol} approved for router.`);
+      }
+
       // Step A: Generate HTLC secret client-side
       setSwapStatus("building");
-      const amountWei = toWei(fromAmount, fromToken.decimals);
       log.info("1inch", `[FUSION+SDK] Step A: Generating HTLC secret client-side`);
       const htlc = generateHtlcSecret();
       log.info("1inch", `[FUSION+SDK] HTLC: secret=${htlc.secret.slice(0, 14)}... hashLock=${htlc.hashLock.slice(0, 14)}...`);
