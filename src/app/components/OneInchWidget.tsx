@@ -2351,43 +2351,17 @@ export function OneInchWidget() {
                   )}
                 </div>
               )}
-              {/* Minimum amount warning for cross-chain swaps */}
-              {crossChainQuote && fromAmount && (() => {
-                const usdValue = (fromPriceUsd && parseFloat(fromAmount) > 0)
-                  ? parseFloat(fromAmount) * fromPriceUsd
-                  : (crossChainQuote.volumeUsd ?? 0);
-                const isL1Source = selectedChainId === 1;
-                const minUsd = isL1Source ? 20 : 8;
-                const warnings: React.ReactNode[] = [];
-                if (usdValue > 0 && usdValue < minUsd) {
-                  warnings.push(
-                    <div key="min-amt" className={`flex items-center gap-1.5 mt-2 text-[10px] ${
-                      isDark ? "text-amber-400" : "text-amber-600"
-                    }`}>
-                      <AlertCircle className="w-3 h-3 shrink-0" />
-                      <span>
-                        {isL1Source
-                          ? `Small amount (~$${usdValue.toFixed(2)}). Ethereum L1 resolver gas costs require orders ≥~$20 for profitable fills. Your order may time out with no resolver matching.`
-                          : `Small amount (~$${usdValue.toFixed(2)}). Cross-chain resolvers may not fill orders under ~$8 due to gas costs.`
-                        }
-                      </span>
-                    </div>
-                  );
-                }
-                if (fromToken.isNative) {
-                  warnings.push(
-                    <div key="wrap-info" className={`flex items-center gap-1.5 mt-1.5 text-[10px] ${
-                      isDark ? "text-cyan-400/70" : "text-cyan-600/70"
-                    }`}>
-                      <Info className="w-3 h-3 shrink-0" />
-                      <span>
-                        Cross-chain swap via 1inch Fusion+ — gasless signature, resolvers handle execution.
-                      </span>
-                    </div>
-                  );
-                }
-                return warnings.length > 0 ? <>{warnings}</> : null;
-              })()}
+              {/* Cross-chain swap info */}
+              {crossChainQuote && fromToken.isNative && (
+                <div className={`flex items-center gap-1.5 mt-1.5 text-[10px] ${
+                  isDark ? "text-cyan-400/70" : "text-cyan-600/70"
+                }`}>
+                  <Info className="w-3 h-3 shrink-0" />
+                  <span>
+                    Cross-chain swap via 1inch Fusion+ — gasless signature, resolvers handle execution.
+                  </span>
+                </div>
+              )}
               {crossChainQuoteError && (
                 <div className={`flex items-center gap-1.5 mt-2 text-[10px] ${
                   isDark ? "text-red-400" : "text-red-600"

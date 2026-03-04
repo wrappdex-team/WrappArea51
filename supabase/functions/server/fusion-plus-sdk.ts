@@ -978,7 +978,7 @@ function buildServerSideOrder(
     // it internally. The order's makerAsset must be WETH, not the native sentinel.
     // 1inch.com's MetaMask popup confirms: MakerAsset = WETH for native ETH swaps.
     const WETH_BY_CHAIN: Record<number, string> = {
-      1: "0xc02aaa39b223fe8d0a0e5dea4148568532aa2b34",       // Ethereum
+      1: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",       // Ethereum (WETH) — FIXED: was wrong address
       56: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",      // BNB Chain (WBNB)
       137: "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",     // Polygon (WMATIC)
       42161: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",    // Arbitrum
