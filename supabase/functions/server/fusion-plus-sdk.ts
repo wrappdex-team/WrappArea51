@@ -1621,10 +1621,19 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
 
     console.log(`${TAG} [CREATE-TX] ${srcChainId}->${dstChainId} amt=${amt} wallet=${cWallet.slice(0,10)}... hl=${hl.slice(0,18)}...`);
 
-    // Step 1: Quote
-    const quoteUrl = `${QUOTER_BASE}/quote/receive`;
-    const quotePayload = { srcChain: srcChainId, dstChain: dstChainId, srcTokenAddress: cSrc, dstTokenAddress: cDst, amount: amt, walletAddress: cWallet, enableEstimate: true };
-    const qr = await apiFetch("POST", quoteUrl, JSON.stringify(quotePayload), UPSTREAM_TIMEOUT_MS);
+    // Step 1: Quote (GET with query params — 1inch quoter ignores POST bodies)
+    const quoteQs = new URLSearchParams({
+      srcChain: String(srcChainId),
+      dstChain: String(dstChainId),
+      srcTokenAddress: cSrc,
+      dstTokenAddress: cDst,
+      amount: amt,
+      walletAddress: cWallet,
+      enableEstimate: "true",
+    });
+    const quoteUrl = `${QUOTER_BASE}/quote/receive?${quoteQs.toString()}`;
+    console.log(`${TAG} [CREATE-TX] Quote URL: GET ${quoteUrl.slice(0, 160)}...`);
+    const qr = await apiFetch("GET", quoteUrl, null, UPSTREAM_TIMEOUT_MS);
     if (qr.status !== 200 || !qr.body) {
       console.log(`${TAG} [CREATE-TX] Quote FAILED (${qr.status}): ${JSON.stringify(qr.body).slice(0, 500)}`);
       return c.json({ error: "Quote failed", details: `${qr.status}`, quoteResponse: qr.body }, 502);
