@@ -120,8 +120,11 @@ import {
   sdkBuildCrossChainOrder,
   sdkSubmitCrossChainOrder,
   placeOnChainOrder,
+  persistHtlcSecret,
+  loadPendingHtlcOrder,
+  clearPendingHtlcOrder,
 } from "../utils/oneinch/fusion-plus";
-import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse, SdkOrderResponse } from "../utils/oneinch/fusion-plus";
+import type { ParsedCrossChainQuote, FusionPlusBuildResponse, FusionPlusOrderStatusResponse, SdkOrderResponse, PendingHtlcOrder } from "../utils/oneinch/fusion-plus";
 import { buildCrossChainOrderClientSide, preloadSdk, getSdkDiagnostics, resetSdkCache } from "../utils/oneinch/cross-chain-builder";
 import {
   getChainById as getModuleChainById,
@@ -954,6 +957,95 @@ export function OneInchWidget() {
     }
   }, [swapMode, chainSupportsFusionPlus]);
 
+  // SAFETY-CRITICAL: On mount, check for pending HTLC orders and resume polling.
+  // If the user closed the tab during a cross-chain swap, the HTLC secret is
+  // persisted in localStorage. We resume polling and submit the secret when needed.
+  useEffect(() => {
+    const pending = loadPendingHtlcOrder();
+    if (!pending) return;
+
+    // Check if the order is too old (>2 hours = definitely expired)
+    const ageMs = Date.now() - pending.createdAt;
+    if (ageMs > 2 * 60 * 60 * 1000) {
+      log.info("1inch", `[HTLC-RECOVERY] Stale pending order (${Math.round(ageMs / 60000)}min old). Clearing.`);
+      clearPendingHtlcOrder();
+      return;
+    }
+
+    log.info("1inch", `[HTLC-RECOVERY] Found pending order: ${pending.orderHash.slice(0, 14)}... age=${Math.round(ageMs / 1000)}s. Resuming polling...`);
+
+    // Resume polling
+    setCrossChainOrderHash(pending.orderHash);
+    setSwapStatus("polling");
+    setSwapMode("crossChain");
+    setFusionOrderStatus("SrcPending" as any);
+
+    const pollDeadline = Date.now() + Math.max(CROSS_CHAIN_POLL_MAX_DURATION_MS - ageMs, 60_000);
+    const localSecret = pending.secret;
+
+    crossChainPollTimer.current = setInterval(async () => {
+      try {
+        if (Date.now() > pollDeadline) {
+          stopCrossChainPolling();
+          setSwapStatus("error");
+          setSwapError(
+            `Cross-chain order recovery timed out for ${pending.srcSymbol}→${pending.dstSymbol}. ` +
+            `Order hash: ${pending.orderHash.slice(0, 18)}... ` +
+            `If a resolver filled the source side, the HTLC escrow will refund after the timelock expires. ` +
+            `Check your WETH balance and the order status on 1inch.`
+          );
+          // Don't clear — user may want to manually check
+          return;
+        }
+
+        const orderStatus = await getCrossChainOrderStatus(pending.orderHash);
+        log.info("1inch", `[HTLC-RECOVERY] Poll: status=${orderStatus.status}`);
+        setFusionOrderStatus(orderStatus.status as any);
+
+        if (isCrossChainTerminalStatus(orderStatus.status)) {
+          stopCrossChainPolling();
+          clearPendingHtlcOrder();
+          if (isCrossChainSuccessStatus(orderStatus.status)) {
+            setSwapStatus("success");
+            log.info("1inch", `[HTLC-RECOVERY] Order completed successfully!`);
+          } else {
+            setSwapStatus("error");
+            setSwapError(`Recovered order status: ${CROSS_CHAIN_STATUS_LABELS[orderStatus.status] || orderStatus.status}`);
+          }
+        }
+
+        if (orderStatus.status === "SrcFilled" && localSecret) {
+          try {
+            const readyRes = await getReadyFills(pending.orderHash);
+            if (readyRes) {
+              log.info("1inch", `[HTLC-RECOVERY] Submitting recovered HTLC secret...`);
+              await submitSecret(pending.orderHash, localSecret);
+              log.info("1inch", `[HTLC-RECOVERY] Secret submitted successfully!`);
+            }
+          } catch (err: any) {
+            log.warn("1inch", `[HTLC-RECOVERY] Secret submission failed (will retry): ${err?.message}`);
+          }
+        }
+      } catch (err: any) {
+        log.warn("1inch", `[HTLC-RECOVERY] Poll error (will retry): ${err?.message}`);
+      }
+    }, CROSS_CHAIN_POLL_INTERVAL_MS);
+
+    return () => stopCrossChainPolling();
+  }, []); // Run once on mount
+
+  // Warn user before closing tab if cross-chain order is active
+  useEffect(() => {
+    if (swapStatus !== "polling" || swapMode !== "crossChain") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Note: modern browsers show a generic message, not this text
+      e.returnValue = "A cross-chain swap is in progress. The HTLC secret has been saved, but closing may delay completion.";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [swapStatus, swapMode]);
+
   // Debounced cross-chain quote
   useEffect(() => {
     if (swapMode !== "crossChain" || !chainSupportsFusionPlus) return;
@@ -1332,6 +1424,17 @@ export function OneInchWidget() {
   const handleCrossChainSwap = useCallback(async () => {
     if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0 || !crossChainQuote) return;
 
+    // SAFETY: Block new swap if there's already a pending HTLC order
+    const existingPending = loadPendingHtlcOrder();
+    if (existingPending) {
+      setSwapError(
+        `Cannot start a new cross-chain swap — there is already a pending order (${existingPending.srcSymbol}→${existingPending.dstSymbol}, ` +
+        `hash: ${existingPending.orderHash.slice(0, 14)}...). Wait for it to complete or expire before starting a new one.`
+      );
+      setSwapStatus("error");
+      return;
+    }
+
     // Safety-net balance check
     if (fromBalance) {
       const walletBal = parseFloat(fromBalance.replace(/,/g, ""));
@@ -1387,6 +1490,16 @@ export function OneInchWidget() {
         // ON-CHAIN PATH: Send the create() transaction directly
         log.info("1inch", `[FUSION+SDK] ✓ On-chain path available! tx.to=${placeResult.tx.to} dataLen=${placeResult.tx.data?.length ?? 0} value=${placeResult.tx.value ?? "0"}`);
 
+        // SAFETY: Validate tx fields before sending any on-chain transaction
+        const txToValid = /^0x[0-9a-fA-F]{40}$/.test(placeResult.tx.to || "");
+        const txDataValid = (placeResult.tx.data?.length ?? 0) >= 10;
+        if (!txToValid || !txDataValid) {
+          log.warn("1inch", `[FUSION+SDK] SAFETY: Invalid tx from place-order (to=${placeResult.tx.to} dataLen=${placeResult.tx.data?.length}). Falling back to relayer.`);
+          placeResult.success = false; // Force fallback
+        }
+      }
+
+      if (placeResult.success && placeResult.tx) {
         setSwapStatus("swapping");
         try {
           const txParams: Record<string, string> = {
@@ -1424,6 +1537,19 @@ export function OneInchWidget() {
           const orderHashForPoll = placeResult.orderHash || txHash;
           setCrossChainOrderHash(orderHashForPoll);
 
+          // SAFETY-CRITICAL: Persist HTLC secret for crash recovery
+          persistHtlcSecret({
+            orderHash: orderHashForPoll,
+            secret: htlc.secret,
+            hashLock: htlc.hashLock,
+            srcChainId: selectedChainId,
+            dstChainId,
+            srcSymbol: fromToken.symbol,
+            dstSymbol: crossChainDstToken.symbol,
+            srcAmount: fromAmount,
+            createdAt: Date.now(),
+          });
+
           // Poll for resolver fill (same as relayer path)
           setSwapStatus("polling");
           setFusionOrderStatus("SrcPending" as any);
@@ -1436,9 +1562,9 @@ export function OneInchWidget() {
                 stopCrossChainPolling();
                 setSwapStatus("error");
                 setSwapError(
-                  "Cross-chain order timed out — no resolver filled your order. " +
-                  "Your funds are SAFE and will be refunded by the HTLC escrow timeout. " +
-                  "Check the transaction on Etherscan for details."
+                  "Cross-chain order timed out — no resolver filled your order within the polling window. " +
+                  "Your funds are locked in the on-chain escrow and will be refunded after the HTLC timelock expires. " +
+                  "The HTLC secret is saved — polling will resume if you refresh the page."
                 );
                 return;
               }
@@ -1449,6 +1575,7 @@ export function OneInchWidget() {
 
               if (isCrossChainTerminalStatus(orderStatus.status)) {
                 stopCrossChainPolling();
+                clearPendingHtlcOrder(); // SAFETY: Clear persisted secret on terminal
                 if (isCrossChainSuccessStatus(orderStatus.status)) {
                   setSwapStatus("success");
                   playVipConfirm();
@@ -1664,13 +1791,27 @@ export function OneInchWidget() {
         fromAmount,
       );
 
+      // SAFETY-CRITICAL: Persist HTLC secret to localStorage so it survives
+      // page refreshes, tab closes, and browser crashes.
+      persistHtlcSecret({
+        orderHash: buildResult.orderHash,
+        secret: htlc.secret,
+        hashLock: htlc.hashLock,
+        srcChainId: selectedChainId,
+        dstChainId,
+        srcSymbol: fromToken.symbol,
+        dstSymbol: crossChainDstToken.symbol,
+        srcAmount: fromAmount,
+        createdAt: Date.now(),
+      });
+
       // Step E: Poll for status until terminal
       setSwapStatus("polling");
       setFusionOrderStatus("SrcPending" as any);
       const pollDeadline = Date.now() + CROSS_CHAIN_POLL_MAX_DURATION_MS;
 
-      // IMPLEMENTATION NOTE: The HTLC secret is captured in this closure.
-      // It was generated client-side and is only revealed when SrcFilled.
+      // IMPLEMENTATION NOTE: The HTLC secret is captured in this closure
+      // AND persisted to localStorage (above) for crash recovery.
       const localHtlcSecret = htlc.secret;
 
       crossChainPollTimer.current = setInterval(async () => {
@@ -1679,10 +1820,10 @@ export function OneInchWidget() {
             stopCrossChainPolling();
             setSwapStatus("error");
             setSwapError(
-              "Cross-chain order timed out — no resolver filled your order within the time limit. " +
-              "Your funds are SAFE: the HTLC escrow will automatically refund your wrapped tokens. " +
-              "This usually happens when the swap amount is too small for resolvers to profit from (Ethereum L1 gas is expensive). " +
-              "Try a larger amount (>$15 for Ethereum source) or try again later when gas is lower."
+              "Cross-chain order timed out — no resolver filled your order within the polling window. " +
+              "If no resolver filled (most likely): your WETH is still in your wallet — unwrap it back to ETH. " +
+              "If a resolver did fill: the HTLC escrow will refund after the timelock expires (can take hours). " +
+              "Check your WETH balance and the order status. The HTLC secret is saved and polling will resume if you refresh."
             );
             return;
           }
@@ -1694,6 +1835,7 @@ export function OneInchWidget() {
 
           if (isCrossChainTerminalStatus(orderStatus.status)) {
             stopCrossChainPolling();
+            clearPendingHtlcOrder(); // SAFETY: Clear persisted secret on terminal
 
             if (isCrossChainSuccessStatus(orderStatus.status)) {
               setSwapStatus("success");
@@ -2854,6 +2996,15 @@ export function OneInchWidget() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
           >
+            {/* Safety notice */}
+            {swapMode === "crossChain" && (
+              <div className={`mb-3 p-2 rounded-lg text-xs flex items-center gap-2 ${
+                isDark ? "bg-amber-900/20 border border-amber-500/30 text-amber-300" : "bg-amber-50 border border-amber-200 text-amber-800"
+              }`}>
+                <span className="text-sm">&#x1F512;</span>
+                <span>HTLC secret saved. Safe to refresh — polling will resume automatically.</span>
+              </div>
+            )}
             {/* Progress bar */}
             <div className={`w-full h-1.5 rounded-full overflow-hidden mb-3 ${
               isDark ? "bg-slate-700" : "bg-gray-200"

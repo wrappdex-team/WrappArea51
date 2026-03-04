@@ -32,7 +32,7 @@ import type {
   FusionPresetQuote,
 } from "./types";
 
-/* ═════════════════════════════════════════════════════════════════════
+/* ═════════════════════════════��═══════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -957,4 +957,67 @@ export async function getSdkHealth(
     `/fusion-plus/sdk-health`,
     { signal, retries: 0 },
   );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * HTLC Secret Persistence (SAFETY-CRITICAL)
+ *
+ * IMPLEMENTATION NOTE (2026-03-04, Safety Audit):
+ * The HTLC secret MUST survive page refreshes, tab closes, and crashes.
+ * If the order reaches SrcFilled but we can't submit the secret, the
+ * escrow times out and refunds — but that can take hours.
+ *
+ * We persist the secret to localStorage immediately when the order is
+ * created, and clear it only when the order reaches a terminal state.
+ * On app mount, we check for pending orders and resume polling.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+const HTLC_SECRET_KEY = "wrappdex:1inch:htlc-pending";
+
+export interface PendingHtlcOrder {
+  orderHash: string;
+  secret: string;
+  hashLock: string;
+  srcChainId: number;
+  dstChainId: number;
+  srcSymbol: string;
+  dstSymbol: string;
+  srcAmount: string;
+  createdAt: number;
+  /** When the order's on-chain expiration is (unix seconds). After this, no resolver can fill. */
+  expiresAt?: number;
+}
+
+/** Persist HTLC secret for a pending cross-chain order. SAFETY-CRITICAL. */
+export function persistHtlcSecret(order: PendingHtlcOrder): void {
+  try {
+    localStorage.setItem(HTLC_SECRET_KEY, JSON.stringify(order));
+    log.info(TAG, `[HTLC] Persisted secret for order ${order.orderHash.slice(0, 14)}...`);
+  } catch {
+    log.warn(TAG, `[HTLC] CRITICAL: Failed to persist HTLC secret! Order ${order.orderHash.slice(0, 14)}...`);
+  }
+}
+
+/** Load a pending HTLC order from localStorage (null if none). */
+export function loadPendingHtlcOrder(): PendingHtlcOrder | null {
+  try {
+    const raw = localStorage.getItem(HTLC_SECRET_KEY);
+    if (!raw) return null;
+    const order = JSON.parse(raw) as PendingHtlcOrder;
+    // Validate it has the critical fields
+    if (!order.orderHash || !order.secret) return null;
+    return order;
+  } catch {
+    return null;
+  }
+}
+
+/** Clear the pending HTLC order (call when order reaches terminal state). */
+export function clearPendingHtlcOrder(): void {
+  try {
+    localStorage.removeItem(HTLC_SECRET_KEY);
+    log.info(TAG, `[HTLC] Cleared pending order from localStorage`);
+  } catch {
+    // ignore
+  }
 }
