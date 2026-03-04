@@ -1588,4 +1588,98 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
 
     return c.json(health, 200);
   });
+
+  // ── POST /1inch/fusion-plus/create-tx ──────────────────────────────
+  // IMPLEMENTATION NOTE (2026-03-04, On-Chain Escrow):
+  // This is the CORRECT flow matching 1inch.com: single create() tx.
+  //   1. Quote from v1.2 quoter
+  //   2. Build order + extension (same as sdk-order)
+  //   3. ABI-encode create(Order, bytes) for escrow contract
+  //   4. Return { to, data, value } for ONE MetaMask tx
+  app.post(`${PREFIX}/fusion-plus/create-tx`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    let reqBody: Record<string, unknown>;
+    try { reqBody = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
+
+    const srcChainId = typeof reqBody.srcChainId === "number" ? reqBody.srcChainId : NaN;
+    const dstChainId = typeof reqBody.dstChainId === "number" ? reqBody.dstChainId : NaN;
+    if (!FUSION_PLUS_CHAINS.has(srcChainId)) return c.json({ error: `Fusion+ unsupported on chain ${srcChainId}` }, 400);
+    if (!FUSION_PLUS_CHAINS.has(dstChainId)) return c.json({ error: `Fusion+ unsupported on chain ${dstChainId}` }, 400);
+    if (!isValidEthAddress(reqBody.srcTokenAddress)) return c.json({ error: "Invalid srcTokenAddress" }, 400);
+    if (!isValidEthAddress(reqBody.dstTokenAddress)) return c.json({ error: "Invalid dstTokenAddress" }, 400);
+    if (typeof reqBody.amount !== "string" || !/^\d+$/.test(reqBody.amount)) return c.json({ error: "Invalid amount" }, 400);
+    if (!isValidWalletAddress(reqBody.walletAddress)) return c.json({ error: "Invalid walletAddress" }, 400);
+    if (typeof reqBody.hashLock !== "string") return c.json({ error: "Missing hashLock" }, 400);
+
+    let cWallet: string; try { cWallet = eip55Checksum(reqBody.walletAddress as string); } catch { cWallet = reqBody.walletAddress as string; }
+    let cSrc: string; try { cSrc = eip55Checksum(reqBody.srcTokenAddress as string); } catch { cSrc = reqBody.srcTokenAddress as string; }
+    let cDst: string; try { cDst = eip55Checksum(reqBody.dstTokenAddress as string); } catch { cDst = reqBody.dstTokenAddress as string; }
+    const amt = reqBody.amount as string;
+    const hl = reqBody.hashLock as string;
+
+    console.log(`${TAG} [CREATE-TX] ${srcChainId}->${dstChainId} amt=${amt} wallet=${cWallet.slice(0,10)}... hl=${hl.slice(0,18)}...`);
+
+    // Step 1: Quote
+    const quoteUrl = `${QUOTER_BASE}/quote/receive`;
+    const quotePayload = { srcChain: srcChainId, dstChain: dstChainId, srcTokenAddress: cSrc, dstTokenAddress: cDst, amount: amt, walletAddress: cWallet, enableEstimate: true };
+    const qr = await apiFetch("POST", quoteUrl, JSON.stringify(quotePayload), UPSTREAM_TIMEOUT_MS);
+    if (qr.status !== 200 || !qr.body) {
+      console.log(`${TAG} [CREATE-TX] Quote FAILED (${qr.status}): ${JSON.stringify(qr.body).slice(0, 500)}`);
+      return c.json({ error: "Quote failed", details: `${qr.status}`, quoteResponse: qr.body }, 502);
+    }
+    const rq = qr.body as Record<string, unknown>;
+    console.log(`${TAG} [CREATE-TX] Quote OK: quoteId=${(rq.quoteId as string || "").slice(0,20)}...`);
+
+    // Step 2: Build order + extension
+    const built = buildServerSideOrder(rq, hl, cWallet.toLowerCase(), srcChainId, dstChainId);
+    if (!built) {
+      console.log(`${TAG} [CREATE-TX] Order build FAILED`);
+      return c.json({ error: "Order construction failed", rawQuoteKeys: Object.keys(rq) }, 500);
+    }
+    const { order: ord, extension: ext, orderHash: oh, diagnostics: diag } = built;
+    console.log(`${TAG} [CREATE-TX] Order OK: hash=${oh.slice(0,18)}... ext=${ext.length}ch`);
+
+    // Step 3: Contract address
+    let contract = "";
+    for (const k of ["srcEscrowFactory", "settlementAddress", "escrowFactory"]) {
+      const v = rq[k]; if (typeof v === "string" && ETH_ADDRESS_RE.test(v)) { contract = v; break; }
+    }
+    if (!contract) contract = srcChainId === 324 ? "0xd9085ac07da21bd6eb003a530a524ab054ca8652" : "0x03a25b3215a0e5c15cf23ac4d2e5cf86c0ff7efa";
+    console.log(`${TAG} [CREATE-TX] Contract: ${contract}`);
+
+    // Step 4: ABI-encode create(Order,bytes)
+    const cSig = "create((uint256,address,address,address,address,uint256,uint256,uint256),bytes)";
+    const sel = bHex(new Uint8Array(keccak_256(new TextEncoder().encode(cSig)).slice(0, 4)));
+
+    const extRaw = hexBytes(ext);
+    function abiAddr(a: string): Uint8Array {
+      const b = new Uint8Array(32);
+      const ab = hexBytes("0x" + a.replace(/^0x/i, "").toLowerCase());
+      b.set(ab, 32 - ab.length);
+      return b;
+    }
+    const ow = catBytes(
+      u256be(BigInt(ord.salt)), abiAddr(ord.maker), abiAddr(ord.receiver),
+      abiAddr(ord.makerAsset), abiAddr(ord.takerAsset),
+      u256be(BigInt(ord.makingAmount)), u256be(BigInt(ord.takingAmount)), u256be(BigInt(ord.makerTraits)),
+    );
+    const pad = (32 - (extRaw.length % 32)) % 32;
+    const cd = "0x" + sel + bHex(catBytes(ow, u256be(288n), u256be(BigInt(extRaw.length)), catBytes(extRaw, new Uint8Array(pad))));
+
+    const isNative = (reqBody.srcTokenAddress as string).toLowerCase() === NATIVE_ADDRESS.toLowerCase();
+    const val = isNative ? amt : "0";
+
+    console.log(`${TAG} [CREATE-TX] OK: sel=0x${sel} cd=${cd.length}ch to=${contract} val=${val}`);
+
+    return c.json({
+      success: true,
+      tx: { to: contract, data: cd, value: val },
+      orderHash: oh, quoteId: rq.quoteId || "",
+      srcTokenAmount: rq.srcTokenAmount, dstTokenAmount: rq.dstTokenAmount,
+      extension: ext,
+      _diagnostics: { ...diag, contractAddress: contract, selector: "0x" + sel, calldataLen: cd.length, isNative, cSig },
+    }, 200);
+  });
 }

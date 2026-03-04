@@ -872,17 +872,87 @@ export async function sdkSubmitCrossChainOrder(
 }
 
 /**
- * Try the on-chain place-order path — returns tx data for direct escrow creation.
+ * Get create() tx data for a direct on-chain escrow creation.
  *
- * IMPLEMENTATION NOTE (2026-03-04): 1inch.com uses an on-chain `create()` tx
- * to the NativeOrders/EscrowFactory contract. This is MORE RELIABLE than the
- * gasless relayer submit path because:
- *   1. Funds are locked on-chain immediately (resolvers can see them)
- *   2. No need for resolver to "discover" the order via relayer
- *   3. Works for small amounts (even $2-3 swaps on 1inch.com)
- *   4. Native ETH sent directly (no WETH wrapping needed)
+ * IMPLEMENTATION NOTE (2026-03-04, On-Chain Escrow):
+ * This is the CORRECT flow matching 1inch.com's own frontend:
+ *   1. Server gets a quote + builds order + ABI-encodes create(Order, bytes) calldata
+ *   2. Returns { to, data, value } for a SINGLE MetaMask transaction
+ *   3. No WETH wrapping, no approval, no EIP-712 signing, no relayer
+ *   4. Native ETH sent directly — contract wraps internally
  *
- * This tries the /quote/place-order and /quote/build endpoints across API versions.
+ * This replaces the old multi-step flow (wrap → approve → sign → relayer → poll).
+ */
+export async function getCreateTx(
+  params: {
+    srcChainId: number;
+    dstChainId: number;
+    srcTokenAddress: string;
+    dstTokenAddress: string;
+    amount: string;
+    walletAddress: string;
+    hashLock: string;
+  },
+  signal?: AbortSignal,
+): Promise<{
+  success: boolean;
+  tx?: { to: string; data: string; value: string };
+  orderHash?: string;
+  quoteId?: string;
+  srcTokenAmount?: string;
+  dstTokenAmount?: string;
+  error?: string;
+  _diagnostics?: unknown;
+}> {
+  const resolvedSrc = params.srcTokenAddress; // Don't resolve native — server handles it
+  const resolvedDst = params.dstTokenAddress;
+
+  log.info(TAG, `[CREATE-TX] Requesting: ${params.srcChainId}→${params.dstChainId} amt=${params.amount}`);
+
+  try {
+    const res = await oneInchApi.post<Record<string, unknown>>(
+      `/fusion-plus/create-tx`,
+      {
+        srcChainId: params.srcChainId,
+        dstChainId: params.dstChainId,
+        srcTokenAddress: resolvedSrc,
+        dstTokenAddress: resolvedDst,
+        amount: params.amount,
+        walletAddress: params.walletAddress,
+        hashLock: params.hashLock,
+      },
+      { signal, retries: 0 },
+    );
+
+    const hasTx = !!(res.tx && (res.tx as any).to && (res.tx as any).data);
+    log.info(TAG, `[CREATE-TX] Response: success=${res.success} hasTx=${hasTx} orderHash=${(res.orderHash as string || "").slice(0, 14)}...`);
+
+    if (res.success && hasTx) {
+      return {
+        success: true,
+        tx: res.tx as { to: string; data: string; value: string },
+        orderHash: res.orderHash as string,
+        quoteId: res.quoteId as string,
+        srcTokenAmount: res.srcTokenAmount as string,
+        dstTokenAmount: res.dstTokenAmount as string,
+        _diagnostics: res._diagnostics,
+      };
+    }
+
+    return { success: false, error: res.error as string || "No tx data returned", _diagnostics: res._diagnostics };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(TAG, `[CREATE-TX] Failed: ${msg}`);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * [DEPRECATED] Try the on-chain place-order path via API URL probing.
+ *
+ * IMPLEMENTATION NOTE: This was the old approach that probed 8 API URL patterns.
+ * It has been superseded by getCreateTx() which builds the create() calldata server-side.
+ * Kept for fallback but should not be the primary path.
  */
 export async function placeOnChainOrder(
   params: {
