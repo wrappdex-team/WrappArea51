@@ -14,7 +14,7 @@ import { log } from "../logger";
 import type { AllowedToken } from "./tokens";
 import { TOKEN_BY_HTS_ID, HBARH_TOKEN_ID, resolveTokenByHtsId } from "./tokens";
 import { isTokenBlocked } from "./scam-blocklist";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 
 // ── Shared Constants ────────────────────────────────────────────────
 

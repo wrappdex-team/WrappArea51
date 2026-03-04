@@ -1,6 +1,6 @@
 import { useTheme } from "../contexts/ThemeContext";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "../utils/logger";
 
 interface NewsItem {

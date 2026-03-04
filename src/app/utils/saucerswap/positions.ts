@@ -47,7 +47,7 @@
  */
 
 import { log } from "../logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import type { HederaNetwork } from "./tokens";
 import { htsIdToEvmAddress } from "./tokens";
 import { getReliableIconUrl } from "../token-icons";

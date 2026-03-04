@@ -1,5 +1,22 @@
 @custom-variant dark (&:is(.dark *));
 
+/* ── SESSION 9: Mobile responsive utilities ── */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Prevent iOS zoom on input focus (font-size must be >= 16px) */
+@media (max-width: 639px) {
+  input[type="number"],
+  input[type="text"] {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* [C28-04] Auto-close progress bar animation for swap success/error states */
 @keyframes shrink {
   from { width: 100%; }

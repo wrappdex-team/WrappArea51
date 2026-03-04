@@ -1,11 +1,20 @@
 /**
- * [C56] TokenSelectorDropdown — Professional token selector with merged tabs.
+ * [C56] TokenSelectorDropdown — Professional token selector.
  *
- * Tabs (merged from 3 → 2):
- *   Popular  — Top 35 tokens by market cap (whitelisted), sorted by rank.
- *              If wallet is connected, held tokens show inline balances.
- *   All      — Full searchable list (static + dynamic SaucerSwap tokens).
- *              User's held tokens sorted to top with balances shown.
+ * SESSION 7 redesign — two tabs:
+ *   Held  — Only tokens the connected wallet holds (balance > 0).
+ *           Priority tokens (HBAR, USDC, WBTC, WETH, etc. — the core
+ *           wrapped/bridged assets from the QuickPairGrid) float to the
+ *           top in their canonical order. Remaining held tokens sorted
+ *           by USD portfolio value descending.
+ *           Shows "Connect wallet" prompt when disconnected.
+ *   All   — Full searchable list. Same priority tokens pinned at the top,
+ *           then all remaining tokens sorted by popularity rank.
+ *           Includes all static + dynamic SaucerSwap tokens.
+ *
+ * Priority token order mirrors the right-panel quick-select pairs:
+ *   HBAR → WHBAR → USDC → USDT → DAI → USDCh → WBTC → WETH → LINK →
+ *   AAVE → SAUCE → HBARX → WPOL → WBNB → WAVAX → WMATIC
  *
  * Security: No user data stored. Wallet balances come from Hedera Mirror
  * Node via hederaAccount.tokens — purely client-side, read-only.
@@ -16,7 +25,7 @@
 
 import { useState, useEffect, useMemo, memo, useCallback, useRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Search, Star, Globe, Loader2, AlertTriangle, Wallet } from "lucide-react";
+import { Search, Globe, Loader2, AlertTriangle, Wallet, X } from "lucide-react";
 import { TokenIcon } from "./TokenIcon";
 import {
   SAUCERSWAP_TOKENS,
@@ -26,25 +35,29 @@ import {
   type DynamicTokenInfo,
 } from "../utils/saucerswap";
 
-type TabId = "popular" | "all";
+type TabId = "held" | "all";
 
 /**
- * Whitelisted symbols for the "Popular" tab — top 35 tokens by Hedera market cap.
- * Matches the curated list from the product owner. Order is determined by rank
- * in SAUCERSWAP_TOKENS (lower rank = higher in list).
+ * IMPLEMENTATION NOTE: Priority tokens — the core exchange tokens from the
+ * QuickPairGrid right-panel quick-select. These always float to the top of
+ * both tabs because they are the primary wrapped/bridged assets and routing
+ * tokens that the DEX is built around. Order here = display priority.
  */
-const POPULAR_SYMBOLS = new Set([
-  // Core routing tokens
-  "HBAR", "WHBAR", "USDC", "USDT", "WBTC", "LINK", "WETH", "SAUCE",
-  // Hedera ecosystem
-  "DOVU", "KARATE", "PACK", "HST", "XSGD", "AUDD", "XPACK", "HSUITE",
-  // Community & meme tokens
-  "BTC.\u210F", "GIB", "JAM", "STEAM", "GRELF", "KBL", "GC",
-  // Stablecoins & bridged
-  "USDCh", "DAI", "HCHF",
-  // Smaller cap community tokens
-  "DOSA", "MFM", "SMACKM", "CLXY", "DINO", "LEEMON", "HBARBARIAN", "JEET",
-]);
+const PRIORITY_SYMBOLS: string[] = [
+  // Native + wrapped native
+  "HBAR", "WHBAR",
+  // Core stablecoins
+  "USDC", "USDT", "DAI", "USDCh",
+  // Wrapped blue-chip cross-chain
+  "WBTC", "WETH", "LINK", "AAVE",
+  // Ecosystem core
+  "SAUCE", "HBARX",
+  // Bridged L1 tokens
+  "WPOL", "WBNB", "WAVAX", "WMATIC",
+];
+const PRIORITY_SET = new Set(PRIORITY_SYMBOLS);
+/** Map symbol → sort rank within the priority group (lower = higher) */
+const PRIORITY_RANK = new Map(PRIORITY_SYMBOLS.map((s, i) => [s, i]));
 
 interface WalletTokenInfo {
   tokenId: string;
@@ -78,7 +91,7 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
   walletTokens, isWalletConnected, dynamicPrices,
   anchorRef,
 }: TokenSelectorDropdownProps) {
-  const [tab, setTab] = useState<TabId>("popular");
+  const [tab, setTab] = useState<TabId>("all");
   const [search, setSearch] = useState("");
   const [allTokens, setAllTokens] = useState<AllowedToken[]>([...SAUCERSWAP_TOKENS]);
   const [dynamicRaw, setDynamicRaw] = useState<DynamicTokenInfo[]>([]);
@@ -88,10 +101,22 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
   const searchRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // ── Mobile detection — full-screen sheet on small viewports ──
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   // ── Portal positioning: calculate fixed position from anchor ref ──
   const [portalPos, setPortalPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
 
   useEffect(() => {
+    // Skip portal positioning on mobile — uses full-screen overlay
+    if (isMobile) { setPortalPos(null); return; }
     if (!isOpen || !anchorRef?.current) {
       setPortalPos(null);
       return;
@@ -123,7 +148,7 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
       window.removeEventListener("resize", updatePos);
       window.removeEventListener("scroll", updatePos, true);
     };
-  }, [isOpen, anchorRef]);
+  }, [isOpen, anchorRef, isMobile]);
 
   // Auto-focus search on open
   useEffect(() => {
@@ -189,6 +214,22 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
     return null;
   }, [livePrices, priceByHtsId]);
 
+  // ── Helper: get USD value of a held token for sort ordering ──
+  const getHeldUsdValue = useCallback((t: AllowedToken): number => {
+    const price = (() => {
+      const lp = livePrices[t.symbol];
+      if (lp && lp > 0) return lp;
+      const dp = priceByHtsId.get(t.htsId);
+      if (dp != null && dp > 0) return dp;
+      return 0;
+    })();
+    if (t.isNative) return 0; // Native HBAR handled by priority sort
+    const wb = walletBalanceMap.get(t.htsId);
+    if (!wb) return 0;
+    const humanBal = wb.balance / Math.pow(10, wb.decimals);
+    return humanBal * price;
+  }, [livePrices, priceByHtsId, walletBalanceMap]);
+
   // Filter tokens based on search + exclude
   const filterTokens = useCallback((tokens: AllowedToken[]) => {
     return tokens
@@ -202,44 +243,51 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
       });
   }, [excludeSymbol, search]);
 
-  // ── Popular tokens: whitelisted 35 + any user-held tokens ──
-  const popularTokens = useMemo(() => {
+  // ── Held tokens: only tokens the connected wallet holds (balance > 0) ──
+  const heldTokens = useMemo(() => {
+    if (!isWalletConnected) return [];
     const combined = allTokens.filter(t =>
-      POPULAR_SYMBOLS.has(t.symbol) ||
-      (isWalletConnected && (t.isNative || walletHtsIds.has(t.htsId)))
+      t.isNative || walletHtsIds.has(t.htsId)
     );
     // Deduplicate by htsId
     const seen = new Set<string>();
     const deduped = combined.filter(t => {
-      if (seen.has(t.htsId)) return false;
-      seen.add(t.htsId);
+      const key = t.htsId || t.symbol;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
-    // Sort: user-held first (by balance value desc), then by rank
+    // Sort: priority tokens first (in PRIORITY_SYMBOLS order), then rest by USD value desc
     return filterTokens(deduped).sort((a, b) => {
-      const aHeld = walletHtsIds.has(a.htsId) || a.isNative;
-      const bHeld = walletHtsIds.has(b.htsId) || b.isNative;
-      if (aHeld && !bHeld) return -1;
-      if (!aHeld && bHeld) return 1;
+      const aPri = PRIORITY_SET.has(a.symbol);
+      const bPri = PRIORITY_SET.has(b.symbol);
+      if (aPri && !bPri) return -1;
+      if (!aPri && bPri) return 1;
+      if (aPri && bPri) return (PRIORITY_RANK.get(a.symbol) ?? 99) - (PRIORITY_RANK.get(b.symbol) ?? 99);
+      // Non-priority: sort by USD value descending
+      const aVal = getHeldUsdValue(a);
+      const bVal = getHeldUsdValue(b);
+      if (bVal !== aVal) return bVal - aVal;
       return a.rank - b.rank;
     });
-  }, [allTokens, filterTokens, isWalletConnected, walletHtsIds]);
+  }, [allTokens, filterTokens, isWalletConnected, walletHtsIds, getHeldUsdValue]);
 
-  // ── All tokens: user held at top, then by rank ──
+  // ── All tokens: priority/wrapped at top, then by rank (popularity) ──
   const filteredAll = useMemo(() => {
     const filtered = filterTokens(allTokens);
-    // Sort: user-held first, then by rank
     return filtered.sort((a, b) => {
-      const aHeld = walletHtsIds.has(a.htsId) || a.isNative;
-      const bHeld = walletHtsIds.has(b.htsId) || b.isNative;
-      if (aHeld && !bHeld) return -1;
-      if (!aHeld && bHeld) return 1;
+      const aPri = PRIORITY_SET.has(a.symbol);
+      const bPri = PRIORITY_SET.has(b.symbol);
+      if (aPri && !bPri) return -1;
+      if (!aPri && bPri) return 1;
+      if (aPri && bPri) return (PRIORITY_RANK.get(a.symbol) ?? 99) - (PRIORITY_RANK.get(b.symbol) ?? 99);
+      // Non-priority: sort by rank (lower = more popular)
       return a.rank - b.rank;
     });
-  }, [allTokens, filterTokens, walletHtsIds]);
+  }, [allTokens, filterTokens]);
 
   // Current list based on tab
-  const currentList = tab === "popular" ? popularTokens : filteredAll;
+  const currentList = tab === "held" ? heldTokens : filteredAll;
 
   if (!isOpen) return null;
 
@@ -276,8 +324,8 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
       ref={dropdownRef}
       role="listbox"
       aria-label="Select token"
-      className={`w-[360px] rounded-2xl shadow-2xl overflow-hidden ${
-        portalPos ? "fixed z-[9999]" : "absolute top-full right-0 mt-2 z-50"
+      className={`${isMobile ? "w-full h-full" : "w-[360px]"} rounded-2xl shadow-2xl overflow-hidden ${
+        portalPos ? "fixed z-[9999]" : isMobile ? "fixed inset-0 z-[9999] rounded-none" : "absolute top-full right-0 mt-2 z-50"
       } ${
         isDark
           ? "bg-[#0c0f1a]/95 backdrop-blur-xl border border-white/[0.08]"
@@ -292,6 +340,26 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
           : Math.min(window.innerHeight - portalPos.top - 16, 480),
       } : undefined}
     >
+      {/* Mobile header with close button */}
+      {isMobile && (
+        <div className={`flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-2 border-b ${
+          isDark ? "border-white/[0.06]" : "border-gray-100"
+        }`}>
+          <h3 className={`text-base font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+            Select Token
+          </h3>
+          <button
+            onClick={onClose}
+            aria-label="Close token selector"
+            className={`p-2 -mr-1 rounded-xl transition-colors ${
+              isDark ? "hover:bg-slate-800 text-slate-400" : "hover:bg-gray-100 text-gray-500"
+            }`}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
       {/* Search */}
       <div className="p-3 pb-2">
         <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl transition-all ${
@@ -315,9 +383,18 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
 
       {/* Tabs */}
       <div className={`flex items-center gap-1.5 px-3 pb-2.5 border-b ${isDark ? "border-white/[0.06]" : "border-gray-100"}`}>
-        <button onClick={() => setTab("popular")} className={tabStyle(tab === "popular", "green")}>
-          <Star className="w-3.5 h-3.5" />
-          Popular
+        <button onClick={() => setTab("held")} className={tabStyle(tab === "held", "green")}>
+          <Wallet className="w-3.5 h-3.5" />
+          Held
+          {isWalletConnected && heldCount > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+              tab === "held"
+                ? isDark ? "bg-emerald-400/20 text-emerald-300" : "bg-emerald-100 text-emerald-700"
+                : isDark ? "bg-slate-700/60 text-slate-400" : "bg-gray-200 text-gray-500"
+            }`}>
+              {heldCount}
+            </span>
+          )}
         </button>
         <button onClick={() => setTab("all")} className={tabStyle(tab === "all")}>
           <Globe className="w-3.5 h-3.5" />
@@ -332,18 +409,12 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
             </span>
           )}
         </button>
-        {isWalletConnected && heldCount > 0 && (
-          <div className={`ml-auto flex items-center gap-1 text-[10px] font-bold ${
-            isDark ? "text-emerald-400/70" : "text-emerald-600/70"
-          }`}>
-            <Wallet className="w-3 h-3" />
-            {heldCount} held
-          </div>
-        )}
       </div>
 
       {/* Token List */}
-      <div className="max-h-80 overflow-y-auto overscroll-contain">
+      <div className={`${isMobile ? "flex-1 overflow-y-auto" : "max-h-80 overflow-y-auto"} overscroll-contain`}
+        style={isMobile ? { maxHeight: "calc(100vh - 200px)" } : undefined}
+      >
         {loading && currentList.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-10">
             <Loader2 className="w-5 h-5 animate-spin text-pink-400" />
@@ -360,9 +431,28 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
           </div>
         ) : currentList.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-8">
-            <span className={`text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-              No matching tokens
-            </span>
+            {tab === "held" && !isWalletConnected ? (
+              <>
+                <Wallet className={`w-6 h-6 ${isDark ? "text-slate-600" : "text-gray-300"}`} />
+                <span className={`text-sm font-medium ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                  Connect wallet to see held tokens
+                </span>
+                <span className={`text-[11px] ${isDark ? "text-slate-600" : "text-gray-300"}`}>
+                  Or browse the All tab for popular tokens
+                </span>
+              </>
+            ) : tab === "held" ? (
+              <>
+                <Wallet className={`w-6 h-6 ${isDark ? "text-slate-600" : "text-gray-300"}`} />
+                <span className={`text-sm font-medium ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                  {search ? "No held tokens match your search" : "No tokens held"}
+                </span>
+              </>
+            ) : (
+              <span className={`text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                No matching tokens
+              </span>
+            )}
           </div>
         ) : (
           <div className="py-1">
@@ -446,11 +536,11 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
       </div>
 
       {/* Footer */}
-      <div className={`px-3 py-2 text-[10px] text-center border-t font-medium ${
+      <div className={`px-3 py-2 ${isMobile ? "pb-[max(env(safe-area-inset-bottom),8px)]" : ""} text-[10px] text-center border-t font-medium ${
         isDark ? "border-white/[0.06] text-slate-600" : "border-gray-100 text-gray-400"
       }`}>
-        {tab === "popular"
-          ? `${popularTokens.length} popular token${popularTokens.length !== 1 ? "s" : ""}`
+        {tab === "held"
+          ? `${heldTokens.length} held token${heldTokens.length !== 1 ? "s" : ""}`
           : `${filteredAll.length} of ${allTokens.length} tokens`
         }
         {allTokens.length > SAUCERSWAP_TOKENS.length && (
@@ -464,11 +554,15 @@ const TokenSelectorDropdown = memo(function TokenSelectorDropdown({
     <>
       {/* Click-away overlay */}
       {createPortal(
-        <div className="fixed inset-0 z-[9998]" onClick={onClose} aria-hidden="true" />,
+        <div
+          className={`fixed inset-0 z-[9998] ${isMobile ? (isDark ? "bg-black/60" : "bg-black/40") : ""}`}
+          onClick={onClose}
+          aria-hidden="true"
+        />,
         document.body
       )}
-      {/* Dropdown — portalled when anchorRef provided, inline otherwise */}
-      {portalPos ? createPortal(dropdownContent, document.body) : dropdownContent}
+      {/* Dropdown — full-screen portal on mobile, positioned portal on desktop */}
+      {(isMobile || portalPos) ? createPortal(dropdownContent, document.body) : dropdownContent}
     </>
   );
 });

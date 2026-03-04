@@ -23,7 +23,7 @@ import {
   ExternalLink,
   FlaskConical,
 } from "lucide-react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "../utils/logger";
 
 // IMPLEMENTATION NOTE: Bump this version to force all users to re-accept.
@@ -329,7 +329,7 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [accepted]);
 
-  // Accept handler ��� with double-click protection via `entering` guard
+  // Accept handler  with double-click protection via `entering` guard
   const handleAccept = useCallback(() => {
     if (!toggleChecked || entering) return;
     setEntering(true);

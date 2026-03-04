@@ -17,7 +17,7 @@
  * standard algorithms so the calendar stays correct across years.
  */
 
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "./logger";
 
 // ── Holiday Configuration ────────────────────────────────────────────

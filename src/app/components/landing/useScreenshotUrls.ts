@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 

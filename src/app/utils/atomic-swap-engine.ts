@@ -39,7 +39,7 @@ import type {
   PoolMetrics,
 } from "./atomic-swap-types";
 import { log } from "./logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import {
   TransferTransaction, AccountId, TokenId, TransactionId, Long,
 } from "./hedera-sdk";
@@ -586,7 +586,7 @@ export async function fetchAllPoolReserves(): Promise<Map<string, PoolReserves>>
   return results;
 }
 
-// ════════════════════════════════════════════════════════════��══════════
+// ══════════════════════════════════════════════════════════════════════
 // SECTION 6: Oracle Price Fetching (Display Only — Swaps Use Reserves)
 // ══════════════════════════════════════════════════════════════════════
 

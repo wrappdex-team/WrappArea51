@@ -6,7 +6,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { isVipEligible, verifyVipEligibilityDirect, getVipNftCount } from "../utils/vip";
 import { GATE_THRESHOLD, formatTokenCount } from "../utils/dao";
 import { getSessionToken } from "../utils/auth";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 
 // ── Constants ────────────────────────────────────────────────────────
 

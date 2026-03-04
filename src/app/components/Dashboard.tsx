@@ -22,7 +22,7 @@ import { playVipButtonChime } from "../utils/sounds";
 import { SiteActivity } from "./SiteActivity";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { TOKEN_LOGOS } from "../utils/coingecko";
-import { projectId } from "/utils/supabase/info";
+import { projectId } from "../../../utils/supabase/info";
 import { CryptoHeatmapWidget } from "./CryptoHeatmapWidget";
 import { Tip } from "./Tip";
 import { PriceFlash } from "./PriceFlash";

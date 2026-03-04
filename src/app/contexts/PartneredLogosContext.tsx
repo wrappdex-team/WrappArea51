@@ -32,7 +32,7 @@
  */
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "../utils/logger";
 import {
   BUCKET_LOGOS,

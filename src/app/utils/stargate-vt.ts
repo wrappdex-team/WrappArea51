@@ -31,7 +31,7 @@
 import { log } from "./logger";
 import { switchChain, getChainId } from "./metamask";
 import { NATIVE_TOKEN_ADDRESS } from "./stargate-chains";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 
 /* ══════════════════════════════════════════════════════════════
  * Constants

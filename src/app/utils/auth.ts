@@ -6,7 +6,7 @@
  * Supports both ED25519 and ECDSA_SECP256K1 key types.
  */
 
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { signMessage } from "./hashpack";
 import { log } from "./logger";
 

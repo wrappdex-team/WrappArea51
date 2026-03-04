@@ -7,9 +7,9 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Crown, Send, Check, AlertCircle, Loader2, MessageSquare, ChevronUp, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { Crown, MessageSquare, ChevronUp, ChevronDown, AlertCircle, Loader2, Check, Send } from "lucide-react";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { playTokenHover, playVipConfirm } from "../utils/sounds";
 import { log } from "../utils/logger";
 

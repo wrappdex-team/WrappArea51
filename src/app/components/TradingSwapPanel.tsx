@@ -40,7 +40,7 @@ import {
 } from "../utils/smart-liquidity";
 import { useTheme } from "../contexts/ThemeContext";
 import { log } from "../utils/logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT } from "../assets/brand";
 import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 import { TokenAssociationCheck, type AssociationStatus } from "./TokenAssociationCheck";
@@ -141,7 +141,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
 
   // ── AMM Kill Switch Status ──────────────────────────────────────
   const [ammHalted, setAmmHalted] = useState(false);
-  // ┌─────────────────────────────────────────────────────────────────────┐
+  // ┌───��─────────────────────────────────────────────────────────────────┐
   // │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
   // │  ammPrelaunch is set from the kill-switch endpoint's               │
   // │  prelaunchLocked field. When true, the entire swap body is         │

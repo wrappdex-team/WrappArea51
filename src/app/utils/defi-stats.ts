@@ -14,7 +14,7 @@
  */
 
 import { log } from "./logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { FORCE_INCLUDE_POOL_CONTRACT_IDS } from "./v2-token-whitelist";
 import { getReliableIconUrl, getReliableIconBySymbol } from "./token-icons";
 

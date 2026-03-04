@@ -20,6 +20,7 @@ import {
   RotateCcw,
   ChevronUp,
 } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { toast } from "sonner";
@@ -312,7 +313,7 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
         tabIndex={0}
         onClick={() => setExpanded(!expanded)}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded(!expanded); } }}
-        className={`w-full flex items-center justify-between px-5 py-3 cursor-pointer transition-colors ${
+        className={`w-full flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-3 cursor-pointer transition-colors ${
           isDark ? "hover:bg-slate-800/30" : "hover:bg-gray-50"
         }`}
       >
@@ -340,326 +341,342 @@ export function SwapHistoryPanel({ history, onClear }: SwapHistoryPanelProps) {
             </button>
             </Tip>
           )}
-          <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""} ${
-            isDark ? "text-slate-400" : "text-gray-500"
-          }`} />
+          <motion.div
+            animate={{ rotate: expanded ? 180 : 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          >
+            <ChevronDown className={`w-4 h-4 ${
+              isDark ? "text-slate-400" : "text-gray-500"
+            }`} />
+          </motion.div>
         </div>
       </div>
 
-      {expanded && (
-        <div className={`border-t ${isDark ? "border-slate-800/30" : "border-gray-100"}`}>
-          <div className="max-h-[400px] overflow-y-auto">
-            {history.slice(0, 10).map((entry) => {
-              const isShowingDiagnosis = diagnosingId === entry.id && (diagnosisLoading || diagnosisResult?.entryId === entry.id);
-              const diag = diagnosisResult?.entryId === entry.id ? diagnosisResult.diag : null;
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="history-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 35 }}
+            style={{ overflow: "hidden" }}
+          >
+            <div className={`border-t ${isDark ? "border-slate-800/30" : "border-gray-100"}`}>
+              <div className="max-h-[400px] overflow-y-auto">
+                {history.slice(0, 10).map((entry) => {
+                  const isShowingDiagnosis = diagnosingId === entry.id && (diagnosisLoading || diagnosisResult?.entryId === entry.id);
+                  const diag = diagnosisResult?.entryId === entry.id ? diagnosisResult.diag : null;
 
-              return (
-                <div
-                  key={entry.id}
-                  className={`px-5 py-3 border-b last:border-b-0 ${
-                    isDark ? "border-slate-800/20" : "border-gray-50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      {entry.success ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : entry.timedOut ? (
-                        <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <XCircle className="w-3.5 h-3.5 text-red-400" />
-                      )}
-                      <span className="text-sm font-bold">
-                        {fmtAmt(entry.inputAmount)} {entry.inputSymbol}
-                      </span>
-                      <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                      <span className="text-sm font-bold">
-                        {fmtAmt(entry.outputAmount)} {entry.outputSymbol}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                        {formatTime(entry.timestamp)}
-                      </span>
-                      {entry.isSimulated ? (
-                        <FlaskConical className={`w-3 h-3 ${isDark ? "text-amber-400/60" : "text-amber-500"}`} />
-                      ) : (
-                        <Zap className={`w-3 h-3 ${isDark ? "text-emerald-400/60" : "text-emerald-500"}`} />
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[10px]">
-                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>
-                        {entry.route.join(" > ")}
-                      </span>
-                      <span className={isDark ? "text-slate-600" : "text-gray-300"}>|</span>
-                      <span className={isDark ? "text-slate-500" : "text-gray-400"}>
-                        Impact: {entry.priceImpact.toFixed(3)}%
-                      </span>
-                      <span className={`px-1 py-0.5 rounded ${
-                        isDark ? "bg-slate-700/40 text-slate-500" : "bg-gray-100 text-gray-400"
-                      }`}>
-                        {entry.executionVenue}
-                      </span>
-                    </div>
-                    {entry.transactionId && !entry.isSimulated && (
-                      <div className="flex items-center gap-1.5">
-                        {/* Diagnose link — available for all real transactions */}
-                        {accountId && (
-                          <button
-                            onClick={() => handleDiagnose(entry)}
-                            disabled={diagnosisLoading && diagnosingId === entry.id}
-                            className={`flex items-center gap-0.5 text-[10px] transition-colors ${
-                              isShowingDiagnosis
-                                ? isDark ? "text-blue-400" : "text-blue-600"
-                                : isDark ? "text-slate-500 hover:text-blue-400" : "text-gray-400 hover:text-blue-600"
-                            }`}
-                          >
-                            {diagnosisLoading && diagnosingId === entry.id ? (
-                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                            ) : (
-                              <Stethoscope className="w-2.5 h-2.5" />
-                            )}
-                            Diagnose
-                          </button>
-                        )}
-                        <span className={`${isDark ? "text-slate-700" : "text-gray-300"}`}>·</span>
-                        <a
-                          href={getHashScanTxUrl(entry.transactionId, entry.network)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`flex items-center gap-0.5 text-[10px] transition-colors ${
-                            isDark ? "text-pink-400/60 hover:text-pink-400" : "text-pink-500 hover:text-pink-600"
-                          }`}
-                        >
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          HashScan
-                        </a>
+                  return (
+                    <div
+                      key={entry.id}
+                      className={`px-3 sm:px-5 py-2.5 sm:py-3 border-b last:border-b-0 ${
+                        isDark ? "border-slate-800/20" : "border-gray-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                          {entry.success ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          ) : entry.timedOut ? (
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          ) : (
+                            <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                          )}
+                          <span className="text-xs sm:text-sm font-bold truncate">
+                            {fmtAmt(entry.inputAmount)} {entry.inputSymbol}
+                          </span>
+                          <ArrowRight className={`w-3 h-3 shrink-0 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
+                          <span className="text-xs sm:text-sm font-bold truncate">
+                            {fmtAmt(entry.outputAmount)} {entry.outputSymbol}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                            {formatTime(entry.timestamp)}
+                          </span>
+                          {entry.isSimulated ? (
+                            <FlaskConical className={`w-3 h-3 ${isDark ? "text-amber-400/60" : "text-amber-500"}`} />
+                          ) : (
+                            <Zap className={`w-3 h-3 ${isDark ? "text-emerald-400/60" : "text-emerald-500"}`} />
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
 
-                  {/* Inline error reason for failed swaps */}
-                  {!entry.success && entry.errorMessage && (
-                    <div className={`mt-1.5 flex items-start gap-1.5 text-[10px] p-1.5 rounded-lg ${
-                      entry.timedOut
-                        ? isDark ? "bg-amber-900/10 border border-amber-500/10 text-amber-400/80" : "bg-amber-50 border border-amber-100 text-amber-600"
-                        : isDark ? "bg-red-900/10 border border-red-500/10 text-red-400/80" : "bg-red-50 border border-red-100 text-red-500"
-                    }`}>
-                      <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-                      <span className="break-all leading-relaxed">{entry.errorMessage.length > 200 ? entry.errorMessage.substring(0, 200) + "..." : entry.errorMessage}</span>
-                    </div>
-                  )}
-
-                  {/* ── Inline Diagnosis Panel ── */}
-                  {isShowingDiagnosis && (
-                    <div className={`mt-2 rounded-xl overflow-hidden transition-all ${
-                      isDark ? "bg-slate-800/20 border border-slate-700/20" : "bg-gray-50/80 border border-gray-100"
-                    }`}>
-                      {diagnosisLoading && !diag && (
-                        <div className={`flex items-center justify-center gap-2 py-4 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          Fetching from Mirror Node...
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className={isDark ? "text-slate-500" : "text-gray-400"}>
+                            {entry.route.join(" > ")}
+                          </span>
+                          <span className={isDark ? "text-slate-600" : "text-gray-300"}>|</span>
+                          <span className={isDark ? "text-slate-500" : "text-gray-400"}>
+                            Impact: {entry.priceImpact.toFixed(3)}%
+                          </span>
+                          <span className={`px-1 py-0.5 rounded ${
+                            isDark ? "bg-slate-700/40 text-slate-500" : "bg-gray-100 text-gray-400"
+                          }`}>
+                            {entry.executionVenue}
+                          </span>
                         </div>
-                      )}
-
-                      {diag && (
-                        <div className="p-3 space-y-2.5">
-                          {/* Status + actions bar */}
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              {diag.result === "CONTRACT_REVERT_EXECUTED" ? (
-                                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-                              ) : diag.result === "SUCCESS" ? (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                              ) : (
-                                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                              )}
-                              <span className={`text-xs font-bold ${
-                                diag.result === "CONTRACT_REVERT_EXECUTED" ? "text-red-400"
-                                  : diag.result === "SUCCESS" ? "text-emerald-400"
-                                    : "text-amber-400"
-                              }`}>
-                                {diag.result || "Unknown"}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Tip content="Copy diagnosis">
+                        {entry.transactionId && !entry.isSimulated && (
+                          <div className="flex items-center gap-1.5">
+                            {/* Diagnose link — available for all real transactions */}
+                            {accountId && (
                               <button
-                                onClick={handleCopyDiagnosis}
-                                className={`p-1 rounded transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
+                                onClick={() => handleDiagnose(entry)}
+                                disabled={diagnosisLoading && diagnosingId === entry.id}
+                                className={`flex items-center gap-0.5 text-[10px] transition-colors ${
+                                  isShowingDiagnosis
+                                    ? isDark ? "text-blue-400" : "text-blue-600"
+                                    : isDark ? "text-slate-500 hover:text-blue-400" : "text-gray-400 hover:text-blue-600"
+                                }`}
                               >
-                                {copiedDiag ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                                {diagnosisLoading && diagnosingId === entry.id ? (
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                ) : (
+                                  <Stethoscope className="w-2.5 h-2.5" />
+                                )}
+                                Diagnose
                               </button>
-                              </Tip>
-                              <Tip content="Close diagnosis">
-                              <button
-                                onClick={() => { setDiagnosingId(null); setDiagnosisResult(null); }}
-                                className={`p-1 rounded transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
-                              >
-                                <XCircle className="w-2.5 h-2.5" />
-                              </button>
-                              </Tip>
-                            </div>
-                          </div>
-
-                          {/* Diagnosis text */}
-                          <p className={`text-[10px] leading-relaxed ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                            {diag.diagnosis}
-                          </p>
-
-                          {/* Key metrics */}
-                          <div className="grid grid-cols-3 gap-1.5">
-                            <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
-                              <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Gas Fee</div>
-                              <div className={`text-[11px] font-bold ${
-                                (diag.chargedFeeHbar || 0) > 1 ? "text-red-400" : isDark ? "text-slate-200" : "text-gray-700"
-                              }`}>
-                                {diag.chargedFeeHbar?.toFixed(4) || "0"} ℏ
-                              </div>
-                            </div>
-                            {diag.contractCallResult && (
-                              <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
-                                <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Gas Used</div>
-                                <div className={`text-[11px] font-bold ${isDark ? "text-slate-200" : "text-gray-700"}`}>
-                                  {diag.contractCallResult.gasUsed.toLocaleString()}
-                                </div>
-                              </div>
                             )}
-                            <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
-                              <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Consensus</div>
-                              <div className={`text-[10px] font-bold font-mono truncate ${isDark ? "text-slate-200" : "text-gray-700"}`}>
-                                {diag.consensusTimestamp || "N/A"}
-                              </div>
-                            </div>
+                            <span className={`${isDark ? "text-slate-700" : "text-gray-300"}`}>·</span>
+                            <a
+                              href={getHashScanTxUrl(entry.transactionId, entry.network)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`flex items-center gap-0.5 text-[10px] transition-colors ${
+                                isDark ? "text-pink-400/60 hover:text-pink-400" : "text-pink-500 hover:text-pink-600"
+                              }`}
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                              HashScan
+                            </a>
                           </div>
+                        )}
+                      </div>
 
-                          {/* Revert reason */}
-                          {diag.contractCallResult?.errorMessage && (
-                            <div className={`p-2 rounded-lg ${isDark ? "bg-red-900/10 border border-red-500/15" : "bg-red-50 border border-red-200"}`}>
-                              <div className={`text-[9px] font-bold mb-0.5 ${isDark ? "text-red-400" : "text-red-600"}`}>Revert Reason</div>
-                              <code className={`text-[10px] font-mono break-all ${isDark ? "text-red-300" : "text-red-500"}`}>
-                                {diag.contractCallResult.errorMessage}
-                              </code>
+                      {/* Inline error reason for failed swaps */}
+                      {!entry.success && entry.errorMessage && (
+                        <div className={`mt-1.5 flex items-start gap-1.5 text-[10px] p-1.5 rounded-lg ${
+                          entry.timedOut
+                            ? isDark ? "bg-amber-900/10 border border-amber-500/10 text-amber-400/80" : "bg-amber-50 border border-amber-100 text-amber-600"
+                            : isDark ? "bg-red-900/10 border border-red-500/10 text-red-400/80" : "bg-red-50 border border-red-100 text-red-500"
+                        }`}>
+                          <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                          <span className="break-all leading-relaxed">{entry.errorMessage.length > 200 ? entry.errorMessage.substring(0, 200) + "..." : entry.errorMessage}</span>
+                        </div>
+                      )}
+
+                      {/* ── Inline Diagnosis Panel ── */}
+                      {isShowingDiagnosis && (
+                        <div className={`mt-2 rounded-xl overflow-hidden transition-all ${
+                          isDark ? "bg-slate-800/20 border border-slate-700/20" : "bg-gray-50/80 border border-gray-100"
+                        }`}>
+                          {diagnosisLoading && !diag && (
+                            <div className={`flex items-center justify-center gap-2 py-4 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Fetching from Mirror Node...
                             </div>
                           )}
 
-                          {/* Transfer details toggle */}
-                          {(diag.transfers.tokens.length > 0 || diag.transfers.hbar.length > 0) && (
-                            <div>
-                              <button
-                                onClick={() => setShowTransfers(!showTransfers)}
-                                className={`flex items-center gap-1 text-[10px] transition-colors ${isDark ? "text-slate-500 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"}`}
-                              >
-                                {showTransfers ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-                                Transfers ({diag.transfers.tokens.length} token, {diag.transfers.hbar.length} HBAR)
-                              </button>
-
-                              {showTransfers && (
-                                <div className="mt-1.5 space-y-1.5">
-                                  {diag.transfers.tokens.length > 0 && (
-                                    <div className={`p-2 rounded-lg ${isDark ? "bg-slate-800/30" : "bg-gray-100/80"}`}>
-                                      <div className={`text-[9px] font-bold mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Token Transfers</div>
-                                      <div className="space-y-0.5">
-                                        {diag.transfers.tokens.map((t, i) => (
-                                          <div key={i} className={`flex items-center gap-1.5 text-[9px] font-mono ${
-                                            t.amountHuman > 0 ? "text-emerald-400" : t.amountHuman < 0 ? "text-red-400" : isDark ? "text-slate-400" : "text-gray-500"
-                                          }`}>
-                                            <span className="shrink-0 w-20 text-right">
-                                              {t.amountHuman >= 0 ? "+" : ""}{t.amountHuman.toFixed(6)}
-                                            </span>
-                                            <span className={`shrink-0 w-12 font-bold ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                                              {t.tokenSymbol}
-                                            </span>
-                                            <ArrowDown className="w-2 h-2 shrink-0" />
-                                            <span className="truncate">{t.account}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
+                          {diag && (
+                            <div className="p-3 space-y-2.5">
+                              {/* Status + actions bar */}
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5">
+                                  {diag.result === "CONTRACT_REVERT_EXECUTED" ? (
+                                    <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                                  ) : diag.result === "SUCCESS" ? (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                  ) : (
+                                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
                                   )}
-                                  {diag.transfers.hbar.length > 0 && (
-                                    <div className={`p-2 rounded-lg ${isDark ? "bg-slate-800/30" : "bg-gray-100/80"}`}>
-                                      <div className={`text-[9px] font-bold mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>HBAR Transfers</div>
-                                      <div className="space-y-0.5">
-                                        {diag.transfers.hbar.slice(0, 10).map((t, i) => (
-                                          <div key={i} className={`flex items-center gap-1.5 text-[9px] font-mono ${
-                                            t.amountHbar > 0 ? "text-emerald-400" : t.amountHbar < 0 ? "text-red-400" : isDark ? "text-slate-400" : "text-gray-500"
-                                          }`}>
-                                            <span className="shrink-0 w-20 text-right">
-                                              {t.amountHbar >= 0 ? "+" : ""}{t.amountHbar.toFixed(4)}
-                                            </span>
-                                            <span className={`shrink-0 w-12 font-bold ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                                              HBAR
-                                            </span>
-                                            <ArrowDown className="w-2 h-2 shrink-0" />
-                                            <span className="truncate">{t.account}</span>
+                                  <span className={`text-xs font-bold ${
+                                    diag.result === "CONTRACT_REVERT_EXECUTED" ? "text-red-400"
+                                      : diag.result === "SUCCESS" ? "text-emerald-400"
+                                        : "text-amber-400"
+                                  }`}>
+                                    {diag.result || "Unknown"}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Tip content="Copy diagnosis">
+                                  <button
+                                    onClick={handleCopyDiagnosis}
+                                    className={`p-1 rounded transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
+                                  >
+                                    {copiedDiag ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                                  </button>
+                                  </Tip>
+                                  <Tip content="Close diagnosis">
+                                  <button
+                                    onClick={() => { setDiagnosingId(null); setDiagnosisResult(null); }}
+                                    className={`p-1 rounded transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-500" : "hover:bg-gray-200 text-gray-400"}`}
+                                  >
+                                    <XCircle className="w-2.5 h-2.5" />
+                                  </button>
+                                  </Tip>
+                                </div>
+                              </div>
+
+                              {/* Diagnosis text */}
+                              <p className={`text-[10px] leading-relaxed ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                                {diag.diagnosis}
+                              </p>
+
+                              {/* Key metrics */}
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
+                                  <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Gas Fee</div>
+                                  <div className={`text-[11px] font-bold ${
+                                    (diag.chargedFeeHbar || 0) > 1 ? "text-red-400" : isDark ? "text-slate-200" : "text-gray-700"
+                                  }`}>
+                                    {diag.chargedFeeHbar?.toFixed(4) || "0"} ℏ
+                                  </div>
+                                </div>
+                                {diag.contractCallResult && (
+                                  <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
+                                    <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Gas Used</div>
+                                    <div className={`text-[11px] font-bold ${isDark ? "text-slate-200" : "text-gray-700"}`}>
+                                      {diag.contractCallResult.gasUsed.toLocaleString()}
+                                    </div>
+                                  </div>
+                                )}
+                                <div className={`p-1.5 rounded-lg ${isDark ? "bg-slate-800/40" : "bg-gray-100"}`}>
+                                  <div className={`text-[9px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>Consensus</div>
+                                  <div className={`text-[10px] font-bold font-mono truncate ${isDark ? "text-slate-200" : "text-gray-700"}`}>
+                                    {diag.consensusTimestamp || "N/A"}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Revert reason */}
+                              {diag.contractCallResult?.errorMessage && (
+                                <div className={`p-2 rounded-lg ${isDark ? "bg-red-900/10 border border-red-500/15" : "bg-red-50 border border-red-200"}`}>
+                                  <div className={`text-[9px] font-bold mb-0.5 ${isDark ? "text-red-400" : "text-red-600"}`}>Revert Reason</div>
+                                  <code className={`text-[10px] font-mono break-all ${isDark ? "text-red-300" : "text-red-500"}`}>
+                                    {diag.contractCallResult.errorMessage}
+                                  </code>
+                                </div>
+                              )}
+
+                              {/* Transfer details toggle */}
+                              {(diag.transfers.tokens.length > 0 || diag.transfers.hbar.length > 0) && (
+                                <div>
+                                  <button
+                                    onClick={() => setShowTransfers(!showTransfers)}
+                                    className={`flex items-center gap-1 text-[10px] transition-colors ${isDark ? "text-slate-500 hover:text-slate-400" : "text-gray-400 hover:text-gray-600"}`}
+                                  >
+                                    {showTransfers ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                                    Transfers ({diag.transfers.tokens.length} token, {diag.transfers.hbar.length} HBAR)
+                                  </button>
+
+                                  {showTransfers && (
+                                    <div className="mt-1.5 space-y-1.5">
+                                      {diag.transfers.tokens.length > 0 && (
+                                        <div className={`p-2 rounded-lg ${isDark ? "bg-slate-800/30" : "bg-gray-100/80"}`}>
+                                          <div className={`text-[9px] font-bold mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Token Transfers</div>
+                                          <div className="space-y-0.5">
+                                            {diag.transfers.tokens.map((t, i) => (
+                                              <div key={i} className={`flex items-center gap-1.5 text-[9px] font-mono ${
+                                                t.amountHuman > 0 ? "text-emerald-400" : t.amountHuman < 0 ? "text-red-400" : isDark ? "text-slate-400" : "text-gray-500"
+                                              }`}>
+                                                <span className="shrink-0 w-20 text-right">
+                                                  {t.amountHuman >= 0 ? "+" : ""}{t.amountHuman.toFixed(6)}
+                                                </span>
+                                                <span className={`shrink-0 w-12 font-bold ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                                                  {t.tokenSymbol}
+                                                </span>
+                                                <ArrowDown className="w-2 h-2 shrink-0" />
+                                                <span className="truncate">{t.account}</span>
+                                              </div>
+                                            ))}
                                           </div>
-                                        ))}
-                                        {diag.transfers.hbar.length > 10 && (
-                                          <div className={`text-[9px] italic ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                                            ...and {diag.transfers.hbar.length - 10} more
+                                        </div>
+                                      )}
+                                      {diag.transfers.hbar.length > 0 && (
+                                        <div className={`p-2 rounded-lg ${isDark ? "bg-slate-800/30" : "bg-gray-100/80"}`}>
+                                          <div className={`text-[9px] font-bold mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>HBAR Transfers</div>
+                                          <div className="space-y-0.5">
+                                            {diag.transfers.hbar.slice(0, 10).map((t, i) => (
+                                              <div key={i} className={`flex items-center gap-1.5 text-[9px] font-mono ${
+                                                t.amountHbar > 0 ? "text-emerald-400" : t.amountHbar < 0 ? "text-red-400" : isDark ? "text-slate-400" : "text-gray-500"
+                                              }`}>
+                                                <span className="shrink-0 w-20 text-right">
+                                                  {t.amountHbar >= 0 ? "+" : ""}{t.amountHbar.toFixed(4)}
+                                                </span>
+                                                <span className={`shrink-0 w-12 font-bold ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                                                  HBAR
+                                                </span>
+                                                <ArrowDown className="w-2 h-2 shrink-0" />
+                                                <span className="truncate">{t.account}</span>
+                                              </div>
+                                            ))}
+                                            {diag.transfers.hbar.length > 10 && (
+                                              <div className={`text-[9px] italic ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                                                ...and {diag.transfers.hbar.length - 10} more
+                                              </div>
+                                            )}
                                           </div>
-                                        )}
-                                      </div>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                 </div>
                               )}
-                            </div>
-                          )}
 
-                          {/* Root Cause & Remediation */}
-                          {diag.found && (() => {
-                            const { rootCause, severity, actions } = classifyRootCause(diag, accountId);
-                            const colors = severity === "critical"
-                              ? isDark ? "bg-red-900/10 border border-red-500/15" : "bg-red-50 border border-red-200"
-                              : severity === "warning"
-                                ? isDark ? "bg-amber-900/10 border border-amber-500/15" : "bg-amber-50 border border-amber-200"
-                                : isDark ? "bg-emerald-900/10 border border-emerald-500/15" : "bg-emerald-50 border border-emerald-200";
-                            const iconColor = severity === "critical" ? "text-red-400"
-                              : severity === "warning" ? "text-amber-400" : "text-emerald-400";
-                            return (
-                              <div className={`p-2 rounded-lg ${colors}`}>
-                                <div className="flex items-center gap-1 mb-1">
-                                  <Lightbulb className={`w-3 h-3 ${iconColor}`} />
-                                  <span className={`text-[10px] font-bold ${iconColor}`}>Root Cause</span>
-                                </div>
-                                <div className={`text-[10px] mb-1.5 ${isDark ? "text-slate-300" : "text-gray-600"}`}>
-                                  {rootCause}
-                                </div>
-                                <div className="space-y-1">
-                                  {actions.map((action, i) => (
-                                    <div key={i} className={`flex items-start gap-1.5 text-[9px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                                      <span className={`shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[7px] font-bold mt-0.5 ${
-                                        isDark ? "bg-slate-700/60 text-slate-300" : "bg-gray-200 text-gray-600"
-                                      }`}>{i + 1}</span>
-                                      <span>{action}</span>
+                              {/* Root Cause & Remediation */}
+                              {diag.found && (() => {
+                                const { rootCause, severity, actions } = classifyRootCause(diag, accountId);
+                                const colors = severity === "critical"
+                                  ? isDark ? "bg-red-900/10 border border-red-500/15" : "bg-red-50 border border-red-200"
+                                  : severity === "warning"
+                                    ? isDark ? "bg-amber-900/10 border border-amber-500/15" : "bg-amber-50 border border-amber-200"
+                                    : isDark ? "bg-emerald-900/10 border border-emerald-500/15" : "bg-emerald-50 border border-emerald-200";
+                                const iconColor = severity === "critical" ? "text-red-400"
+                                  : severity === "warning" ? "text-amber-400" : "text-emerald-400";
+                                return (
+                                  <div className={`p-2 rounded-lg ${colors}`}>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <Lightbulb className={`w-3 h-3 ${iconColor}`} />
+                                      <span className={`text-[10px] font-bold ${iconColor}`}>Root Cause</span>
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })()}
+                                    <div className={`text-[10px] mb-1.5 ${isDark ? "text-slate-300" : "text-gray-600"}`}>
+                                      {rootCause}
+                                    </div>
+                                    <div className="space-y-1">
+                                      {actions.map((action, i) => (
+                                        <div key={i} className={`flex items-start gap-1.5 text-[9px] ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                                          <span className={`shrink-0 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[7px] font-bold mt-0.5 ${
+                                            isDark ? "bg-slate-700/60 text-slate-300" : "bg-gray-200 text-gray-600"
+                                          }`}>{i + 1}</span>
+                                          <span>{action}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
-                          {/* Not found state */}
-                          {!diag.found && (
-                            <div className={`p-2 rounded-lg text-[10px] ${isDark ? "bg-slate-800/30 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
-                              Transaction not found on Mirror Node — wait 30-60s and try again.
+                              {/* Not found state */}
+                              {!diag.found && (
+                                <div className={`p-2 rounded-lg text-[10px] ${isDark ? "bg-slate-800/30 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
+                                  Transaction not found on Mirror Node — wait 30-60s and try again.
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

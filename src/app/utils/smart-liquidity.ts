@@ -26,7 +26,7 @@
  * for the active settlement layer.
  */
 
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { getSessionToken, authHeaders } from "./auth";
 
 // ── Types ───────────────────────────────────────────────────────────

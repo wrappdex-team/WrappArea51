@@ -15,7 +15,7 @@
  */
 
 import type { HederaTokenBalance } from "./hedera";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "./logger";
 import { getSessionToken, authHeaders } from "./auth";
 

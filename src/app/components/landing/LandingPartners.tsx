@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import { BUCKET_LOGOS } from "../../assets/brand";
 
 const BLUE = "#1D63ED";

@@ -16,7 +16,7 @@
  */
 
 import { log } from "../logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import type { HederaNetwork } from "./tokens";
 import { TOKEN_BY_HTS_ID, htsIdToEvmAddress, evmAddressToHtsId } from "./tokens";
 import {
@@ -29,7 +29,7 @@ import {
 import { bytesToHex, encodeGetPool, encodeGetPair } from "./abi";
 import { saucerFetch, makeAbort } from "./prices";
 
-// ═══════════════════════════════════════════════════��════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // ── SHARED INFRASTRUCTURE ─────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 
@@ -370,7 +370,7 @@ export async function discoverV2Factory(network: HederaNetwork): Promise<string 
   return null;
 }
 
-// ═════════════════��══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // ── V2 POOL LIST FETCHER ──────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════
 

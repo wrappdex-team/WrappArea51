@@ -22,7 +22,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { toast } from "sonner";
 import { playVipCashRegister } from "../utils/sounds";
 import { loadVipPrefs, isVipEligible } from "../utils/vip";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { SAUCERSWAP_LARRY_LOGO } from "../assets/brand";
 import { TokenIcon } from "./TokenIcon";
 import {
@@ -81,10 +81,9 @@ import { TokenInputPro } from "./TokenInputPro";
 import { SwapRouteViz } from "./SwapRouteViz";
 import { QuoteDetailsPro } from "./QuoteDetailsPro";
 import { SwapButtonPro } from "./SwapButtonPro";
-import { SlippageSettingsPro } from "./SlippageSettingsPro";
+import { SettingsDrawer } from "./SettingsDrawer";
 import { QuickPairGrid } from "./QuickPairGrid";
 
-const SLIPPAGE_OPTIONS = [1.0, 3.0];
 const HBAR_GAS_RESERVE = 3; // HBAR reserved for gas to prevent gas-locking the wallet.
 // IMPLEMENTATION NOTE: Hedera fees are sub-cent but users need a buffer for future
 // transactions. 3 HBAR covers hundreds of operations and prevents accidental lockout.
@@ -227,7 +226,8 @@ export function SwapPanel() {
   // ── UI state ──
   const [slippage, setSlippage] = useState(3);
   const [customSlippage, setCustomSlippage] = useState("");
-  const [showSlippage, setShowSlippage] = useState(false);
+  // [SESSION 4] Settings drawer state — gear icon in SwapCardPro header
+  const [showSettings, setShowSettings] = useState(false);
   const [showInputSelector, setShowInputSelector] = useState(false);
   const [showOutputSelector, setShowOutputSelector] = useState(false);
   const [activePoolId, setActivePoolId] = useState<string | null>(null);
@@ -957,11 +957,27 @@ export function SwapPanel() {
   const outputTokenContainerRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+    <div className="space-y-3 sm:space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-5">
         {/* ═══ SWAP INTERFACE ═══ */}
         <div className="lg:col-span-5">
-          <SwapCardPro isDark={isDark} title="Swap">
+          <SwapCardPro
+            isDark={isDark}
+            title="Swap"
+            showSettings={showSettings}
+            onToggleSettings={() => setShowSettings(s => !s)}
+            settingsContent={
+              <SettingsDrawer
+                isDark={isDark}
+                slippage={slippage}
+                customSlippage={customSlippage}
+                effectiveSlippage={effectiveSlippage}
+                onSetSlippage={handleSetSlippageFromWarning}
+                onSetCustomSlippage={setCustomSlippage}
+                autoSlippageWarning={autoSlippageWarning}
+              />
+            }
+          >
             {/* Input Token */}
             <div className="relative" ref={inputTokenContainerRef}>
               <TokenInputPro
@@ -1022,86 +1038,103 @@ export function SwapPanel() {
               )}
             </div>
 
-            {/* Route Visualization */}
-            {route && !isWrapUnwrap && inputAmount && parseFloat(inputAmount) > 0 && (
-              <SwapRouteViz route={route} isDark={isDark} />
-            )}
+            {/* ═══ SESSION 1: Progressive disclosure ═══
+                Everything below the token inputs is hidden until the user
+                enters an amount. Elements animate in smoothly via motion.
+                Order: Swap Button → Route → Quote Details.
+                Settings are embedded inside QuoteDetailsPro (no standalone). */}
+            <AnimatePresence>
+              {/* Swap Button — appears as soon as user types an amount */}
+              {(inputAmount && parseFloat(inputAmount) > 0) || swapStatus !== "idle" ? (
+                <motion.div
+                  key="swap-btn-area"
+                  initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                  animate={{ opacity: 1, height: "auto", marginTop: 4 }}
+                  exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                >
+                  <SwapButtonPro
+                    status={swapStatus}
+                    canSwap={!!canSwap}
+                    isWalletConnected={isWalletConnected}
+                    isWrapUnwrap={isWrapUnwrap}
+                    isWrapping={isWrapping}
+                    inputToken={inputToken}
+                    outputToken={outputToken}
+                    hasRoute={!!route}
+                    routeSearching={routeSearching}
+                    insufficientBalance={insufficientBalance}
+                    gasReserveShortfall={gasReserveShortfall}
+                    hasValidOutput={!!hasValidOutput}
+                    swapStep={swapStep}
+                    swapError={swapError}
+                    lastTxId={lastTxId}
+                    txUrl={lastTxId ? getHashScanTxUrl(lastTxId, hederaNetwork) : null}
+                    onSwap={handleSwap}
+                    onReset={handleResetSwap}
+                    onHover={prewarmRelay}
+                    onOpenWallet={() => tryOpenWalletExtension({ userInitiated: true })}
+                    isDark={isDark}
+                    approvalNeeded={
+                      approvalStatusRef.current != null
+                        ? approvalStatusRef.current.approvalNeeded
+                        : (swapPrereqs?.approvalNeeded ?? null)
+                    }
+                  />
+                </motion.div>
+              ) : null}
 
-            {/* Quote Details + Settings (unified) */}
-            {quote && inputAmount && parseFloat(inputAmount) > 0 && (
-              <QuoteDetailsPro
-                quote={quote}
-                inputToken={inputToken}
-                outputToken={outputToken}
-                effectiveSlippage={effectiveSlippage}
-                isWrapUnwrap={isWrapUnwrap}
-                isDark={isDark}
-                quoteCountdown={quoteCountdown}
-                maxCountdown={QUOTE_REFRESH_INTERVAL}
-                onRefresh={fetchPrices}
-                autoSlippageWarning={autoSlippageWarning}
-                onSetSlippage={handleSetSlippageFromWarning}
-                scoredRoutes={scoredRoutes}
-                showRouteComparison={showRouteComparison}
-                onToggleRouteComparison={() => setShowRouteComparison(prev => !prev)}
-                slippage={slippage}
-                customSlippage={customSlippage}
-                onSetCustomSlippage={setCustomSlippage}
-                feeOnTransfer={swapPrereqs?.feeOnTransfer ? {
-                  detected: swapPrereqs.feeOnTransfer.detected,
-                  totalFeePercent: swapPrereqs.feeOnTransfer.totalFeePercent,
-                  summary: swapPrereqs.feeOnTransfer.summary,
-                } : undefined}
-                quoteStale={quoteStale}
-                routeDegradation={routeDegradation}
-              />
-            )}
+              {/* Route Visualization — slides in after quote loads */}
+              {route && !isWrapUnwrap && inputAmount && parseFloat(inputAmount) > 0 && (
+                <motion.div
+                  key="route-viz"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 28, delay: 0.05 }}
+                >
+                  <SwapRouteViz route={route} isDark={isDark} />
+                </motion.div>
+              )}
 
-            {/* Slippage Settings — standalone fallback when no quote active */}
-            {!(quote && inputAmount && parseFloat(inputAmount) > 0) && (
-              <SlippageSettingsPro
-                slippage={slippage}
-                customSlippage={customSlippage}
-                effectiveSlippage={effectiveSlippage}
-                showSlippage={showSlippage}
-                onToggle={() => setShowSlippage(!showSlippage)}
-                onSetSlippage={setSlippage}
-                onSetCustomSlippage={setCustomSlippage}
-                isDark={isDark}
-              />
-            )}
-
-            {/* Swap Button */}
-            <SwapButtonPro
-              status={swapStatus}
-              canSwap={!!canSwap}
-              isWalletConnected={isWalletConnected}
-              isWrapUnwrap={isWrapUnwrap}
-              isWrapping={isWrapping}
-              inputToken={inputToken}
-              outputToken={outputToken}
-              hasRoute={!!route}
-              routeSearching={routeSearching}
-              insufficientBalance={insufficientBalance}
-              gasReserveShortfall={gasReserveShortfall}
-              hasValidOutput={!!hasValidOutput}
-              swapStep={swapStep}
-              swapError={swapError}
-              lastTxId={lastTxId}
-              txUrl={lastTxId ? getHashScanTxUrl(lastTxId, hederaNetwork) : null}
-              onSwap={handleSwap}
-              onReset={handleResetSwap}
-              onHover={prewarmRelay}
-              onOpenWallet={() => tryOpenWalletExtension({ userInitiated: true })}
-              isDark={isDark}
-              approvalNeeded={
-                // [STEP6] Prefer quote-time approval status (arrives faster, bundled with quote)
-                // Fall back to separate checkSwapPrerequisites result
-                approvalStatusRef.current != null
-                  ? approvalStatusRef.current.approvalNeeded
-                  : (swapPrereqs?.approvalNeeded ?? null)
-              }
-            />
+              {/* Quote Details + Inline Settings — slides in after route */}
+              {quote && inputAmount && parseFloat(inputAmount) > 0 && (
+                <motion.div
+                  key="quote-details"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 28, delay: 0.1 }}
+                >
+                  <QuoteDetailsPro
+                    quote={quote}
+                    inputToken={inputToken}
+                    outputToken={outputToken}
+                    effectiveSlippage={effectiveSlippage}
+                    isWrapUnwrap={isWrapUnwrap}
+                    isDark={isDark}
+                    quoteCountdown={quoteCountdown}
+                    maxCountdown={QUOTE_REFRESH_INTERVAL}
+                    onRefresh={fetchPrices}
+                    autoSlippageWarning={autoSlippageWarning}
+                    onSetSlippage={handleSetSlippageFromWarning}
+                    scoredRoutes={scoredRoutes}
+                    showRouteComparison={showRouteComparison}
+                    onToggleRouteComparison={() => setShowRouteComparison(prev => !prev)}
+                    slippage={slippage}
+                    customSlippage={customSlippage}
+                    onSetCustomSlippage={setCustomSlippage}
+                    feeOnTransfer={swapPrereqs?.feeOnTransfer ? {
+                      detected: swapPrereqs.feeOnTransfer.detected,
+                      totalFeePercent: swapPrereqs.feeOnTransfer.totalFeePercent,
+                      summary: swapPrereqs.feeOnTransfer.summary,
+                    } : undefined}
+                    quoteStale={quoteStale}
+                    routeDegradation={routeDegradation}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Success Celebration Overlay */}
             {successDetails && (

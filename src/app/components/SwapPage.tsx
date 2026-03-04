@@ -27,14 +27,14 @@ export function SwapPage() {
       {/* Subtle ambient background effects */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
         <div
-          className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full opacity-[0.03]"
+          className="absolute top-0 left-1/4 w-[300px] sm:w-[600px] h-[300px] sm:h-[600px] rounded-full opacity-[0.03]"
           style={{
             background: "radial-gradient(circle, rgba(236,72,153,0.4) 0%, transparent 70%)",
             filter: "blur(80px)",
           }}
         />
         <div
-          className="absolute bottom-0 right-1/4 w-[500px] h-[500px] rounded-full opacity-[0.03]"
+          className="absolute bottom-0 right-1/4 w-[250px] sm:w-[500px] h-[250px] sm:h-[500px] rounded-full opacity-[0.03]"
           style={{
             background: "radial-gradient(circle, rgba(139,92,246,0.4) 0%, transparent 70%)",
             filter: "blur(80px)",
@@ -42,7 +42,7 @@ export function SwapPage() {
         />
       </div>
 
-      <div className="max-w-7xl mx-auto px-2 sm:px-4">
+      <div className="max-w-7xl mx-auto px-1 sm:px-2 md:px-4">
         <SwapPanel />
       </div>
     </div>

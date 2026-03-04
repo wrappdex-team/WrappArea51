@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { toast } from "sonner";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "../utils/logger";
 import { authenticate, getSessionToken, hasValidSession, authHeaders, clearSession as clearAuthSession } from "../utils/auth";
 

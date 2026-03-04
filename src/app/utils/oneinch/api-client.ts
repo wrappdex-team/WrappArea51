@@ -23,7 +23,7 @@
  */
 
 import { log } from "../logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import type { OneInchError, OneInchErrorKind } from "./types";
 
 /* ══════════════════════════════════════════════════════════════════════

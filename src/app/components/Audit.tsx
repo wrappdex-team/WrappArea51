@@ -11,24 +11,8 @@
  * Client diagnostics run synchronously on mount — no perceptible delay.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { log } from "../utils/logger";
-import {
-  Shield,
-  RefreshCw,
-  Loader2,
-  Activity,
-  Database,
-  HardDrive,
-  Wallet,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-  Clock,
-} from "lucide-react";
-import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import {
   isWalletConnectConfigured,
   getSignClient,
@@ -122,7 +106,6 @@ const SERVER_CHECK_META: Record<string, { label: string; icon: React.ReactNode }
 // ── Main Component ───────────────────────────────────────────────────
 
 export function Audit() {
-  const { isDark } = useTheme();
   const { hashPackSession, metaMaskAccount } = useWallet();
 
   // Server-side checks

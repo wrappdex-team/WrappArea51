@@ -1,17 +1,19 @@
 /**
- * SwapRouteViz — Premium animated swap route visualization.
+ * SwapRouteViz — Compact pill-based route visualization.
  *
- * Shows the token-to-token swap path with:
- * - Animated connecting lines between hops
- * - Pool version badges (V1 / V2)
- * - Fee tier at each hop
- * - On-chain detected badge for dynamic routes
- * - Smooth entrance animation
+ * SESSION 5 redesign:
+ * - Single-line horizontal flow: token → fee → token → fee → token
+ * - Tiny token pills (16px icons, tight padding)
+ * - Micro fee/version badges between arrows
+ * - Animated gradient flow line connecting all tokens
+ * - "Route" label as inline prefix with hop badge
+ * - On-chain detected badge inline
+ * - Minimal vertical footprint
  */
 
 import { memo } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, Zap, Globe } from "lucide-react";
+import { ChevronRight, Globe, Zap } from "lucide-react";
 import { TokenIcon } from "./TokenIcon";
 import type { AllowedToken, PoolRoute } from "../utils/saucerswap";
 
@@ -31,106 +33,124 @@ export const SwapRouteViz = memo(function SwapRouteViz({ route, isDark }: SwapRo
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
-      className={`mt-4 rounded-xl overflow-hidden ${
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className={`mt-3 px-3 py-2.5 rounded-xl relative overflow-hidden ${
         isDark
-          ? "bg-gradient-to-r from-slate-800/40 via-slate-800/20 to-slate-800/40 border border-white/[0.04]"
-          : "bg-gradient-to-r from-gray-50 via-white to-gray-50 border border-gray-100"
+          ? "bg-slate-800/30 border border-white/[0.04]"
+          : "bg-gray-50/80 border border-gray-100"
       }`}
     >
-      {/* Route header */}
-      <div className={`flex items-center justify-between px-3.5 pt-3 pb-2`}>
-        <div className="flex items-center gap-1.5">
-          <div className={`w-1.5 h-1.5 rounded-full ${
-            isDark ? "bg-emerald-400" : "bg-emerald-500"
-          } animate-pulse`} />
-          <span className={`text-[11px] font-semibold tracking-wide uppercase ${
-            isDark ? "text-slate-400" : "text-gray-500"
-          }`}>
-            Route
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          {route.onChain && (
-            <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-              isDark
-                ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
-                : "bg-cyan-50 text-cyan-700 border border-cyan-200"
-            }`}>
-              <Globe className="w-2.5 h-2.5" />
-              On-chain
-            </span>
-          )}
-          <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+      {/* Animated flow gradient — subtle left-to-right sweep */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-40"
+        style={{
+          backgroundImage: isDark
+            ? "linear-gradient(90deg, transparent 0%, rgba(236,72,153,0.08) 30%, rgba(139,92,246,0.06) 70%, transparent 100%)"
+            : "linear-gradient(90deg, transparent 0%, rgba(236,72,153,0.04) 30%, rgba(139,92,246,0.03) 70%, transparent 100%)",
+          backgroundSize: "200% 100%",
+          animation: "routeFlow 4s ease-in-out infinite",
+        }}
+      />
+
+      {/* Route content — single line */}
+      <div className="relative flex items-center gap-1.5 flex-wrap overflow-x-auto scrollbar-none">
+        {/* Route label pill */}
+        <div className={`flex items-center gap-1 shrink-0 mr-0.5`}>
+          <Zap className={`w-2.5 h-2.5 ${
             isDirect
-              ? isDark ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-              : isDark ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-purple-50 text-purple-700 border border-purple-200"
+              ? isDark ? "text-emerald-400" : "text-emerald-500"
+              : isDark ? "text-purple-400" : "text-purple-500"
+          }`} />
+          <span className={`text-[10px] font-bold uppercase tracking-wider ${
+            isDark ? "text-slate-500" : "text-gray-400"
           }`}>
-            <Zap className="w-2.5 h-2.5" />
             {isDirect ? "Direct" : `${hopCount}-hop`}
           </span>
+          {route.onChain && (
+            <span className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded font-semibold ${
+              isDark
+                ? "bg-cyan-500/10 text-cyan-400"
+                : "bg-cyan-50 text-cyan-600"
+            }`}>
+              <Globe className="w-2 h-2" />
+              live
+            </span>
+          )}
         </div>
-      </div>
 
-      {/* Route path */}
-      <div className="px-3.5 pb-3">
-        <div className="flex items-center gap-1 flex-wrap">
-          {route.path.map((token, idx) => (
-            <div key={token.symbol + idx} className="flex items-center gap-1">
-              {/* Token node */}
+        {/* Token path pills */}
+        {route.path.map((token, idx) => (
+          <div key={token.symbol + idx} className="flex items-center gap-1">
+            {/* Token pill */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: idx * 0.06, duration: 0.15 }}
+              className={`inline-flex items-center gap-1 px-1.5 py-1 rounded-lg ${
+                isDark ? "bg-slate-700/50" : "bg-white/80"
+              }`}
+            >
+              <TokenIcon
+                src={token.logo}
+                symbol={token.symbol}
+                htsId={token.htsId}
+                size="w-4 h-4"
+              />
+              <span className={`text-[11px] font-bold leading-none ${
+                isDark ? "text-white" : "text-slate-800"
+              }`}>
+                {token.symbol}
+              </span>
+            </motion.div>
+
+            {/* Fee connector between tokens */}
+            {idx < route.path.length - 1 && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: idx * 0.1, duration: 0.2 }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${
-                  isDark ? "bg-slate-700/50" : "bg-gray-100/80"
-                }`}
+                initial={{ opacity: 0, x: -3 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: idx * 0.06 + 0.03, duration: 0.15 }}
+                className="flex items-center gap-px"
               >
-                <TokenIcon src={token.logo} symbol={token.symbol} htsId={token.htsId} size="w-5 h-5" />
-                <span className={`text-xs font-bold ${
-                  isDark ? "text-white" : "text-slate-800"
+                {/* Version + fee micro badge */}
+                <span className={`text-[9px] font-bold leading-none ${
+                  route.pools[idx]?.source === "v2"
+                    ? isDark ? "text-purple-400/70" : "text-purple-500/70"
+                    : isDark ? "text-emerald-400/60" : "text-emerald-500/60"
                 }`}>
-                  {token.symbol}
+                  {route.pools[idx]?.source?.toUpperCase()}
                 </span>
+                <span className={`text-[9px] font-medium leading-none mx-px ${
+                  isDark ? "text-slate-600" : "text-gray-300"
+                }`}>
+                  {route.pools[idx]?.fee !== undefined ? `${route.pools[idx].fee}%` : ""}
+                </span>
+                <ChevronRight className={`w-3 h-3 -mx-0.5 ${
+                  isDark ? "text-pink-400/40" : "text-pink-400/50"
+                }`} />
               </motion.div>
+            )}
+          </div>
+        ))}
 
-              {/* Arrow + fee between nodes */}
-              {idx < route.path.length - 1 && (
-                <motion.div
-                  initial={{ opacity: 0, x: -4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.1 + 0.05, duration: 0.2 }}
-                  className="flex items-center gap-0.5"
-                >
-                  <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md ${
-                    isDark ? "bg-slate-700/30" : "bg-gray-50"
-                  }`}>
-                    {route.pools[idx]?.source && (
-                      <span className={`text-[9px] font-bold uppercase ${
-                        route.pools[idx]?.source === "v2"
-                          ? isDark ? "text-purple-400" : "text-purple-600"
-                          : isDark ? "text-emerald-400" : "text-emerald-600"
-                      }`}>
-                        {route.pools[idx]?.source}
-                      </span>
-                    )}
-                    <span className={`text-[10px] font-medium ${
-                      isDark ? "text-slate-500" : "text-gray-400"
-                    }`}>
-                      {route.pools[idx]?.fee}%
-                    </span>
-                  </div>
-                  <ArrowRight className={`w-3 h-3 ${
-                    isDark ? "text-pink-400/60" : "text-pink-500/60"
-                  }`} />
-                </motion.div>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* Total fee — only show for multi-hop */}
+        {!isDirect && (
+          <span className={`ml-auto text-[9px] font-medium shrink-0 ${
+            isDark ? "text-slate-600" : "text-gray-300"
+          }`}>
+            {route.totalFee}% total
+          </span>
+        )}
       </div>
+
+      {/* Keyframe for route flow animation */}
+      <style>{`
+        @keyframes routeFlow {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
     </motion.div>
   );
 });

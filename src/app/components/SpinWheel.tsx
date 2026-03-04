@@ -15,7 +15,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { HBARH_LOGO_DARK as hbarhLogo } from "../assets/brand";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { getSessionToken } from "../utils/auth";
 import { verifyVipEligibilityDirect } from "../utils/vip";
 

@@ -15,7 +15,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { HBARH_BRANDING_DARK, HBARH_BRANDING_LIGHT } from "../assets/brand";
 import { log } from "../utils/logger";
 

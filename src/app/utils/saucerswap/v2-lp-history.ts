@@ -7,7 +7,7 @@
  * server-side KV store. Used by V2PositionTracker for "Recent Activity".
  */
 
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import { log } from "../logger";
 
 const BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;

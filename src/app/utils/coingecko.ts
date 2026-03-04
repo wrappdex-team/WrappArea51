@@ -5,7 +5,7 @@ const COINGECKO_API = "https://api.coingecko.com/api/v3";
 // ── CoinCap Proxy (server-side API key injection) ─────────────────
 // CoinCap now requires an API key. The key is stored server-side.
 // All CoinCap requests route through our Edge Function proxy.
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 const COINCAP_PROXY_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/coincap-proxy`;
 
 async function fetchCoinCapViaProxy(path: string, timeoutMs: number = 8000): Promise<Response> {

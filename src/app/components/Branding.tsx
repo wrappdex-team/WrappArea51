@@ -21,7 +21,7 @@ import {
   HBARH_BRANDING_LIGHT,
   HBAR_LOGO,
 } from "../assets/brand";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 
 /* ─── Real Logo Assets ─────────────────────────────────────────────── */
 // On mount the Branding page fetches real logos from the "WRAPP LOGOS"

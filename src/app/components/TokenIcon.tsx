@@ -26,7 +26,7 @@
  * [C79-01] Production icon system — replaces single-source + letter fallback.
  */
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
-import { projectId } from "/utils/supabase/info";
+import { projectId } from "../../../utils/supabase/info";
 import { getReliableIconUrl } from "../utils/token-icons";
 
 // ═══════════════════════════════════════════════════════════════════════

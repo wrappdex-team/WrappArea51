@@ -15,7 +15,7 @@
  */
 
 import { log } from "../logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import type { AllowedToken, HederaNetwork } from "./tokens";
 import {
   TOKEN_BY_SYMBOL,

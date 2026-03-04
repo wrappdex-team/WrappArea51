@@ -70,7 +70,7 @@ import { log } from "./logger";
 import {
   TokenAssociateTransaction, AccountId, TokenId, TransactionId,
 } from "./hedera-sdk";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { getSessionToken } from "./auth";
 
 // ── Server Endpoint ─────────────────────────────────────────────────

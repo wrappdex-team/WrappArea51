@@ -10,7 +10,8 @@
  */
 
 import { memo, type ReactNode } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
+import { Settings2 } from "lucide-react";
 import { SAUCERSWAP_LARRY_LOGO, ONEINCH_LOGO, HEDERA_LOGO } from "../assets/brand";
 
 interface SwapCardProProps {
@@ -20,6 +21,12 @@ interface SwapCardProProps {
   title?: string;
   /** Show the venue logos header */
   showVenues?: boolean;
+  /** Settings drawer open state */
+  showSettings?: boolean;
+  /** Toggle settings drawer */
+  onToggleSettings?: () => void;
+  /** Settings drawer content (rendered between header and body) */
+  settingsContent?: ReactNode;
 }
 
 export const SwapCardPro = memo(function SwapCardPro({
@@ -27,6 +34,9 @@ export const SwapCardPro = memo(function SwapCardPro({
   isDark,
   title = "Swap",
   showVenues = true,
+  showSettings = false,
+  onToggleSettings,
+  settingsContent,
 }: SwapCardProProps) {
   return (
     <div className="relative">
@@ -62,10 +72,10 @@ export const SwapCardPro = memo(function SwapCardPro({
           }`}
         >
           {/* Header */}
-          <div className={`px-5 pt-4 pb-2 flex items-center justify-between ${
+          <div className={`px-3 sm:px-5 pt-3 sm:pt-4 pb-2 flex items-center justify-between ${
             isDark ? "border-b border-white/[0.04]" : "border-b border-gray-100"
           }`}>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 sm:gap-2.5">
               <img
                 src={SAUCERSWAP_LARRY_LOGO}
                 alt=""
@@ -73,7 +83,7 @@ export const SwapCardPro = memo(function SwapCardPro({
                 width={28}
                 height={28}
               />
-              <h2 className={`text-lg font-extrabold tracking-tight ${
+              <h2 className={`text-base sm:text-lg font-extrabold tracking-tight ${
                 isDark ? "text-white" : "text-slate-900"
               }`}>
                 {title}
@@ -82,6 +92,26 @@ export const SwapCardPro = memo(function SwapCardPro({
 
             {showVenues && (
               <div className="flex items-center gap-1">
+                {/* Settings gear */}
+                {onToggleSettings && (
+                  <motion.button
+                    onClick={onToggleSettings}
+                    whileHover={{ scale: 1.1, rotate: 30 }}
+                    whileTap={{ scale: 0.9 }}
+                    aria-label="Toggle settings"
+                    className={`p-1.5 rounded-lg mr-1 transition-colors ${
+                      showSettings
+                        ? isDark
+                          ? "bg-pink-500/15 text-pink-400"
+                          : "bg-pink-50 text-pink-600"
+                        : isDark
+                        ? "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                        : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    <Settings2 className="w-4 h-4" />
+                  </motion.button>
+                )}
                 <VenuePill
                   logo={SAUCERSWAP_LARRY_LOGO}
                   label="SaucerSwap"
@@ -107,8 +137,13 @@ export const SwapCardPro = memo(function SwapCardPro({
             )}
           </div>
 
+          {/* Settings drawer — slides down between header and content */}
+          <AnimatePresence>
+            {showSettings && settingsContent}
+          </AnimatePresence>
+
           {/* Content */}
-          <div className="px-5 pt-4 pb-5">
+          <div className="px-3 sm:px-5 pt-3 sm:pt-4 pb-3 sm:pb-5">
             {children}
           </div>
         </div>

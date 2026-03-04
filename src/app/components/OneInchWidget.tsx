@@ -52,7 +52,7 @@ import {
 } from "../utils/sounds";
 import { ONEINCH_LOGO } from "../assets/brand";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { OneInchTokenSelector } from "./OneInchTokenSelector";
 import { OneInchOrderTracker } from "./OneInchOrderTracker";
 import {
