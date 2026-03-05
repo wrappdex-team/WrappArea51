@@ -527,15 +527,20 @@ export function getExplorerTxUrl(txHash: string, chainId: number): string {
 
 // ── Price Feeds ──────────────────────────────────────────────────────
 
+// IMPLEMENTATION NOTE — Switched from CoinGecko to Binance for ETH/SOL
+// price feeds. CoinGecko blocks browser CORS from custom domains; Binance
+// has full CORS support and real-time data. Hardcoded fallbacks remain for
+// offline resilience.
+
 export async function fetchEthPrice(): Promise<number> {
   try {
     const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT",
       { signal: AbortSignal.timeout(8000) },
     );
     if (!res.ok) return 3500;
     const data = await res.json();
-    return data?.ethereum?.usd ?? 3500;
+    return parseFloat(data?.price) || 3500;
   } catch {
     return 3500;
   }
@@ -544,12 +549,12 @@ export async function fetchEthPrice(): Promise<number> {
 export async function fetchSolPrice(): Promise<number> {
   try {
     const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
+      "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT",
       { signal: AbortSignal.timeout(8000) },
     );
     if (!res.ok) return 185;
     const data = await res.json();
-    return data?.solana?.usd ?? 185;
+    return parseFloat(data?.price) || 185;
   } catch {
     return 185;
   }

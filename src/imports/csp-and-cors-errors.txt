@@ -1,0 +1,729 @@
+Patching Protobuf Long.js instance...
+App-DoFR8we1.js:2 [SECURITY] Production build using hardcoded fallback values for: VITE_WALLETCONNECT_PROJECT_ID, VITE_DYNAMIC_ENV_ID, VITE_CHANGENOW_AFFILIATE_ID. Set these env vars to enable rotation without redeployment.
+console.warn @ App-DoFR8we1.js:2
+5Connecting to '<URL>' violates the following Content Security Policy directive: "connect-src 'self' <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL> <URL>". The action has been blocked.
+App-DoFR8we1.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-DoFR8we1.js:287
+App-DoFR8we1.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-DoFR8we1.js:287
+App-DoFR8we1.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-DoFR8we1.js:287
+App-DoFR8we1.js:287 Fetch API cannot load https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json. Refused to connect because it violates the document's Content Security Policy.
+(anonymous) @ App-DoFR8we1.js:287
+wallet:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wallet:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wallet:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+api.coingecko.com/api/v3/ping:1  Failed to load resource: the server responded with a status of 429 ()
+api.saucerswap.finance/tokens:1  Failed to load resource: the server responded with a status of 401 ()
+App-DoFR8we1.js:332 Fetching content from 'https://iconic.dynamic-static-assets.com/icons/sprite.svg' violates the following Content Security Policy directive: "default-src 'self'". The action has been blocked.
+c7 @ App-DoFR8we1.js:332
+App-DoFR8we1.js:332 Fetching content from 'https://dynamic-static-assets.com/wallet-book/v1/stable/wallet-book.json' violates the following Content Security Policy directive: "default-src 'self'". The action has been blocked.
+c7 @ App-DoFR8we1.js:332
+api.saucerswap.finance/tokens:1  Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin
+App-DoFR8we1.js:2 [HBAR.h][BetaTerms] Version check unavailable — trusting localStorage 
+console.warn @ App-DoFR8we1.js:2
+api.coincap.io/v2/assets/hedera-hashgraph:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+api.coincap.io/v2/assets?limit=1:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+wallet:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wallet:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+wallet:1 Access to fetch at 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd:1  Failed to load resource: net::ERR_FAILED
+App-DoFR8we1.js:2 [WC] Relay disconnected — triggering reconnection...
+api.saucerswap.finance/tokens:1  Failed to load resource: the server responded with a status of 401 ()
+api.coincap.io/v2/assets/hedera-hashgraph:1  Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+App-DoFR8we1.js:2 [WC] Relay connected after phase 1 polling
+App-DoFR8we1.js:2 [WC] SignClient ready. Sessions: 5
+App-DoFR8we1.js:2 [WC] Pre-connect relay keepalive started
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:2 Object
+console.error @ App-DoFR8we1.js:2
+App-DoFR8we1.js:192 Fetch API cannot load https://api.basescan.org/api?module=account&action=txlist&address=0x4bd5190073e6d2e23ac278a7b7f540753fe6981f&startblock=0&endblock=99999999&page=1&offset=25&sort=desc. Refused to connect because it violates the document's Content Security Policy.
+AWe @ App-DoFR8we1.js:192
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/ss-proxy?path=%2Fv1%2Fpools:1  Failed to load resource: the server responded with a status of 404 ()
+api.saucerswap.finance/v1/pools:1  Failed to load resource: the server responded with a status of 404 ()
+App-DoFR8we1.js:2 [HBAR.h] LP token price: $0.00079216 (via DexScreener pair liquidity / LP supply)
+App-DoFR8we1.js:2 [WC] Modal opened with pairing URI
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.456858 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] Existing allowance for 0.0.456858 spender=0.0.3949434: 9957600
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.541564 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.541564 spender=0.0.3949434
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.746480 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.746480 spender=0.0.3949434
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.975304 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.975304 spender=0.0.3949434
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1080694 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1080694 spender=0.0.3949434
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1234197 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1234197 spender=0.0.3949434
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1244965 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1244965 spender=0.0.3949434
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1285191 spender=0.0.3045981
+App-DoFR8we1.js:2 [C53] No existing allowance for 0.0.1285191 spender=0.0.3949434
+App-DoFR8we1.js:2 [HBAR.h] SaucerSwap V2 pool list fetched via /v2/pools/full: 45 pools (raw: 45)
+App-DoFR8we1.js:2 [HBAR.h] [C47] Resolved contract 0.0.3949434 -> EVM: 0x00000000000000000000000000000000003c437a (via proxy, actual=true)
+App-DoFR8we1.js:2 [HBAR.h] [C47] Resolved contract 0.0.3045981 -> EVM: 0x00000000000000000000000000000000002e7a5d (via proxy, actual=true)
+ehmlclowiedoqncymegi.supabase.co/functions/v1/make-server-54299934/ss-proxy?path=%2Fv1%2Fpools:1  Failed to load resource: the server responded with a status of 404 ()
+api.saucerswap.finance/v1/pools:1  Failed to load resource: the server responded with a status of 404 ()
+App-DoFR8we1.js:2 [WC] Pre-connect relay keepalive stopped
+buy-sell:1 Access to fetch at 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=hedera-hashgraph&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=hedera-hashgraph&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h:1  Failed to load resource: net::ERR_FAILED
+buy-sell:1 Access to fetch at 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=hedera-hashgraph&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h' from origin 'https://www.wrappdex.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=hedera-hashgraph&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h:1  Failed to load resource: net::ERR_FAILED
+App-DoFR8we1.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+2App-DoFR8we1.js:2 [HBAR.h] [C47] Resolved 0.0.518487 -> EVM: 0x000000000000000000000000000000000007e957 (via proxy, actual=true)
+App-DoFR8we1.js:2 [HBAR.h] Live token prices updated: 38 tokens Object
+App-DoFR8we1.js:2 [HBAR.h] Live token prices updated: 38 tokens {HBAR: 0.09983811, WHBAR: 0.09983811, SAUCE: 0.018212745799321955, AAVE: 17.24655907, BTC.ℏ: 0.00480742, …}

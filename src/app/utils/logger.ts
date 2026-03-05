@@ -58,7 +58,7 @@ function createEntry(
 }
 
 function formatPrefix(level: LogLevel, module: string): string {
-  return `[HBAR.h][${module}]`;
+  return `[WRAPpDEX][${module}]`;
 }
 
 // ── Level Gate ─────────────────────────────────────────────────────

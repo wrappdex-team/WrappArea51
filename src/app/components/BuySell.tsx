@@ -22,6 +22,7 @@ import { fetchCoinPrices } from "../utils/coingecko";
 import { WalletConnectModal } from "./WalletConnectModal";
 import { FlashBillboard } from "./FlashBillboard";
 import { BuySellSwapTab } from "./BuySellSwapTab";
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 
 // ── Assets ───────────────────────────────────────────────────────────
 
@@ -35,14 +36,15 @@ const CHANGENOW_LOGO = "https://changenow.io/images/changenow-logo.svg";
 // behind a "coming soon" banner. Currently false = live for all users.
 const BUYSELL_TOPUP_LOCKED = false;
 
-// ChangeNOW affiliate link ID
-const CN_LINK_ID = "d05bfbe1f77541";
+// IMPLEMENTATION NOTE — CN_LINK_ID moved to server-side env var (CHANGENOW_LINK_ID).
+// Widget URLs are now built by the server endpoint /changenow/widget-url to keep
+// the affiliate link_id out of frontend source code.
+const SERVER_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 
-// IMPLEMENTATION NOTE — ChangeNOW top-up currency routing:
-//   HBAR  → delivered on Hedera network → address = Hedera account ID (0.0.xxxxx)
-//   USDC  → delivered as ERC-20 on Ethereum → address = MetaMask EVM address (0x...)
-//   USDT  → delivered as ERC-20 on Ethereum → address = MetaMask EVM address (0x...)
-// The app auto-selects the correct wallet based on the chosen currency.
+// IMPLEMENTATION NOTE — Wallet-aware address routing for Top Up:
+//   HBAR  → Hedera wallet (HashPack) → 0.0.xxxxx
+//   USDC  → EVM wallet (MetaMask) → 0x... (ERC-20 on Ethereum)
+//   USDT  → EVM wallet (MetaMask) → 0x... (ERC-20 on Ethereum)
 type TopUpCurrency = "hbar" | "usdc" | "usdt";
 
 /** Returns true if the currency is delivered on an EVM chain (MetaMask) */
@@ -63,70 +65,31 @@ function isValidHederaAddress(addr: string): boolean {
 /** Session-scoped consent key for fiat on-ramp privacy notice */
 const FIAT_CONSENT_KEY = "hbarh_fiat_consent_accepted";
 
-function buildChangeNowUrl(opts: {
-  isDark: boolean;
-  topUpMode?: boolean;
-  topUpCurrency?: string;
-  topUpAddress?: string;
-  from?: string;
-  to?: string;
-}) {
-  const bg = opts.isDark ? "0d0d1a" : "FFFFFF";
-
-  // Base params shared by both modes
-  const params = new URLSearchParams({
-    FAQ: "true",
-    backgroundColor: bg,
-    darkMode: String(opts.isDark),
-    horizontal: "false",
-    lang: "en-US",
-    link_id: CN_LINK_ID,
-    locales: "true",
-    logo: "true",
-    primaryColor: "EC4899",
-    toTheMoon: "true",
-  });
-
-  if (opts.topUpMode) {
-    // Fiat on-ramp mode — buying crypto with fiat
-    const targetCurrency = opts.topUpCurrency ?? "hbar";
-    params.set("amount", "500");
-    params.set("from", "usd");
-    params.set("fromFiat", "usd");
-    params.set("to", targetCurrency);
-    params.set("toFiat", targetCurrency);
-    params.set("isFiat", "true");
-    params.set("isEstimate", "true");
-    // IMPLEMENTATION NOTE — Address routing per currency:
-    //   HBAR  → Hedera address (0.0.xxxxx) validated by isValidHederaAddress
-    //   USDC  → ERC-20 on Ethereum → EVM address (0x...) validated by isValidEvmAddress
-    //   USDT  → ERC-20 on Ethereum → EVM address (0x...) validated by isValidEvmAddress
-    // Only validated addresses are injected to prevent XSS/injection via ChangeNOW params.
-    if (opts.topUpAddress) {
-      const isEvm = isEvmTopUpCurrency(targetCurrency as TopUpCurrency);
-      if (isEvm && isValidEvmAddress(opts.topUpAddress)) {
-        params.set("address", opts.topUpAddress);
-      } else if (!isEvm && isValidHederaAddress(opts.topUpAddress)) {
-        params.set("address", opts.topUpAddress);
-      }
-      // If address fails validation, omit it — user can enter manually in widget
+// IMPLEMENTATION NOTE — Widget URL builder moved server-side. The frontend fetches
+// the fully-constructed URL from /changenow/widget-url so the affiliate link_id
+// never appears in client source code.
+async function fetchWidgetUrl(params: Record<string, string>): Promise<string> {
+  try {
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(`${SERVER_BASE}/changenow/widget-url?${qs}`, {
+      headers: { Authorization: `Bearer ${publicAnonKey}` },
+    });
+    if (!res.ok) {
+      console.log(`[BuySell] fetchWidgetUrl failed: ${res.status} ${await res.text()}`);
+      return "";
     }
-  } else {
-    // Crypto-to-crypto cross-chain swap mode
-    params.set("amount", "0.1");
-    params.set("amountFiat", "500");
-    params.set("from", opts.from ?? "btc");
-    params.set("fromFiat", "usd");
-    params.set("to", opts.to ?? "hbar");
-    params.set("toFiat", opts.to ?? "hbar");
-    params.set("isFiat", "");
+    const data = await res.json();
+    return data.url || "";
+  } catch (err) {
+    console.log("[BuySell] fetchWidgetUrl error:", err);
+    return "";
   }
-
-  return `https://changenow.io/embeds/exchange-widget/v2/widget.html?${params.toString()}`;
 }
 
 // Iframe sandbox permissions — restrictive but functional for ChangeNOW widget
-const CN_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox";
+// IMPLEMENTATION NOTE — allow-top-navigation-by-user-activation is needed for
+// fiat payment providers (Mercuryo, Simplex, etc.) to redirect after checkout.
+const CN_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -225,8 +188,9 @@ export function BuySell() {
       ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : `$${p.toFixed(6)}`;
 
-  // ChangeNOW widget URLs
-  const crossChainUrl = buildChangeNowUrl({ isDark, from: "btc", to: "hbar" });
+  // ── Server-fetched ChangeNOW widget URLs ──
+  const [crossChainUrl, setCrossChainUrl] = useState("");
+  const [topUpUrl, setTopUpUrl] = useState("");
 
   // IMPLEMENTATION NOTE — Wallet-aware address routing for Top Up:
   //   HBAR  → Hedera wallet (HashPack) → 0.0.xxxxx
@@ -235,12 +199,30 @@ export function BuySell() {
   const isEvmCurrency = isEvmTopUpCurrency(topUpCurrency);
   const evmAddress = metaMaskAccount?.address || "";
   const topUpDeliveryAddress = isEvmCurrency ? evmAddress : walletAddress;
-  const topUpUrl = buildChangeNowUrl({
-    isDark,
-    topUpMode: true,
-    topUpCurrency: topUpCurrency,
-    topUpAddress: topUpDeliveryAddress || undefined,
-  });
+
+  // Fetch cross-chain widget URL when dark mode changes or tab is active
+  useEffect(() => {
+    if (activeTab !== "crosschain") return;
+    let cancelled = false;
+    fetchWidgetUrl({ mode: "crosschain", isDark: String(isDark), from: "btc", to: "hbar" })
+      .then(url => { if (!cancelled && url) setCrossChainUrl(url); });
+    return () => { cancelled = true; };
+  }, [activeTab, isDark]);
+
+  // Fetch top-up widget URL when currency, address, or dark mode changes
+  useEffect(() => {
+    if (activeTab !== "topup" || !fiatConsent) return;
+    let cancelled = false;
+    const params: Record<string, string> = {
+      mode: "topup",
+      isDark: String(isDark),
+      topUpCurrency,
+    };
+    if (topUpDeliveryAddress) params.topUpAddress = topUpDeliveryAddress;
+    fetchWidgetUrl(params)
+      .then(url => { if (!cancelled && url) setTopUpUrl(url); });
+    return () => { cancelled = true; };
+  }, [activeTab, isDark, topUpCurrency, topUpDeliveryAddress, fiatConsent]);
 
   // ── Tab config ─────────────────────────────────────────────────────
 
@@ -326,15 +308,21 @@ export function BuySell() {
 
               {/* Widget */}
               <div className={`relative ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`}>
-                <iframe
-                  id="iframe-widget"
-                  src={crossChainUrl}
-                  style={{ height: 440, width: "100%", border: "none" }}
-                  title="ChangeNOW Cross-Chain Swap"
-                  sandbox={CN_SANDBOX}
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  allow="clipboard-write"
-                />
+                {crossChainUrl ? (
+                  <iframe
+                    id="iframe-widget"
+                    src={crossChainUrl}
+                    style={{ height: 440, width: "100%", border: "none" }}
+                    title="ChangeNOW Cross-Chain Swap"
+                    sandbox={CN_SANDBOX}
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    allow="clipboard-write"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center" style={{ height: 440 }}>
+                    <RefreshCw className={`w-5 h-5 animate-spin ${isDark ? "text-pink-400/40" : "text-gray-400"}`} />
+                  </div>
+                )}
               </div>
 
               {/* Footer */}
@@ -529,7 +517,7 @@ export function BuySell() {
               {/* Widget — gated behind third-party data consent */}
               {!fiatConsent ? (
                 <FiatConsentGate isDark={isDark} onAccept={acceptFiatConsent} />
-              ) : (
+              ) : topUpUrl ? (
                 <div className={`relative ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} key={`topup-${topUpCurrency}-${topUpDeliveryAddress}`}>
                   <iframe
                     id="iframe-widget"
@@ -541,6 +529,10 @@ export function BuySell() {
                     allow="clipboard-write"
                   />
                 </div>
+              ) : (
+                <div className={`flex items-center justify-center ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} style={{ height: 440 }}>
+                  <RefreshCw className={`w-5 h-5 animate-spin ${isDark ? "text-pink-400/40" : "text-gray-400"}`} />
+                </div>
               )}
 
               {/* Footer */}
@@ -548,7 +540,7 @@ export function BuySell() {
                 <div className={`flex items-center justify-between text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                   <div className="flex items-center gap-2">
                     <Lock className="w-3.5 h-3.5 text-pink-400/60" />
-                    <span>Payments processed by ChangeNOW — HBAR.\u0127 never sees your card details</span>
+                    <span>Payments processed by ChangeNOW — WRAPpDEX never sees your card details</span>
                   </div>
                   <a
                     href="https://changenow.io/"
@@ -652,7 +644,7 @@ function FiatConsentGate({ isDark, onAccept }: { isDark: boolean; onAccept: () =
         <div className="text-center">
           <h3 className="font-bold text-lg">Third-Party Payment Notice</h3>
           <p className={`text-sm mt-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            Fiat purchases are processed by <strong>ChangeNOW</strong>, a third-party provider. HBAR.\u0127 does not collect, store, or have access to your payment card details, personal identity documents, or banking information.
+            Fiat purchases are processed by <strong>ChangeNOW</strong>, a third-party provider. WRAPpDEX does not collect, store, or have access to your payment card details, personal identity documents, or banking information.
           </p>
         </div>
 
@@ -664,7 +656,7 @@ function FiatConsentGate({ isDark, onAccept }: { isDark: boolean; onAccept: () =
           </div>
           <div className="flex items-start gap-2">
             <Eye className="w-3.5 h-3.5 mt-0.5 text-pink-400 flex-shrink-0" />
-            <span>HBAR.\u0127 only receives your Hedera wallet address to route the purchased crypto</span>
+            <span>WRAPpDEX only receives your Hedera wallet address to route the purchased crypto</span>
           </div>
           <div className="flex items-start gap-2">
             <Shield className="w-3.5 h-3.5 mt-0.5 text-pink-400 flex-shrink-0" />

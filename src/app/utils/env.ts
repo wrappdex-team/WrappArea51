@@ -21,15 +21,16 @@ const WALLETCONNECT_PROJECT_ID =
   import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "44b5b74e402af9f8e3c14ce8e4d2d2a0";
 const DYNAMIC_ENVIRONMENT_ID =
   import.meta.env.VITE_DYNAMIC_ENV_ID || "7e0e9ad0-5717-40f4-8aa4-5a2bdc7f062e";
-const CHANGENOW_AFFILIATE_ID =
-  import.meta.env.VITE_CHANGENOW_AFFILIATE_ID || "4de8efb2ccff7a";
+
+// IMPLEMENTATION NOTE — CHANGENOW_AFFILIATE_ID removed from frontend env.
+// The ChangeNOW link_id is now exclusively server-side via the CHANGENOW_LINK_ID
+// Supabase secret, accessed through /changenow/widget-url and /changenow/redirect-url.
 
 // Warn once in production if env vars are missing (forces hardcoded fallback rotation awareness)
 if (IS_PROD) {
   const missing: string[] = [];
   if (!import.meta.env.VITE_WALLETCONNECT_PROJECT_ID) missing.push("VITE_WALLETCONNECT_PROJECT_ID");
   if (!import.meta.env.VITE_DYNAMIC_ENV_ID) missing.push("VITE_DYNAMIC_ENV_ID");
-  if (!import.meta.env.VITE_CHANGENOW_AFFILIATE_ID) missing.push("VITE_CHANGENOW_AFFILIATE_ID");
   if (missing.length > 0) {
     console.warn(`[SECURITY] Production build using hardcoded fallback values for: ${missing.join(", ")}. Set these env vars to enable rotation without redeployment.`);
   }
@@ -73,7 +74,6 @@ export const ENV = {
   BONZO_APP_URL,
   WALLETCONNECT_PROJECT_ID,
   DYNAMIC_ENVIRONMENT_ID,
-  CHANGENOW_AFFILIATE_ID,
   HBARH_TOKEN_ID,
   VIP_NFT_TOKEN_ID,
   VIP_TOKEN_THRESHOLD,
@@ -81,7 +81,7 @@ export const ENV = {
   FEATURES,
   RATE_LIMITS,
   TIMEOUTS,
-  APP_NAME: "HBAR.ħ",
+  APP_NAME: "WRAPpDEX",
   APP_VERSION: import.meta.env.VITE_APP_VERSION || "1.0.0",
-  APP_URL: import.meta.env.VITE_APP_URL || "https://hbar.exchange",
+  APP_URL: import.meta.env.VITE_APP_URL || "https://www.wrappdex.io",
 } as const;

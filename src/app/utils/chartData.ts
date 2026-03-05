@@ -1,5 +1,6 @@
 import type { CandlestickData } from "lightweight-charts";
 import { fetchCoinCapHistory, type HistoryPoint, COINCAP_ID_MAP, COIN_ID_MAP } from "./coingecko";
+import { fetchCoinGeckoViaProxy } from "./coingecko";
 import { TOKEN_REGISTRY } from "./tokens";
 import { log } from "./logger";
 
@@ -139,13 +140,15 @@ function getCoinCapParams(timeframe: string): {
 }
 
 // ── CoinGecko OHLC fetcher ───────────────────────────────────────────
+// IMPLEMENTATION NOTE: Routes through server proxy (coingecko-proxy.ts)
+// to avoid CORS blocks from direct browser → CoinGecko requests.
 async function fetchCoinGeckoOHLC(symbol: string, days: number): Promise<CandlestickData[]> {
   const coinId = COIN_ID_MAP[symbol];
   if (!coinId) return [];
 
   try {
-    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`;
-    const res = await fetch(url);
+    const path = `/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`;
+    const res = await fetchCoinGeckoViaProxy(path, 10000);
     if (!res.ok) return [];
     const data: number[][] = await res.json();
     return data.map((d) => ({

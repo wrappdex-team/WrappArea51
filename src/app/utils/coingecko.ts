@@ -1,6 +1,7 @@
 // IMPLEMENTATION NOTE: COINCAP_API const removed — all CoinCap requests
 // now route through the server proxy (coincap-proxy.ts) which holds the API key.
-const COINGECKO_API = "https://api.coingecko.com/api/v3";
+// IMPLEMENTATION NOTE: COINGECKO_API const removed — all CoinGecko requests
+// now route through the server proxy (coingecko-proxy.ts) to avoid CORS blocks.
 
 // ── CoinCap Proxy (server-side API key injection) ─────────────────
 // CoinCap now requires an API key. The key is stored server-side.
@@ -10,6 +11,32 @@ const COINCAP_PROXY_BASE = `https://${projectId}.supabase.co/functions/v1/make-s
 
 async function fetchCoinCapViaProxy(path: string, timeoutMs: number = 8000): Promise<Response> {
   const url = `${COINCAP_PROXY_BASE}?path=${encodeURIComponent(path)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${publicAnonKey}`,
+        "Accept": "application/json",
+      },
+    });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+// ── CoinGecko Proxy (server-side CORS bypass) ────────────────────
+// CoinGecko free tier CORS-blocks browser requests from custom domains.
+// All CoinGecko requests route through our Edge Function proxy which
+// has a 2-min cache for prices and 5-min cache for OHLC data.
+const COINGECKO_PROXY_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/coingecko-proxy`;
+
+export async function fetchCoinGeckoViaProxy(path: string, timeoutMs: number = 10000): Promise<Response> {
+  const url = `${COINGECKO_PROXY_BASE}?path=${encodeURIComponent(path)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -511,6 +538,8 @@ async function fetchCoinCapPrices(symbols: string[]): Promise<Record<string, Coi
 }
 
 // ── Tier 3: CoinGecko /coins/markets ─────────────────────────────
+// IMPLEMENTATION NOTE: Routes through server proxy (coingecko-proxy.ts)
+// to avoid CORS blocks from direct browser → CoinGecko requests.
 async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, CoinPrice>> {
   const result: Record<string, CoinPrice> = {};
   const ids = symbols.map((s) => COIN_ID_MAP[s]).filter(Boolean);
@@ -520,8 +549,8 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
   const uniqueIds = [...new Set(ids)];
 
   try {
-    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h`;
-    const res = await fetchWithTimeout(url, 8000);
+    const path = `/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h`;
+    const res = await fetchCoinGeckoViaProxy(path, 10000);
     if (!res.ok) {
       log.debug("CoinGecko", `HTTP ${res.status}`);
       return result;
@@ -815,9 +844,10 @@ export function formatVolume(value: number): string {
 }
 
 // ── Global Market Data (CoinGecko /global) ────────────────────────
+// IMPLEMENTATION NOTE: Routes through server proxy to avoid CORS blocks.
 export async function fetchGlobalMarketData(): Promise<GlobalMarketData | null> {
   try {
-    const res = await fetchWithTimeout(`${COINGECKO_API}/global`, 8000);
+    const res = await fetchCoinGeckoViaProxy("/global", 10000);
     if (!res.ok) {
       log.debug("CoinGecko", `Global: HTTP ${res.status}`);
       return null;
@@ -944,10 +974,11 @@ export async function fetchAllSparklines(symbols: string[]): Promise<SparklineMa
 }
 
 // ── Top 20 Composite Index ────────────────────────────────────────
+// IMPLEMENTATION NOTE: Routes through server proxy to avoid CORS blocks.
 export async function fetchTop20Index(): Promise<Top20IndexData | null> {
   try {
-    const url = `${COINGECKO_API}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h`;
-    const res = await fetchWithTimeout(url, 8000);
+    const path = `/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h`;
+    const res = await fetchCoinGeckoViaProxy(path, 10000);
     if (!res.ok) {
       log.debug("CoinGecko", `Top20: HTTP ${res.status}`);
       return null;

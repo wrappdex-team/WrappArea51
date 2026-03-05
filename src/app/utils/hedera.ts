@@ -329,9 +329,12 @@ async function _raceOracles(timeoutMs: number): Promise<number> {
     const oracles = [
       _fetchPriceNetworkRate,
       _fetchPriceBinance,
-      _fetchPriceCoinGecko,
-      _fetchPriceCoinCap,
-      _fetchPriceSaucerSwap,
+      // IMPLEMENTATION NOTE — CoinGecko, CoinCap, and SaucerSwap oracle tiers
+      // removed from the browser-side race. CoinGecko blocks CORS from custom
+      // domains (wrappdex.io), CoinCap v2 DNS is intermittently failing, and
+      // SaucerSwap /tokens returns 401 without an API key. All three generated
+      // noisy console errors on every page load. The remaining three sources
+      // (NetworkRate, Binance, DexScreener) are reliable and CORS-friendly.
       _fetchPriceDexScreener,
     ];
 

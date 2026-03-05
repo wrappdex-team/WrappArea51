@@ -26,25 +26,31 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
 import { fetchCoinPrices, type CoinPrice } from "../utils/coingecko";
 import { Tip } from "./Tip";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 // ── ChangeNOW Partner Config ─────────────────────────────────────────
 
-const CN_LINK_ID = "4de8efb2ccff7a";
+// IMPLEMENTATION NOTE — CN_LINK_ID moved to server-side env var (CHANGENOW_LINK_ID).
+// Redirect URLs are now built by the server endpoint /changenow/redirect-url to keep
+// the affiliate link_id out of frontend source code.
+const SERVER_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 
-function buildExchangeRedirectUrl(opts: {
-  from: string;
-  to: string;
-  amount: string;
-  address?: string;
-}) {
-  const params = new URLSearchParams({
-    from: opts.from.toLowerCase(),
-    to: opts.to.toLowerCase(),
-    amount: opts.amount || "0.1",
-    link_id: CN_LINK_ID,
-  });
-  if (opts.address) params.set("address", opts.address);
-  return `https://changenow.io/exchange?${params.toString()}`;
+async function fetchRedirectUrl(params: Record<string, string>): Promise<string | null> {
+  try {
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(`${SERVER_BASE}/changenow/redirect-url?${qs}`, {
+      headers: { Authorization: `Bearer ${publicAnonKey}` },
+    });
+    if (!res.ok) {
+      console.error(`[CrossChainExchange] redirect-url fetch failed: ${res.status} ${res.statusText}`);
+      return null;
+    }
+    const data = await res.json();
+    return data.url || null;
+  } catch (err) {
+    console.error("[CrossChainExchange] redirect-url fetch error:", err);
+    return null;
+  }
 }
 
 // ── Token definitions (cross-chain) ──────────────────────────────────
@@ -178,14 +184,23 @@ export function CrossChainExchange() {
   }, [walletAddress]);
 
   // Open ChangeNOW exchange
-  const handleExchange = useCallback(() => {
-    const url = buildExchangeRedirectUrl({
+  const handleExchange = useCallback(async () => {
+    const params: Record<string, string> = {
+      mode: "exchange",
       from: fromToken.symbol,
       to: toToken.symbol,
       amount: amount || "0.1",
-      address: toToken.symbol === "HBAR" ? (recipientAddress || walletAddress || undefined) : undefined,
-    });
-    window.open(url, "_blank", "noopener,noreferrer");
+    };
+    const addr = toToken.symbol === "HBAR" ? (recipientAddress || walletAddress) : "";
+    if (addr) params.address = addr;
+
+    const url = await fetchRedirectUrl(params);
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    } else {
+      // IMPLEMENTATION NOTE — Surface error to user instead of silent failure
+      alert("Unable to connect to ChangeNOW. Please try again in a moment.");
+    }
   }, [fromToken.symbol, toToken.symbol, amount, recipientAddress, walletAddress]);
 
   const canExchange = parseFloat(amount) > 0;

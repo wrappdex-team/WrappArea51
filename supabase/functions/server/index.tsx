@@ -31,7 +31,9 @@ import { registerLpHistoryRoutes } from "./lp-history.ts";
 import { registerBetaTermsRoutes } from "./beta-terms.ts";
 import { registerStargateVtProxyRoutes } from "./stargate-vt-proxy.ts";
 import { registerCoinCapProxyRoutes } from "./coincap-proxy.ts";
+import { registerCoinGeckoProxyRoutes } from "./coingecko-proxy.ts";
 import { registerFusionPlusSdkRoutes } from "./fusion-plus-sdk.ts";
+import { registerChangeNowRoutes } from "./changenow.ts";
 
 const app = new Hono();
 
@@ -103,6 +105,8 @@ registerLpHistoryRoutes(app);
 registerBetaTermsRoutes(app);
 registerStargateVtProxyRoutes(app);
 registerCoinCapProxyRoutes(app);
+registerCoinGeckoProxyRoutes(app);
 registerFusionPlusSdkRoutes(app);
+registerChangeNowRoutes(app);
 
 Deno.serve(app.fetch);
