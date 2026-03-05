@@ -661,12 +661,26 @@ async function executeSaucerSwapV2Direct(
     // The V2 SwapRouter's WETH9 and all V2 pool Factory registrations use the contract address.
     // Without this fix, exactInputSingle passes the wrong WHBAR address → Factory.getPool
     // returns address(0) → CONTRACT_REVERT_EXECUTED on every V2 swap involving HBAR/WHBAR.
+    //
+    // [S10-ALIAS] PREFER server-provided pathEvmAddresses when available.
+    // The server resolves V2 aliases dynamically (including non-bridge wrappers
+    // like BONZO). If we re-resolve from the client token object, we lose the
+    // server's alias and use the canonical address → wrong V2 pool → revert.
+    const _serverPathAddrs = options?.validatedRoute?.pathEvmAddresses;
+    const _hasServerAddrs = _serverPathAddrs && _serverPathAddrs.length >= 2;
     const tokenInEvm = ensureWhbarContractForV2(
-      getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken), network
+      _hasServerAddrs ? _serverPathAddrs[0] : getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken), network
     );
     const tokenOutEvm = ensureWhbarContractForV2(
-      getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken), network
+      _hasServerAddrs ? _serverPathAddrs[_serverPathAddrs.length - 1] : getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken), network
     );
+    if (_hasServerAddrs) {
+      const clientIn = getSaucerswapRoutingEvmAddress(isInputNative ? whbar : inputToken);
+      const clientOut = getSaucerswapRoutingEvmAddress(isOutputNative ? whbar : outputToken);
+      if (tokenInEvm !== ensureWhbarContractForV2(clientIn, network) || tokenOutEvm !== ensureWhbarContractForV2(clientOut, network)) {
+        console.log(`[S10-ALIAS] Using server V2 addresses (differ from client): in=${tokenInEvm.slice(0,10)}… out=${tokenOutEvm.slice(0,10)}…`);
+      }
+    }
 
     // ── V2 Quote: try V2 QuoterV2 first, then fall back to price estimation ──
     // V1 getAmountsOut does NOT work for V2-only pools, so we use the V2 QuoterV2
@@ -1663,7 +1677,7 @@ async function executeSaucerSwapV2MultiHop(
     // │  graph's fee tier. If it fails, try all V2_FEE_TIERS. Use the     │
     // │  first tier that returns a valid quote. This guarantees the packed │
     // │  path encodes REAL pool fee tiers.                                 │
-    // └─────────────────────────────────────────────────────────────────────┘
+    // └───────────────────────────────────────────────���─────────────────────┘
     const correctedFees: number[] = [];
     const rpcUrl = JSON_RPC_RELAY[network] || JSON_RPC_RELAY.mainnet;
     const quoterHtsId = SAUCERSWAP_V2_QUOTER[network] || SAUCERSWAP_V2_QUOTER.mainnet;
@@ -2431,25 +2445,46 @@ async function executeSaucerSwapDirect(
     // │  checkSwapPrerequisites already ran during quote phase).           │
     // └─────────────────────────────────────────────────────────────────────┘
     // [S9] IMPLEMENTATION NOTE — Skip FOT check when server-validated route exists.
-    // The server already validated this route via QuoterV2/getAmountsOut, so if it
-    // returned V2 with a valid quote, the token doesn't have FOT issues severe enough
-    // to block V2 execution. The FOT check hits Mirror Node (0-2s latency), which is
-    // the LAST remaining blocker between "click Swap" and "wallet opens".
-    // When no validated route exists (client-side discovery), keep the FOT check.
-    if (_skipDiscovery) {
-      console.log(`[S9] Skipping FOT check — server-validated route (${vr?.source})`);
-    } else if (poolVersionInfo?.version === "v2" || (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2"))) {
+    //
+    // [S10-HOTFIX] FOT (Fee-On-Transfer) early check for V2 routes.
+    // QuoterV2 simulates via staticcall (no actual transfers), so it CAN return
+    // valid quotes for FOT tokens — but the real V2 swap MAY revert because
+    // the pool receives fewer tokens than amountIn.
+    // V1 routers have swapExact*SupportingFeeOnTransferTokens (handles FOT).
+    //
+    // [S10-REV] When FOT is detected, prefer V1 IF a V1 pool exists.
+    // If ONLY V2 liquidity exists (e.g., BONZO), keep V2 — forcing V1
+    // when no V1 pool exists makes the token completely untradeable.
+    // The server already prefers V1 for FOT tokens (confidence downgrade),
+    // so if we get here with V2, it means V2 is the only option.
+    const _isValidatedV1 = _skipDiscovery && poolVersionInfo?.version === "v1";
+    const _isV2Route = poolVersionInfo?.version === "v2" || (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2"));
+    if (_isValidatedV1) {
+      console.log(`[S10] Skipping FOT check — server-validated V1 route (${vr?.source}), V1 handles FOT natively`);
+    } else if (_isV2Route) {
       try {
         const [earlyInputFee, earlyOutputFee] = await Promise.all([
           !isInputNative ? fetchTokenFeeSchedule(inputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
           !isOutputNative ? fetchTokenFeeSchedule(outputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
         ]);
         if (earlyInputFee.hasFee || earlyOutputFee.hasFee) {
-          console.log(`[FOT-EARLY] Fee token detected BEFORE V2 attempt — forcing V1 to avoid wasted gas`);
+          console.log(`[FOT-EARLY] Fee token detected on V2 route`);
           console.log(`[FOT-EARLY]   Input: ${inputToken.symbol} ${earlyInputFee.hasFee ? earlyInputFee.feeDescription : "no fees"}`);
           console.log(`[FOT-EARLY]   Output: ${outputToken.symbol} ${earlyOutputFee.hasFee ? earlyOutputFee.feeDescription : "no fees"}`);
-          poolVersionInfo = { version: "v1", poolAddress: undefined };
-          multiHopRoute = null;
+          // [S10-REV] Only force V1 if this is NOT a server-validated route.
+          // If the server already picked V2, it means V1 wasn't available or V2 was
+          // the only option. Overriding to V1 would cause "no V1 pool" errors.
+          if (_skipDiscovery) {
+            console.log(`[FOT-EARLY] [S10] Server validated V2 for FOT token — keeping V2 (server already tried V1 preference)`);
+            // Mark as FOT so downstream V2 execution can increase slippage tolerance
+            if (earlyInputFee.hasFee) markTokenAsFOT(inputToken.htsId);
+            if (earlyOutputFee.hasFee) markTokenAsFOT(outputToken.htsId);
+          } else {
+            // No server validation — force V1 (client-side discovery path)
+            console.log(`[FOT-EARLY] Forcing V1 (no server route — client-side discovery)`);
+            poolVersionInfo = { version: "v1", poolAddress: undefined };
+            multiHopRoute = null;
+          }
         }
       } catch (earlyFotErr: any) {
         console.log(`[FOT-EARLY] Fee detection failed (non-blocking): ${earlyFotErr?.message}`);
@@ -2732,7 +2767,7 @@ async function executeSaucerSwapDirect(
     // │                                                                     │
     // │  V2 failure cache is a SOFT hint: skip V2 validation entirely     │
     // │  (saves ~2s of eth_calls) but doesn't permanently block V2.       │
-    // └─────────────────────────────────────────────────────────────────────┘
+    // └──────────────────────────���──────────────────────────────────────────┘
     let _v2MultiHopError: string | undefined;
 
     if (!isInputNative && !isOutputNative && multiHopRoute) {

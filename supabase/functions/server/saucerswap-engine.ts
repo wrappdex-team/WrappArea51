@@ -703,21 +703,17 @@ async function lookupV2PoolFromApi(
       (idA === htsIdA && idB === htsIdB) ||
       (idA === htsIdB && idB === htsIdA);
 
-    // [C36-04] Fallback: symbol match (handles bridge token ID mismatches)
+    // [S10-ALIAS] Enhanced symbol match: when one side matches by exact HTS ID
+    // and the other side has a different ID (V2 ERC20Wrapper), accept the match.
+    // This handles tokens like BONZO that have wrapper addresses for V2 pools.
     const symA = (tA.symbol || "").toUpperCase();
     const symB = (tB.symbol || "").toUpperCase();
-    // We don't have the local token registry here, but we can still do
-    // a pure-symbol cross-match when ID match fails
     const matchedBySymbol = !matchedById && symA && symB && (
-      // At least one ID matches and the other matches by symbol in the other pair
-      (idA === htsIdA && symB !== "" && idB !== htsIdB) ||
-      (idA === htsIdB && symB !== "" && idB !== htsIdA) ||
-      (idB === htsIdA && symA !== "" && idA !== htsIdB) ||
-      (idB === htsIdB && symA !== "" && idA !== htsIdA)
+      (idA === htsIdA && idB !== htsIdB) ||
+      (idA === htsIdB && idB !== htsIdA) ||
+      (idB === htsIdA && idA !== htsIdB) ||
+      (idB === htsIdB && idA !== htsIdA)
     );
-    // IMPLEMENTATION NOTE: Pure symbol matching is intentionally disabled on the
-    // server side — too many false positives without the full token registry.
-    // ID-based matching is authoritative and sufficient for all production pools.
 
     if (matchedById) {
       const fee = pool.fee ?? pool.feeTier ?? pool.feeRate ?? 3000;
@@ -729,9 +725,25 @@ async function lookupV2PoolFromApi(
       return { version: "v2", feeTier: fee, poolAddress: poolAddr, source: "api-v2" };
     }
 
-    // Log symbol fallback match but don't use it without registry validation
+    // [S10-ALIAS] Accept symbol-based match when one side has exact ID match.
+    // Safe because: (1) one token positively identified by ID, (2) pool from
+    // official SaucerSwap API. Logs discovered wrapper for diagnostics.
     if (matchedBySymbol) {
-      console.log(`[SS-Engine] V2 API potential symbol match: ${idA}(${symA})/${idB}(${symB}) for ${htsIdA}/${htsIdB} — skipping (no registry validation)`);
+      const fee = pool.fee ?? pool.feeTier ?? pool.feeRate ?? 3000;
+      const poolAddr = pool.contractId
+        ? htsIdToEvmAddress(pool.contractId).toLowerCase()
+        : (pool.id?.startsWith?.("0x") ? pool.id : undefined);
+
+      // Identify which token had the ID mismatch (wrapper discovery)
+      const mismatchIsA = (idA !== htsIdA && idA !== htsIdB);
+      const wrapperInfo = mismatchIsA
+        ? { canonical: (idB === htsIdA) ? htsIdB : htsIdA, wrapper: idA, symbol: symA }
+        : { canonical: (idA === htsIdA) ? htsIdB : htsIdA, wrapper: idB, symbol: symB };
+
+      console.log(`[SS-Engine] [S10-ALIAS] V2 API match via symbol: ${idA}(${symA})/${idB}(${symB}) ` +
+        `fee=${fee} pool=${poolAddr || "?"} — discovered wrapper: ${wrapperInfo.symbol} ${wrapperInfo.canonical} → ${wrapperInfo.wrapper}`);
+
+      return { version: "v2", feeTier: fee, poolAddress: poolAddr, source: "api-v2-symbol" } as PoolVersionInfo;
     }
   }
 

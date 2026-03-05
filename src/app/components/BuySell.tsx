@@ -1,68 +1,59 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { log } from "../utils/logger";
 import {
   RefreshCw,
   TrendingUp,
   TrendingDown,
-  ArrowDownUp,
   AlertCircle,
-  CheckCircle2,
   Shield,
-  Settings2,
-  ChevronDown,
   Zap,
   ExternalLink,
   Wallet,
   ArrowRightLeft,
+  ArrowDownUp,
   CreditCard,
   Lock,
   Eye,
   ShieldCheck,
-  Info,
 } from "lucide-react";
 import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
-import { playVipCashRegister } from "../utils/sounds";
-import { loadVipPrefs, isVipEligible } from "../utils/vip";
-import { recordTrade } from "../utils/orderbook";
 import { fetchCoinPrices } from "../utils/coingecko";
-import { formatHbar } from "../utils/hedera";
 import { WalletConnectModal } from "./WalletConnectModal";
 import { FlashBillboard } from "./FlashBillboard";
-import {
-  executeSaucerSwap,
-  type SwapResult,
-} from "../utils/saucerswap";
-import { signTransaction as hashPackSign } from "../utils/hashpack";
+import { BuySellSwapTab } from "./BuySellSwapTab";
 
 // ── Assets ───────────────────────────────────────────────────────────
 
 const HBAR_LOGO = "https://assets.coingecko.com/coins/images/3688/large/hbar.png";
 const USDC_LOGO = "https://assets.coingecko.com/coins/images/6319/large/usdc.png";
+const USDT_LOGO = "https://assets.coingecko.com/coins/images/325/large/Tether.png";
+const ETH_LOGO = "https://assets.coingecko.com/coins/images/279/large/ethereum.png";
 const CHANGENOW_LOGO = "https://changenow.io/images/changenow-logo.svg";
 
-const SLIPPAGE_OPTIONS = [1.0, 3.0];
+// IMPLEMENTATION NOTE — Kill-switch for Top Up tab. Set to true to lock the tab
+// behind a "coming soon" banner. Currently false = live for all users.
+const BUYSELL_TOPUP_LOCKED = false;
 
-// ┌─────────────────────────────────────────────────────────────────────┐
-// │  IMPLEMENTATION NOTE — TOP UP TAB PRODUCTION LOCK                  │
-// │                                                                    │
-// │  The Hedera Swap and Cross-Chain tabs are now LIVE for all users.  │
-// │  The Top Up (fiat on-ramp) tab remains locked behind a test gate   │
-// │  pending ChangeNOW partner integration verification.               │
-// │                                                                    │
-// │  TO GO LIVE: set BUYSELL_TOPUP_LOCKED = false                      │
-// │                                                                    │
-// │  SaucerSwap Partner ID: SERVER-SIDE [C108]                         │
-// │  API key lives in SAUCERSWAP_API_KEY Supabase secret and is        │
-// │  attached by the /ss-proxy endpoint. No longer client-exposed.     │
-// └─────────────────────────────────────────────────────────────────────┘
-const BUYSELL_TOPUP_LOCKED = true;
-const BUYSELL_ALLOWED_ACCOUNT = "0.0.518487";
+// ChangeNOW affiliate link ID
+const CN_LINK_ID = "d05bfbe1f77541";
 
-// ── ChangeNOW widget config ──────────────────────────────────────────
+// IMPLEMENTATION NOTE — ChangeNOW top-up currency routing:
+//   HBAR  → delivered on Hedera network → address = Hedera account ID (0.0.xxxxx)
+//   USDC  → delivered as ERC-20 on Ethereum → address = MetaMask EVM address (0x...)
+//   USDT  → delivered as ERC-20 on Ethereum → address = MetaMask EVM address (0x...)
+// The app auto-selects the correct wallet based on the chosen currency.
+type TopUpCurrency = "hbar" | "usdc" | "usdt";
 
-const CN_LINK_ID = "4de8efb2ccff7a";
+/** Returns true if the currency is delivered on an EVM chain (MetaMask) */
+function isEvmTopUpCurrency(c: TopUpCurrency): boolean {
+  return c === "usdc" || c === "usdt";
+}
+
+/** Validate EVM address format (0x + 40 hex chars) */
+function isValidEvmAddress(addr: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(addr);
+}
 
 /** Validate Hedera account ID format (0.0.xxxxx) to prevent injection */
 function isValidHederaAddress(addr: string): boolean {
@@ -106,9 +97,19 @@ function buildChangeNowUrl(opts: {
     params.set("toFiat", targetCurrency);
     params.set("isFiat", "true");
     params.set("isEstimate", "true");
-    // ChangeNOW fiat on-ramp fields
-    if (opts.topUpAddress && isValidHederaAddress(opts.topUpAddress)) {
-      params.set("address", opts.topUpAddress);
+    // IMPLEMENTATION NOTE — Address routing per currency:
+    //   HBAR  → Hedera address (0.0.xxxxx) validated by isValidHederaAddress
+    //   USDC  → ERC-20 on Ethereum → EVM address (0x...) validated by isValidEvmAddress
+    //   USDT  → ERC-20 on Ethereum → EVM address (0x...) validated by isValidEvmAddress
+    // Only validated addresses are injected to prevent XSS/injection via ChangeNOW params.
+    if (opts.topUpAddress) {
+      const isEvm = isEvmTopUpCurrency(targetCurrency as TopUpCurrency);
+      if (isEvm && isValidEvmAddress(opts.topUpAddress)) {
+        params.set("address", opts.topUpAddress);
+      } else if (!isEvm && isValidHederaAddress(opts.topUpAddress)) {
+        params.set("address", opts.topUpAddress);
+      }
+      // If address fails validation, omit it — user can enter manually in widget
     }
   } else {
     // Crypto-to-crypto cross-chain swap mode
@@ -131,47 +132,24 @@ const CN_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups all
 
 type TabKey = "swap" | "crosschain" | "topup";
 
-interface RecentSwap {
-  id: string;
-  type: "buy" | "sell";
-  hbarAmount: number;
-  usdcAmount: number;
-  price: number;
-  timestamp: Date;
-  status: "completed" | "pending";
-}
-
 // ── Main Component ───────────────────────────────────────────────────
 
 export function BuySell() {
   const { isDark } = useTheme();
-  const { primaryWallet, hederaAccount, hashPackSession, hederaNetwork, hbarPrice: ctxHbarPrice } = useWallet();
+  const { primaryWallet, hashPackSession, hederaNetwork, hbarPrice: ctxHbarPrice, hederaAccount, metaMaskAccount, connectMetaMask, isConnectingMetaMask } = useWallet();
 
-  // ── Top Up Lock Gate (derived — evaluated after all hooks below) ──
-  const connectedHederaAccount = hashPackSession?.accountId ?? "";
-  const isAllowedTester = connectedHederaAccount === BUYSELL_ALLOWED_ACCOUNT;
-  const isTopUpLocked = BUYSELL_TOPUP_LOCKED && !isAllowedTester;
+  // IMPLEMENTATION NOTE — Top Up is now live for all users. The lock gate
+  // below evaluates to false (BUYSELL_TOPUP_LOCKED = false) so the locked
+  // banner is never shown. Kept as a kill-switch for emergency rollback.
+  const isTopUpLocked = BUYSELL_TOPUP_LOCKED;
 
   const [activeTab, setActiveTab] = useState<TabKey>("swap");
-  const [mode, setMode] = useState<"buy" | "sell">("buy");
-  const [hbarAmount, setHbarAmount] = useState("");
-  const [usdcAmount, setUsdcAmount] = useState("");
-  const [slippage, setSlippage] = useState(3);
-  const [showSlippageSettings, setShowSlippageSettings] = useState(false);
-  const [customSlippage, setCustomSlippage] = useState("");
-  const [livePrice, setLivePrice] = useState(0);
-  const [priceChange, setPriceChange] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
-  const [swapStatus, setSwapStatus] = useState<"idle" | "confirming" | "success" | "error">("idle");
-  const [swapError, setSwapError] = useState<string | null>(null);
-  const [lastTxId, setLastTxId] = useState<string | null>(null);
-  const [recentSwaps, setRecentSwaps] = useState<RecentSwap[]>([]);
 
   // Top-up currency selector
-  const [topUpCurrency, setTopUpCurrency] = useState<"hbar" | "usdc">("hbar");
+  const [topUpCurrency, setTopUpCurrency] = useState<TopUpCurrency>("hbar");
 
-  // Fiat consent gate — user must acknowledge third-party data notice once per session
+  // Fiat consent gate
   const [fiatConsent, setFiatConsent] = useState(() => {
     try { return sessionStorage.getItem(FIAT_CONSENT_KEY) === "true"; } catch { return false; }
   });
@@ -180,14 +158,32 @@ export function BuySell() {
     try { sessionStorage.setItem(FIAT_CONSENT_KEY, "true"); } catch { /* non-critical */ }
   };
 
-  // Connected wallet address for top-up pre-fill (must be above useEffect that depends on it)
   const walletAddress = hashPackSession?.accountId || "";
 
-  // Stepper connector script – load once, never remove (ChangeNOW's
-  // stepper-connector.js crashes if the script tag is removed while its
-  // internal MutationObserver is still active).
-  // We poll for the actual iframe DOM node instead of a blind timeout so the
-  // script never runs before the iframe exists (avoids "iframe-widget not found").
+  // ── Live HBAR price for header widget ──
+  const [livePrice, setLivePrice] = useState(0);
+  const [priceChange, setPriceChange] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const refreshPrice = useCallback(async () => {
+    setIsRefreshing(true);
+    const data = await fetchCoinPrices(["HBAR"]);
+    if (data.HBAR && data.HBAR.current_price > 0) {
+      setLivePrice(data.HBAR.current_price);
+      setPriceChange(data.HBAR.price_change_percentage_24h);
+    } else if (ctxHbarPrice > 0) {
+      setLivePrice(ctxHbarPrice);
+    }
+    setTimeout(() => setIsRefreshing(false), 500);
+  }, [ctxHbarPrice]);
+
+  useEffect(() => {
+    refreshPrice();
+    const iv = setInterval(refreshPrice, 30000);
+    return () => clearInterval(iv);
+  }, [refreshPrice]);
+
+  // ── ChangeNOW stepper connector script ──
   const scriptLoaded = useRef(false);
   useEffect(() => {
     if (scriptLoaded.current) return;
@@ -195,7 +191,7 @@ export function BuySell() {
 
     let cancelled = false;
     let attempts = 0;
-    const maxAttempts = 50; // ~830ms at 60 fps — generous for React render
+    const maxAttempts = 50;
 
     const tryLoad = () => {
       if (cancelled) return;
@@ -220,201 +216,36 @@ export function BuySell() {
     return () => { cancelled = true; };
   }, [activeTab]);
 
-  // Fetch live HBAR price
-  const refreshPrice = useCallback(async () => {
-    setIsRefreshing(true);
-    const data = await fetchCoinPrices(["HBAR"]);
-    if (data.HBAR && data.HBAR.current_price > 0) {
-      setLivePrice(data.HBAR.current_price);
-      setPriceChange(data.HBAR.price_change_percentage_24h);
-    } else if (ctxHbarPrice > 0) {
-      // Fallback to WalletContext oracle price
-      setLivePrice(ctxHbarPrice);
-    }
-    setTimeout(() => setIsRefreshing(false), 500);
-  }, [ctxHbarPrice]);
-
-  useEffect(() => {
-    refreshPrice();
-    const iv = setInterval(refreshPrice, 30000);
-    return () => clearInterval(iv);
-  }, [refreshPrice]);
-
-  const effectiveSlippage = customSlippage ? parseFloat(customSlippage) : slippage;
-
-  const handleHbarChange = (value: string) => {
-    setHbarAmount(value);
-    if (value && !isNaN(parseFloat(value))) {
-      setUsdcAmount((parseFloat(value) * livePrice).toFixed(2));
-    } else {
-      setUsdcAmount("");
-    }
-  };
-
-  const handleUsdcChange = (value: string) => {
-    setUsdcAmount(value);
-    if (value && !isNaN(parseFloat(value))) {
-      setHbarAmount((parseFloat(value) / livePrice).toFixed(4));
-    } else {
-      setHbarAmount("");
-    }
-  };
-
-  const handlePercentage = (pct: number) => {
-    if (!hederaAccount) return;
-    if (mode === "sell") {
-      const amount = (hederaAccount.hbarBalance ?? 0) * (pct / 100);
-      handleHbarChange(amount.toFixed(4));
-    } else {
-      const usdcToken = hederaAccount.tokens?.find(t => t.symbol === "USDC");
-      const usdcBal = usdcToken?.balance ?? 0;
-      const amt = usdcBal * (pct / 100);
-      handleUsdcChange(amt.toFixed(2));
-    }
-  };
-
-  const handleSwap = async () => {
-    if (!hbarAmount || !usdcAmount) return;
-    setSwapStatus("confirming");
-    setSwapError(null);
-    setLastTxId(null);
-
-    const accountId = hashPackSession?.accountId;
-
-    if (accountId) {
-      const inputSymbol = mode === "buy" ? "USDC" : "HBAR";
-      const outputSymbol = mode === "buy" ? "HBAR" : "USDC";
-      const inputAmt = mode === "buy" ? usdcAmount : hbarAmount;
-
-      // SauceSwap primary
-      try {
-        const saucerResult: SwapResult = await executeSaucerSwap(
-          inputSymbol,
-          outputSymbol,
-          inputAmt,
-          effectiveSlippage,
-          accountId,
-          hederaNetwork
-        );
-
-        if (saucerResult.success) {
-          onSwapSuccess(saucerResult.transactionId || null, "saucerswap", accountId);
-          return;
-        }
-        log.debug("BuySell", "SauceSwap failed", saucerResult.error);
-        setSwapError(`SaucerSwap: ${saucerResult.error}`);
-      } catch (err: any) {
-        log.debug("BuySell", "SauceSwap error", err?.message);
-      }
-    }
-
-    // ── No simulation fallback — production mode only ──
-    // If we reach here, the wallet is either not connected or
-    // SaucerSwap router failed. Show the real error.
-    if (!accountId) {
-      setSwapStatus("error");
-      setSwapError("Connect your HashPack wallet to execute swaps.");
-    } else {
-      setSwapStatus("error");
-      if (!swapError) {
-        setSwapError("SaucerSwap router failed. Please try again or check your network connection.");
-      }
-    }
-  };
-
-  const onSwapSuccess = (txId: string | null, router: "saucerswap", accountId: string) => {
-    // VIP cash register
-    try {
-      const vp = loadVipPrefs();
-      const toks = hederaAccount?.tokens ?? [];
-      if (vp.active && vp.features.vip_sounds && isVipEligible(toks, hederaNetwork)) {
-        playVipCashRegister();
-      }
-    } catch { /* non-critical */ }
-
-    const newSwap: RecentSwap = {
-      id: txId || Date.now().toString(),
-      type: mode,
-      hbarAmount: parseFloat(hbarAmount),
-      usdcAmount: parseFloat(usdcAmount),
-      price: livePrice,
-      timestamp: new Date(),
-      status: "completed",
-    };
-    setRecentSwaps((prev) => [newSwap, ...prev].slice(0, 10));
-    setLastTxId(txId);
-    setSwapStatus("success");
-    setSwapError(null);
-
-    // Record in site orderbook
-    try {
-      recordTrade({
-        wallet: accountId,
-        side: mode,
-        tokenIn: mode === "buy" ? "USDC" : "HBAR",
-        tokenOut: mode === "buy" ? "HBAR" : "USDC",
-        amountIn: mode === "buy" ? parseFloat(usdcAmount) : parseFloat(hbarAmount),
-        amountOut: mode === "buy" ? parseFloat(hbarAmount) : parseFloat(usdcAmount),
-        priceUsd: livePrice,
-        route: "HBAR ↔ USDC",
-        router,
-        transactionId: txId,
-        status: "confirmed",
-        slippageBps: 0,
-      });
-    } catch { /* non-critical */ }
-
-    setTimeout(() => {
-      setSwapStatus("idle");
-      setHbarAmount("");
-      setUsdcAmount("");
-      setLastTxId(null);
-    }, 3000);
-  };
-
-  const flipMode = () => {
-    setMode((m) => (m === "buy" ? "sell" : "buy"));
-    setHbarAmount("");
-    setUsdcAmount("");
-  };
-
-  const minReceived = mode === "buy"
-    ? (parseFloat(hbarAmount || "0") * (1 - effectiveSlippage / 100)).toFixed(4)
-    : (parseFloat(usdcAmount || "0") * (1 - effectiveSlippage / 100)).toFixed(2);
-
-  const fee = parseFloat(usdcAmount || "0") * 0.0025;
-  const hbarBalance = hederaAccount ? hederaAccount.hbarBalance : 0;
-  const hbarUsdValue = hbarBalance * livePrice;
-  const connected = !!primaryWallet;
+  const cardClass = isDark
+    ? "bg-gradient-to-br from-slate-900/60 to-slate-800/30 border border-pink-500/15 backdrop-blur-sm"
+    : "bg-white border border-gray-200 shadow-sm";
 
   const formatPrice = (p: number) =>
     p >= 1
       ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : `$${p.toFixed(6)}`;
 
-  const canTrade = connected && !!hbarAmount && !!usdcAmount && parseFloat(hbarAmount) > 0;
-
-  const cardClass = isDark
-    ? "bg-gradient-to-br from-slate-900/60 to-slate-800/30 border border-pink-500/15 backdrop-blur-sm"
-    : "bg-white border border-gray-200 shadow-sm";
-
-  const inputClass = isDark
-    ? "bg-slate-800/60 border border-pink-500/10"
-    : "bg-gray-50 border border-gray-200";
-
   // ChangeNOW widget URLs
   const crossChainUrl = buildChangeNowUrl({ isDark, from: "btc", to: "hbar" });
+
+  // IMPLEMENTATION NOTE — Wallet-aware address routing for Top Up:
+  //   HBAR  → Hedera wallet (HashPack) → 0.0.xxxxx
+  //   USDC  → EVM wallet (MetaMask) → 0x... (ERC-20 on Ethereum)
+  //   USDT  → EVM wallet (MetaMask) → 0x... (ERC-20 on Ethereum)
+  const isEvmCurrency = isEvmTopUpCurrency(topUpCurrency);
+  const evmAddress = metaMaskAccount?.address || "";
+  const topUpDeliveryAddress = isEvmCurrency ? evmAddress : walletAddress;
   const topUpUrl = buildChangeNowUrl({
     isDark,
     topUpMode: true,
     topUpCurrency: topUpCurrency,
-    topUpAddress: walletAddress || undefined,
+    topUpAddress: topUpDeliveryAddress || undefined,
   });
 
   // ── Tab config ─────────────────────────────────────────────────────
 
   const TABS: { key: TabKey; label: string; icon: React.ReactNode; desc: string }[] = [
-    { key: "swap", label: "Hedera Swap", icon: <ArrowDownUp className="w-4 h-4" />, desc: "HBAR ↔ USDC on-chain" },
+    { key: "swap", label: "Hedera Swap", icon: <ArrowDownUp className="w-4 h-4" />, desc: "HBAR \u2194 USDC on-chain" },
     { key: "crosschain", label: "Cross-Chain", icon: <ArrowRightLeft className="w-4 h-4" />, desc: "Any chain to any chain" },
     { key: "topup", label: "Top Up", icon: <CreditCard className="w-4 h-4" />, desc: "Buy with card or fiat" },
   ];
@@ -471,438 +302,9 @@ export function BuySell() {
           ))}
         </div>
 
-        {/* ── TAB: Hedera Swap ── */}
+        {/* ── TAB: Hedera Swap (upgraded to SwapPanel architecture) ── */}
         {activeTab === "swap" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 space-y-4">
-              <div className={`rounded-2xl p-6 ${cardClass}`}>
-                {/* Buy/Sell Toggle */}
-                <div className="grid grid-cols-2 gap-2 mb-6">
-                  <button
-                    onClick={() => { setMode("buy"); setHbarAmount(""); setUsdcAmount(""); }}
-                    className={`py-3 rounded-xl font-bold transition-all duration-300 ${
-                      mode === "buy"
-                        ? "bg-gradient-to-r from-emerald-600 to-green-500 text-white shadow-lg shadow-emerald-500/30"
-                        : isDark ? "bg-slate-800/50 text-slate-400 hover:text-white" : "bg-gray-100 text-gray-500 hover:text-gray-900"
-                    }`}
-                  >
-                    Buy HBAR
-                  </button>
-                  <button
-                    onClick={() => { setMode("sell"); setHbarAmount(""); setUsdcAmount(""); }}
-                    className={`py-3 rounded-xl font-bold transition-all duration-300 ${
-                      mode === "sell"
-                        ? "bg-gradient-to-r from-red-600 to-orange-500 text-white shadow-lg shadow-red-500/30"
-                        : isDark ? "bg-slate-800/50 text-slate-400 hover:text-white" : "bg-gray-100 text-gray-500 hover:text-gray-900"
-                    }`}
-                  >
-                    Sell HBAR
-                  </button>
-                </div>
-
-                {/* From Section */}
-                <div className={`rounded-xl p-4 mb-2 ${inputClass}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                      {mode === "buy" ? "You Pay" : "You Sell"}
-                    </span>
-                    {hederaAccount && (
-                      <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                        Balance: {mode === "sell"
-                          ? `${formatHbar(hbarBalance)} HBAR`
-                          : (() => {
-                              const usdcToken = hederaAccount.tokens?.find(t => t.symbol === "USDC");
-                              return `${(usdcToken?.balance ?? 0).toFixed(2)} USDC`;
-                            })()
-                        }
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="number"
-                      placeholder="0.00"
-                      className="bg-transparent flex-1 outline-none text-2xl w-0"
-                      value={mode === "buy" ? usdcAmount : hbarAmount}
-                      onChange={(e) => mode === "buy" ? handleUsdcChange(e.target.value) : handleHbarChange(e.target.value)}
-                    />
-                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isDark ? "bg-slate-700/50" : "bg-gray-200"}`}>
-                      <img src={mode === "buy" ? USDC_LOGO : HBAR_LOGO} alt={mode === "buy" ? "USDC" : "HBAR"} className="w-6 h-6 rounded-full" />
-                      <span className="font-bold text-sm">{mode === "buy" ? "USDC" : "HBAR"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Swap Direction */}
-                <div className="flex justify-center -my-3 relative z-10">
-                  <button
-                    onClick={flipMode}
-                    className={`p-2.5 rounded-xl border-4 transition-all duration-300 hover:rotate-180 ${
-                      isDark
-                        ? "bg-slate-800 border-[#0a0a0f] hover:bg-slate-700 text-pink-400"
-                        : "bg-white border-gray-100 hover:bg-gray-50 text-pink-600 shadow-sm"
-                    }`}
-                  >
-                    <ArrowDownUp className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* To Section */}
-                <div className={`rounded-xl p-4 mt-2 ${inputClass}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                      {mode === "buy" ? "You Receive" : "You Get"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="number"
-                      placeholder="0.00"
-                      className="bg-transparent flex-1 outline-none text-2xl w-0"
-                      value={mode === "buy" ? hbarAmount : usdcAmount}
-                      onChange={(e) => mode === "buy" ? handleHbarChange(e.target.value) : handleUsdcChange(e.target.value)}
-                    />
-                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isDark ? "bg-slate-700/50" : "bg-gray-200"}`}>
-                      <img src={mode === "buy" ? HBAR_LOGO : USDC_LOGO} alt={mode === "buy" ? "HBAR" : "USDC"} className="w-6 h-6 rounded-full" />
-                      <span className="font-bold text-sm">{mode === "buy" ? "HBAR" : "USDC"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quick % buttons */}
-                {hederaAccount && (
-                  <div className="grid grid-cols-4 gap-2 mt-4">
-                    {[25, 50, 75, 100].map((pct) => (
-                      <button
-                        key={pct}
-                        onClick={() => handlePercentage(pct)}
-                        className={`py-2 rounded-lg text-sm transition-colors ${
-                          isDark
-                            ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/10 text-slate-300"
-                            : "bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-600"
-                        }`}
-                      >
-                        {pct}%
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Slippage */}
-                <div className="mt-4">
-                  <button
-                    onClick={() => setShowSlippageSettings(!showSlippageSettings)}
-                    className={`flex items-center gap-2 text-sm w-full ${isDark ? "text-slate-400 hover:text-slate-300" : "text-gray-500 hover:text-gray-700"}`}
-                  >
-                    <Settings2 className="w-4 h-4" />
-                    <span>Slippage: {effectiveSlippage}%</span>
-                    <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${showSlippageSettings ? "rotate-180" : ""}`} />
-                  </button>
-
-                  {showSlippageSettings && (
-                    <div className={`mt-3 p-3 rounded-xl ${inputClass}`}>
-                      <div className="flex items-center gap-2">
-                        {SLIPPAGE_OPTIONS.map((opt) => (
-                          <button
-                            key={opt}
-                            onClick={() => { setSlippage(opt); setCustomSlippage(""); }}
-                            className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
-                              slippage === opt && !customSlippage
-                                ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white"
-                                : isDark ? "bg-slate-700/50 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
-                            }`}
-                          >
-                            {opt}%
-                          </button>
-                        ))}
-                        <div className="flex items-center flex-1">
-                          <input
-                            type="number"
-                            placeholder="Custom"
-                            className={`w-full px-2 py-1.5 rounded-lg text-sm outline-none ${isDark ? "bg-slate-700/50 text-white" : "bg-gray-200 text-gray-900"}`}
-                            value={customSlippage}
-                            onChange={(e) => setCustomSlippage(e.target.value)}
-                          />
-                          <span className={`text-sm ml-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>%</span>
-                        </div>
-                      </div>
-                      {effectiveSlippage > 3 && (
-                        <div className="flex items-center gap-1.5 mt-2 text-amber-400 text-xs">
-                          <AlertCircle className="w-3.5 h-3.5" />
-                          High slippage may result in unfavorable rates
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Transaction Details */}
-                {(hbarAmount || usdcAmount) && (
-                  <div className={`mt-4 p-4 rounded-xl space-y-2 text-sm ${inputClass}`}>
-                    <div className="flex items-center justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Rate</span>
-                      <span>1 HBAR = {formatPrice(livePrice)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Min. {mode === "buy" ? "Received" : "Output"}</span>
-                      <span>{minReceived} {mode === "buy" ? "HBAR" : "USDC"}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Fee (0.25%)</span>
-                      <span>${fee.toFixed(4)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className={isDark ? "text-slate-400" : "text-gray-500"}>Network</span>
-                      <span>~$0.0001</span>
-                    </div>
-                    <div className={`flex items-center justify-between pt-2 border-t font-bold ${isDark ? "border-slate-700" : "border-gray-200"}`}>
-                      <span className={isDark ? "text-slate-300" : "text-gray-700"}>Total</span>
-                      <span>${(parseFloat(usdcAmount || "0") + fee + 0.0001).toFixed(2)} USDC</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Button */}
-                <div className="mt-6">
-                  {!connected ? (
-                    <button
-                      onClick={() => setShowWalletModal(true)}
-                      className="w-full py-4 rounded-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg shadow-pink-500/30 transition-all duration-300"
-                    >
-                      Connect Wallet to Trade
-                    </button>
-                  ) : swapStatus === "confirming" ? (
-                    <button disabled className="w-full py-4 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white opacity-80 cursor-wait">
-                      <div className="flex items-center justify-center gap-2">
-                        <RefreshCw className="w-5 h-5 animate-spin" />
-                        Confirming...
-                      </div>
-                    </button>
-                  ) : swapStatus === "success" ? (
-                    <button disabled className="w-full py-4 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-green-500 text-white">
-                      <div className="flex items-center justify-center gap-2">
-                        <CheckCircle2 className="w-5 h-5" />
-                        Swap Complete
-                      </div>
-                    </button>
-                  ) : swapStatus === "error" ? (
-                    <div>
-                      <button disabled className="w-full py-4 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white">
-                        <div className="flex items-center justify-center gap-2">
-                          <AlertCircle className="w-5 h-5" />
-                          Swap Failed
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => { setSwapStatus("idle"); setSwapError(null); }}
-                        className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}
-                      >
-                        Try Again
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleSwap}
-                      disabled={!canTrade}
-                      className={`w-full py-4 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
-                        !canTrade
-                          ? "bg-slate-600 opacity-50 cursor-not-allowed shadow-none"
-                          : mode === "buy"
-                          ? "bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 shadow-emerald-500/30"
-                          : "bg-gradient-to-r from-red-600 to-orange-500 hover:from-red-500 hover:to-orange-400 shadow-red-500/30"
-                      }`}
-                    >
-                      {mode === "buy" ? "Buy HBAR" : "Sell HBAR"}
-                    </button>
-                  )}
-                </div>
-
-                {/* Error/Success Messages */}
-                {swapError && swapStatus !== "success" && (
-                  <div className={`mt-3 flex items-center gap-2 text-xs p-3 rounded-lg ${isDark ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-red-50 text-red-600 border border-red-200"}`}>
-                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>{swapError}</span>
-                  </div>
-                )}
-
-                {lastTxId && swapStatus === "success" && (
-                  <div className={`mt-3 flex items-center justify-between text-xs p-3 rounded-lg ${isDark ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"}`}>
-                    <span className={isDark ? "text-emerald-400" : "text-emerald-700"}>
-                      Tx: {lastTxId.slice(0, 20)}...
-                    </span>
-                    <a
-                      href={`https://hashscan.io/${hederaNetwork}/transaction/${lastTxId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`flex items-center gap-1 ${isDark ? "text-emerald-400 hover:text-emerald-300" : "text-emerald-600 hover:text-emerald-500"}`}
-                    >
-                      HashScan <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                )}
-
-                {/* Router badge */}
-                {hashPackSession?.accountId && swapStatus === "idle" && (
-                  <div className="mt-3 flex items-center justify-center gap-2 text-xs">
-                    <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-emerald-900/20 text-emerald-400 border border-emerald-500/20" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
-                      <Zap className="w-2.5 h-2.5" />
-                      SauceSwap V1
-                    </span>
-                  </div>
-                )}
-                <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                  <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Routed through SauceSwap on Hedera with ~2s finality. Signed via HashPack.</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column */}
-            <div className="lg:col-span-5 space-y-4">
-              {/* Wallet Balance */}
-              {hederaAccount && (
-                <div className={`rounded-2xl p-5 ${cardClass}`}>
-                  <h3 className="font-bold mb-3 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                    Your Balance
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <img src={HBAR_LOGO} alt="HBAR" className="w-7 h-7 rounded-full" />
-                        <div>
-                          <div className="font-bold">HBAR</div>
-                          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Hedera</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold">{formatHbar(hbarBalance)}</div>
-                        <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                          ~${hbarUsdValue.toFixed(2)}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <img src={USDC_LOGO} alt="USDC" className="w-7 h-7 rounded-full" />
-                        <div>
-                          <div className="font-bold">USDC</div>
-                          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>USD Coin</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        {(() => {
-                          const usdcToken = hederaAccount.tokens?.find(t => t.symbol === "USDC");
-                          const bal = usdcToken?.balance ?? 0;
-                          return (
-                            <>
-                              <div className="font-bold">{bal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>~${bal.toFixed(2)}</div>
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Need more HBAR? Upsell to Top Up */}
-              <div className={`rounded-2xl p-5 ${cardClass}`}>
-                <h3 className="font-bold mb-2 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                  Need More HBAR?
-                </h3>
-                <p className={`text-sm mb-3 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                  Buy HBAR or USDC instantly with a credit card, bank transfer, or 100+ cryptocurrencies.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setActiveTab("topup")}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white transition-all"
-                  >
-                    <CreditCard className="w-4 h-4" />
-                    Buy with Card
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("crosschain")}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm transition-all ${
-                      isDark ? "bg-slate-800/50 border border-pink-500/20 text-slate-300 hover:text-white" : "bg-gray-100 border border-gray-200 text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    <ArrowRightLeft className="w-4 h-4" />
-                    Cross-Chain
-                  </button>
-                </div>
-              </div>
-
-              {/* Recent Swaps */}
-              {recentSwaps.length > 0 && (
-                <div className={`rounded-2xl p-5 ${cardClass}`}>
-                  <h3 className="font-bold mb-3 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                    Recent Swaps
-                  </h3>
-                  <div className="space-y-2">
-                    {recentSwaps.map((swap) => (
-                      <div
-                        key={swap.id}
-                        className={`flex items-center justify-between p-3 rounded-lg ${isDark ? "bg-slate-800/30" : "bg-gray-50"}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white ${
-                            swap.type === "buy"
-                              ? "bg-gradient-to-br from-emerald-600 to-green-500"
-                              : "bg-gradient-to-br from-red-600 to-orange-500"
-                          }`}>
-                            {swap.type === "buy" ? "B" : "S"}
-                          </div>
-                          <div>
-                            <div className="text-sm font-bold">
-                              {swap.type === "buy" ? "Bought" : "Sold"} {swap.hbarAmount.toLocaleString()} HBAR
-                            </div>
-                            <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                              @ {formatPrice(swap.price)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-bold">${swap.usdcAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                            {swap.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Market Info */}
-              <div className={`rounded-2xl p-5 ${cardClass}`}>
-                <h3 className="font-bold mb-3 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent">
-                  Hedera Network
-                </h3>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500/20 to-green-500/20 flex items-center justify-center flex-shrink-0">
-                      <Zap className="w-5 h-5 text-emerald-400" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-bold">~2s Finality</div>
-                      <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>aBFT hashgraph consensus</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500/20 to-cyan-500/20 flex items-center justify-center flex-shrink-0">
-                      <Shield className="w-5 h-5 text-blue-400" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-bold">$0.0001 Fees</div>
-                      <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>Near-zero transaction costs</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <BuySellSwapTab />
         )}
 
         {/* ── TAB: Cross-Chain (ChangeNOW) ── */}
@@ -986,9 +388,9 @@ export function BuySell() {
                   founder testing. It will be available to all users once the payment
                   integration has been fully verified.
                 </p>
-                {connectedHederaAccount && (
+                {walletAddress && (
                   <p className={`text-xs mt-4 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                    Connected: {connectedHederaAccount}
+                    Connected: {walletAddress}
                   </p>
                 )}
               </div>
@@ -1046,24 +448,80 @@ export function BuySell() {
                       <img src={USDC_LOGO} alt="USDC" className="w-4 h-4 rounded-full" />
                       USDC
                     </button>
+                    <button
+                      onClick={() => setTopUpCurrency("usdt")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                        topUpCurrency === "usdt"
+                          ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white"
+                          : isDark ? "bg-slate-800/50 text-slate-400 hover:text-white border border-white/5" : "bg-gray-100 text-gray-500 hover:text-gray-900 border border-gray-200"
+                      }`}
+                    >
+                      <img src={USDT_LOGO} alt="USDT" className="w-4 h-4 rounded-full" />
+                      USDT
+                    </button>
                   </div>
                 </div>
 
-                {/* Connected wallet address */}
-                {walletAddress && (
-                  <div className={`mt-3 flex items-center gap-2 text-xs p-2.5 rounded-lg ${isDark ? "bg-emerald-900/15 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"}`}>
-                    <Wallet className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                    <span className={isDark ? "text-emerald-400" : "text-emerald-700"}>
-                      Sending to: <span className="font-mono">{walletAddress}</span>
+                {/* EVM network indicator for USDC/USDT */}
+                {isEvmCurrency && (
+                  <div className={`mt-2 flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg ${isDark ? "bg-indigo-900/15 border border-indigo-500/20" : "bg-indigo-50 border border-indigo-200"}`}>
+                    <img src={ETH_LOGO} alt="Ethereum" className="w-3.5 h-3.5 rounded-full flex-shrink-0" />
+                    <span className={isDark ? "text-indigo-400" : "text-indigo-700"}>
+                      {topUpCurrency.toUpperCase()} will be delivered as an <strong>ERC-20 token on Ethereum</strong> to your MetaMask wallet
                     </span>
                   </div>
                 )}
-                {!walletAddress && (
+
+                {/* Connected wallet address — context-aware per currency */}
+                {!isEvmCurrency && walletAddress && (
+                  <div className={`mt-3 flex items-center gap-2 text-xs p-2.5 rounded-lg ${isDark ? "bg-emerald-900/15 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"}`}>
+                    <Wallet className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span className={isDark ? "text-emerald-400" : "text-emerald-700"}>
+                      Sending to Hedera: <span className="font-mono">{walletAddress}</span>
+                    </span>
+                  </div>
+                )}
+                {!isEvmCurrency && !walletAddress && (
                   <div className={`mt-3 flex items-center gap-2 text-xs p-2.5 rounded-lg ${isDark ? "bg-amber-900/15 border border-amber-500/20" : "bg-amber-50 border border-amber-200"}`}>
                     <AlertCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                     <span className={isDark ? "text-amber-400" : "text-amber-700"}>
-                      Connect your wallet to auto-fill your Hedera address, or enter it manually in the widget.
+                      Connect HashPack to auto-fill your Hedera address, or enter it manually in the widget.
                     </span>
+                  </div>
+                )}
+
+                {/* MetaMask address for EVM currencies */}
+                {isEvmCurrency && evmAddress && (
+                  <div className={`mt-3 flex items-center gap-2 text-xs p-2.5 rounded-lg ${isDark ? "bg-emerald-900/15 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-200"}`}>
+                    <Wallet className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span className={isDark ? "text-emerald-400" : "text-emerald-700"}>
+                      Sending to MetaMask: <span className="font-mono">{evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}</span>
+                      {metaMaskAccount?.chainName && (
+                        <span className={`ml-1.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>({metaMaskAccount.chainName})</span>
+                      )}
+                    </span>
+                  </div>
+                )}
+                {isEvmCurrency && !evmAddress && (
+                  <div className={`mt-3 flex items-center justify-between text-xs p-2.5 rounded-lg ${isDark ? "bg-amber-900/15 border border-amber-500/20" : "bg-amber-50 border border-amber-200"}`}>
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                      <span className={isDark ? "text-amber-400" : "text-amber-700"}>
+                        Connect MetaMask to receive {topUpCurrency.toUpperCase()} on Ethereum
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => connectMetaMask()}
+                      disabled={isConnectingMetaMask}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        isConnectingMetaMask
+                          ? "opacity-50 cursor-not-allowed"
+                          : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-sm"
+                      }`}
+                    >
+                      <Wallet className="w-3 h-3" />
+                      {isConnectingMetaMask ? "Connecting..." : "Connect MetaMask"}
+                    </button>
                   </div>
                 )}
               </div>
@@ -1072,7 +530,7 @@ export function BuySell() {
               {!fiatConsent ? (
                 <FiatConsentGate isDark={isDark} onAccept={acceptFiatConsent} />
               ) : (
-                <div className={`relative ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} key={`topup-${topUpCurrency}-${walletAddress}`}>
+                <div className={`relative ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} key={`topup-${topUpCurrency}-${topUpDeliveryAddress}`}>
                   <iframe
                     id="iframe-widget"
                     src={topUpUrl}
@@ -1090,7 +548,7 @@ export function BuySell() {
                 <div className={`flex items-center justify-between text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                   <div className="flex items-center gap-2">
                     <Lock className="w-3.5 h-3.5 text-pink-400/60" />
-                    <span>Payments processed by ChangeNOW — HBAR.ħ never sees your card details</span>
+                    <span>Payments processed by ChangeNOW — HBAR.\u0127 never sees your card details</span>
                   </div>
                   <a
                     href="https://changenow.io/"
@@ -1194,7 +652,7 @@ function FiatConsentGate({ isDark, onAccept }: { isDark: boolean; onAccept: () =
         <div className="text-center">
           <h3 className="font-bold text-lg">Third-Party Payment Notice</h3>
           <p className={`text-sm mt-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            Fiat purchases are processed by <strong>ChangeNOW</strong>, a third-party provider. HBAR.ħ does not collect, store, or have access to your payment card details, personal identity documents, or banking information.
+            Fiat purchases are processed by <strong>ChangeNOW</strong>, a third-party provider. HBAR.\u0127 does not collect, store, or have access to your payment card details, personal identity documents, or banking information.
           </p>
         </div>
 
@@ -1206,7 +664,7 @@ function FiatConsentGate({ isDark, onAccept }: { isDark: boolean; onAccept: () =
           </div>
           <div className="flex items-start gap-2">
             <Eye className="w-3.5 h-3.5 mt-0.5 text-pink-400 flex-shrink-0" />
-            <span>HBAR.ħ only receives your Hedera wallet address to route the purchased crypto</span>
+            <span>HBAR.\u0127 only receives your Hedera wallet address to route the purchased crypto</span>
           </div>
           <div className="flex items-start gap-2">
             <Shield className="w-3.5 h-3.5 mt-0.5 text-pink-400 flex-shrink-0" />

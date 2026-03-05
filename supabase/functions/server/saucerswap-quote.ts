@@ -396,16 +396,22 @@ async function ensureDynamicAliasMap(): Promise<Map<string, string>> {
       if (BRIDGE_TOKEN_SYMBOLS.has(symbol)) {
         // Known bridge symbol — auto-discover V2 wrapper
         aliasMap.set(canonical.id, alias.id);
-        // Only log when the discovered alias differs from the hardcoded one
         if (TOKEN_ALIAS_MAP[canonical.id] !== alias.id) {
-          console.log(`[SS-Quote] [C100-S4] NEW dynamic alias: ${symbol} ${canonical.id} → ${alias.id}`);
+          console.log(`[SS-Quote] [C100-S4] NEW dynamic alias (bridge): ${symbol} ${canonical.id} → ${alias.id}`);
         }
       } else if (entries.length >= 2) {
-        // Non-bridge symbol with multiple IDs — log for diagnostics.
-        // This helps operators discover new bridge tokens that need
-        // adding to BRIDGE_TOKEN_SYMBOLS.
-        console.log(`[SS-Quote] [C100-S4] Multi-ID symbol (not bridge): ${symbol} → ` +
-          entries.map(e => e.id).join(", "));
+        // [S10-ALIAS] Non-bridge tokens with multiple IDs — ALSO alias.
+        // Many native HTS tokens (e.g., BONZO, SMACKM) have V2 ERC20Wrappers
+        // with higher entity numbers. Without this alias, QuoterV2 uses the
+        // canonical address → Factory.getPool computes a different CREATE2
+        // address → no pool found → the token appears untradeable on V2.
+        //
+        // Safety: the alias only affects V2 QuoterV2 calls via resolveV2AliasId().
+        // If the wrapper ID is wrong, QuoterV2 returns 0 (no harm). V1 routing
+        // always uses canonical addresses and is unaffected.
+        aliasMap.set(canonical.id, alias.id);
+        console.log(`[SS-Quote] [C100-S4] [S10-ALIAS] Dynamic alias (non-bridge): ${symbol} ${canonical.id} → ${alias.id} ` +
+          `(${entries.length} IDs: ${entries.map(e => e.id).join(", ")})`);
       }
     }
 
@@ -687,6 +693,58 @@ const QUOTE_OVERALL_TIMEOUT_MS = 15_000;
  * Ordered by most common first for early success in Promise.any races.
  */
 const V2_FEE_TIERS = [3000, 1500, 10000, 500, 100] as const;
+
+// ═════════════════════════════════════════════════════════════════════
+// [S10] FOT (Fee-On-Transfer) Detection via Mirror Node
+// ═════════════════════════════════════════════════════════════════════
+// Checks if an HTS token has custom_fees (fractional/royalty/fixed).
+// V2 concentrated liquidity routers CANNOT handle FOT tokens — the pool
+// receives fewer tokens than amountIn due to the fee deduction, causing
+// CONTRACT_REVERT. V1 has swapExact*SupportingFeeOnTransferTokens.
+//
+// Runs in PARALLEL with quote probes so it adds zero latency.
+// Result is used to filter out V2 quotes when FOT is detected.
+// ═════════════════════════════════════════════════════════════════════
+
+/** Cache: tokenId → hasFee (true/false). TTL managed by caller. */
+const _fotCache = new Map<string, { hasFee: boolean; ts: number }>();
+const FOT_CACHE_TTL_MS = 300_000; // 5 min — fee schedules rarely change
+
+/**
+ * [S10] Check if a token has HTS custom fees (FOT detection).
+ * Returns true if the token has any fractional_fees or royalty_fees.
+ * Fixed fees are ignored (they don't cause V2 reverts in the same way).
+ */
+async function checkTokenHasFees(tokenId: string, network = "mainnet"): Promise<boolean> {
+  if (!tokenId || tokenId === WHBAR_HTS_ID) return false;
+  const cached = _fotCache.get(tokenId);
+  if (cached && Date.now() - cached.ts < FOT_CACHE_TTL_MS) return cached.hasFee;
+  try {
+    const mirrorBase = network === "mainnet"
+      ? "https://mainnet.mirrornode.hedera.com"
+      : "https://testnet.mirrornode.hedera.com";
+    const resp = await fetch(`${mirrorBase}/api/v1/tokens/${tokenId}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!resp.ok) {
+      console.log(`[S10-FOT] Mirror Node returned ${resp.status} for ${tokenId}`);
+      return false;
+    }
+    const data = await resp.json();
+    const fees = data?.custom_fees;
+    const hasFractional = fees?.fractional_fees?.length > 0;
+    const hasRoyalty = fees?.royalty_fees?.length > 0;
+    const hasFee = hasFractional || hasRoyalty;
+    _fotCache.set(tokenId, { hasFee, ts: Date.now() });
+    if (hasFee) {
+      console.log(`[S10-FOT] Token ${tokenId} has custom fees — V2 unsafe (fractional=${hasFractional}, royalty=${hasRoyalty})`);
+    }
+    return hasFee;
+  } catch (err: any) {
+    console.log(`[S10-FOT] Fee check failed for ${tokenId}: ${err?.message?.slice(0, 80)}`);
+    return false; // Fail open — don't block quotes
+  }
+}
 
 // ═════════════════════════════════════════════════════════════════════
 // PARALLEL RPC + MIRROR RACE  [C92]
@@ -1635,7 +1693,7 @@ export async function ssQuote(params: {
   network: string;
   inputAliasId?: string;
   outputAliasId?: string;
-}): Promise<{ best: QuoteResult | null; allQuotes: QuoteResult[]; scoredRoutes: ScoredRoute[]; poolInfo: PoolVersionInfo | null }> {
+}): Promise<{ best: QuoteResult | null; allQuotes: QuoteResult[]; scoredRoutes: ScoredRoute[]; poolInfo: PoolVersionInfo | null; hasFotToken: boolean; inputHasFees: boolean; outputHasFees: boolean }> {
   const { inputToken, outputToken, amountIn, slippage, inputDecimals, outputDecimals, network, inputAliasId, outputAliasId } = params;
   const amountInBigInt = BigInt(amountIn);
 
@@ -1729,11 +1787,23 @@ export async function ssQuote(params: {
     ? probeThreeHopRoutes(amountInBigInt, tokenInEvm, tokenOutEvm, inputHtsId, outputHtsId, network)
     : Promise.resolve([] as QuoteResult[]);
 
-  const [strategies, multiRouteResults, threeHopResults] = await Promise.all([
+  // [S10] FOT check — runs in parallel with all quote probes (zero added latency).
+  // Checks BOTH input and output tokens for HTS custom fees. If either has fees,
+  // V2 quotes will be filtered out (V2 can't handle FOT tokens).
+  const fotPromise = Promise.all([
+    checkTokenHasFees(inputHtsId, network),
+    checkTokenHasFees(outputHtsId, network),
+  ]).catch(() => [false, false] as [boolean, boolean]);
+
+  const [strategies, multiRouteResults, threeHopResults, fotResults] = await Promise.all([
     Promise.race([strategiesPromise, timeoutPromise]),
     multiRoutePromise,
     threeHopPromise,
+    fotPromise,
   ]);
+
+  const [inputHasFees, outputHasFees] = fotResults as [boolean, boolean];
+  const hasFotToken = inputHasFees || outputHasFees;
 
   // Collect successful results from main strategies
   const allQuotes: QuoteResult[] = [];
@@ -1762,7 +1832,36 @@ export async function ssQuote(params: {
 
   console.log(`[SS-Quote] ${allQuotes.length} total quotes for ${inputHtsId}→${outputHtsId} (${multiRouteResults.length} from 2-hop, ${threeHopResults.length} from 3-hop)`);
 
-  if (allQuotes.length === 0) return { best: null, allQuotes: [], scoredRoutes: [], poolInfo };
+  // [S10] FOT handling — PREFER V1 quotes but KEEP V2 as last resort.
+  // V2 concentrated liquidity routers can't handle FOT tokens natively:
+  // the pool receives fewer tokens than amountIn due to fee deduction.
+  // QuoterV2 uses staticcall (no actual transfers), so it quotes fine
+  // but the real swap MAY revert. V1 has SupportingFeeOnTransferTokens.
+  //
+  // [S10-REV] Do NOT remove V2 quotes — some tokens (e.g., BONZO) ONLY
+  // have V2 liquidity with no V1 pool. Removing V2 makes them untradeable.
+  // Instead, downgrade V2 confidence when FOT is detected so V1 sorts first.
+  // If no V1 exists, V2 still executes (may work depending on fee structure).
+  if (hasFotToken) {
+    const v1Count = allQuotes.filter(q => q.poolVersion === "v1").length;
+    const v2Count = allQuotes.filter(q => q.poolVersion === "v2").length;
+    console.log(`[S10-FOT] FOT token detected (input=${inputHasFees}, output=${outputHasFees}). Quotes: ${v1Count} V1, ${v2Count} V2`);
+
+    if (v1Count > 0 && v2Count > 0) {
+      // Have both — downgrade V2 confidence so V1 sorts first
+      for (const q of allQuotes) {
+        if (q.poolVersion === "v2" && q.confidence === "high") {
+          q.confidence = "medium";
+          console.log(`[S10-FOT] Downgraded V2 quote "${q.source}" from high→medium confidence (V1 available)`);
+        }
+      }
+    } else if (v1Count === 0 && v2Count > 0) {
+      // V2 only — keep V2, warn that FOT may cause issues
+      console.log(`[S10-FOT] ⚠️ No V1 quotes available — keeping V2 as only option for FOT token`);
+    }
+  }
+
+  if (allQuotes.length === 0) return { best: null, allQuotes: [], scoredRoutes: [], poolInfo: effectivePoolInfo, hasFotToken, inputHasFees, outputHasFees };
 
   // [C92] Rank by HIGHEST OUTPUT among high-confidence quotes first,
   // then by confidence for lower tiers. This ensures the user always gets
@@ -1853,7 +1952,7 @@ export async function ssQuote(params: {
     }
   }
 
-  return { best, allQuotes, scoredRoutes, poolInfo };
+  return { best, allQuotes, scoredRoutes, poolInfo: effectivePoolInfo, hasFotToken, inputHasFees, outputHasFees };
 
   } finally {
     // [C99] Guarantee alias cleanup — prevents leaking across requests on error
@@ -1945,7 +2044,7 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
       const cacheKey = `${network}:${inputHtsId}:${outputHtsId}:${amountIn}`;
       const wasCached = _quoteCache.has(cacheKey) && Date.now() - (_quoteCache.get(cacheKey)?.ts ?? 0) < QUOTE_CACHE_TTL_MS;
 
-      const { best, allQuotes, scoredRoutes, poolInfo } = await ssQuote({
+      const { best, allQuotes, scoredRoutes, poolInfo, hasFotToken, inputHasFees, outputHasFees } = await ssQuote({
         inputToken, outputToken, amountIn, slippage, inputDecimals, outputDecimals, network,
         inputAliasId, outputAliasId,
       });
@@ -1953,10 +2052,16 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
       const durationMs = Date.now() - startMs;
 
       if (!best) {
+        // [S10] Differentiate: FOT-filtered vs genuinely no quotes
+        const fotFilteredAll = hasFotToken && allQuotes.length === 0;
         return c.json({
-          error: "No quotes available",
+          error: fotFilteredAll
+            ? "This token has transfer fees (FOT) — only V1 pools can handle it, but no V1 liquidity was found for this pair"
+            : "No quotes available",
+          fotBlocked: fotFilteredAll,
           inputToken, outputToken, amountIn, durationMs,
           poolInfo,
+          fotWarning: hasFotToken ? { inputHasFees, outputHasFees } : null,
         }, 404);
       }
 
@@ -2044,6 +2149,12 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
           selectedReason: isOutputHbar && !isInputHbar
             ? "v1-preferred-token-to-hbar"
             : bestVersion === "v2" ? "v2-better-output" : "v1-better-output",
+        } : null,
+        // [S10] FOT warning — tells client this pair involves a fee-on-transfer token.
+        // Client should PREFER V1 for this pair. If only V2, proceed with caution.
+        fotWarning: hasFotToken ? {
+          inputHasFees: inputHasFees,
+          outputHasFees: outputHasFees,
         } : null,
       });
     } catch (err: any) {

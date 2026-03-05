@@ -92,6 +92,7 @@ const AVATAR_COLORS = [
 ];
 
 function symbolToColor(symbol: string): string {
+  if (!symbol) return AVATAR_COLORS[0];
   let hash = 0;
   for (let i = 0; i < symbol.length; i++) {
     hash = symbol.charCodeAt(i) + ((hash << 5) - hash);
