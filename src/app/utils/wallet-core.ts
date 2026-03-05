@@ -774,6 +774,16 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       // client.request() is async: it encrypts, then calls ws.send(), then
       // returns a Promise that resolves when the wallet RESPONDS. An early
       // rejection means the publish itself failed (dead WS, bad topic, etc.).
+      // [S9] Log click-to-request delay for diagnostics
+      const swapClickedAt = (globalThis as any).__swapClickedAt;
+      if (swapClickedAt) {
+        const delayMs = Date.now() - swapClickedAt;
+        console.log(`[S9] ⏱️ Click → wallet request: ${delayMs}ms (target: <1000ms)`);
+        if (delayMs > 2000) {
+          console.warn(`[S9] ⚠️ Click-to-request delay is ${delayMs}ms — wallet may have gone to sleep. Check for blocking operations in swap pipeline.`);
+        }
+      }
+
       let publishFailed = false;
       let publishFailReason = "";
       const requestPromise = client.request(params);
@@ -1152,11 +1162,32 @@ export async function prewarmRelay(): Promise<void> {
 let _relayKeepaliveId: ReturnType<typeof setInterval> | null = null;
 
 /**
+ * [S9] Timestamp of the last successful session ping to the WALLET.
+ * Used by _tryActivateWalletFast to skip the awaited ping if the keepalive
+ * recently confirmed the wallet is alive. The keepalive fires every 25s,
+ * so if _walletLastPingedAt is within the last 20s, the wallet is alive.
+ */
+let _walletLastPingedAt = 0;
+const WALLET_PING_FRESH_MS = 20_000; // 20s — slightly less than keepalive interval
+
+/**
  * [C81-01] Start a relay keepalive that pings every 25 seconds.
  *
  * WalletConnect relay WebSockets typically drop after 30-60 seconds of
  * inactivity. This keepalive ensures the connection stays warm so wallet
  * signing requests are delivered instantly.
+ *
+ * [S9] IMPLEMENTATION NOTE — Now also sends a WC session ping to the
+ * WALLET side of the relay. Previously, this only checked the dApp's
+ * relay connection. But the WALLET extension's service worker can be
+ * killed by Chrome after ~30s of inactivity, severing its relay WS.
+ * The session ping travels: dApp → relay → wallet extension, which:
+ *   1. Forces the relay server to maintain the wallet's subscription
+ *   2. Wakes HashPack's service worker if Chrome suspended it
+ *   3. Confirms the full round-trip path works
+ * Without this, clicking Swap after 30s+ of idle time often fails to
+ * open the wallet because the signing request queues at the relay with
+ * no live subscriber on the wallet side.
  *
  * Call once after wallet connection. Safe to call multiple times.
  */
@@ -1171,6 +1202,27 @@ export function startRelayKeepalive(): void {
       if (relayer && !relayer.connected) {
         console.log("[WC] Keepalive: relay disconnected — reconnecting");
         await _ensureRelayConnected(_signClient, 8000);
+      }
+      // [S9] Session ping — keeps the WALLET's relay subscriber alive.
+      // This is the critical addition: without it, the dApp relay stays
+      // connected but the wallet's side drops, causing signing requests
+      // to queue with no one listening.
+      try {
+        const sessions = _signClient.session?.getAll?.() ?? [];
+        if (sessions.length > 0) {
+          const topic = sessions[sessions.length - 1].topic;
+          await Promise.race([
+            _signClient.ping({ topic }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("keepalive ping timeout")), 5000)),
+          ]);
+          // [S9] Mark wallet as confirmed alive — _tryActivateWalletFast
+          // will skip its awaited ping if this is fresh enough.
+          _walletLastPingedAt = Date.now();
+        }
+      } catch (pingErr: any) {
+        // Non-fatal — ping failure means wallet may be asleep.
+        // The next signing request's _tryActivateWalletFast will handle it.
+        console.log(`[WC] Keepalive: session ping failed (${pingErr?.message?.slice(0, 60) ?? "unknown"}) — wallet may need manual activation`);
       }
     } catch {
       // Best effort — don't throw in keepalive
@@ -1918,20 +1970,47 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
     }
   }
 
-  // ── Strategy 2 (background): WC session ping ──────────────────────
-  // Fire-and-forget — don't await. The ping wakes the wallet if its
-  // relay WS is still alive, but we don't block on it completing.
-  client.ping({ topic }).then(
-    () => console.log(`[WC] Session ping OK (${Date.now() - startMs}ms)`),
-    (e: any) => console.log(`[WC] Session ping failed (${Date.now() - startMs}ms):`, e?.message?.slice(0, 80)),
-  );
+  // ── [S9] Fast path: skip ping if keepalive recently confirmed wallet alive ──
+  // The 25s keepalive sends a session ping that round-trips through the relay
+  // and proves the wallet's service worker is awake. If that succeeded within
+  // the last 20s, skip the awaited ping here — saves 200-500ms latency on
+  // the hot path (click Swap → wallet opens).
+  if (Date.now() - _walletLastPingedAt < WALLET_PING_FRESH_MS) {
+    console.log(`[WC] [S9] Wallet pinged ${Math.round((Date.now() - _walletLastPingedAt) / 1000)}s ago — skipping activation ping (fast path)`);
+    return;
+  }
 
-  // ── Brief wait ───────────────────────────────────────────────────────
-  // [WALLET-PERF] Reduced from 300ms to 100ms. The relay keepalive
-  // (startRelayKeepalive in SwapPanel) maintains the WC WebSocket
-  // connection, so the extension's service worker should already be warm.
-  // 100ms is sufficient for chrome.runtime.sendMessage to register.
-  // Previous values: 800ms → 300ms → 100ms.
-  await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  // ── Strategy 2: WC session ping (AWAITED with timeout) ─────────────
+  // [S9] IMPLEMENTATION NOTE — Changed from fire-and-forget to awaited.
+  // The session ping travels: dApp → relay → wallet → relay → dApp.
+  // If it succeeds, the FULL relay round-trip is confirmed working and
+  // the wallet's service worker is provably awake. This is the single
+  // most important check for reliable wallet popup delivery.
+  //
+  // Previously fire-and-forget with 100ms fixed wait — the ping often
+  // completed AFTER client.request() fired, meaning the signing request
+  // raced ahead of the activation. Now we AWAIT the ping (1.5s timeout)
+  // to guarantee the wallet is alive before sending the signing request.
+  //
+  // If the ping fails/times out, proceed anyway — the signing request
+  // may still work if the relay queues and delivers it when the wallet
+  // reconnects. But the user may need to manually click the extension.
+  try {
+    await Promise.race([
+      client.ping({ topic }).then(
+        () => {
+          _walletLastPingedAt = Date.now();
+          console.log(`[WC] [S9] Session ping OK (${Date.now() - startMs}ms) — wallet confirmed alive`);
+        },
+      ),
+      new Promise<void>((resolve) => setTimeout(() => {
+        console.log(`[WC] [S9] Session ping timeout after 1.5s — proceeding (wallet may be asleep)`);
+        resolve();
+      }, 1500)),
+    ]);
+  } catch (pingErr: any) {
+    console.log(`[WC] [S9] Session ping failed (${Date.now() - startMs}ms): ${pingErr?.message?.slice(0, 80)} — proceeding anyway`);
+  }
+
   console.log(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
 }

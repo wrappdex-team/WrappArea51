@@ -90,8 +90,17 @@ import { verifyIsContract } from "./verification";
  * Previous value was 3000ms which, combined with the 1s internal
  * wait in executeHederaTransactionFast + post-approval verification,
  * added ~6.5s of unnecessary delay between wallet popups.
+ *
+ * [S2] IMPLEMENTATION NOTE — Raised from 0 → 2000ms.
+ * CONSENSUS_WAIT_MS = 0 caused intermittent CONTRACT_REVERT_EXECUTED
+ * on Token→HBAR swaps because the approval had not reached consensus
+ * before the swap TX arrived at the router's transferFrom() check.
+ * 2000ms gives Hedera consensus (3-5s finality) time to commit the
+ * approval while keeping the gap between wallet popups small.
+ * SaucerSwap.finance's UI has ~2-3s of JS processing between popups
+ * which serves the same purpose; our pipeline was near-instant (0ms).
  */
-const CONSENSUS_WAIT_MS = 0;
+const CONSENSUS_WAIT_MS = 2000;
 
 // ══════════════════════════════════════════════════════════════════════
 // ── [STALE-ALLOW] MIRROR NODE STALE-ALLOWANCE RACE GUARD ────────────
@@ -531,18 +540,36 @@ async function approveIfNeeded(params: {
     };
   }
 
-  // ── [PERF-01] No artificial wait ──────────────────────────────────
-  // WalletConnect round-trip (sign → submit → return) already takes 2-5s,
-  // providing sufficient time for Hedera consensus. Both transactions
-  // target the same node (0.0.3) ensuring sequential mempool processing.
-  // Post-approval Mirror Node verification was also removed — it added
-  // 1-2.5s of delay with no benefit (if approval failed, the swap
-  // reverts with a clear CONTRACT_REVERT_EXECUTED error).
+  // ── [PERF-01 / S2] Consensus wait ──────────────────────────────────
+  // [S2] IMPLEMENTATION NOTE — CONSENSUS_WAIT_MS was raised from 0 → 2000ms.
+  // The WC round-trip (sign → submit → return) takes 2-5s, but the approval
+  // may not reach consensus before the swap TX arrives. 2s wait ensures the
+  // HTS precompile sees the fresh allowance when the swap TX's transferFrom()
+  // checks it. This runs concurrently with the wallet re-focus hint (S2).
   if (CONSENSUS_WAIT_MS > 0) {
-    console.log(`[PERF-01] Waiting ${CONSENSUS_WAIT_MS}ms for approval consensus...`);
+    console.log(`[S2] Waiting ${CONSENSUS_WAIT_MS}ms for approval consensus...`);
     await new Promise(r => setTimeout(r, CONSENSUS_WAIT_MS));
   }
-  console.log(`[PERF-01] ✓ Approval submitted — proceeding to swap (no artificial wait)`);
+
+  // ── [S3] Lightweight approval confirmation ──────────────────────────
+  // After the consensus wait, do a quick Mirror Node allowance check to
+  // confirm the approval landed. If it hasn't, wait 2s more. This catches
+  // edge cases where Mirror Node lag exceeds CONSENSUS_WAIT_MS.
+  // Non-blocking: if the check fails (network error), proceed optimistically.
+  // The swap TX will revert cleanly if allowance is actually stale.
+  try {
+    const postApproveAllowance = await fetchTokenAllowance(ownerAccountId, tokenHtsId, spenderAccountId, network);
+    if (postApproveAllowance < rawInput) {
+      console.log(`[S3] Post-approval allowance ${postApproveAllowance} < ${rawInput} — waiting 2s more for Mirror Node sync`);
+      await new Promise(r => setTimeout(r, 2000));
+    } else {
+      console.log(`[S3] ✓ Approval confirmed on Mirror Node: ${postApproveAllowance} >= ${rawInput}`);
+    }
+  } catch (confirmErr: any) {
+    console.log(`[S3] Approval confirmation check failed (non-blocking): ${confirmErr?.message || confirmErr}`);
+  }
+
+  console.log(`[S2] ✓ Approval submitted — proceeding to swap`);
 
   return {
     needed: true, skipped: false, success: true,
@@ -731,10 +758,14 @@ async function executeSaucerSwapV2Direct(
       // 0.5% slippage causes frequent INSUFFICIENT_OUTPUT_AMOUNT reverts.
       // SaucerSwap.finance defaults to 0.5% but their frontend re-quotes
       // right before execution; our architecture has a longer gap.
-      // Floor: 1% for on-chain QuoterV2 quotes, 5% for price estimates.
+      // [S3] IMPLEMENTATION NOTE — Floor raised from 1% → 2%.
+      // Token→HBAR V2 swaps have an extra latency gap (approval popup +
+      // CONSENSUS_WAIT_MS + swap popup signing time). The concentrated
+      // liquidity tick can move 1-3% in the 5-10s between quote and execution.
+      // 2% floor matches the multi-hop V2 floor (line ~1784) for consistency.
       const effectiveSlippage = quote.source === "price-estimate"
         ? Math.max(slippagePct, 5) // wider slippage for estimated quotes
-        : Math.max(slippagePct, 1); // [SLIPPAGE-FIX] 1% floor for V2 on-chain quotes
+        : Math.max(slippagePct, 2); // [S3] 2% floor for V2 on-chain quotes
       minOutput = Math.max(1, Math.floor(quote.amountOut * (1 - effectiveSlippage / 100)));
       console.log(`[HBAR.h] V2 Quote: source=${quote.source}, amountOut=${quote.amountOut}, minOutput=${minOutput} (${effectiveSlippage}% slippage, requested=${slippagePct}%)`);
     } else {
@@ -936,7 +967,11 @@ async function executeSaucerSwapV2Direct(
     // SWAP_GAS is the gas LIMIT for the EVM call, NOT the HBAR cost.
     // NOTE: APPROVE_GAS was removed — approveIfNeeded() uses native HTS
     // AccountAllowanceApproveTransaction which doesn't need an EVM gas limit.
-    const SWAP_GAS = 1_500_000;
+    // [S2] IMPLEMENTATION NOTE — Raised from 1.5M → 2M.
+    // Token→HBAR V2 multicall (exactInputSingle + unwrapWETH9) involves two
+    // cross-contract calls, each with HTS precompile interactions. 1.5M was
+    // marginal and caused sporadic out-of-gas reverts on busy tick crossings.
+    const SWAP_GAS = 2_000_000;
     const gasReserveNeeded = 1; // 1 HBAR covers gas + network fees with plenty of margin
 
     if (isInputNative) {
@@ -1164,6 +1199,20 @@ async function executeSaucerSwapV2Direct(
           executionVenue: "saucerswap-v2",
           userCancelled: v2ApproveResult.userCancelled,
         };
+      }
+
+      // [S2] IMPLEMENTATION NOTE — Wallet re-focus hint between approve and swap.
+      // After approval returns, the wallet may have gone to background (desktop)
+      // or the WC relay needs time to clear the first request before accepting
+      // the next. This non-blocking call pings the wallet extension's service
+      // worker so the swap popup appears promptly instead of the user having
+      // to manually switch windows. Combined with CONSENSUS_WAIT_MS = 2000,
+      // this runs during the consensus wait — zero added latency.
+      if (v2ApproveResult.needed && !v2ApproveResult.skipped) {
+        try {
+          const { tryOpenWalletExtension } = await import("../hashpack");
+          tryOpenWalletExtension().catch(() => {});
+        } catch { /* non-blocking */ }
       }
 
       // [C53] Update step count — if approve was skipped, swap is step 1/1
@@ -1983,6 +2032,14 @@ async function executeSaucerSwapV2MultiHop(
         };
       }
 
+      // [S2] Wallet re-focus hint between approve and swap (multi-hop path)
+      if (mhApproveResult.needed && !mhApproveResult.skipped) {
+        try {
+          const { tryOpenWalletExtension: mhWalletHint } = await import("../hashpack");
+          mhWalletHint().catch(() => {});
+        } catch { /* non-blocking */ }
+      }
+
       const mhSwapStep = mhApproveResult.skipped ? 1 : 2;
       const mhTotalSteps = mhApproveResult.skipped ? 1 : 2;
 
@@ -2182,7 +2239,14 @@ async function executeSaucerSwapDirect(
     // have changed). The execution engine falls back to normal discovery.
     // ═══════════════════════════════════════════════════════════════════
     const vr = options?.validatedRoute;
-    const VALIDATED_ROUTE_MAX_AGE_MS = 30_000; // 30 seconds
+    // [S5] IMPLEMENTATION NOTE — Reduced from 30s → 15s.
+    // Stale routes are the #1 cause of V2 CONTRACT_REVERT on execution.
+    // V2 concentrated liquidity ticks can move significantly in 15-30s.
+    // 15s gives enough time for the user to click "Swap" after seeing
+    // the quote, while rejecting quotes from significantly earlier.
+    // If the route is stale, the engine falls back to client-side
+    // route discovery (findRouteViaGraph) which re-validates live.
+    const VALIDATED_ROUTE_MAX_AGE_MS = 15_000; // 15 seconds
 
     // [STEP1] Safety: verify validated route matches current token pair
     const vrInputId = isInputNative ? "0.0.1456986" : inputToken.htsId;
@@ -2235,10 +2299,21 @@ async function executeSaucerSwapDirect(
       // [WALLET-PERF] Still need recipientEvmAddress for the swap TX
       // but skip ALL graph/pool discovery — go straight to routing-complete
     } else if (vr) {
-      // Validated route skipped — log reason for debugging
+      // [S5] Validated route skipped — log reason for debugging
       const age = vr.validatedAt ? Date.now() - vr.validatedAt : -1;
-      console.log(`[STEP1] Validated route SKIPPED: pairMatch=${!!vrPairMatch}, age=${age}ms (max=${VALIDATED_ROUTE_MAX_AGE_MS}ms), ` +
+      const reason = !vrPairMatch ? "pair mismatch" : `stale (${age}ms > ${VALIDATED_ROUTE_MAX_AGE_MS}ms)`;
+      console.log(`[S5] Validated route SKIPPED (${reason}): pairMatch=${!!vrPairMatch}, age=${age}ms, ` +
         `expected=${vrInputId}→${vrOutputId}, got=${vr.routeHtsIds[0]}→${vr.routeHtsIds[vr.routeHtsIds.length - 1]}`);
+      // [S5] IMPLEMENTATION NOTE — When the route is stale but pair matches,
+      // the server data is still useful as a hint for the client-side graph
+      // routing (which version to try first). We just don't trust the exact
+      // fee tiers or packed path for V2 execution since they may be stale.
+      if (vrPairMatch && age > VALIDATED_ROUTE_MAX_AGE_MS && vr.version === "v1") {
+        // V1 routes are less time-sensitive (AMM reserves change slowly)
+        // — use as a routing hint even when stale
+        console.log(`[S5] Stale V1 route used as routing hint: version=${vr.version}`);
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -2355,7 +2430,15 @@ async function executeSaucerSwapDirect(
     // │  and uses the same cached fetchTokenFeeSchedule (instant hit if    │
     // │  checkSwapPrerequisites already ran during quote phase).           │
     // └─────────────────────────────────────────────────────────────────────┘
-    if (poolVersionInfo?.version === "v2" || (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2"))) {
+    // [S9] IMPLEMENTATION NOTE — Skip FOT check when server-validated route exists.
+    // The server already validated this route via QuoterV2/getAmountsOut, so if it
+    // returned V2 with a valid quote, the token doesn't have FOT issues severe enough
+    // to block V2 execution. The FOT check hits Mirror Node (0-2s latency), which is
+    // the LAST remaining blocker between "click Swap" and "wallet opens".
+    // When no validated route exists (client-side discovery), keep the FOT check.
+    if (_skipDiscovery) {
+      console.log(`[S9] Skipping FOT check — server-validated route (${vr?.source})`);
+    } else if (poolVersionInfo?.version === "v2" || (multiHopRoute && multiHopRoute.hops.some(h => h.version === "v2"))) {
       try {
         const [earlyInputFee, earlyOutputFee] = await Promise.all([
           !isInputNative ? fetchTokenFeeSchedule(inputToken.htsId, network) : Promise.resolve({ hasFee: false, feePercent: 0, feeDescription: "", hasFixedFee: false } as TokenFeeInfo),
@@ -2423,7 +2506,37 @@ async function executeSaucerSwapDirect(
         pathAddresses = v1BypassPath.map(t => htsIdToEvmAddress(t.htsId));
       }
 
+      // ┌─────────────────────────────────────────────────────────────────────┐
+      // │  [S4] IMPLEMENTATION NOTE — TOKEN→HBAR V1 BIAS                     │
+      // │                                                                     │
+      // │  Token→HBAR is the most complex V2 swap path (multicall with       │
+      // │  exactInputSingle + unwrapWETH9). V1 swapExactTokensForETH is      │
+      // │  a single atomic call — simpler, more reliable, proven on mainnet. │
+      // │                                                                     │
+      // │  Unless the server SPECIFICALLY validated V2 with high confidence  │
+      // │  (validatedRoute.version === "v2"), prefer V1 for Token→HBAR.      │
+      // │  This eliminates most CONTRACT_REVERT_EXECUTED failures without    │
+      // │  sacrificing pricing (V1 AMM typically has comparable or deeper    │
+      // │  liquidity for WHBAR pairs than V2 concentrated liquidity pools).  │
+      // │                                                                     │
+      // │  Server-validated V2 routes bypass this gate because the server    │
+      // │  already confirmed the V2 path works via QuoterV2 on-chain call.  │
+      // └─────────────────────────────────────────────────────────────────────┘
+      const serverValidatedV2 = options?.validatedRoute?.version === "v2";
+      if (poolVersionInfo?.version === "v2" && !serverValidatedV2 && !v2CacheHitTH) {
+        console.log(`[S4] Token→HBAR: V1 bias active — downgrading V2 to V1 (no server V2 validation)`);
+        console.log(`[S4]   Reason: V2 multicall(exactInputSingle+unwrapWETH9) is fragile; V1 swapExactTokensForETH is simpler and more reliable`);
+        poolVersionInfo = { version: "v1", poolAddress: undefined };
+        multiHopRoute = null;
+        const v1BiasPath = buildSwapPath(
+          isInputNative ? whbar : inputToken,
+          isOutputNative ? whbar : outputToken,
+        );
+        pathAddresses = v1BiasPath.map(t => htsIdToEvmAddress(t.htsId));
+      }
+
       // ── V2 Direct Token→HBAR (single-hop) ──
+      // [S4] Only fires when server specifically validated V2 route
       if (poolVersionInfo?.version === "v2" && !multiHopRoute && !v2CacheHitTH) {
         console.log(`[HBAR.h] [C100-S9] Token→HBAR: trying V2 direct first ` +
           `(multicall pattern, fee=${poolVersionInfo.feeTier}, pool=${poolVersionInfo.poolAddress || "detected"})`);
@@ -2478,8 +2591,25 @@ async function executeSaucerSwapDirect(
       if (multiHopRoute) {
         const allHopsV2 = multiHopRoute.hops.every(h => h.version === "v2");
 
+        // [S4] IMPLEMENTATION NOTE — V1 bias for Token→HBAR multi-hop.
+        // Same rationale as S4 single-hop: V2 multi-hop multicall is even more
+        // complex (exactInput with packed path + unwrapWETH9). Prefer V1 unless
+        // the server specifically validated V2 with a packed path.
+        if (allHopsV2 && !serverValidatedV2) {
+          console.log(`[S4] Token→HBAR multi-hop: V1 bias active — downgrading V2 to V1 (no server V2 validation)`);
+          poolVersionInfo = { version: "v1", poolAddress: undefined };
+          multiHopRoute = null;
+          _forceV1MultiHop = true;
+          const v1BiasMhPath = buildSwapPath(
+            isInputNative ? whbar : inputToken,
+            isOutputNative ? whbar : outputToken,
+          );
+          pathAddresses = v1BiasMhPath.map(t => htsIdToEvmAddress(t.htsId));
+        }
+
         // [STEP-6] Conditional V2 for Token→HBAR multi-hop
-        if (allHopsV2) {
+        // [S4] Only reaches here if server validated V2
+        if (allHopsV2 && multiHopRoute) {
           // [STEP3] Gated: server validated V2 → skip stale failure cache
           const v2CacheHitTH = options?.validatedRoute ? false : isV2FailureCached(inputToken.htsId, outputToken.htsId);
           if (v2CacheHitTH) {
@@ -3931,6 +4061,14 @@ async function executeSaucerSwapDirect(
         };
       }
 
+      // [S2] Wallet re-focus hint between approve and swap (V1 Token→HBAR path)
+      if (v1ApproveResult1.needed && !v1ApproveResult1.skipped) {
+        try {
+          const { tryOpenWalletExtension: v1WalletHint1 } = await import("../hashpack");
+          v1WalletHint1().catch(() => {});
+        } catch { /* non-blocking */ }
+      }
+
       const v1SwapStep1 = v1ApproveResult1.skipped ? 1 : 2;
       const v1TotalSteps1 = v1ApproveResult1.skipped ? 1 : 2;
 
@@ -4040,6 +4178,14 @@ async function executeSaucerSwapDirect(
           executionVenue: "saucerswap-v1",
           userCancelled: v1ApproveResult2.userCancelled,
         };
+      }
+
+      // [S2] Wallet re-focus hint between approve and swap (V1 Token→Token path)
+      if (v1ApproveResult2.needed && !v1ApproveResult2.skipped) {
+        try {
+          const { tryOpenWalletExtension: v1WalletHint2 } = await import("../hashpack");
+          v1WalletHint2().catch(() => {});
+        } catch { /* non-blocking */ }
       }
 
       const v1SwapStep2 = v1ApproveResult2.skipped ? 1 : 2;

@@ -858,6 +858,16 @@ export async function fetchServerQuote(
       route?: string[];
       poolVersion?: string;
       feeTier?: number;
+      durationMs?: number;
+      routeDetails?: ValidatedRoute;
+      scoredRoutes?: any[];
+      allQuotes?: any[];
+      versionComparison?: {
+        v1: { amountOut: string; source: string } | null;
+        v2: { amountOut: string; source: string } | null;
+        selectedVersion: string;
+        selectedReason: string;
+      } | null;
     }>("/quote", proxyParams, 12000); // [PERF-01] 12s (reduced from 18s) — fail faster, fall through to browser strategies
 
     const durationMs = Date.now() - startMs;
@@ -892,6 +902,18 @@ export async function fetchServerQuote(
       `[C51] Server quote: ${humanOutput.toFixed(6)} ${outputToken.symbol}` +
       ` (${confidence}, ${proxyData.source}, ${proxyData.durationMs || durationMs}ms)`
     );
+
+    // [S8] Log version comparison for diagnostics
+    if (proxyData.versionComparison) {
+      const vc = proxyData.versionComparison;
+      const v1Out = vc.v1 ? Number(BigInt(vc.v1.amountOut)) / Math.pow(10, outputToken.decimals) : null;
+      const v2Out = vc.v2 ? Number(BigInt(vc.v2.amountOut)) / Math.pow(10, outputToken.decimals) : null;
+      log.info("Quote",
+        `[S8] V1 vs V2: V1=${v1Out?.toFixed(6) ?? "n/a"} (${vc.v1?.source ?? "-"}) | ` +
+        `V2=${v2Out?.toFixed(6) ?? "n/a"} (${vc.v2?.source ?? "-"}) | ` +
+        `Selected: ${vc.selectedVersion} (${vc.selectedReason})`
+      );
+    }
 
     // [C52] Build scored routes — prefer server's scoredRoutes (proper composite scoring)
     // Fall back to rebuilding from allQuotes if server didn't provide them
@@ -954,12 +976,18 @@ export async function fetchServerQuote(
       const allowanceResult = await allowancePromise;
       if (allowanceResult) {
         const { v1, v2, rawNeeded, v1Router, v2Router } = allowanceResult;
-        // Determine which router has the better allowance
-        const bestAllowance = Math.max(v1, v2);
-        const approvalNeeded = bestAllowance < rawNeeded;
-        // Pick the router with higher allowance (or V2 if tied — preferred for deeper liquidity)
-        const routerVersion: "v1" | "v2" = v2 >= v1 ? "v2" : "v1";
+        // [S8] IMPLEMENTATION NOTE — Align approval check with server's winning route.
+        // The server's routeDetails.version tells us which pool version won the
+        // tiebreaking (including S7 Token→HBAR V1 bias). The approval spender
+        // MUST match this version — otherwise the approval targets V2 router but
+        // the swap executes on V1, causing CONTRACT_REVERT_EXECUTED.
+        const serverWinningVersion = (proxyData.routeDetails?.version as "v1" | "v2") || null;
+        // Use server's winning version if available; otherwise fall back to best-allowance heuristic
+        const routerVersion: "v1" | "v2" = serverWinningVersion || (v2 >= v1 ? "v2" : "v1");
         const spenderForRoute = routerVersion === "v2" ? v2Router : v1Router;
+        // Check allowance against the specific router that will execute the swap
+        const relevantAllowance = routerVersion === "v2" ? v2 : v1;
+        const approvalNeeded = relevantAllowance < rawNeeded;
         approvalStatus = {
           approvalNeeded,
           v1Allowance: v1,
@@ -971,7 +999,7 @@ export async function fetchServerQuote(
         };
         log.info("Quote",
           `[STEP6] Approval status: ${approvalNeeded ? "NEEDS APPROVAL" : "PRE-APPROVED"} ` +
-          `(best=${bestAllowance} needed=${rawNeeded} via ${routerVersion.toUpperCase()})`,
+          `(relevant=${relevantAllowance} needed=${rawNeeded} via ${routerVersion.toUpperCase()}${serverWinningVersion ? " [server-aligned]" : ""})`,
         );
       }
     }

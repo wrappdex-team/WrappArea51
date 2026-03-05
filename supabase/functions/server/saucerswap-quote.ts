@@ -1787,10 +1787,27 @@ export async function ssQuote(params: {
         const aHops = a.route.length - 1;
         const bHops = b.route.length - 1;
         if (aHops !== bHops) return aHops - bHops;
-        // (b) Prefer V2 over V1 — tighter spreads, concentrated liquidity
-        const aV2 = a.poolVersion === "v2" ? 1 : 0;
-        const bV2 = b.poolVersion === "v2" ? 1 : 0;
-        if (aV2 !== bV2) return bV2 - aV2;
+        // [S7] IMPLEMENTATION NOTE — V2 liquidity depth check for Token→HBAR.
+        // V2 concentrated liquidity pools for Token→WHBAR can have narrow tick
+        // ranges that cause CONTRACT_REVERT when the price moves even slightly.
+        // V1 AMM pools have full-range liquidity — more resilient to price movement.
+        // For Token→HBAR swaps (output is WHBAR), prefer V1 unless V2 output
+        // is significantly better (>2% more). This effectively neutralizes
+        // the old V2 preference for the most failure-prone swap direction.
+        const isOutputHbar = (a.route[a.route.length - 1] === WHBAR_HTS_ID || b.route[b.route.length - 1] === WHBAR_HTS_ID);
+        const isInputHbar = (a.route[0] === WHBAR_HTS_ID || b.route[0] === WHBAR_HTS_ID);
+        const isTokenToHbar = isOutputHbar && !isInputHbar;
+        if (isTokenToHbar) {
+          // (b-alt) For Token→HBAR: prefer V1 over V2 (reliability > tighter spread)
+          const aV1 = a.poolVersion === "v1" ? 1 : 0;
+          const bV1 = b.poolVersion === "v1" ? 1 : 0;
+          if (aV1 !== bV1) return bV1 - aV1;
+        } else {
+          // (b) For all other swaps: Prefer V2 over V1 — tighter spreads, concentrated liquidity
+          const aV2 = a.poolVersion === "v2" ? 1 : 0;
+          const bV2 = b.poolVersion === "v2" ? 1 : 0;
+          if (aV2 !== bV2) return bV2 - aV2;
+        }
         // (c) Prefer lower total fees
         const aFees = (a.feeTiers || [a.feeTier || 3000]).reduce((s: number, f: number) => s + f, 0);
         const bFees = (b.feeTiers || [b.feeTier || 3000]).reduce((s: number, f: number) => s + f, 0);
@@ -1943,6 +1960,10 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
         }, 404);
       }
 
+      // [S8] Detect Token→HBAR direction for cross-quote comparison
+      const isOutputHbar = outputToken === "HBAR" || outputToken === WHBAR_HTS_ID;
+      const isInputHbar = inputToken === "HBAR" || inputToken === WHBAR_HTS_ID;
+
       // Calculate amountOutMin with slippage
       const amountOutBig = BigInt(best.amountOut);
       const slippageBps = Math.floor(slippage * 100); // 0.5% → 50 bps
@@ -1974,6 +1995,29 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
         validatedAt: Date.now(),
       };
 
+      // [S8] IMPLEMENTATION NOTE — Cross-quote V1 vs V2 comparison.
+      // Extract the best V1 and best V2 outputs from allQuotes so the
+      // frontend can show a side-by-side comparison in QuoteDetailsPro.
+      // This helps users understand why a particular route was selected
+      // and provides transparency when V1 is preferred over V2 for Token→HBAR.
+      let bestV1Output: string | null = null;
+      let bestV2Output: string | null = null;
+      let bestV1Source: string | null = null;
+      let bestV2Source: string | null = null;
+      for (const q of allQuotes) {
+        if (q.confidence !== "high" && q.confidence !== "medium") continue;
+        const out = BigInt(q.amountOut);
+        if (out <= 0n) continue;
+        if ((q.poolVersion === "v1" || !q.poolVersion) && (!bestV1Output || out > BigInt(bestV1Output))) {
+          bestV1Output = q.amountOut;
+          bestV1Source = q.source;
+        }
+        if (q.poolVersion === "v2" && (!bestV2Output || out > BigInt(bestV2Output))) {
+          bestV2Output = q.amountOut;
+          bestV2Source = q.source;
+        }
+      }
+
       return c.json({
         amountOut: best.amountOut,
         amountOutMin: amountOutMin.toString(),
@@ -1992,6 +2036,15 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
         dynamicAliases: _dynamicAliasMap?.size ?? 0,
         // [STEP1] Validated route for client execution passthrough
         routeDetails,
+        // [S8] Cross-quote V1 vs V2 comparison
+        versionComparison: (bestV1Output || bestV2Output) ? {
+          v1: bestV1Output ? { amountOut: bestV1Output, source: bestV1Source } : null,
+          v2: bestV2Output ? { amountOut: bestV2Output, source: bestV2Source } : null,
+          selectedVersion: bestVersion,
+          selectedReason: isOutputHbar && !isInputHbar
+            ? "v1-preferred-token-to-hbar"
+            : bestVersion === "v2" ? "v2-better-output" : "v1-better-output",
+        } : null,
       });
     } catch (err: any) {
       console.log(`[SS-Quote] /quote error: ${err?.message || err}`);

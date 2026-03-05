@@ -62,6 +62,7 @@ import {
   type SwapPrerequisites,
   type ValidatedRoute,
   type ServerQuoteResult,
+  resolveAccountEvmAddress,
 } from "../utils/saucerswap";
 import { classifySwapError } from "../utils/saucerswap/diagnostics";
 import { prewarmRelay, startRelayKeepalive, tryOpenWalletExtension } from "../utils/hashpack";
@@ -260,6 +261,19 @@ export function SwapPanel() {
       prewarmRelay();
     }
   }, [isWalletConnected]);
+
+  // [S6] IMPLEMENTATION NOTE — Swap preparation: pre-resolve EVM address.
+  // resolveAccountEvmAddress makes a Mirror Node call on first use, then
+  // caches permanently. By calling it when the wallet connects (instead of
+  // when the user clicks "Swap"), we eliminate 0.5-2s from the swap critical
+  // path. The cache is shared with executeSaucerSwapDirect's parallel resolve.
+  useEffect(() => {
+    if (!hashPackSession?.accountId || !hederaNetwork) return;
+    resolveAccountEvmAddress(hashPackSession.accountId, hederaNetwork).catch(() => {
+      // Non-blocking — will be retried at swap time if it fails here
+      console.log("[S6] Pre-resolve EVM address failed (non-blocking, will retry at swap time)");
+    });
+  }, [hashPackSession?.accountId, hederaNetwork]);
 
   // Pull-to-refresh support — re-fetch swap prices on mobile swipe-down
   useEffect(() => {
@@ -692,6 +706,13 @@ export function SwapPanel() {
     setSwapStep(null); // [C27-04] Reset step tracker
     setSwapError(null);
     setLastTxId(null);
+
+    // [S9] Timing trace — measure click-to-wallet delay for diagnostics.
+    // This timestamp is logged inside _safeRequest when client.request() fires,
+    // letting us measure exactly how long the user waits between clicking Swap
+    // and the wallet receiving the signing request.
+    (window as any).__swapClickedAt = Date.now();
+    console.log(`[S9] ⏱️ Swap clicked at ${new Date().toISOString()}`);
 
     // [C81-01] Pre-warm WC relay IMMEDIATELY — don't block on it.
     // The pre-flight checks (balance, pool detection, quote) take 5-15s;
