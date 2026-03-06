@@ -1074,7 +1074,7 @@ export function Wallet() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button onClick={() => setShowDeposit(true)} className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${isDark
+                    <button onClick={() => setShowDeposit(true)} className={`px-3 py-1.5 rounded-lg text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${isDark
                       ? isVip
                         ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
                         : "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/20"
@@ -1352,12 +1352,12 @@ export function Wallet() {
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <Tip content="Refresh">
-                    <button onClick={handleRefreshMM} disabled={isRefreshingMM} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`}>
+                    <button onClick={handleRefreshMM} disabled={isRefreshingMM} className={`p-1.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${isDark ? "hover:bg-slate-800/50" : "hover:bg-gray-100"}`}>
                       <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingMM ? "animate-spin text-orange-400" : ""}`} />
                     </button>
                     </Tip>
                     <Tip content="Disconnect">
-                    <button onClick={disconnectMetaMask} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-red-900/30 text-red-400" : "hover:bg-red-50 text-red-500"}`}>
+                    <button onClick={disconnectMetaMask} className={`p-1.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50 ${isDark ? "hover:bg-red-900/30 text-red-400" : "hover:bg-red-50 text-red-500"}`}>
                       <Unplug className="w-3.5 h-3.5" />
                     </button>
                     </Tip>
@@ -1540,7 +1540,7 @@ export function Wallet() {
                   </div>
                 )}
                 {recentTxns.length > 8 && (
-                  <button onClick={() => setShowAllTxns(!showAllTxns)} className={`w-full mt-2 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors ${isDark ? "text-cyan-400/70 hover:text-cyan-400 hover:bg-white/[0.03]" : "text-cyan-500 hover:bg-gray-50"}`}>
+                  <button onClick={() => setShowAllTxns(!showAllTxns)} className={`w-full mt-2 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${isDark ? "text-cyan-400/70 hover:text-cyan-400 hover:bg-white/[0.03]" : "text-cyan-500 hover:bg-gray-50"}`}>
                     {showAllTxns ? <>Show less <ChevronUp className="w-3 h-3" /></> : <>All {recentTxns.length} <ChevronDown className="w-3 h-3" /></>}
                   </button>
                 )}
@@ -1631,7 +1631,7 @@ export function Wallet() {
                   </div>
                 )}
                 {evmTxns.length > 8 && (
-                  <button onClick={() => setShowAllEvmTxns(!showAllEvmTxns)} className={`w-full mt-2 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors ${isDark ? "text-orange-400/70 hover:text-orange-400 hover:bg-white/[0.03]" : "text-orange-500 hover:bg-gray-50"}`}>
+                  <button onClick={() => setShowAllEvmTxns(!showAllEvmTxns)} className={`w-full mt-2 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${isDark ? "text-orange-400/70 hover:text-orange-400 hover:bg-white/[0.03]" : "text-orange-500 hover:bg-gray-50"}`}>
                     {showAllEvmTxns ? <>Show less <ChevronUp className="w-3 h-3" /></> : <>All {evmTxns.length} <ChevronDown className="w-3 h-3" /></>}
                   </button>
                 )}
@@ -1650,7 +1650,7 @@ export function Wallet() {
           }`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-lg">Deposit</h3>
-              <button onClick={() => setShowDeposit(false)} className={`p-1 rounded-lg ${isDark ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}>
+              <button onClick={() => setShowDeposit(false)} className={`p-1 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${isDark ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1663,7 +1663,7 @@ export function Wallet() {
             <p className={`text-xs mt-3 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
               Send HBAR or HTS tokens to this Account ID. Hedera confirms in ~2 seconds.
             </p>
-            <button onClick={() => copyToClipboard(hederaAccount.accountId, "deposit")} className={`w-full mt-4 py-2.5 rounded-lg text-white flex items-center justify-center gap-2 text-sm ${isVip
+            <button onClick={() => copyToClipboard(hederaAccount.accountId, "deposit")} className={`w-full mt-4 py-2.5 rounded-lg text-white flex items-center justify-center gap-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${isVip
               ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500"
               : "bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500"
             }`}>

@@ -32,7 +32,7 @@ import { useEscapeKey } from "../hooks/useEscapeKey";
 // [PERFORMANCE-FIX] Lazy-load QRCodeSVG — only needed when showing QR, not on modal open
 const QRCodeSVG = lazy(() => import("qrcode.react").then(m => ({ default: m.QRCodeSVG })));
 
-// ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ───���──────────
+// ── [WALLET-SURGERY Step 2] Pre-warm WC on modal mount ─────────────
 // Fire getSignClient() the moment the modal opens, so by the time the user
 // clicks "HashPack" the WC SDK is already initialized and relay is connected.
 // ── [WALLET-SURGERY Step 3] Detect HashPack extension ──────────────
@@ -453,7 +453,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-8">
-            <button onClick={handleMetaMaskBack} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
+            <button onClick={handleMetaMaskBack} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50">
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
             <img src={partnerLogos.metamask} alt="MetaMask" className="w-7 h-7 rounded-lg" />
@@ -466,10 +466,14 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                   <Loader2 className="w-8 h-8 text-orange-400 animate-spin" />
                 </div>
                 <p className="text-white/90 mb-1">Connecting...</p>
-                <p className="text-white/30 text-sm mb-4">Approve in your MetaMask extension</p>
+                <p className="text-white/30 text-sm mb-4">
+                  {isMobileBrowser()
+                    ? "Approve in MetaMask Mobile — you'll return here after"
+                    : "Approve in your MetaMask extension"}
+                </p>
                 <button
                   onClick={handleMetaMaskBack}
-                  className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+                  className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                 >
                   Cancel
                 </button>
@@ -479,12 +483,18 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                 <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mx-auto mb-5">
                   <AlertCircle className="w-8 h-8 text-red-400" />
                 </div>
-                {metaMaskError === "MOBILE_NO_PROVIDER" ? (
-                  /* ── Mobile: deep-link into MetaMask's in-app browser ── */
+                {metaMaskError === "MOBILE_NO_PROVIDER" || metaMaskError === "MOBILE_SDK_FALLBACK" ? (
+                  /* ── Mobile: SDK failed or legacy fallback — offer deep-link ── */
+                  /* IMPLEMENTATION NOTE: MOBILE_SDK_FALLBACK means the MetaMask SDK
+                     tried to connect via socket channel but failed (SDK init error,
+                     MetaMask app not installed, etc.). Show the deep-link option
+                     as a fallback so the user can still connect via in-app browser. */
                   <>
-                    <p className="text-white/90 mb-2">Open in MetaMask</p>
+                    <p className="text-white/90 mb-2">Connect via MetaMask</p>
                     <p className="text-white/30 text-sm mb-6 max-w-xs mx-auto">
-                      On mobile, MetaMask connects through its in-app browser. Tap below to open this dApp inside the MetaMask app.
+                      {metaMaskError === "MOBILE_SDK_FALLBACK"
+                        ? "Direct connection couldn't be established. You can open this dApp inside MetaMask's browser, or try again."
+                        : "Tap below to open this dApp inside the MetaMask app, or install MetaMask Mobile if you haven't already."}
                     </p>
                     <a
                       href={getMetaMaskDeepLink()}
@@ -495,8 +505,14 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                       Open in MetaMask
                     </a>
                     <button
+                      onClick={handleMetaMaskConnect}
+                      className="block mx-auto px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors mb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
+                    >
+                      Try SDK Again
+                    </button>
+                    <button
                       onClick={handleMetaMaskBack}
-                      className="block mx-auto px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+                      className="block mx-auto px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                     >
                       Back
                     </button>
@@ -518,7 +534,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                     )}
                     <button
                       onClick={handleMetaMaskConnect}
-                      className="block mx-auto px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
+                      className="block mx-auto px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                     >
                       Try Again
                     </button>
@@ -535,7 +551,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
 
   // ════════════════════════════════════════════════════════════
   // METAMASK SUCCESS
-  // ══════════════════════════════════��══════════════════════════
+  // ════════════════════════════════════════════════════════════
   if (step === "metamask-success" && metaMaskAccount) {
     return (
       <>{dynamicBridge}
@@ -548,7 +564,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
 
   // ═════════════════════════════════════════════════════════════
   // WC CONNECTING — [WALLET-SURGERY Step 6] Streamlined UI
-  // ═════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   if (step === "wc-connecting") {
     const hasError = wcError || (!isConnectingHedera && hederaConnectionError);
     const errorMsg = wcError || hederaConnectionError;
@@ -559,7 +575,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-6">
-            <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
+            <button onClick={() => setStep("list")} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50">
               <ArrowLeft className="w-4 h-4 text-white/50" />
             </button>
             {selectedWallet && (
@@ -579,13 +595,13 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <div className="flex gap-2 justify-center flex-wrap">
                 <button
                   onClick={() => selectedWallet && handleWCConnect(selectedWallet)}
-                  className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors"
+                  className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                 >
                   Try Again
                 </button>
                 <button
                   onClick={handleClearAndRetry}
-                  className="px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-sm flex items-center gap-2 transition-colors"
+                  className="px-5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-sm flex items-center gap-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Reset
                 </button>
@@ -621,7 +637,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               </div>
               <button
                 onClick={() => setStep("list")}
-                className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+                className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
               >
                 Cancel
               </button>
@@ -659,7 +675,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               </p>
               <button
                 onClick={() => setStep("list")}
-                className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors"
+                className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
               >
                 Cancel
               </button>
@@ -695,7 +711,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-white/90">Connect Wallet</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50">
             <X className="w-4 h-4 text-white/30" />
           </button>
         </div>
@@ -711,7 +727,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           <button
             key={wallet.id}
             onClick={() => handleWCConnect(wallet)}
-            className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-purple-500/30 hover:bg-white/[0.02] text-left mb-2"
+            className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-purple-500/30 hover:bg-white/[0.02] text-left mb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
           >
             <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0 bg-white/[0.03]">
               <img src={wallet.id === "hashpack" ? partnerLogos.hashpack : wallet.logo} alt={wallet.name} className="w-11 h-11 object-cover" />
@@ -745,7 +761,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
         {/* MetaMask */}
         <button
           onClick={handleMetaMaskConnect}
-          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-orange-500/30 hover:bg-white/[0.02] text-left mb-2"
+          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-orange-500/30 hover:bg-white/[0.02] text-left mb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
         >
           <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
             <img src={partnerLogos.metamask} alt="MetaMask" className="w-11 h-11 object-cover" />
@@ -755,7 +771,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
               <span className="text-sm text-white/90">MetaMask</span>
               <Badge color="orange">Ethereum</Badge>
             </div>
-            <p className="text-xs text-white/30">{isMobileBrowser() ? "Mobile app" : "Browser extension"}</p>
+            <p className="text-xs text-white/30">{isMobileBrowser() ? "Mobile app (SDK)" : "Browser extension"}</p>
           </div>
           <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-orange-500/10 transition-colors">
             <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-orange-400 transition-colors" />
@@ -771,7 +787,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
         {/* Dynamic */}
         <button
           onClick={handleDynamicConnect}
-          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-blue-500/30 hover:bg-white/[0.02] text-left mb-2"
+          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-blue-500/30 hover:bg-white/[0.02] text-left mb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
         >
           <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
             <img src={partnerLogos.dynamic} alt="Dynamic" className="w-11 h-11 object-cover" />

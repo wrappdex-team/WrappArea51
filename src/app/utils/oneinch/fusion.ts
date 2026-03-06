@@ -19,6 +19,7 @@
  */
 
 import { log } from "../logger";
+import { getEthereumProvider } from "../metamask";
 import { oneInchApi, OneInchApiError, isAbortError, friendlyErrorMessage } from "./api-client";
 import { getChainById, CHAINS } from "./chains";
 import { NATIVE_TOKEN_ADDRESS } from "./types";
@@ -742,7 +743,8 @@ export async function signFusionOrder(
   typedData: EIP712TypedData,
   account: string,
 ): Promise<string> {
-  if (!window.ethereum) {
+  const _eth = getEthereumProvider();
+  if (!_eth) {
     throw new Error("No EVM wallet detected. Install MetaMask or another wallet.");
   }
 
@@ -767,7 +769,7 @@ export async function signFusionOrder(
 
   // [DIAG] Verify the signer account matches a wallet account
   try {
-    const walletAccounts: string[] = await window.ethereum!.request({ method: "eth_accounts" });
+    const walletAccounts: string[] = await _eth.request({ method: "eth_accounts" });
     const signerLower = account.toLowerCase();
     const match = walletAccounts.find(a => a.toLowerCase() === signerLower);
     if (!match) {
@@ -779,7 +781,7 @@ export async function signFusionOrder(
     }
   } catch { /* non-critical diagnostic */ }
 
-  const signature = await window.ethereum.request({
+  const signature = await _eth.request({
     method: "eth_signTypedData_v4",
     params: [account, JSON.stringify(typedData)],
   });
@@ -1019,7 +1021,8 @@ export async function sendApprovalTransaction(
   tokenAddress: string,
   amount?: string,
 ): Promise<string> {
-  if (!window.ethereum) {
+  const _eth = getEthereumProvider();
+  if (!_eth) {
     throw new Error("No EVM wallet detected");
   }
 
@@ -1034,11 +1037,11 @@ export async function sendApprovalTransaction(
   if (res.configured === false) throw new Error("1inch API key not configured");
   if (!res.to || !res.data) throw new Error("Invalid approval response from 1inch");
 
-  const accounts = await window.ethereum.request({ method: "eth_accounts" });
+  const accounts = await _eth.request({ method: "eth_accounts" });
   const from = accounts?.[0];
   if (!from) throw new Error("No connected account");
 
-  const txHash = await window.ethereum.request({
+  const txHash = await _eth.request({
     method: "eth_sendTransaction",
     params: [{
       from,
@@ -1065,7 +1068,8 @@ export async function waitForTransaction(
   txHash: string,
   timeoutMs: number = 60_000,
 ): Promise<boolean> {
-  if (!window.ethereum) return false;
+  const _eth = getEthereumProvider();
+  if (!_eth) return false;
 
   const deadline = Date.now() + timeoutMs;
   const pollInterval = 2_000;
@@ -1074,7 +1078,7 @@ export async function waitForTransaction(
 
   while (Date.now() < deadline) {
     try {
-      const receipt = await window.ethereum.request({
+      const receipt = await _eth.request({
         method: "eth_getTransactionReceipt",
         params: [txHash],
       });

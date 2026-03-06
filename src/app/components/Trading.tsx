@@ -921,7 +921,7 @@ export function Trading() {
                     .catch(() => { setChartLoading(false); });
                 }}
                 disabled={chartLoading}
-                className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-800/50 text-slate-500 hover:text-slate-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"} ${chartLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`p-1.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-800/50 text-slate-500 hover:text-slate-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"} ${chartLoading ? "opacity-50 cursor-not-allowed" : ""}`}
               >
                 <RefreshCw className={`w-3 h-3 ${chartLoading ? "animate-spin" : ""}`} />
               </button>

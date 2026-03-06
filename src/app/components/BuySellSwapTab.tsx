@@ -857,7 +857,7 @@ export function BuySellSwapTab() {
                 Your Balance
               </h3>
               <Tip content="Refresh balances">
-                <button onClick={fetchBalances} className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-slate-700/50 text-slate-400" : "hover:bg-gray-100 text-gray-400"}`}>
+                <button onClick={fetchBalances} className={`p-1.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "hover:bg-slate-700/50 text-slate-400" : "hover:bg-gray-100 text-gray-400"}`}>
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
               </Tip>
@@ -944,7 +944,7 @@ export function BuySellSwapTab() {
                     setScoredRoutes([]);
                   }
                 }}
-                className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   inputToken.symbol === pair.in && outputToken.symbol === pair.out
                     ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
                     : isDark

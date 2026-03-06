@@ -29,7 +29,7 @@
  */
 
 import { log } from "./logger";
-import { switchChain, getChainId } from "./metamask";
+import { switchChain, getChainId, getEthereumProvider } from "./metamask";
 import { NATIVE_TOKEN_ADDRESS } from "./stargate-chains";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 
@@ -950,7 +950,8 @@ async function getTokenBalanceViaProvider(
   tokenAddress: string,
   decimals: number
 ): Promise<TokenBalance> {
-  if (!window.ethereum) return { raw: 0n, formatted: "0.00" };
+  const eth = getEthereumProvider();
+  if (!eth) return { raw: 0n, formatted: "0.00" };
 
   const isNative = tokenAddress.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase();
 
@@ -958,7 +959,7 @@ async function getTokenBalanceViaProvider(
     let rawHex: string;
 
     if (isNative) {
-      rawHex = await (window.ethereum as any).request({
+      rawHex = await eth.request({
         method: "eth_getBalance",
         params: [userAddress, "latest"],
       });
@@ -966,7 +967,7 @@ async function getTokenBalanceViaProvider(
       const paddedAddress = userAddress.toLowerCase().replace("0x", "").padStart(64, "0");
       const callData = `${BALANCE_OF_SELECTOR}${paddedAddress}`;
 
-      rawHex = await (window.ethereum as any).request({
+      rawHex = await eth.request({
         method: "eth_call",
         params: [{ to: tokenAddress, data: callData }, "latest"],
       });
@@ -1597,7 +1598,8 @@ export async function executeUserSteps(
   steps: VTUserStep[],
   callbacks?: StepCallbacks
 ): Promise<string[]> {
-  if (!window.ethereum) {
+  const _eth = getEthereumProvider();
+  if (!_eth) {
     throw new Error("MetaMask is not installed. Please install MetaMask to bridge tokens.");
   }
 
@@ -1664,7 +1666,7 @@ export async function executeUserSteps(
       // 3. Submit to MetaMask — user sees the approval popup
       log.debug("StargateVT", `Submitting tx to MetaMask`, { txParams });
 
-      const txHash: string = await (window.ethereum as any).request({
+      const txHash: string = await _eth.request({
         method: "eth_sendTransaction",
         params: [txParams],
       });
@@ -1742,10 +1744,12 @@ async function ensureCorrectChain(requiredChainId: number): Promise<void> {
  */
 async function waitForReceipt(txHash: string): Promise<void> {
   const start = Date.now();
+  const eth = getEthereumProvider();
+  if (!eth) throw new Error("No EVM wallet provider available");
 
   while (Date.now() - start < RECEIPT_TIMEOUT_MS) {
     try {
-      const receipt = await (window.ethereum as any).request({
+      const receipt = await eth.request({
         method: "eth_getTransactionReceipt",
         params: [txHash],
       });

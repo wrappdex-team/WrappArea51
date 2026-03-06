@@ -465,7 +465,7 @@ export const SwapButtonPro = memo(function SwapButtonPro({
             onClick={onSwap}
             disabled={!canSwap}
             onPointerEnter={onHover}
-            className={`w-full py-4 rounded-2xl font-bold transition-all duration-300 relative overflow-hidden ${
+            className={`w-full py-4 rounded-2xl font-bold transition-all duration-300 relative overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
               !canSwap
                 ? isDark
                   ? "bg-slate-800/60 text-slate-500 border border-white/[0.04] cursor-not-allowed"

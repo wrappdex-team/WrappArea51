@@ -2,7 +2,7 @@
  * OneInchWidget — Full native 1inch DEX Aggregator swap interface.
  *
  * Uses the 1inch Swap API v6.0 via server-side proxy (avoids CORS +
- * keeps API key secure). Connects EVM wallets via window.ethereum
+ * keeps API key secure). Connects EVM wallets via getEthereumProvider()
  * (MetaMask, Rabby, etc.) with zero ethers/web3 static imports.
  *
  * ⚠️ DEVELOPER NOTE — API Key Required:
@@ -54,6 +54,7 @@ import {
 import { ONEINCH_LOGO } from "../assets/brand";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getEthereumProvider } from "../utils/metamask";
 import { OneInchTokenSelector } from "./OneInchTokenSelector";
 import { OneInchOrderTracker } from "./OneInchOrderTracker";
 import {
@@ -279,7 +280,9 @@ async function wrapNativeToken(
 
   log.info("1inch", `[WRAP] Wrapping ${amountWei} wei native → ${wethAddress} on chain ${chainId}`);
 
-  const txHash = await window.ethereum!.request({
+  const provider = getEthereumProvider();
+  if (!provider) throw new Error("No EVM wallet provider available");
+  const txHash = await provider.request({
     method: "eth_sendTransaction",
     params: [{
       from: walletAddress,
@@ -302,7 +305,9 @@ async function waitForTxReceipt(txHash: string, timeoutMs = 60000, pollMs = 3000
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const receipt = await window.ethereum!.request({
+      const provider = getEthereumProvider();
+      if (!provider) throw new Error("No EVM wallet provider available");
+      const receipt = await provider.request({
         method: "eth_getTransactionReceipt",
         params: [txHash],
       }) as { status: string } | null;
@@ -484,10 +489,11 @@ export function OneInchWidget() {
     ? "bg-slate-800/50 border border-white/[0.04] hover:border-white/[0.08]"
     : "bg-gray-50/80 border border-gray-200/60 hover:border-gray-300";
 
-  // ── Wallet connection (window.ethereum — no ethers/web3) ──────────
+  // ── Wallet connection (EIP-1193 via getEthereumProvider — no ethers/web3) ──
 
   const connectWallet = useCallback(async () => {
-    if (!window.ethereum) {
+    const eth = getEthereumProvider();
+    if (!eth) {
       setSwapError("No EVM wallet detected. Install MetaMask or Rabby.");
       return;
     }
@@ -495,7 +501,7 @@ export function OneInchWidget() {
     playVipButtonChime();
     try {
       const accounts: string[] = await Promise.race([
-        window.ethereum.request({ method: "eth_requestAccounts" }),
+        eth.request({ method: "eth_requestAccounts" }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Wallet did not respond in time. Close any pending popups and try again.")), 90_000)
         ),
@@ -504,7 +510,7 @@ export function OneInchWidget() {
         setEvmAccount(accounts[0]);
         playConnectionSuccess();
       }
-      const chainHex: string = await window.ethereum.request({ method: "eth_chainId" });
+      const chainHex: string = await eth.request({ method: "eth_chainId" });
       setEvmChainId(parseInt(chainHex, 16));
     } catch (err: any) {
       log.error("1inch", "Wallet connect error", err);
@@ -517,7 +523,7 @@ export function OneInchWidget() {
 
   // Listen for account/chain changes
   useEffect(() => {
-    const eth = window.ethereum;
+    const eth = getEthereumProvider();
     if (!eth?.on) return;
     const handleAccounts = (accounts: string[]) => {
       setEvmAccount(accounts[0] || null);
@@ -537,11 +543,12 @@ export function OneInchWidget() {
 
   // Auto-detect existing connection
   useEffect(() => {
-    if (!window.ethereum) return;
-    window.ethereum.request({ method: "eth_accounts" }).then((accounts: string[]) => {
+    const eth = getEthereumProvider();
+    if (!eth) return;
+    eth.request({ method: "eth_accounts" }).then((accounts: string[]) => {
       if (accounts[0]) {
         setEvmAccount(accounts[0]);
-        window.ethereum!.request({ method: "eth_chainId" }).then((hex: string) => {
+        eth.request({ method: "eth_chainId" }).then((hex: string) => {
           setEvmChainId(parseInt(hex, 16));
         });
       }
@@ -550,16 +557,17 @@ export function OneInchWidget() {
 
   // Switch chain
   const switchChain = useCallback(async (targetChain: ChainConfig) => {
-    if (!window.ethereum) return;
+    const eth = getEthereumProvider();
+    if (!eth) return;
     try {
-      await window.ethereum.request({
+      await eth.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: targetChain.hexId }],
       });
     } catch (err: any) {
       if (err?.code === 4902) {
         try {
-          await window.ethereum.request({
+          await eth.request({
             method: "wallet_addEthereumChain",
             params: [{
               chainId: targetChain.hexId,
@@ -574,13 +582,14 @@ export function OneInchWidget() {
     }
   }, []);
 
-  // ── Fetch balance ──────────────────────────────────────────────────
+  // ── Fetch balance ──────────────────────────────���───────────────────
 
   const fetchBalance = useCallback(async () => {
-    if (!evmAccount || !window.ethereum) return;
+    const eth = getEthereumProvider();
+    if (!evmAccount || !eth) return;
     try {
       if (fromToken.isNative) {
-        const balHex: string = await window.ethereum.request({
+        const balHex: string = await eth.request({
           method: "eth_getBalance",
           params: [evmAccount, "latest"],
         });
@@ -591,7 +600,7 @@ export function OneInchWidget() {
         setFromBalance(`${whole}.${fracStr}`);
       } else {
         const data = "0x70a08231" + evmAccount.slice(2).padStart(64, "0");
-        const result: string = await window.ethereum.request({
+        const result: string = await eth.request({
           method: "eth_call",
           params: [{ to: fromToken.address, data }, "latest"],
         });
@@ -1120,7 +1129,8 @@ export function OneInchWidget() {
 
   // ── Execute CLASSIC swap ────────────────────────────────────────────
   const handleClassicSwap = useCallback(async () => {
-    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
+    const _eth = getEthereumProvider();
+    if (!evmAccount || !_eth || !fromAmount || parseFloat(fromAmount) <= 0) return;
 
     // Safety-net balance check — prevent sending a tx the wallet can't cover
     if (fromBalance) {
@@ -1155,7 +1165,7 @@ export function OneInchWidget() {
           const approveValue = approveData.value && approveData.value !== "0"
             ? "0x" + BigInt(approveData.value).toString(16)
             : "0x0";
-          const approveTxHash = await window.ethereum.request({
+          const approveTxHash = await _eth.request({
             method: "eth_sendTransaction",
             params: [{ from: evmAccount, to: approveData.to, data: approveData.data, value: approveValue }],
           });
@@ -1163,7 +1173,7 @@ export function OneInchWidget() {
           for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 1000));
             try {
-              const receipt = await window.ethereum!.request({
+              const receipt = await _eth.request({
                 method: "eth_getTransactionReceipt",
                 params: [approveTxHash],
               });
@@ -1197,7 +1207,7 @@ export function OneInchWidget() {
         ? "0x" + BigInt(String(swapData.tx.gas)).toString(16)
         : undefined;
 
-      const txHash = await window.ethereum.request({
+      const txHash = await _eth.request({
         method: "eth_sendTransaction",
         params: [{
           from: evmAccount, to: swapData.tx.to,
@@ -1235,7 +1245,8 @@ export function OneInchWidget() {
 
   // ── Execute FUSION swap (gasless — full lifecycle) ─────────────────
   const handleFusionSwap = useCallback(async () => {
-    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0 || !fusionQuote) return;
+    const _eth = getEthereumProvider();
+    if (!evmAccount || !_eth || !fromAmount || parseFloat(fromAmount) <= 0 || !fusionQuote) return;
 
     // Safety-net balance check — prevent spending gas on approval for a swap that can't complete
     if (fromBalance) {
@@ -1422,7 +1433,8 @@ export function OneInchWidget() {
 
   // ── Execute FUSION+ cross-chain swap (full lifecycle) ───────────────
   const handleCrossChainSwap = useCallback(async () => {
-    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0 || !crossChainQuote) return;
+    const _eth = getEthereumProvider();
+    if (!evmAccount || !_eth || !fromAmount || parseFloat(fromAmount) <= 0 || !crossChainQuote) return;
 
     // SAFETY: Block new swap if there's already a pending HTLC order
     const existingPending = loadPendingHtlcOrder();
@@ -1520,7 +1532,7 @@ export function OneInchWidget() {
         setSwapStatus("swapping");
         log.info("1inch", `[FUSION+] Step 3a: Sending NativeOrderFactory.create() via MetaMask...`);
 
-        txHash = await window.ethereum!.request({
+        txHash = await _eth.request({
           method: "eth_sendTransaction",
           params: [{
             from: evmAccount,
@@ -1539,7 +1551,7 @@ export function OneInchWidget() {
         for (let i = 0; i < 60; i++) {
           await new Promise(r => setTimeout(r, 2000));
           try {
-            const receipt = await window.ethereum!.request({
+            const receipt = await _eth.request({
               method: "eth_getTransactionReceipt",
               params: [txHash],
             }) as any;
@@ -1614,7 +1626,7 @@ export function OneInchWidget() {
         const ownerPadded = evmAccount.replace(/^0x/, "").toLowerCase().padStart(64, "0");
         const spenderPadded = approvalTarget.replace(/^0x/, "").toLowerCase().padStart(64, "0");
         const allowanceData = "0x" + allowanceSel + ownerPadded + spenderPadded;
-        const allowanceHex = await window.ethereum!.request({
+        const allowanceHex = await _eth.request({
           method: "eth_call",
           params: [{ to: fromToken.address, data: allowanceData }, "latest"],
         }) as string;
@@ -1625,7 +1637,7 @@ export function OneInchWidget() {
           const approveSel = "095ea7b3";
           const maxUint = "f".repeat(64);
           const approveCalldata = "0x" + approveSel + spenderPadded + maxUint;
-          const approveTxHash = await window.ethereum!.request({
+          const approveTxHash = await _eth.request({
             method: "eth_sendTransaction",
             params: [{ from: evmAccount, to: fromToken.address, data: approveCalldata, value: "0x0" }],
           });
@@ -1633,7 +1645,7 @@ export function OneInchWidget() {
           for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 1000));
             try {
-              const receipt = await window.ethereum!.request({
+              const receipt = await _eth.request({
                 method: "eth_getTransactionReceipt",
                 params: [approveTxHash],
               });
@@ -1654,7 +1666,7 @@ export function OneInchWidget() {
           return;
         }
 
-        const signature = await window.ethereum!.request({
+        const signature = await _eth.request({
           method: "eth_signTypedData_v4",
           params: [evmAccount, JSON.stringify(result.typedData)],
         }) as string;
@@ -1792,7 +1804,7 @@ export function OneInchWidget() {
 
   // ── Unified swap handler — dispatches to Classic, Fusion, or Fusion+ ──
   const handleSwap = useCallback(async () => {
-    if (!evmAccount || !window.ethereum || !fromAmount || parseFloat(fromAmount) <= 0) return;
+    if (!evmAccount || !getEthereumProvider() || !fromAmount || parseFloat(fromAmount) <= 0) return;
     if (evmChainId !== selectedChainId) { await switchChain(chain); return; }
 
     if (swapMode === "crossChain") {
@@ -1938,11 +1950,23 @@ export function OneInchWidget() {
             : "radial-gradient(ellipse at 30% 20%, rgba(236,72,153,0.06), transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(139,92,246,0.05), transparent 60%)",
         }}
       />
+    {/* Animated gradient border (matches SwapCardPro) */}
+    <div className="relative rounded-2xl p-[1px] overflow-hidden">
+      <div
+        className="absolute inset-0 rounded-2xl"
+        style={{
+          backgroundImage: isDark
+            ? "linear-gradient(135deg, rgba(236,72,153,0.3), rgba(139,92,246,0.2), rgba(6,182,212,0.15), rgba(236,72,153,0.3))"
+            : "linear-gradient(135deg, rgba(236,72,153,0.15), rgba(139,92,246,0.1), rgba(6,182,212,0.08), rgba(236,72,153,0.15))",
+          backgroundSize: "300% 300%",
+          animation: "gradientShift 8s ease-in-out infinite",
+        }}
+      />
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 }}
-      className={`relative rounded-2xl p-5 ${cardClass}`}
+      className={`relative rounded-2xl p-5 ${isDark ? "bg-[#0c0f1a]/95 backdrop-blur-2xl" : "bg-white/95 backdrop-blur-2xl shadow-xl"}`}
     >
       {/* ── Header (matches SaucerSwap header) ── */}
       <div className={`flex items-center justify-between pb-3 mb-4 ${isDark ? "border-b border-white/[0.04]" : "border-b border-gray-100"}`}>
@@ -1981,7 +2005,7 @@ export function OneInchWidget() {
             whileHover={{ scale: 1.1, rotate: 30 }}
             whileTap={{ scale: 0.9 }}
             aria-label="Toggle settings"
-            className={`p-1.5 rounded-lg transition-colors ${
+            className={`p-1.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
               showSettings
                 ? isDark
                   ? "bg-pink-500/15 text-pink-400"
@@ -1996,7 +2020,7 @@ export function OneInchWidget() {
           {/* Chain Selector */}
           <div className="relative">
             <button onClick={() => setShowChainMenu(!showChainMenu)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                 isDark
                   ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:border-emerald-400/50"
                   : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300"
@@ -2067,7 +2091,7 @@ export function OneInchWidget() {
                 <span className={`text-xs font-bold ${isDark ? "text-slate-400" : "text-gray-500"}`}>Slippage:</span>
                 {[0.5, 1, 2, 3].map(s => (
                   <button key={s} onClick={() => { setSlippage(s); playVipButtonChime(); }}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                       slippage === s
                         ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
                         : isDark
@@ -2702,7 +2726,7 @@ export function OneInchWidget() {
             disabled={walletConnecting}
             whileHover={walletConnecting ? {} : { scale: 1.01 }}
             whileTap={walletConnecting ? {} : { scale: 0.98 }}
-            className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 ${
+            className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
               walletConnecting
                 ? isDark ? "bg-slate-700 text-slate-400 cursor-wait" : "bg-gray-300 text-gray-500 cursor-wait"
                 : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg shadow-pink-500/30"
@@ -2728,7 +2752,7 @@ export function OneInchWidget() {
             onClick={() => { switchChain(chain); playVipButtonChime(); }}
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
-            className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-white shadow-lg shadow-amber-500/20"
+            className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-white shadow-lg shadow-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
           >
             <div className="flex items-center justify-center gap-2">
               <AlertCircle className="w-4 h-4" />
@@ -2905,7 +2929,7 @@ export function OneInchWidget() {
               </div>
             )}
             <button onClick={() => { setSwapStatus("idle"); setFromAmount(""); setToAmount(""); setLastQuote(null); setLastSignedOrder(null); setFusionQuote(null); setFusionOrderStatus(null); setFusionFillTxHash(null); stopFusionPolling(); }}
-              className={`w-full mt-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
+              className={`w-full mt-3 py-2.5 rounded-xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                 isDark
                   ? "bg-slate-800 hover:bg-slate-700 border border-pink-500/20 text-white"
                   : "bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-900"
@@ -2928,7 +2952,7 @@ export function OneInchWidget() {
               </div>
             )}
             <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); setCrossChainOrderHash(null); setCrossChainBuildData(null); stopFusionPolling(); stopCrossChainPolling(); resetSdkCache(); }}
-              className={`w-full mt-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
+              className={`w-full mt-3 py-2.5 rounded-xl text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                 isDark
                   ? "bg-slate-800 hover:bg-slate-700 border border-pink-500/20 text-white"
                   : "bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-900"
@@ -2945,7 +2969,7 @@ export function OneInchWidget() {
             transition={{ duration: 0.2 }}
             whileHover={canSwap ? { scale: 1.01 } : {}}
             whileTap={canSwap ? { scale: 0.98 } : {}}
-            className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
+            className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
               insufficientBalance
                 ? isDark ? "bg-red-900/60 text-red-300 shadow-none cursor-not-allowed border border-red-500/30" : "bg-red-100 text-red-600 shadow-none cursor-not-allowed border border-red-300"
                 : !canSwap
@@ -3073,6 +3097,7 @@ export function OneInchWidget() {
       </div>
 
     </motion.div>
+    </div>{/* end animated gradient border wrapper */}
     </div>
 
     {/* ═══ FUSION ORDER TRACKER (Step 8) — separate card below widget ═══ */}

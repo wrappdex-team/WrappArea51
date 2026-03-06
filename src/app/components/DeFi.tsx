@@ -343,7 +343,7 @@ export function DeFi() {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm transition-all duration-300 ${
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                 active
                   ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
                   : isDark
@@ -459,7 +459,7 @@ export function DeFi() {
                   >
                     {/* Favorite */}
                     <div className="hidden md:flex col-span-1 items-center">
-                      <button onClick={(e) => { e.stopPropagation(); toggleFav(pool.id); }} className="p-0.5">
+                      <button onClick={(e) => { e.stopPropagation(); toggleFav(pool.id); }} className="p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 rounded">
                         <Star className={`w-4 h-4 ${favorites.includes(pool.id) ? "text-yellow-400 fill-yellow-400" : isDark ? "text-slate-600" : "text-gray-300"}`} />
                       </button>
                     </div>
@@ -587,7 +587,7 @@ export function DeFi() {
                                   if (livePool) setAddLiquidityPool(livePool);
                                 }}
                                 disabled={!isPoolWhitelisted(pool.tokenA.symbol, pool.tokenB.symbol, pool.tokenA.htsId, pool.tokenB.htsId, pool.id)}
-                                className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-lg ${
+                                className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                                   isPoolWhitelisted(pool.tokenA.symbol, pool.tokenB.symbol, pool.tokenA.htsId, pool.tokenB.htsId, pool.id)
                                     ? "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-pink-500/20"
                                     : isDark
@@ -604,7 +604,7 @@ export function DeFi() {
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setActiveTab("positions"); }}
-                                className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}
+                                className={`px-4 py-2.5 rounded-lg text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-200 hover:bg-gray-300 text-gray-700"}`}
                               >
                                 Manage Positions
                               </button>

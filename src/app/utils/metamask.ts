@@ -99,6 +99,145 @@ export interface MetaMaskAccountInfo {
 
 // ── Provider Detection ───────────────────────────────────────────────
 
+// ── MetaMask SDK for Mobile ──────────────────────────────────────────
+// IMPLEMENTATION NOTE: The MetaMask SDK (@metamask/sdk) provides a socket-
+// based communication channel between a regular mobile browser (Chrome/Safari)
+// and the MetaMask Mobile app. This is the Web3 "surgical" fix for the mobile
+// MetaMask problem:
+//
+// OLD flow (broken for dual-wallet users):
+//   1. User in Chrome → clicks "Connect MetaMask"
+//   2. Deep link opens MetaMask's in-app browser → loads entire dApp inside
+//   3. User is TRAPPED inside MetaMask's WebView → CANNOT use WalletConnect
+//      for HashPack because the WebView doesn't handle WC deep links properly
+//
+// NEW flow (SDK):
+//   1. User in Chrome → clicks "Connect MetaMask"
+//   2. SDK opens MetaMask Mobile via deep link for APPROVAL ONLY
+//   3. User approves → returns to Chrome → MetaMask connected via socket
+//   4. User can ALSO connect HashPack via WalletConnect (still in Chrome!)
+//
+// On desktop, the SDK detects the browser extension and delegates to it
+// directly — zero behavioral change from the existing window.ethereum flow.
+
+import type { MetaMaskSDK as MetaMaskSDKType } from "@metamask/sdk";
+
+let _mmSDK: MetaMaskSDKType | null = null;
+let _mmSDKInitPromise: Promise<MetaMaskSDKType> | null = null;
+let _mmSDKProvider: any = null;
+
+/**
+ * Lazy-initialize the MetaMask SDK singleton.
+ * On desktop with extension: SDK detects it and proxies to window.ethereum.
+ * On mobile: SDK establishes a socket channel to MetaMask Mobile app.
+ */
+async function _getMetaMaskSDK(): Promise<MetaMaskSDKType> {
+  if (_mmSDK?._initialized) return _mmSDK;
+  if (_mmSDKInitPromise) return _mmSDKInitPromise;
+
+  _mmSDKInitPromise = (async () => {
+    try {
+      const { MetaMaskSDK } = await import("@metamask/sdk");
+      const sdk = new MetaMaskSDK({
+        dappMetadata: {
+          name: "WRAPpDEX",
+          url: typeof window !== "undefined" ? window.location.href : "https://wrappdex.com",
+        },
+        // Don't prompt install immediately — wait for user to click Connect
+        checkInstallationImmediately: false,
+        // Use deep links (better for Android); iOS falls back to universal links
+        useDeeplink: true,
+        // Don't inject into window.ethereum — we manage the provider ourselves
+        // to avoid interfering with the existing extension detection
+        injectProvider: false,
+        forceInjectProvider: false,
+        // Suppress SDK's built-in modal UI — we have our own WalletConnectModal
+        headless: true,
+        // Disable analytics
+        enableAnalytics: false,
+        logging: { developerMode: false },
+      });
+
+      await sdk.init();
+      _mmSDK = sdk;
+      console.log("[MetaMask SDK] Initialized. Extension active:", sdk.isExtensionActive());
+      return sdk;
+    } catch (err: any) {
+      console.warn("[MetaMask SDK] Init failed:", err?.message);
+      _mmSDKInitPromise = null;
+      throw err;
+    }
+  })();
+
+  return _mmSDKInitPromise;
+}
+
+/**
+ * Get the active EIP-1193 provider.
+ * Priority: SDK provider (if connected via SDK) > window.ethereum (extension).
+ * On mobile after SDK connect, _mmSDKProvider is set and used for all RPC calls.
+ */
+export function getEthereumProvider(): any | null {
+  if (_mmSDKProvider) return _mmSDKProvider;
+  if (typeof window !== "undefined" && (window as any).ethereum) return (window as any).ethereum;
+  return null;
+}
+
+/**
+ * Connect MetaMask via the SDK on mobile.
+ * Opens MetaMask Mobile app for approval, user returns to browser connected.
+ * Returns the connected account addresses.
+ */
+export async function connectMetaMaskSDK(signal?: AbortSignal): Promise<string[]> {
+  const sdk = await _getMetaMaskSDK();
+
+  // On desktop, if extension is active, the SDK delegates to it.
+  // On mobile, this opens MetaMask Mobile via deep link.
+  const connectPromise = sdk.connect();
+
+  const accounts = await Promise.race([
+    connectPromise,
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("MetaMask SDK connection timed out. Make sure MetaMask Mobile is installed.")),
+        120_000, // 2 minutes — user needs time to switch apps on mobile
+      );
+      signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(new Error("Connection cancelled"));
+      }, { once: true });
+    }),
+  ]);
+
+  // Store the SDK provider for subsequent RPC calls
+  const provider = sdk.getProvider();
+  if (provider) {
+    _mmSDKProvider = provider;
+    console.log("[MetaMask SDK] Provider acquired. Accounts:", accounts?.length || 0);
+  }
+
+  return (accounts as string[]) || [];
+}
+
+/**
+ * Disconnect the MetaMask SDK session (terminates socket channel).
+ */
+export async function disconnectMetaMaskSDK(): Promise<void> {
+  if (_mmSDK) {
+    try {
+      await _mmSDK.terminate();
+    } catch { /* ignore */ }
+  }
+  _mmSDKProvider = null;
+}
+
+/**
+ * Check if the MetaMask SDK has an active mobile session.
+ */
+export function isSDKConnected(): boolean {
+  return !!_mmSDKProvider;
+}
+
 /**
  * Detect mobile browsers (iOS Safari, Android Chrome, etc.).
  * Used to determine whether to deep-link into MetaMask Mobile
@@ -126,10 +265,13 @@ export function getMetaMaskDeepLink(): string {
 }
 
 export function isMetaMaskInstalled(): boolean {
+  // Check for SDK provider (mobile) OR native window.ethereum (desktop extension)
+  if (_mmSDKProvider) return true;
   return typeof window !== "undefined" && typeof window.ethereum !== "undefined";
 }
 
 export function isMetaMaskProvider(): boolean {
+  if (_mmSDKProvider) return true;
   if (!isMetaMaskInstalled()) return false;
   return !!(window.ethereum as any)?.isMetaMask;
 }
@@ -169,11 +311,15 @@ function encodeBalanceOf(address: string): string {
 }
 
 // ── Core EIP-1193 Functions ──────────────────────────────────────────
+// IMPLEMENTATION NOTE: All RPC calls use getEthereumProvider() which returns
+// the SDK provider (mobile) or window.ethereum (desktop). This ensures
+// SDK-connected mobile sessions work with all existing EIP-1193 code.
 
 export async function requestAccounts(signal?: AbortSignal): Promise<string[]> {
-  if (!isMetaMaskInstalled()) throw new Error("MetaMask is not installed");
+  const provider = getEthereumProvider();
+  if (!provider) throw new Error("MetaMask is not installed");
   try {
-    const requestPromise = (window.ethereum as any).request({
+    const requestPromise = provider.request({
       method: "eth_requestAccounts",
     });
 
@@ -200,9 +346,10 @@ export async function requestAccounts(signal?: AbortSignal): Promise<string[]> {
 }
 
 export async function getChainId(): Promise<number> {
-  if (!isMetaMaskInstalled()) return 0;
+  const provider = getEthereumProvider();
+  if (!provider) return 0;
   try {
-    const hex = await (window.ethereum as any).request({ method: "eth_chainId" });
+    const hex = await provider.request({ method: "eth_chainId" });
     return parseInt(hex, 16);
   } catch {
     return 0;
@@ -213,9 +360,10 @@ export async function getBalance(address: string): Promise<{
   balanceWei: string;
   balanceEth: string;
 }> {
-  if (!isMetaMaskInstalled()) return { balanceWei: "0", balanceEth: "0" };
+  const provider = getEthereumProvider();
+  if (!provider) return { balanceWei: "0", balanceEth: "0" };
   try {
-    const hex: string = await (window.ethereum as any).request({
+    const hex: string = await provider.request({
       method: "eth_getBalance",
       params: [address, "latest"],
     });
@@ -230,9 +378,10 @@ export async function getBalance(address: string): Promise<{
 }
 
 export async function getConnectedAccounts(): Promise<string[]> {
-  if (!isMetaMaskInstalled()) return [];
+  const provider = getEthereumProvider();
+  if (!provider) return [];
   try {
-    const accounts = await (window.ethereum as any).request({
+    const accounts = await provider.request({
       method: "eth_accounts",
     });
     return accounts as string[];
@@ -270,9 +419,8 @@ export function subscribeToMetaMaskEvents(handlers: {
   onChainChanged?: (chainId: number) => void;
   onDisconnect?: () => void;
 }): () => void {
-  if (!isMetaMaskInstalled()) return () => {};
-
-  const ethereum = window.ethereum as any;
+  const provider = getEthereumProvider();
+  if (!provider) return () => {};
 
   const handleAccountsChanged = (accounts: string[]) => {
     if (accounts.length === 0) {
@@ -286,12 +434,12 @@ export function subscribeToMetaMaskEvents(handlers: {
     handlers.onChainChanged?.(parseInt(chainIdHex, 16));
   };
 
-  ethereum.on("accountsChanged", handleAccountsChanged);
-  ethereum.on("chainChanged", handleChainChanged);
+  provider.on("accountsChanged", handleAccountsChanged);
+  provider.on("chainChanged", handleChainChanged);
 
   return () => {
-    ethereum.removeListener("accountsChanged", handleAccountsChanged);
-    ethereum.removeListener("chainChanged", handleChainChanged);
+    provider.removeListener("accountsChanged", handleAccountsChanged);
+    provider.removeListener("chainChanged", handleChainChanged);
   };
 }
 
@@ -301,7 +449,8 @@ export async function fetchERC20Balances(
   address: string,
   chainId: number,
 ): Promise<ERC20Balance[]> {
-  if (!isMetaMaskInstalled()) return [];
+  const provider = getEthereumProvider();
+  if (!provider) return [];
   const tokenDefs = KNOWN_ERC20S[chainId];
   if (!tokenDefs || tokenDefs.length === 0) return [];
 
@@ -310,7 +459,7 @@ export async function fetchERC20Balances(
   const queries = tokenDefs.map(async (token) => {
     try {
       const data = encodeBalanceOf(address);
-      const hex: string = await (window.ethereum as any).request({
+      const hex: string = await provider.request({
         method: "eth_call",
         params: [{ to: token.address, data }, "latest"],
       });
@@ -384,11 +533,12 @@ const ADD_CHAIN_PARAMS: Record<number, any> = {
 };
 
 export async function switchChain(chainId: number): Promise<boolean> {
-  if (!isMetaMaskInstalled()) return false;
+  const provider = getEthereumProvider();
+  if (!provider) return false;
   const hexChainId = `0x${chainId.toString(16)}`;
 
   try {
-    await (window.ethereum as any).request({
+    await provider.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: hexChainId }],
     });
@@ -398,7 +548,7 @@ export async function switchChain(chainId: number): Promise<boolean> {
       const params = ADD_CHAIN_PARAMS[chainId];
       if (params) {
         try {
-          await (window.ethereum as any).request({
+          await provider.request({
             method: "wallet_addEthereumChain",
             params: [{ chainId: hexChainId, ...params }],
           });
@@ -444,7 +594,8 @@ export async function signPersonalMessage(
   message: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (!isMetaMaskInstalled()) throw new Error("MetaMask is not installed");
+  const provider = getEthereumProvider();
+  if (!provider) throw new Error("MetaMask is not installed");
 
   // EIP-191 personal_sign expects [message, address].
   // MetaMask internally converts the message to a UTF-8 hex string
@@ -454,7 +605,7 @@ export async function signPersonalMessage(
     .join("");
 
   try {
-    const signPromise = (window.ethereum as any).request({
+    const signPromise = provider.request({
       method: "personal_sign",
       params: [msgHex, address],
     });

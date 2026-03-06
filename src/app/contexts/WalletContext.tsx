@@ -23,6 +23,10 @@ import {
   fetchSolPrice,
   CHAIN_INFO,
   signPersonalMessage,
+  connectMetaMaskSDK,
+  disconnectMetaMaskSDK,
+  isSDKConnected,
+  getEthereumProvider,
 } from "../utils/metamask";
 import type {
   HashPackSession,
@@ -353,21 +357,73 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     setIsConnectingMetaMask(true);
     setMetaMaskError(null);
-    if (!isMetaMaskInstalled()) {
-      // On mobile, there's no browser extension — the user needs to open
-      // this dApp inside MetaMask Mobile's in-app browser via deep link.
-      // WalletConnectModal reads this specific error to show "Open in MetaMask".
-      if (isMobileBrowser()) {
-        setMetaMaskError("MOBILE_NO_PROVIDER");
-      } else {
-        setMetaMaskError("MetaMask is not installed. Please install the MetaMask browser extension.");
-      }
-      setIsConnectingMetaMask(false);
-      return false;
-    }
 
     const controller = new AbortController();
     metaMaskAbortRef.current = controller;
+
+    // ── Mobile: Use MetaMask SDK ─────────────────────────────────
+    // IMPLEMENTATION NOTE: On mobile browsers without window.ethereum,
+    // the MetaMask SDK creates a socket-based channel to MetaMask Mobile.
+    // The user stays in Chrome/Safari, approves in MetaMask, and returns.
+    // This allows dual-wallet use (MetaMask + HashPack via WalletConnect).
+    if (isMobileBrowser() && !isMetaMaskInstalled()) {
+      try {
+        console.log("[WalletContext] Mobile MetaMask SDK connect flow starting...");
+        const accounts = await connectMetaMaskSDK(controller.signal);
+        if (controller.signal.aborted) return false;
+        if (!accounts || accounts.length === 0) {
+          setMetaMaskError("No accounts returned from MetaMask Mobile.");
+          setIsConnectingMetaMask(false);
+          return false;
+        }
+
+        // SDK provider is now active — use standard getChainId/getBalance
+        const address = accounts[0];
+        const chainId = await getChainId();
+        const { balanceWei, balanceEth } = await getBalance(address);
+        const chain = CHAIN_INFO[chainId];
+        const info: MetaMaskAccountInfo = {
+          address,
+          balanceWei,
+          balanceEth,
+          chainId,
+          chainName: chain?.name || `Chain ${chainId}`,
+          nativeSymbol: chain?.symbol || "ETH",
+          explorerUrl: chain?.explorer || "",
+        };
+        setMetaMaskAccount(info);
+        localStorage.setItem("hbarh-metamask-connected", "true");
+        setConnectedWallets((prev) => {
+          const filtered = prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask"));
+          return [...filtered, { address: info.address, type: "ethereum", connector: "MetaMask" }];
+        });
+        fetchEthPrice().then(setEthPrice);
+        fetchSolPrice().then(setSolPrice);
+        setIsConnectingMetaMask(false);
+        return true;
+      } catch (error: any) {
+        if (error.message === "Connection cancelled" || controller.signal.aborted) {
+          setIsConnectingMetaMask(false);
+          return false;
+        }
+        // If SDK fails, fall back to showing the deep link option
+        console.warn("[WalletContext] MetaMask SDK failed, falling back to deep link:", error?.message);
+        setMetaMaskError("MOBILE_SDK_FALLBACK");
+        setIsConnectingMetaMask(false);
+        return false;
+      } finally {
+        if (metaMaskAbortRef.current === controller) {
+          metaMaskAbortRef.current = null;
+        }
+      }
+    }
+
+    // ── Desktop / Extension: Use standard window.ethereum flow ────
+    if (!isMetaMaskInstalled()) {
+      setMetaMaskError("MetaMask is not installed. Please install the MetaMask browser extension.");
+      setIsConnectingMetaMask(false);
+      return false;
+    }
 
     try {
       const info = await connectMM(controller.signal);
@@ -406,6 +462,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setConnectedWallets((prev) => prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask")));
     metaMaskUnsubRef.current?.();
     metaMaskUnsubRef.current = null;
+    // IMPLEMENTATION NOTE: Clean up MetaMask SDK session if it was used (mobile).
+    // This terminates the socket channel to MetaMask Mobile.
+    if (isSDKConnected()) {
+      disconnectMetaMaskSDK().catch(() => { /* non-critical */ });
+    }
   }, []);
 
   const refreshMetaMaskBalance = useCallback(async () => {

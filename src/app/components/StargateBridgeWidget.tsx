@@ -68,6 +68,7 @@ import {
   formatAddress,
   isMobileBrowser,
   getMetaMaskDeepLink,
+  getEthereumProvider,
 } from "../utils/metamask";
 import {
   fetchSupportedTokens,
@@ -325,8 +326,8 @@ export function StargateBridgeWidget({ onClose, isDark, isAdmin = false }: Starg
   phaseRef.current = phase;
 
   useEffect(() => {
-    if (!window.ethereum) return;
-    const eth = window.ethereum as any;
+    const eth = getEthereumProvider();
+    if (!eth) return;
 
     const handleAccounts = (accs: string[]) => {
       if (accs.length === 0) {
@@ -381,10 +382,12 @@ export function StargateBridgeWidget({ onClose, isDark, isAdmin = false }: Starg
     (async () => {
       if (!isMetaMaskInstalled()) return;
       try {
-        const accs = await (window.ethereum as any).request({ method: "eth_accounts" });
+        const eth = getEthereumProvider();
+        if (!eth) return;
+        const accs = await eth.request({ method: "eth_accounts" });
         if (accs?.length) {
           setWalletAddress(accs[0]);
-          const chainHex = await (window.ethereum as any).request({ method: "eth_chainId" });
+          const chainHex = await eth.request({ method: "eth_chainId" });
           setWalletChainId(parseInt(chainHex, 16));
         }
       } catch { /* silent */ }

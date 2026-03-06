@@ -255,7 +255,7 @@ export function BuySell() {
             <Tip content="Refresh price">
             <button
               onClick={refreshPrice}
-              className={`p-2.5 rounded-xl transition-all ${isDark ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20" : "bg-gray-100 hover:bg-gray-200 border border-gray-200"}`}
+              className={`p-2.5 rounded-xl transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${isDark ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20" : "bg-gray-100 hover:bg-gray-200 border border-gray-200"}`}
             >
               <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""} ${isDark ? "text-slate-400" : "text-gray-500"}`} />
             </button>
@@ -678,7 +678,7 @@ function FiatConsentGate({ isDark, onAccept }: { isDark: boolean; onAccept: () =
         {/* Accept */}
         <button
           onClick={onAccept}
-          className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg shadow-pink-500/30 transition-all duration-300"
+          className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-lg shadow-pink-500/30 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
         >
           I Understand, Continue
         </button>

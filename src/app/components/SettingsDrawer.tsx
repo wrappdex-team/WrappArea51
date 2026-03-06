@@ -86,7 +86,7 @@ export const SettingsDrawer = memo(function SettingsDrawer({
             <button
               key={opt}
               onClick={() => { onSetSlippage(opt); onSetCustomSlippage(""); }}
-              className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-all duration-200 ${
+              className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                 slippage === opt && !isCustom
                   ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-md shadow-pink-500/20"
                   : isDark
