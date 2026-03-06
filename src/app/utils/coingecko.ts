@@ -77,11 +77,15 @@ const BINANCE_PAIR_MAP: Record<string, string> = {
   SHIB: "SHIBUSDT", DOT: "DOTUSDT", LTC: "LTCUSDT", PAXG: "PAXGUSDT",
   AAVE: "AAVEUSDT",
   DAI: "DAIUSDT",
+  USDC: "USDCUSDT",
   XLM: "XLMUSDT",
   UNI: "UNIUSDT",
   HYPE: "HYPEUSDT",
   // IMPLEMENTATION NOTE: Canton (CC) is NOT listed on Binance.
   // Do NOT add CC here — one invalid pair kills the entire batch request (HTTP 400).
+  // IMPLEMENTATION NOTE: XMR (Monero) delisted from Binance Feb 2024 — do NOT add.
+  // IMPLEMENTATION NOTE: USDT has no USDTUSDT pair (it IS the quote currency).
+  // IMPLEMENTATION NOTE: EURC has no EURCUSDT pair on Binance.
 };
 
 // Reverse map: Binance pair -> our symbol
@@ -267,7 +271,7 @@ const FALLBACK_DATA: Record<string, CoinPrice> = {
 
 // ─────────────────────────────────────────────────────────────────────
 // 5-TIER ORACLE PRICE PIPELINE
-// ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────��───────
 //
 // T0 — Network Rate : Hedera 0x168 exchange rate (HBAR only, consensus-derived)
 // T1 — Chainlink    : On-chain decentralized oracles (most reliable for majors)
@@ -320,6 +324,7 @@ const PROVEN_BINANCE_PAIRS = new Set([
   "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "HBARUSDT",
   "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "TRXUSDT", "TONUSDT", "LINKUSDT",
   "SHIBUSDT", "DOTUSDT", "LTCUSDT", "PAXGUSDT", "AAVEUSDT", "DAIUSDT",
+  "XLMUSDT", "UNIUSDT", "HYPEUSDT", "USDCUSDT",
 ]);
 
 /** Parse a single Binance ticker item into a CoinPrice */
@@ -549,7 +554,10 @@ async function fetchCoinGeckoPrices(symbols: string[]): Promise<Record<string, C
   const uniqueIds = [...new Set(ids)];
 
   try {
-    const path = `/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false&price_change_percentage=24h`;
+    // IMPLEMENTATION NOTE: sparkline=true adds ~168 hourly price points per token.
+    // This is the primary sparkline source for tokens not on Binance (CC, XMR, EURC,
+    // USDT, etc.). Binance klines override in background for faster-updating tokens.
+    const path = `/coins/markets?vs_currency=usd&ids=${uniqueIds.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=24h`;
     const res = await fetchCoinGeckoViaProxy(path, 10000);
     if (!res.ok) {
       log.debug("CoinGecko", `HTTP ${res.status}`);
@@ -940,11 +948,16 @@ export async function fetchMarketRSI(): Promise<{ rsi: number }> {
   }
 }
 
-// ── Sparklines (Binance 7-day klines for mini charts) ─────────────
+// ── Sparklines (Binance klines + CoinGecko OHLC fallback for mini charts) ──
+// IMPLEMENTATION NOTE: Primary source is Binance 1h klines (168 points = 7 days).
+// For tokens not on Binance (CC, XMR, EURC, USDT), we fall back to CoinGecko
+// OHLC via the server proxy. The CoinGecko sparkline from fetchCoinPrices
+// (sparkline=true) is the first line of defense; this function provides a
+// higher-quality Binance override + OHLC fallback belt-and-suspenders.
 export async function fetchAllSparklines(symbols: string[]): Promise<SparklineMap> {
   const result: SparklineMap = {};
 
-  // Fetch in parallel batches of 6 to avoid rate limits
+  // ── Phase 1: Binance klines for all tokens with a valid pair ──
   const BATCH_SIZE = 6;
   const eligible = symbols.filter((s) => BINANCE_PAIR_MAP[s]);
 
@@ -958,7 +971,8 @@ export async function fetchAllSparklines(symbols: string[]): Promise<SparklineMa
         const res = await fetchWithTimeout(url, 5000);
         if (!res.ok) return;
         const klines: any[] = await res.json();
-        result[sym] = klines.map((k: any) => parseFloat(k[4])); // close prices
+        const closes = klines.map((k: any) => parseFloat(k[4]));
+        if (closes.length >= 10) result[sym] = closes;
       } catch {
         // Skip this symbol
       }
@@ -968,6 +982,36 @@ export async function fetchAllSparklines(symbols: string[]): Promise<SparklineMa
     if (i + BATCH_SIZE < eligible.length) {
       await new Promise((r) => setTimeout(r, 100));
     }
+  }
+
+  // ── Phase 2: CoinGecko OHLC fallback for non-Binance tokens ──
+  // Tokens like CC, XMR, EURC, USDT that have no Binance pair
+  const nonBinance = symbols.filter((s) => !BINANCE_PAIR_MAP[s] && COIN_ID_MAP[s] && !result[s]);
+  if (nonBinance.length > 0) {
+    log.debug("Sparkline", `CoinGecko OHLC fallback for ${nonBinance.length} non-Binance tokens: ${nonBinance.join(", ")}`);
+    const ohlcPromises = nonBinance.map(async (sym) => {
+      const coinId = COIN_ID_MAP[sym];
+      if (!coinId) return;
+      try {
+        const path = `/coins/${coinId}/ohlc?vs_currency=usd&days=7`;
+        const res = await fetchCoinGeckoViaProxy(path, 8000);
+        if (!res.ok) return;
+        const data: number[][] = await res.json();
+        if (data && data.length >= 10) {
+          // Extract close prices from OHLC [timestamp, open, high, low, close]
+          result[sym] = data.map((d) => d[4]);
+          log.debug("Sparkline", `${sym}: ${data.length} OHLC points from CoinGecko`);
+        }
+      } catch {
+        // Skip — CoinGecko sparkline from fetchCoinPrices will serve as fallback
+      }
+    });
+    await Promise.all(ohlcPromises);
+  }
+
+  // USDCh mirrors USDC sparkline
+  if (result["USDC"] && !result["USDCh"]) {
+    result["USDCh"] = [...result["USDC"]];
   }
 
   return result;

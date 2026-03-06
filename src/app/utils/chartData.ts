@@ -28,11 +28,15 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
   BNB: "BNBUSDT", SOL: "SOLUSDT", DOGE: "DOGEUSDT", ADA: "ADAUSDT",
   AVAX: "AVAXUSDT", TRX: "TRXUSDT", TON: "TONUSDT", LINK: "LINKUSDT",
   SHIB: "SHIBUSDT", DOT: "DOTUSDT", LTC: "LTCUSDT", PAXG: "PAXGUSDT",
-  AAVE: "AAVEUSDT", DAI: "DAIUSDT",
+  AAVE: "AAVEUSDT", DAI: "DAIUSDT", USDC: "USDCUSDT",
   XLM: "XLMUSDT", UNI: "UNIUSDT",
   HYPE: "HYPEUSDT",
   // IMPLEMENTATION NOTE: Canton (CC) is NOT listed on Binance — no valid pair.
   // Charts fall through to CoinGecko OHLC → CoinCap → synthetic cascade.
+  // IMPLEMENTATION NOTE: XMR (Monero) delisted from Binance Feb 2024.
+  // Charts fall through to CoinGecko OHLC → CoinCap history → synthetic.
+  // IMPLEMENTATION NOTE: USDT has no USDTUSDT pair (it IS the quote currency).
+  // IMPLEMENTATION NOTE: EURC has no EURCUSDT pair on Binance.
 };
 
 // ── Binance interval mapping ─────────────────────────────────────────
