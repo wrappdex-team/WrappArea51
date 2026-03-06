@@ -60,7 +60,7 @@ const SEGMENTS: WheelSegment[] = [
   { label: "So Close", color: "#1e1b4b", textColor: "#c4b5fd", isWinner: false },
   { label: "Not Yet", color: "#172554", textColor: "#93c5fd", isWinner: false },
   { label: "Try Again", color: "#1e1b4b", textColor: "#c4b5fd", isWinner: false },
-  { label: "HBAR.h", color: "#4a1942", textColor: "#ec4899", isWinner: true },
+  { label: "WRAPpDEX", color: "#4a1942", textColor: "#ec4899", isWinner: true },
   { label: "Not Yet", color: "#172554", textColor: "#93c5fd", isWinner: false },
   { label: "Almost!", color: "#1e1b4b", textColor: "#c4b5fd", isWinner: false },
   { label: "Try Again", color: "#172554", textColor: "#93c5fd", isWinner: false },
@@ -577,7 +577,7 @@ function PrizeTicket({
   const winDate = new Date(winTimestamp);
 
   const copyTicketInfo = () => {
-    const text = `HBAR.h DAO Spin Winner!\nTicket: ${ticketId}\nAccount: ${accountId}\nDate: ${winDate.toLocaleString()}\nVerify on Discord: ${DISCORD_LINK}`;
+    const text = `WRAPpDEX DAO Spin Winner!\nTicket: ${ticketId}\nAccount: ${accountId}\nDate: ${winDate.toLocaleString()}\nVerify on Discord: ${DISCORD_LINK}`;
     // Use textarea + execCommand fallback for iframe/permissions-policy environments
     try {
       const ta = document.createElement("textarea");
@@ -659,7 +659,7 @@ function PrizeTicket({
                 <Trophy className="w-6 h-6 text-yellow-300" />
               </div>
               <div className="text-pink-100 text-xs tracking-widest uppercase">
-                HBAR.h DAO Free Spin Prize
+                WRAPpDEX DAO Free Spin Prize
               </div>
             </div>
           </div>
@@ -677,7 +677,7 @@ function PrizeTicket({
             <div className="flex justify-center">
               <motion.img
                 src={hbarhLogo}
-                alt="HBAR.h"
+                alt="WRAPpDEX"
                 className="w-16 h-16 rounded-full ring-2 ring-pink-500/50 shadow-lg shadow-pink-500/30"
                 animate={{ rotate: [0, 5, -5, 0] }}
                 transition={{ duration: 3, repeat: Infinity }}
@@ -726,7 +726,7 @@ function PrizeTicket({
                   <span className="text-white">Screenshot this winning ticket</span>
                 </li>
                 <li>
-                  <span className="text-white">Head to the HBAR.h Discord server</span>
+                  <span className="text-white">Head to the WRAPpDEX Discord server</span>
                 </li>
                 <li>
                   <span className="text-white">
@@ -772,7 +772,7 @@ function PrizeTicket({
 
             {/* Footer watermark */}
             <div className="text-center text-[9px] text-white/30 pt-2">
-              HBAR.h DAO | Verified On-Chain | Token-Gated Prize
+              WRAPpDEX DAO | Verified On-Chain | Token-Gated Prize
             </div>
           </div>
         </div>
@@ -1118,7 +1118,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
           Free Spin Prize Wheel
         </h3>
         <p className="text-slate-500 dark:text-slate-400 text-sm max-w-md mx-auto">
-          Exclusive for HBAR.h DAO members. Spin once every 24 hours for a chance to win prizes!
+          Exclusive for WRAPpDEX DAO members. Spin once every 24 hours for a chance to win prizes!
         </p>
       </div>
 
@@ -1136,7 +1136,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
           <div className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span className="text-sm text-emerald-700 dark:text-emerald-300">
-              VIP Verified — {vipBalance >= 1_000_000 ? `${(vipBalance / 1_000_000).toFixed(0)}M` : vipBalance.toLocaleString()} HBAR.h
+              VIP Verified — {vipBalance >= 1_000_000 ? `${(vipBalance / 1_000_000).toFixed(0)}M` : vipBalance.toLocaleString()} WRAPpDEX
             </span>
           </div>
         )}
@@ -1144,7 +1144,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
           <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
             <span className="text-sm text-amber-700 dark:text-amber-300">
-              Hold 100M+ HBAR.h tokens to unlock the spin wheel
+              Hold 100M+ WRAPpDEX tokens to unlock the spin wheel
               {vipBalance > 0 && <span className="text-amber-500/70 dark:text-amber-400/60"> (current: {vipBalance >= 1_000_000 ? `${(vipBalance / 1_000_000).toFixed(1)}M` : vipBalance.toLocaleString()})</span>}
             </span>
           </div>
@@ -1355,7 +1355,7 @@ export function SpinWheel({ accountId }: { accountId: string }) {
         <ul className="space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
           <li className="flex items-start gap-2">
             <span className="text-pink-500 dark:text-pink-400 mt-0.5">&#x2022;</span>
-            <span>Must hold <span className="text-pink-600 dark:text-pink-400 font-medium">100M+ HBAR.h</span> tokens to access</span>
+            <span>Must hold <span className="text-pink-600 dark:text-pink-400 font-medium">100M+ WRAPpDEX</span> tokens to access</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-pink-500 dark:text-pink-400 mt-0.5">&#x2022;</span>

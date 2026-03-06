@@ -191,7 +191,7 @@ export function Layout() {
       }`}>
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
-            {/* HBAR.ħ Logo — compact on lg to free nav space */}
+            {/* WRAPpDEX Logo — compact on lg to free nav space */}
             <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1 max-w-[140px] lg:max-w-[110px] xl:max-w-[145px] 2xl:max-w-none overflow-hidden">
               <HolidayLogo
                 defaultDarkSrc={brandLogos.dark}
@@ -274,7 +274,7 @@ export function Layout() {
               </Tip>
 
               {/* Social Links */}
-              <Tip content="Follow HBAR.ħ on X">
+              <Tip content="Follow WRAPpDEX on X">
               <a
                 href="https://x.com/WRAPpDEX"
                 target="_blank"
@@ -291,7 +291,7 @@ export function Layout() {
                 </svg>
               </a>
               </Tip>
-              <Tip content="Join HBAR.ħ Discord">
+              <Tip content="Join WRAPpDEX Discord">
               <a
                 href="https://discord.gg/ZFnfRFxQZ"
                 target="_blank"

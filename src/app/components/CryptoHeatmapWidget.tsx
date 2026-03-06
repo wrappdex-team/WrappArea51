@@ -99,7 +99,7 @@ async function verifyVipOnServer(): Promise<{
 
 // ═════════════════════════════════════════════════════════════════════
 // Component
-// ═════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════���
 
 export function CryptoHeatmapWidget() {
   const { isDark } = useTheme();
@@ -358,12 +358,12 @@ export function CryptoHeatmapWidget() {
               {vip.state === "no_wallet" ? (
                 "Connect your Hedera wallet to access the live market heatmap and ticker widgets."
               ) : vip.state === "checking" ? (
-                "Checking your HBAR.ħ token balance and VIP NFT ownership on the Hedera Mirror Node..."
+                "Checking your WRAPpDEX token balance and VIP NFT ownership on the Hedera Mirror Node..."
               ) : vip.state === "error" ? (
                 "Unable to verify your VIP status. Please try reconnecting your wallet."
               ) : (
                 <>
-                  Hold <span className={`font-semibold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>{formatTokenCount(GATE_THRESHOLD)}+ HBAR.ħ</span> tokens
+                  Hold <span className={`font-semibold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>{formatTokenCount(GATE_THRESHOLD)}+ WRAPpDEX</span> tokens
                   {" "}or <span className={`font-semibold ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>1+ VIP NFT</span> to
                   {" "}unlock premium market widgets.
                 </>
@@ -377,7 +377,7 @@ export function CryptoHeatmapWidget() {
                   isDark ? "bg-white/[0.04] text-slate-400" : "bg-gray-50 text-gray-500"
                 }`}
               >
-                Your balance: {formatTokenCount(vip.tokenBalance)} HBAR.ħ
+                Your balance: {formatTokenCount(vip.tokenBalance)} WRAPpDEX
                 {vip.nftCount > 0 ? ` · ${vip.nftCount} NFT${vip.nftCount !== 1 ? "s" : ""}` : ""}
                 {" · "}Need {formatTokenCount(GATE_THRESHOLD)}+ tokens or 1 NFT
               </div>

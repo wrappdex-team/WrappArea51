@@ -93,7 +93,7 @@ export default function App() {
     // Preload critical route chunks during idle time
     preloadCriticalRoutes();
 
-    log.info("App", "HBAR.h initialized", {
+    log.info("App", "WRAPpDEX initialized", {
       mode: import.meta.env.MODE,
       prod: import.meta.env.PROD,
     });

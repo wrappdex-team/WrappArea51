@@ -48,7 +48,7 @@ const roadmap: Quarter[] = [
     items: [
       { text: "Back-end infrastructure hardening & security review", status: "planned" },
       { text: "Community growth & membership acquisition initiatives", status: "planned" },
-      { text: "Ivyfy native staking integration for HBAR.ħ", status: "planned" },
+      { text: "Ivyfy native staking integration for WRAPpDEX", status: "planned" },
       { text: "AMM engine development, stress testing & hardening", status: "planned" },
       { text: "Multi-hop swap execution (USDC-hop routes)", status: "planned" },
       { text: "Portfolio P&L analytics & reporting dashboard", status: "planned" },

@@ -537,9 +537,9 @@ export function DAO() {
               Connect a Wallet
             </h3>
             <p className={`text-sm max-w-sm text-center leading-relaxed mb-6 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              Connect your HashPack wallet to participate in HBAR.ħ governance.
+              Connect your HashPack wallet to participate in WRAPpDEX governance.
               You need at least{" "}
-              <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>{" "}
+              <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>{formatTokenCount(GATE_THRESHOLD)} WRAPpDEX</span>{" "}
               tokens or <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>1 VIP NFT</span> to vote or create proposals.
             </p>
             <button
@@ -604,8 +604,8 @@ export function DAO() {
           <p className={`text-center max-w-md ${isDark ? "text-slate-400" : "text-gray-500"}`}>
             You hold{" "}
             <span className={isDark ? "text-white" : "text-gray-900"}>{formatTokenCount(wrappBalance)}</span>{" "}
-            HBAR.ħ and <span className={isDark ? "text-white" : "text-gray-900"}>{nftCount}</span> VIP NFTs. You need at least{" "}
-            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(GATE_THRESHOLD)} HBAR.ħ</span>,{" "}
+            WRAPpDEX and <span className={isDark ? "text-white" : "text-gray-900"}>{nftCount}</span> VIP NFTs. You need at least{" "}
+            <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(GATE_THRESHOLD)} WRAPpDEX</span>,{" "}
             <span className={isSky ? "text-sky-400" : "text-pink-400"}>1 VIP NFT</span>, or{" "}
             <span className={isSky ? "text-sky-400" : "text-pink-400"}>{formatTokenCount(LP_TOKENS_PER_VOTE)} LP tokens</span>.
             Acquire more on the{" "}
@@ -877,7 +877,7 @@ function EligibilityCard({
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div>
-          <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>HBAR.ħ Balance</div>
+          <div className={`text-xs mb-1 ${isDark ? "text-slate-500" : "text-slate-600"}`}>WRAPpDEX Balance</div>
           <div className={`text-lg ${isDark ? "text-white" : "text-gray-900"}`}>{formatTokenCount(wrappBalance)}</div>
           <div className={`text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{Math.min(tokenVotes, MAX_TOKEN_VOTES)} vote{Math.min(tokenVotes, MAX_TOKEN_VOTES) !== 1 ? "s" : ""} from tokens{tokenVotes > MAX_TOKEN_VOTES ? ` (capped from ${tokenVotes})` : ""}</div>
         </div>
@@ -921,7 +921,7 @@ function EligibilityCard({
                 Liquidity Provider Benefits Active
               </div>
               <div className={`text-[10px] leading-relaxed ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-                Your ssLP-HBAR-HBAR.ħ position grants full VIP/DAO membership: governance voting ({Math.min(lpVotes, MAX_LP_VOTES)} LP vote{Math.min(lpVotes, MAX_LP_VOTES) !== 1 ? "s" : ""}), proposal commenting, VIP chat access, and spin wheel eligibility &mdash; identical to HBAR.ħ token holders.
+                Your ssLP-HBAR-WRAPpDEX position grants full VIP/DAO membership: governance voting ({Math.min(lpVotes, MAX_LP_VOTES)} LP vote{Math.min(lpVotes, MAX_LP_VOTES) !== 1 ? "s" : ""}), proposal commenting, VIP chat access, and spin wheel eligibility &mdash; identical to WRAPpDEX token holders.
               </div>
             </div>
           </div>
@@ -978,7 +978,7 @@ function EligibilityCard({
           Account: <span className={`font-mono ${isDark ? "text-slate-400" : "text-slate-700"}`}>{accountId}</span> |{" "}
           Token: <span className={`font-mono ${isDark ? "text-slate-400" : "text-slate-700"}`}>{tokenId}</span> |{" "}
           NFT: <span className={`font-mono ${isDark ? "text-slate-400" : "text-slate-700"}`}>{VIP_NFT_TOKEN_ID}</span> |{" "}
-          Gate: {formatTokenCount(GATE_THRESHOLD)} HBAR.ħ or 1 NFT |{" "}
+          Gate: {formatTokenCount(GATE_THRESHOLD)} WRAPpDEX or 1 NFT |{" "}
           Max: {MAX_TOKEN_VOTES} token votes + {MAX_NFT_VOTES} NFT vote |{" "}
           {NFTS_PER_VOTE} NFTs = 1 vote
         </span>
@@ -1347,7 +1347,7 @@ function ProposalList({
 
                   {isActive && !voted && !canVote && votingPower <= 0 && (
                     <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-                      Insufficient balance to vote. Hold at least {formatTokenCount(GATE_THRESHOLD)} HBAR.ħ or 1 VIP NFT.
+                      Insufficient balance to vote. Hold at least {formatTokenCount(GATE_THRESHOLD)} WRAPpDEX or 1 VIP NFT.
                     </div>
                   )}
 
@@ -1505,7 +1505,7 @@ function CommentsSection({
         </div>
       ) : !canComment ? (
         <div className={`text-xs italic ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-          Hold HBAR.ħ tokens or VIP NFTs to comment.
+          Hold WRAPpDEX tokens or VIP NFTs to comment.
         </div>
       ) : null}
     </div>

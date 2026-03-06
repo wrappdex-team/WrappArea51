@@ -47,7 +47,7 @@ export function VIPAccessGate({
             {featureName}
           </p>
           <p className={`text-xs ${isDark ? "text-white/30" : "text-gray-400"}`}>
-            Requires {formatTokenCount(GATE_THRESHOLD)} HBAR.ħ or 1 VIP NFT
+            Requires {formatTokenCount(GATE_THRESHOLD)} WRAPpDEX or 1 VIP NFT
           </p>
         </div>
 

@@ -508,8 +508,8 @@ export function Dashboard() {
   ];
 
   const cardClass = isDark
-    ? `rounded-xl p-4 border border-white/[0.06] bg-[#0d0f1a]/80${vipActive ? " vip-dash-card" : ""}`
-    : `rounded-xl p-4 border border-gray-200 bg-white${vipActive ? " vip-dash-card" : ""}`;
+    ? `rounded-2xl p-4 border border-white/[0.06] bg-[#0d0f1a]/80${vipActive ? " vip-dash-card" : ""}`
+    : `rounded-2xl p-4 border border-gray-200 bg-white${vipActive ? " vip-dash-card" : ""}`;
 
   return (
     <div className="space-y-4">

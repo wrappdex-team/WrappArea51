@@ -22,10 +22,10 @@ interface SEOHeadProps {
   image?: string;
 }
 
-const BASE_TITLE = "HBAR.ħ";
+const BASE_TITLE = "WRAPpDEX";
 const DEFAULT_DESC = "Decentralized exchange on the Hedera network — swap, trade, stake, and bridge with HashPack wallet integration.";
-const DEFAULT_IMAGE = "https://hbar.exchange/og-image.png"; // Update with actual OG image
-const BASE_URL = "https://hbar.exchange";
+const DEFAULT_IMAGE = "https://www.wrappdex.io/og-image.png";
+const BASE_URL = "https://www.wrappdex.io";
 
 function setMeta(name: string, content: string, isProperty = false): void {
   const attr = isProperty ? "property" : "name";
@@ -92,7 +92,7 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
   },
   "/trading": {
     title: "Trading",
-    description: "CEX-like trading terminal with candlestick charts, technical indicators, and real-time order flow on HBAR.ħ decentralized exchange.",
+    description: "CEX-like trading terminal with candlestick charts, technical indicators, and real-time order flow on the WRAPpDEX decentralized exchange.",
     path: "/trading",
   },
   "/swap": {
@@ -110,11 +110,6 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
     description: "DeFi dashboard with staking, liquidity pools, lending via Bonzo Finance, and live SaucerSwap pool analytics on Hedera.",
     path: "/defi",
   },
-  "/smart-liquidity": {
-    title: "Smart Liquidity",
-    description: "Intelligent liquidity management with concentrated liquidity positions and automated range strategies.",
-    path: "/smart-liquidity",
-  },
   "/wallet": {
     title: "Wallet",
     description: "Multi-chain wallet dashboard showing Hedera HBAR, ERC-20 token balances, portfolio analytics, and transaction history.",
@@ -122,7 +117,7 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
   },
   "/dao": {
     title: "DAO",
-    description: "HBAR.ħ DAO governance — create proposals, vote with token and NFT holdings, and participate in community decisions.",
+    description: "WRAPpDEX DAO governance — create proposals, vote with token and NFT holdings, and participate in community decisions.",
     path: "/dao",
   },
   "/bridges": {
@@ -144,5 +139,15 @@ export const ROUTE_SEO: Record<string, SEOHeadProps> = {
     title: "White Paper",
     description: "The WRAPpDEX Wrapp Paper — institutional-grade DEX on Hedera. Platform overview, AMM engine, oracle pipeline, tokenomics, governance, and roadmap.",
     path: "/white-paper",
+  },
+  "/audit": {
+    title: "Audit",
+    description: "WRAPpDEX security audit reports and transparency disclosures for the Hedera-native decentralized exchange.",
+    path: "/audit",
+  },
+  "/branding": {
+    title: "Branding",
+    description: "WRAPpDEX brand identity — logos, color palette, typography, and usage guidelines for the WRAPpDEX decentralized exchange.",
+    path: "/branding",
   },
 };

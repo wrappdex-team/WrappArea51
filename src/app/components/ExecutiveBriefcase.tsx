@@ -400,7 +400,7 @@ export function ExecutiveBriefcase({ open, onClose }: ExecutiveBriefcaseProps) {
                   </li>
                   <li>
                     <span className={hl}>The VIP system is a loyalty architecture,
-                    not a paywall.</span> 100M HBAR.ħ tokens or a VIP NFT is a
+                    not a paywall.</span> 100M WRAPpDEX tokens or a VIP NFT is a
                     commitment signal. The emerald theme, the chat room, the
                     spin wheel, the premium sound FX &mdash; these are not
                     features. They are <span className={em}>rituals of belonging</span>.
@@ -645,7 +645,7 @@ export function ExecutiveBriefcase({ open, onClose }: ExecutiveBriefcaseProps) {
                   <li>
                     <span className={hl}>Diversify outside the protocol.</span>{" "}
                     It is not disloyal to hold BTC, ETH, stablecoins, and
-                    traditional assets alongside your HBAR.ħ position. In fact,
+                    traditional assets alongside your WRAPpDEX position. In fact,
                     it is prudent. A steward who is personally over-leveraged
                     makes desperate decisions. A steward with a stable personal
                     foundation makes{" "}

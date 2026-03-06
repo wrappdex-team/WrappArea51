@@ -616,7 +616,7 @@ export function prepareScheduledTransfer(
   return {
     senderAccountId: sender.trim(), recipientAccountId: recipient.trim(),
     amountHbar, amountTinybar: Math.round(amountHbar * 100_000_000),
-    memo: memo || "HBAR.ħ scheduled transfer", expirationTime,
+    memo: memo || "WRAPpDEX scheduled transfer", expirationTime,
   };
 }
 

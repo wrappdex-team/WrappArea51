@@ -269,7 +269,7 @@ export function BuySell() {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                 activeTab === tab.key
                   ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
                   : isDark
@@ -609,7 +609,7 @@ function InfoCard({
   desc: string;
 }) {
   return (
-    <div className={`rounded-xl p-4 transition-all duration-200 hover:scale-[1.02] ${
+    <div className={`rounded-2xl p-4 transition-all duration-200 hover:scale-[1.02] ${
       isDark
         ? "bg-gradient-to-br from-slate-900/60 to-slate-800/30 border border-pink-500/15 backdrop-blur-sm hover:border-pink-500/30"
         : "bg-white border border-gray-200 shadow-sm hover:shadow-md hover:border-pink-200"

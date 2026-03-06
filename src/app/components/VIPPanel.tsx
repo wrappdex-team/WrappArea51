@@ -245,7 +245,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
             </button>
           </div>
           <p className={`text-xs mt-1.5 transition-colors duration-500 ${isActive ? "text-emerald-400/60" : "text-slate-500"}`}>
-            Hold {formatTokenCount(GATE_THRESHOLD)} HBAR.h or 1 VIP NFT to unlock
+            Hold {formatTokenCount(GATE_THRESHOLD)} WRAPpDEX or 1 VIP NFT to unlock
           </p>
         </div>
 
@@ -276,7 +276,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-amber-300">Not eligible</div>
                 <div className="text-xs text-slate-500 mt-0.5">
-                  {formatTokenCount(displayBalance)} HBAR.h &middot; Need {formatTokenCount(GATE_THRESHOLD)}
+                  {formatTokenCount(displayBalance)} WRAPpDEX &middot; Need {formatTokenCount(GATE_THRESHOLD)}
                 </div>
               </div>
             </div>
@@ -304,7 +304,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
                   {isActive ? "VIP Active" : "VIP Eligible"}
                 </div>
                 <div className="text-xs text-slate-500 mt-0.5">
-                  {formatTokenCount(displayBalance)} HBAR.h{nftCount > 0 ? ` + ${nftCount} NFT${nftCount !== 1 ? "s" : ""}` : ""} verified
+                  {formatTokenCount(displayBalance)} WRAPpDEX{nftCount > 0 ? ` + ${nftCount} NFT${nftCount !== 1 ? "s" : ""}` : ""} verified
                 </div>
               </div>
               {/* Master toggle */}

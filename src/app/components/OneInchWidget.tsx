@@ -44,6 +44,7 @@ import {
 import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
+import { isVipEligible } from "../utils/vip";
 import {
   playVipCashRegister,
   playVipConfirm,
@@ -162,16 +163,15 @@ interface QuoteResult {
 }
 
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  IMPLEMENTATION NOTE — 1INCH TESTING LOCK                          │
-// │  The 1inch swap widget is locked to ONLY the founder's Hedera      │
-// │  account (0.0.518487) until end-to-end swap flow has been          │
-// │  smoke-tested on a live deployment. Non-matching users see a       │
-// │  locked banner.                                                    │
+// │  IMPLEMENTATION NOTE — 1INCH PER-MODE ACCESS CONTROL               │
 // │                                                                    │
-// │  TO GO LIVE: set ONEINCH_TEST_LOCKED = false                       │
+// │  Classic mode  → VIP DAO members (token/NFT gate) + owner/admins   │
+// │  Cross Fusion+ → Owner + admins only (WIP, locked for all others)  │
+// │                                                                    │
+// │  Owner account: 0.0.518487                                         │
+// │  VIP gate uses isVipEligible() from vip.ts (100M HBAR.h OR 1 NFT) │
 // └─────────────────────────────────────────────────────────────────────┘
-const ONEINCH_TEST_LOCKED = true;
-const ONEINCH_ALLOWED_ACCOUNT = "0.0.518487";
+const ONEINCH_OWNER_ACCOUNT = "0.0.518487";
 
 // ── Chain configuration ──────────────────────────────────────────────
 
@@ -343,12 +343,18 @@ function toWei(amount: string, decimals: number): string {
 export function OneInchWidget() {
   const { isDark } = useTheme();
   const partnerLogos = usePartneredLogos();
-  const { hashPackSession } = useWallet();
+  const { hashPackSession, hederaAccount, hederaNetwork } = useWallet();
 
-  // ── Test Lock Gate (derived — evaluated after all hooks below) ──
+  // ── Per-mode access control (derived — evaluated after all hooks below) ──
   const connectedHederaAccount = hashPackSession?.accountId ?? "";
-  const isAllowedTester = connectedHederaAccount === ONEINCH_ALLOWED_ACCOUNT;
-  const isLocked = ONEINCH_TEST_LOCKED && !isAllowedTester;
+  const isOwnerOrAdmin = connectedHederaAccount === ONEINCH_OWNER_ACCOUNT;
+  const isVip = isVipEligible(hederaAccount?.tokens ?? [], hederaNetwork);
+  // Classic: VIP DAO members + owner/admins
+  const canUseClassic = isVip || isOwnerOrAdmin;
+  // Cross Fusion+: owner/admins only (WIP — locked for everyone else)
+  const canUseCrossFusion = isOwnerOrAdmin;
+  // Widget-level lock: user has no access to ANY mode
+  const isLocked = !canUseClassic && !canUseCrossFusion;
 
   // ── Wallet state ──
   const [evmAccount, setEvmAccount] = useState<string | null>(null);
@@ -414,14 +420,14 @@ export function OneInchWidget() {
   const [fromPriceUsd, setFromPriceUsd] = useState<number | null>(null);
   const [toPriceUsd, setToPriceUsd] = useState<number | null>(null);
 
-  // ── Swap mode: "classic" | "fusion" | "limit" | "crossChain" ──
-  type WidgetSwapMode = "classic" | "fusion" | "limit" | "crossChain";
+  // ── Swap mode: "classic" | "crossChain" (Fusion+ cross-chain) ──
+  type WidgetSwapMode = "classic" | "crossChain";
   const [swapMode, setSwapMode] = useState<WidgetSwapMode>(() => {
     try {
       const saved = localStorage.getItem("wrappdex:1inch:swap-mode");
-      if (saved === "classic" || saved === "fusion" || saved === "crossChain") return saved;
+      if (saved === "classic" || saved === "crossChain") return saved as WidgetSwapMode;
     } catch {}
-    return "fusion";
+    return "classic";
   });
   const chainSupportsFusion = isFusionSupported(selectedChainId);
 
@@ -475,8 +481,8 @@ export function OneInchWidget() {
     ? "bg-[#0c0f1a]/95 backdrop-blur-2xl border border-white/[0.04]"
     : "bg-white/95 backdrop-blur-2xl border border-gray-200 shadow-xl";
   const inputClass = isDark
-    ? "bg-slate-800/60 border border-slate-700/30"
-    : "bg-gray-50 border border-gray-200";
+    ? "bg-slate-800/50 border border-white/[0.04] hover:border-white/[0.08]"
+    : "bg-gray-50/80 border border-gray-200/60 hover:border-gray-300";
 
   // ── Wallet connection (window.ethereum — no ethers/web3) ──────────
 
@@ -853,7 +859,13 @@ export function OneInchWidget() {
     setFusionQuoteLoading(false);
   }, [evmAccount, fromToken, toToken, selectedChainId, selectedPreset]);
 
-  // Debounced fusion quote (when in fusion mode)
+  // IMPLEMENTATION NOTE: Fusion (same-chain gasless) logic is intentionally kept dormant.
+  // Future plan: blend Fusion + Cross Fusion+ into a single unified experience (like
+  // 1inch.com) where same-chain and cross-chain are just routing options within one mode.
+  // Once that blended UX ships and works correctly, Classic mode will be retired.
+  // Until then, Classic remains the primary working mode and Cross Fusion+ is admin-only.
+
+  // Debounced fusion quote (when in fusion mode — currently dormant, see note above)
   useEffect(() => {
     if (swapMode !== "fusion" || !chainSupportsFusion) return;
     if (!fromAmount || parseFloat(fromAmount) <= 0 || !evmAccount) {
@@ -1078,32 +1090,21 @@ export function OneInchWidget() {
       setFusionCountdown(FUSION_QUOTE_REFRESH_INTERVAL_MS);
       setCrossChainQuote(null);
       setCrossChainQuoteError(null);
-    } else if (swapMode === "fusion") {
-      setLastQuote(null);
-      setQuoteError(null);
-      setCrossChainQuote(null);
-      setCrossChainQuoteError(null);
     } else if (swapMode === "crossChain") {
       setLastQuote(null);
       setQuoteError(null);
       setFusionQuote(null);
       setFusionQuoteError(null);
-    } else {
-      setLastQuote(null);
-      setQuoteError(null);
     }
     setToAmount("");
   }, [swapMode]);
 
-  // Auto-fallback to classic if chain doesn't support Fusion
+  // Auto-fallback to classic if chain doesn't support Fusion+ OR user lacks access
   useEffect(() => {
-    if (!chainSupportsFusion && swapMode === "fusion") {
+    if (swapMode === "crossChain" && (!chainSupportsFusionPlus || !canUseCrossFusion)) {
       setSwapMode("classic");
     }
-    if (!chainSupportsFusionPlus && swapMode === "crossChain") {
-      setSwapMode(chainSupportsFusion ? "fusion" : "classic");
-    }
-  }, [chainSupportsFusion, chainSupportsFusionPlus, swapMode]);
+  }, [chainSupportsFusionPlus, swapMode, canUseCrossFusion]);
 
   // When src chain changes in cross-chain mode, ensure dst chain is different
   useEffect(() => {
@@ -1798,11 +1799,7 @@ export function OneInchWidget() {
       await handleCrossChainSwap();
       return;
     }
-    if (swapMode === "fusion" && fusionQuote) {
-      await handleFusionSwap();
-    } else {
-      await handleClassicSwap();
-    }
+    await handleClassicSwap();
   }, [evmAccount, evmChainId, selectedChainId, fromAmount, swapMode, fusionQuote, chain, switchChain, handleClassicSwap, handleFusionSwap, handleCrossChainSwap]);
 
   // ── Rate calculation ───────────────────────────────────────────────
@@ -1840,7 +1837,7 @@ export function OneInchWidget() {
     return outNum / inNum;
   }, [crossChainQuote, fromAmount, crossChainDstToken.decimals, selectedPreset]);
 
-  const activeRate = swapMode === "fusion" ? fusionRate : swapMode === "crossChain" ? crossChainRate : rate;
+  const activeRate = swapMode === "crossChain" ? crossChainRate : rate;
   // Effective output token — in cross-chain mode, use the destination chain token
   const effectiveToToken = swapMode === "crossChain" ? crossChainDstToken : toToken;
   // ── Insufficient balance detection ──
@@ -1856,7 +1853,7 @@ export function OneInchWidget() {
 
   const canSwap = evmAccount && fromAmount && parseFloat(fromAmount) > 0
     && !insufficientBalance
-    && ((swapMode === "classic" && lastQuote) || (swapMode === "fusion" && fusionQuote) || (swapMode === "crossChain" && crossChainQuote))
+    && ((swapMode === "classic" && lastQuote) || (swapMode === "crossChain" && crossChainQuote))
     && apiConfigured !== false && swapStatus === "idle";
 
   // ── Shared props for new OneInchTokenSelector ───────────────────────
@@ -1901,11 +1898,11 @@ export function OneInchWidget() {
             <Lock className={`w-7 h-7 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
           </div>
           <h4 className={`text-base font-bold mb-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
-            Testing in Progress
+            VIP DAO Access Required
           </h4>
           <p className={`text-sm leading-relaxed max-w-xs mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
-            The 1inch swap aggregator is currently locked for founder testing.
-            It will be available to all users once the swap flow has been fully verified.
+            The 1inch swap aggregator requires VIP DAO membership.
+            Hold 100M+ HBAR.h tokens or 1 VIP NFT to unlock Classic mode.
           </p>
           {connectedHederaAccount && (
             <p className={`text-xs mt-3 font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -1931,14 +1928,24 @@ export function OneInchWidget() {
 
   return (
     <>
+    <div className="relative mt-4">
+      {/* Ambient glow (matches SwapCardPro) */}
+      <div
+        className="absolute -inset-3 rounded-3xl opacity-30 blur-2xl pointer-events-none"
+        style={{
+          background: isDark
+            ? "radial-gradient(ellipse at 30% 20%, rgba(236,72,153,0.12), transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(139,92,246,0.10), transparent 60%)"
+            : "radial-gradient(ellipse at 30% 20%, rgba(236,72,153,0.06), transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(139,92,246,0.05), transparent 60%)",
+        }}
+      />
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 }}
-      className={`rounded-2xl p-5 mt-4 ${cardClass}`}
+      className={`relative rounded-2xl p-5 ${cardClass}`}
     >
       {/* ── Header (matches SaucerSwap header) ── */}
-      <div className="flex items-center justify-between mb-4">
+      <div className={`flex items-center justify-between pb-3 mb-4 ${isDark ? "border-b border-white/[0.04]" : "border-b border-gray-100"}`}>
         <div>
           <div className="flex items-center gap-2.5">
             {/* 1inch Logo */}
@@ -1969,14 +1976,22 @@ export function OneInchWidget() {
 
         <div className="flex items-center gap-2">
           {/* Settings gear */}
-          <button onClick={() => { setShowSettings(!showSettings); playVipButtonChime(); }}
-            className={`p-2 rounded-lg transition-all ${
-              isDark
-                ? "hover:bg-slate-800 text-slate-500 hover:text-pink-400"
-                : "hover:bg-gray-100 text-gray-400 hover:text-pink-600"
+          <motion.button
+            onClick={() => { setShowSettings(!showSettings); playVipButtonChime(); }}
+            whileHover={{ scale: 1.1, rotate: 30 }}
+            whileTap={{ scale: 0.9 }}
+            aria-label="Toggle settings"
+            className={`p-1.5 rounded-lg transition-colors ${
+              showSettings
+                ? isDark
+                  ? "bg-pink-500/15 text-pink-400"
+                  : "bg-pink-50 text-pink-600"
+                : isDark
+                ? "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
             }`}>
             <Settings2 className="w-4 h-4" />
-          </button>
+          </motion.button>
 
           {/* Chain Selector */}
           <div className="relative">
@@ -2103,56 +2118,57 @@ export function OneInchWidget() {
         )}
       </AnimatePresence>
 
-      {/* ═══ SWAP MODE TOGGLE — Fusion / Classic / Cross-Chain / Limit (Step 10) ═══ */}
-      {chainSupportsFusion && (
+      {/* ═══ SWAP MODE TOGGLE — Classic / Cross Fusion+ ═══ */}
         <div className="mb-3">
           <div className={`flex items-center gap-1 p-1 rounded-xl ${inputClass}`}>
+            {/* ── Classic tab — VIP DAO members + owner/admins ── */}
             <button
-              onClick={() => { updateSwapMode("fusion"); playVipButtonChime(); }}
+              onClick={() => { if (canUseClassic) { updateSwapMode("classic"); playVipButtonChime(); } }}
+              disabled={!canUseClassic}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
-                swapMode === "fusion"
-                  ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/20"
-                  : isDark
-                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                !canUseClassic
+                  ? isDark ? "text-slate-600 cursor-not-allowed" : "text-gray-300 cursor-not-allowed"
+                  : swapMode === "classic"
+                    ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
+                    : isDark
+                      ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
               }`}
-            >
-              <Zap className="w-3 h-3" />
-              Fusion
-              <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
-                swapMode === "fusion"
-                  ? "bg-white/20 text-white"
-                  : isDark ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-600"
-              }`}>
-                GASLESS
-              </span>
-            </button>
-            <button
-              onClick={() => { updateSwapMode("classic"); playVipButtonChime(); }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
-                swapMode === "classic"
-                  ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-500/20"
-                  : isDark
-                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-              }`}
+              title={!canUseClassic ? "VIP DAO members only — hold 100M+ HBAR.h or 1 VIP NFT" : "Classic swap (gas required)"}
             >
               <Fuel className="w-3 h-3" />
               Classic
+              {!canUseClassic && <Lock className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+              {canUseClassic && (isVip || isOwnerOrAdmin) && (
+                <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
+                  swapMode === "classic"
+                    ? "bg-white/20 text-white"
+                    : isDark ? "bg-pink-500/10 text-pink-400" : "bg-pink-50 text-pink-600"
+                }`}>
+                  VIP
+                </span>
+              )}
             </button>
-            {chainSupportsFusionPlus && (
-              <button
-                onClick={() => { updateSwapMode("crossChain"); playVipButtonChime(); }}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
-                  swapMode === "crossChain"
+            {/* ── Cross Fusion+ tab — Owner/admins only (WIP) ── */}
+            <button
+              onClick={() => { if (canUseCrossFusion) { updateSwapMode("crossChain"); playVipButtonChime(); } }}
+              disabled={!canUseCrossFusion}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                !canUseCrossFusion
+                  ? isDark ? "text-slate-600 cursor-not-allowed" : "text-gray-300 cursor-not-allowed"
+                  : swapMode === "crossChain"
                     ? "bg-gradient-to-r from-cyan-600 to-blue-500 text-white shadow-lg shadow-cyan-500/20"
                     : isDark
                       ? "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
                       : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                }`}
-              >
-                <Globe className="w-3 h-3" />
-                Cross
+              }`}
+              title={!canUseCrossFusion ? "Admin-only — Cross Fusion+ is in development" : "Cross-chain Fusion+ (gasless, resolver-powered)"}
+            >
+              <Globe className="w-3 h-3" />
+              Cross Fusion+
+              {!canUseCrossFusion ? (
+                <Lock className="w-2.5 h-2.5 ml-0.5 opacity-60" />
+              ) : (
                 <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
                   swapMode === "crossChain"
                     ? "bg-white/20 text-white"
@@ -2160,24 +2176,7 @@ export function OneInchWidget() {
                 }`}>
                   F+
                 </span>
-              </button>
-            )}
-            <button
-              disabled
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-not-allowed ${
-                isDark
-                  ? "text-slate-600 hover:text-slate-500"
-                  : "text-gray-300 hover:text-gray-400"
-              }`}
-              title="Limit orders — coming soon"
-            >
-              <Timer className="w-3 h-3" />
-              Limit
-              <span className={`text-[9px] px-1 py-0.5 rounded-full font-extrabold ${
-                isDark ? "bg-slate-700/50 text-slate-500" : "bg-gray-100 text-gray-400"
-              }`}>
-                SOON
-              </span>
+              )}
             </button>
           </div>
 
@@ -2204,30 +2203,8 @@ export function OneInchWidget() {
             )}
           </AnimatePresence>
 
-          {/* Classic mode gas indicator */}
-          <AnimatePresence>
-            {swapMode === "classic" && lastQuote?.gas && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.15 }}
-                className={`flex items-center justify-center gap-1.5 mt-2 py-1.5 rounded-lg text-[10px] font-bold ${
-                  isDark
-                    ? "bg-pink-900/15 text-pink-400 border border-pink-500/15"
-                    : "bg-pink-50 text-pink-600 border border-pink-200/50"
-                }`}
-              >
-                <Fuel className="w-3 h-3" />
-                Est. gas: {estimateGasSavingsUsd(lastQuote.gas, selectedChainId)}
-                <span className={`text-[9px] ${isDark ? "text-pink-500/60" : "text-pink-500/50"}`}>
-                  · You pay gas
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {/* IMPLEMENTATION NOTE: Classic gas indicator removed — inaccurate gas estimates */}
         </div>
-      )}
 
       {/* ═══ CROSS-CHAIN: DESTINATION CHAIN SELECTOR + ROUTE (Step 10) ═══ */}
       <AnimatePresence>
@@ -2384,13 +2361,13 @@ export function OneInchWidget() {
       </AnimatePresence>
 
       {/* ═══ INPUT TOKEN ═══ */}
-      <div className={`rounded-xl p-4 mb-2 transition-all ${inputClass} ${
+      <div className={`rounded-2xl p-4 mb-2 transition-all ${inputClass} ${
         insufficientBalance
           ? isDark ? "ring-1 ring-red-500/50" : "ring-1 ring-red-400/60"
           : ""
       }`}>
         <div className="flex items-center justify-between mb-2">
-          <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>You Pay</span>
+          <span className={`text-[11px] font-semibold tracking-wide uppercase ${isDark ? "text-slate-500" : "text-gray-400"}`}>You Pay</span>
           {evmAccount && fromBalance !== null && (
             <Tip content="Use max balance">
             <button
@@ -2420,10 +2397,12 @@ export function OneInchWidget() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <input type="number" placeholder="0.0"
-            className="bg-transparent flex-1 outline-none text-2xl min-w-0"
+          <input type="number" placeholder=""
+            aria-label="Amount to swap"
+            className="bg-transparent flex-1 outline-none text-2xl font-semibold min-w-0"
             value={fromAmount}
             onChange={e => { setFromAmount(e.target.value); setSwapStatus("idle"); setSwapError(null); }}
+            onWheel={e => (e.target as HTMLInputElement).blur()}
           />
           <div className="relative shrink-0">
             <button onClick={() => { setShowFromSelector(!showFromSelector); setShowToSelector(false); setTokenSearch(""); }}
@@ -2453,12 +2432,12 @@ export function OneInchWidget() {
             )}
           </div>
         </div>
-        <div className={`flex items-center justify-between mt-1`}>
-          <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+        <div className={`flex items-center justify-between mt-1.5 px-0.5`}>
+          <span className={`text-[11px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
             {chain.name} network
           </span>
           {fromAmount && parseFloat(fromAmount) > 0 && fromPriceUsd !== null && fromPriceUsd > 0 && (
-            <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+            <span className={`text-[11px] font-medium ${isDark ? "text-slate-500" : "text-gray-500"}`}>
               {formatUsd(parseFloat(fromAmount) * fromPriceUsd)}
             </span>
           )}
@@ -2469,13 +2448,14 @@ export function OneInchWidget() {
       <div className="flex justify-center -my-3 relative z-10">
         <motion.button
           onClick={flipTokens}
+          aria-label="Swap input and output tokens"
           whileTap={{ scale: 0.9, rotate: 180 }}
           whileHover={{ scale: 1.08 }}
           transition={{ type: "spring", stiffness: 400, damping: 15 }}
-          className={`p-2.5 rounded-xl border-4 transition-colors ${
+          className={`p-2.5 rounded-2xl border-4 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
             isDark
-              ? "bg-slate-800 border-slate-900/80 hover:bg-slate-700 text-pink-400"
-              : "bg-white border-gray-100 hover:bg-gray-50 text-pink-600 shadow-sm"
+              ? "bg-[#0c0f1a] border-[#0c0f1a] hover:bg-slate-800 text-pink-400 shadow-lg shadow-pink-500/5"
+              : "bg-white border-white hover:bg-gray-50 text-pink-600 shadow-md"
           }`}
         >
           <ArrowDownUp className="w-5 h-5" />
@@ -2483,9 +2463,9 @@ export function OneInchWidget() {
       </div>
 
       {/* ═══ OUTPUT TOKEN ═══ */}
-      <div className={`rounded-xl p-4 mt-2 ${inputClass}`}>
+      <div className={`rounded-2xl p-4 mt-2 ${inputClass}`}>
         <div className="flex items-center justify-between mb-2">
-          <span className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+          <span className={`text-[11px] font-semibold tracking-wide uppercase ${isDark ? "text-slate-500" : "text-gray-400"}`}>
             You Receive{swapMode === "crossChain" && dstChain ? ` (on ${dstChain.name})` : ""}
           </span>
           {activeRate && (
@@ -2495,12 +2475,12 @@ export function OneInchWidget() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className={`flex-1 text-2xl min-w-0 ${(quoteLoading || fusionQuoteLoading || crossChainQuoteLoading) ? "animate-pulse" : ""} ${!toAmount ? (isDark ? "text-slate-600" : "text-gray-300") : ""}`}>
+          <div className={`flex-1 text-2xl font-semibold min-w-0 ${(quoteLoading || fusionQuoteLoading || crossChainQuoteLoading) ? "animate-pulse" : ""} ${!toAmount ? (isDark ? "text-slate-600" : "text-gray-300") : ""}`}>
             {(quoteLoading || fusionQuoteLoading || crossChainQuoteLoading) ? (
               <span className="flex items-center gap-2">
                 <Loader2 className={`w-5 h-5 animate-spin ${swapMode === "crossChain" ? "text-cyan-400" : "text-pink-400"}`} />
                 <span className={`text-sm ${isDark ? "text-slate-400" : "text-gray-400"}`}>
-                  {swapMode === "crossChain" ? "Cross-chain routing..." : swapMode === "fusion" ? "Finding resolvers..." : "Routing..."}
+                  {swapMode === "crossChain" ? "Cross-chain routing..." : "Routing..."}
                 </span>
               </span>
             ) : toAmount || "0.0"}
@@ -2547,12 +2527,12 @@ export function OneInchWidget() {
             )}
           </div>
         </div>
-        <div className={`flex items-center justify-between mt-1`}>
-          <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+        <div className={`flex items-center justify-between mt-1.5 px-0.5`}>
+          <span className={`text-[11px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
             {swapMode === "crossChain" ? `${dstChain?.name ?? "?"} network` : `${chain.name} network`}
           </span>
           {toAmount && parseFloat(toAmount.replace(/,/g, "")) > 0 && toPriceUsd !== null && toPriceUsd > 0 && (
-            <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+            <span className={`text-[11px] font-medium ${isDark ? "text-slate-500" : "text-gray-500"}`}>
               {formatUsd(parseFloat(toAmount.replace(/,/g, "")) * toPriceUsd)}
             </span>
           )}
@@ -2714,76 +2694,6 @@ export function OneInchWidget() {
         )}
       </AnimatePresence>
 
-      {/* ═══ CLASSIC ROUTE + QUOTE DETAILS ═══ */}
-      <AnimatePresence>
-        {swapMode === "classic" && lastQuote && !quoteLoading && fromAmount && parseFloat(fromAmount) > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-            className={`mt-4 p-3 rounded-xl ${isDark ? "bg-slate-800/30 border border-pink-500/10" : "bg-gray-50 border border-gray-100"}`}
-          >
-            {/* Route visualization */}
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-1.5">
-                <Zap className={`w-3.5 h-3.5 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-                <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-                  Best Route
-                </span>
-              </div>
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
-              }`}>
-                Aggregated
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 mb-3">
-              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
-                {fromToken.logoURI && <img src={fromToken.logoURI} alt="" className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
-                <span className="text-xs font-bold">{fromToken.symbol}</span>
-              </div>
-              <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-              <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
-                1inch
-              </span>
-              <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
-              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
-                {toToken.logoURI && <img src={toToken.logoURI} alt="" className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
-                <span className="text-xs font-bold">{toToken.symbol}</span>
-              </div>
-            </div>
-
-            {/* Quote summary (matches SaucerSwap style) */}
-            <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Rate</span>
-                <span>1 {fromToken.symbol} = {rate ? (rate >= 1 ? rate.toFixed(6) : rate.toFixed(8)) : "—"} {toToken.symbol}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Slippage</span>
-                <span>{slippage}%</span>
-              </div>
-              {lastQuote.gas && (
-                <div className="flex justify-between">
-                  <span className={isDark ? "text-slate-400" : "text-gray-500"}>Est. Gas</span>
-                  <span>{lastQuote.gas.toLocaleString()}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Source</span>
-                <span className="flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-emerald-400" />
-                  1inch Aggregation
-                  {lastQuote.cached && <span className={`text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>(cached)</span>}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ═══ ACTION BUTTON ═══ */}
       <div className="mt-4">
         {!evmAccount ? (
@@ -2826,35 +2736,35 @@ export function OneInchWidget() {
             </div>
           </motion.button>
         ) : swapStatus === "approving" ? (
-          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait">
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait shadow-lg shadow-amber-500/20">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               Approving {fromToken.symbol}...
             </div>
           </button>
         ) : swapStatus === "swapping" ? (
-          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait">
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-amber-600 to-yellow-500 text-white cursor-wait shadow-lg shadow-amber-500/20">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               Awaiting wallet signature...
             </div>
           </button>
         ) : swapStatus === "building" ? (
-          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait shadow-lg shadow-emerald-500/20">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               Building Fusion order...
             </div>
           </button>
         ) : swapStatus === "signing" ? (
-          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait shadow-lg shadow-emerald-500/20">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               Sign in wallet (no gas!)...
             </div>
           </button>
         ) : swapStatus === "submitting" ? (
-          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+          <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait shadow-lg shadow-emerald-500/20">
             <div className="flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               Submitting to resolvers...
@@ -2891,7 +2801,7 @@ export function OneInchWidget() {
               />
             </div>
 
-            <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait">
+            <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-500 text-white cursor-wait shadow-lg shadow-emerald-500/20">
               <div className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 {(swapMode === "crossChain"
@@ -2963,10 +2873,10 @@ export function OneInchWidget() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
           >
-            <button disabled className={`w-full py-3.5 rounded-xl font-bold text-white ${
+            <button disabled className={`w-full py-3.5 rounded-xl font-bold text-white shadow-lg ${
               fusionOrderStatus === "filled"
-                ? "bg-gradient-to-r from-emerald-600 to-teal-500"
-                : "bg-gradient-to-r from-emerald-600 to-green-500"
+                ? "bg-gradient-to-r from-emerald-600 to-teal-500 shadow-emerald-500/20"
+                : "bg-gradient-to-r from-emerald-600 to-green-500 shadow-emerald-500/20"
             }`}>
               <div className="flex items-center justify-center gap-2">
                 <CheckCircle2 className="w-4 h-4" />
@@ -2995,15 +2905,17 @@ export function OneInchWidget() {
               </div>
             )}
             <button onClick={() => { setSwapStatus("idle"); setFromAmount(""); setToAmount(""); setLastQuote(null); setLastSignedOrder(null); setFusionQuote(null); setFusionOrderStatus(null); setFusionFillTxHash(null); stopFusionPolling(); }}
-              className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${
-                isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              className={`w-full mt-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                isDark
+                  ? "bg-slate-800 hover:bg-slate-700 border border-pink-500/20 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-900"
               }`}>
               New Swap
             </button>
           </motion.div>
         ) : swapStatus === "error" ? (
           <div>
-            <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white">
+            <button disabled className="w-full py-3.5 rounded-xl font-bold bg-gradient-to-r from-red-600 to-orange-500 text-white shadow-lg shadow-red-500/20">
               <div className="flex items-center justify-center gap-2">
                 <AlertCircle className="w-4 h-4" />
                 Swap Failed
@@ -3016,16 +2928,21 @@ export function OneInchWidget() {
               </div>
             )}
             <button onClick={() => { setSwapStatus("idle"); setSwapError(null); setLastSignedOrder(null); setFusionOrderStatus(null); setFusionFillTxHash(null); setCrossChainOrderHash(null); setCrossChainBuildData(null); stopFusionPolling(); stopCrossChainPolling(); resetSdkCache(); }}
-              className={`w-full mt-2 py-2 rounded-lg text-xs transition-colors ${
-                isDark ? "text-slate-400 hover:text-slate-300 hover:bg-slate-800/50" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              className={`w-full mt-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                isDark
+                  ? "bg-slate-800 hover:bg-slate-700 border border-pink-500/20 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-900"
               }`}>
               Try Again
             </button>
           </div>
-        ) : (
+        ) : fromAmount && parseFloat(fromAmount) > 0 ? (
           <motion.button
             onClick={handleSwap}
             disabled={!canSwap}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
             whileHover={canSwap ? { scale: 1.01 } : {}}
             whileTap={canSwap ? { scale: 0.98 } : {}}
             className={`w-full py-3.5 rounded-xl font-bold transition-all duration-300 shadow-lg text-white ${
@@ -3035,34 +2952,90 @@ export function OneInchWidget() {
                 ? isDark ? "bg-slate-700 text-slate-500 shadow-none cursor-not-allowed" : "bg-gray-300 text-gray-500 shadow-none cursor-not-allowed"
                 : swapMode === "crossChain"
                   ? "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 shadow-cyan-500/30"
-                  : swapMode === "fusion"
-                    ? "bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-emerald-500/30"
-                    : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
+                  : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-pink-500/30"
             }`}
           >
-            {!fromAmount || parseFloat(fromAmount) <= 0
-              ? "Enter an amount"
-              : insufficientBalance
+            {insufficientBalance
                 ? `Insufficient ${fromToken.symbol} Balance`
               : swapMode === "crossChain" && !evmAccount
-                ? "Connect wallet for Cross-Chain"
+                ? "Connect wallet for Cross Fusion+"
                 : swapMode === "crossChain" && !crossChainQuote
-                  ? crossChainQuoteLoading ? "Finding cross-chain resolvers..." : "Enter amount for quote"
-                  : swapMode === "fusion" && !evmAccount
-                    ? "Connect wallet for Fusion"
-                    : swapMode === "fusion" && !fusionQuote
-                      ? fusionQuoteLoading ? "Finding resolvers..." : "Enter amount for quote"
-                      : swapMode === "classic" && !lastQuote
-                        ? "Fetching quote..."
-                        : swapMode === "crossChain"
-                          ? `🌐 Cross-Chain ${fromToken.symbol} → ${effectiveToToken.symbol}`
-                          : swapMode === "fusion"
-                            ? `⚡ Gasless Swap ${fromToken.symbol} → ${toToken.symbol}`
-                            : `Swap ${fromToken.symbol} → ${toToken.symbol}`
+                  ? crossChainQuoteLoading ? "Finding cross-chain resolvers..." : "Fetching quote..."
+                  : swapMode === "classic" && !lastQuote
+                    ? "Fetching quote..."
+                    : swapMode === "crossChain"
+                      ? `🌐 Cross Fusion+ ${fromToken.symbol} → ${effectiveToToken.symbol}`
+                      : `Swap ${fromToken.symbol} → ${toToken.symbol}`
             }
           </motion.button>
-        )}
+        ) : null}
       </div>
+
+      {/* ═══ CLASSIC ROUTE + QUOTE DETAILS (below swap button) ═══ */}
+      <AnimatePresence>
+        {swapMode === "classic" && lastQuote && !quoteLoading && fromAmount && parseFloat(fromAmount) > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className={`mt-4 p-3 rounded-xl ${isDark ? "bg-slate-800/30 border border-pink-500/10" : "bg-gray-50 border border-gray-100"}`}
+          >
+            {/* Route visualization */}
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center gap-1.5">
+                <Zap className={`w-3.5 h-3.5 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
+                <span className={`text-xs font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                  Best Route
+                </span>
+              </div>
+              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                isDark ? "bg-pink-500/10 text-pink-400 border border-pink-500/20" : "bg-pink-50 text-pink-600 border border-pink-200"
+              }`}>
+                Aggregated
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 mb-3">
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
+                {fromToken.logoURI && <img src={fromToken.logoURI} alt="" className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                <span className="text-xs font-bold">{fromToken.symbol}</span>
+              </div>
+              <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
+              <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700/40 text-slate-400" : "bg-gray-100 text-gray-500"}`}>
+                1inch
+              </span>
+              <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
+                {toToken.logoURI && <img src={toToken.logoURI} alt="" className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                <span className="text-xs font-bold">{toToken.symbol}</span>
+              </div>
+            </div>
+
+            {/* Quote summary */}
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Rate</span>
+                <span className="font-medium">1 {fromToken.symbol} = {rate ? (rate >= 1 ? rate.toFixed(6) : rate.toFixed(8)) : "—"} {toToken.symbol}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Slippage</span>
+                <span className="font-medium">{slippage}%</span>
+              </div>
+              {/* IMPLEMENTATION NOTE: Est. Gas row removed — 1inch quote gas values were not
+                  matching real on-chain gas costs, so hidden until accurate data is available */}
+              <div className="flex justify-between">
+                <span className={isDark ? "text-slate-400" : "text-gray-500"}>Source</span>
+                <span className="flex items-center gap-1 font-medium">
+                  <Zap className="w-3 h-3 text-emerald-400" />
+                  1inch Aggregation
+                  {lastQuote.cached && <span className={`text-[10px] font-normal ${isDark ? "text-slate-600" : "text-gray-400"}`}>(cached)</span>}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ═══ MODE / VENUE INFO (matches SaucerSwap footer) ═══ */}
       <div className={`flex items-center justify-center gap-2 mt-3 text-xs flex-wrap ${isDark ? "text-slate-500" : "text-gray-400"}`}>
@@ -3074,7 +3047,7 @@ export function OneInchWidget() {
                 : "bg-emerald-50 text-emerald-700 border border-emerald-200"
             }`}>
               <Zap className="w-2.5 h-2.5" />
-              1inch {swapMode === "crossChain" ? "Fusion+" : swapMode === "fusion" ? "Fusion" : swapMode === "limit" ? "Limit" : "Classic"} · {swapMode === "crossChain" ? `${chain.name} → ${dstChain?.name ?? "?"}` : chain.name}
+              1inch {swapMode === "crossChain" ? "Fusion+" : "Classic"} · {swapMode === "crossChain" ? `${chain.name} → ${dstChain?.name ?? "?"}` : chain.name}
             </span>
             <span className="flex items-center gap-1">
               <span className={`font-mono text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
@@ -3100,6 +3073,7 @@ export function OneInchWidget() {
       </div>
 
     </motion.div>
+    </div>
 
     {/* ═══ FUSION ORDER TRACKER (Step 8) — separate card below widget ═══ */}
     <OneInchOrderTracker evmAccount={evmAccount} chainId={selectedChainId} isDark={isDark} />
