@@ -23,6 +23,7 @@ import { WalletConnectModal } from "./WalletConnectModal";
 import { FlashBillboard } from "./FlashBillboard";
 import { BuySellSwapTab } from "./BuySellSwapTab";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getSessionToken } from "../utils/auth";
 
 // ── Assets ───────────────────────────────────────────────────────────
 
@@ -71,11 +72,13 @@ const FIAT_CONSENT_KEY = "hbarh_fiat_consent_accepted";
 async function fetchWidgetUrl(params: Record<string, string>): Promise<string> {
   try {
     const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`${SERVER_BASE}/changenow/widget-url?${qs}`, {
-      headers: { Authorization: `Bearer ${publicAnonKey}` },
-    });
+    const headers: Record<string, string> = { Authorization: `Bearer ${publicAnonKey}` };
+    const sessionToken = getSessionToken();
+    if (sessionToken) headers["X-Session-Token"] = sessionToken;
+    const res = await fetch(`${SERVER_BASE}/changenow/widget-url?${qs}`, { headers });
     if (!res.ok) {
-      console.log(`[BuySell] fetchWidgetUrl failed: ${res.status} ${await res.text()}`);
+      const body = await res.text();
+      console.log(`[BuySell] fetchWidgetUrl failed: ${res.status} ${body}`);
       return "";
     }
     const data = await res.json();

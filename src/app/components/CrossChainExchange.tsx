@@ -27,6 +27,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { fetchCoinPrices, type CoinPrice } from "../utils/coingecko";
 import { Tip } from "./Tip";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { getSessionToken } from "../utils/auth";
 
 // ── ChangeNOW Partner Config ─────────────────────────────────────────
 
@@ -38,9 +39,10 @@ const SERVER_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-5
 async function fetchRedirectUrl(params: Record<string, string>): Promise<string | null> {
   try {
     const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`${SERVER_BASE}/changenow/redirect-url?${qs}`, {
-      headers: { Authorization: `Bearer ${publicAnonKey}` },
-    });
+    const headers: Record<string, string> = { Authorization: `Bearer ${publicAnonKey}` };
+    const sessionToken = getSessionToken();
+    if (sessionToken) headers["X-Session-Token"] = sessionToken;
+    const res = await fetch(`${SERVER_BASE}/changenow/redirect-url?${qs}`, { headers });
     if (!res.ok) {
       console.error(`[CrossChainExchange] redirect-url fetch failed: ${res.status} ${res.statusText}`);
       return null;
