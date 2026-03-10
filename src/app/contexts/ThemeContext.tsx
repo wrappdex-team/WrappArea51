@@ -17,9 +17,9 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 // Default fallback for when useTheme is called outside ThemeProvider (e.g. preview/HMR)
 const DEFAULT_THEME: ThemeContextType = {
-  theme: "dark",
+  theme: "light",
   toggleTheme: () => {},
-  isDark: true,
+  isDark: false,
   accent: "sky",
   toggleAccent: () => {},
   isSky: true,
@@ -29,9 +29,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("hbarh-theme");
-      return (saved as Theme) || "dark";
+      return (saved as Theme) || "light";
     }
-    return "dark";
+    return "light";
   });
 
   const [accent, setAccent] = useState<Accent>(() => {

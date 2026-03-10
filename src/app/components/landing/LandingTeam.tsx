@@ -86,7 +86,7 @@ export function LandingTeam() {
             <span
               className="italic bg-clip-text text-transparent"
               style={{
-                backgroundImage: `linear-gradient(135deg, ${BLUE}, ${CYAN})`,
+                backgroundImage: `linear-gradient(135deg, ${BLUE}, ${BLUE}cc)`,
                 WebkitBackgroundClip: "text",
               }}
             >

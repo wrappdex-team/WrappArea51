@@ -55,7 +55,7 @@ function Word({
           style={
             gradient
               ? {
-                  background: `linear-gradient(135deg, ${BLUE}, #06b6d4)`,
+                  background: `linear-gradient(135deg, ${BLUE}, ${BLUE}cc)`,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                   paddingLeft: "0.06em",

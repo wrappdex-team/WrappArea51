@@ -1,29 +1,41 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { Link, useLocation } from "react-router";
-import { TrendingUp, Wallet, BarChart3, Vote, ArrowRightLeft, LogOut, Sun, Moon, DollarSign, Menu, Volume2, VolumeOff, Volume1, Droplets, Crown, AlertTriangle, Shield, Globe } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useLocation, Link } from "react-router";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  TrendingUp, BarChart3, ArrowRightLeft, DollarSign,
+  Droplets, Wallet, Vote, Globe, Shield,
+  Sun, Moon, Crown, LogOut, Menu,
+  VolumeOff, Volume1, Volume2, AlertTriangle,
+} from "lucide-react";
+import { Toaster } from "sonner";
+
 import { useWallet } from "../contexts/WalletContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { WalletConnectModal } from "./WalletConnectModal";
-import { formatAddress } from "../utils/metamask";
-import { NewsTicker } from "./NewsTicker";
-import { playTabChime, getSoundVolume, cycleSoundVolume, playVipNavNote, playVipWalletWave } from "../utils/sounds";
-import { Toaster } from "sonner";
-import { VIPPanel } from "./VIPPanel";
-import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
-import { SEOHead, ROUTE_SEO } from "./SEOHead";
-import { preloadRoute } from "../utils/preload";
-import { trackRouteChange } from "../utils/performance";
-import { Tip } from "./Tip";
-import { AnimatedOutlet } from "./AnimatedOutlet";
-import { motion, AnimatePresence } from "motion/react";
-import { PullToRefresh } from "./PullToRefresh";
-import { ScrollToTop } from "./ScrollToTop";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
-import { AnimatedNumber } from "./AnimatedNumber";
-import { HolidayLogo } from "./HolidayLogo";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
 import { useBrandLogos } from "../hooks/useBrandLogos";
-import { BetaBadge } from "./BetaBadge";
+
+import { WalletConnectModal } from "./WalletConnectModal";
+import { AnimatedOutlet } from "./AnimatedOutlet";
+import { AnimatedNumber } from "./AnimatedNumber";
+import { HolidayLogo } from "./HolidayLogo";
+import { VIPPanel } from "./VIPPanel";
+import { ScrollToTop } from "./ScrollToTop";
+import { PullToRefresh } from "./PullToRefresh";
+import { SEOHead, ROUTE_SEO } from "./SEOHead";
+import { Tip } from "./Tip";
+import { NewsTicker } from "./NewsTicker";
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from "./ui/sheet";
+
+import { formatAddress } from "../utils/metamask";
+import { trackRouteChange } from "../utils/performance";
+import { preloadRoute } from "../utils/preload";
+import { isVipEligible, loadVipPrefs, type VipPrefs } from "../utils/vip";
+import {
+  getSoundVolume, cycleSoundVolume, playTabChime,
+  playVipWalletWave, playVipNavNote,
+} from "../utils/sounds";
 
 export function Layout() {
   const location = useLocation();
@@ -191,36 +203,23 @@ export function Layout() {
       }`}>
         <div className="container mx-auto px-3 md:px-4 lg:px-5 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2">
-            {/* WRAPpDEX Logo — compact on lg to free nav space */}
-            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1 max-w-[140px] lg:max-w-[110px] xl:max-w-[145px] 2xl:max-w-none overflow-hidden">
+            {/* WRAPpDEX Logo — responsive viewport-aware sizing, no overflow clipping */}
+            <Link to="/markets" className="flex items-center group flex-shrink-0 ml-0 sm:ml-1">
               <HolidayLogo
                 defaultDarkSrc={brandLogos.dark}
                 defaultLightSrc={brandLogos.light}
                 isDark={isDark}
                 alt="Wrappdex Decentralized Exchange"
                 vipPulse={vipActive}
-                wrapperClassName={`flex-shrink-0 transition-transform duration-300 flex items-center ${
-                  isDark
-                    ? "h-[117px] md:h-[137px] lg:h-[88px] xl:h-[105px] 2xl:h-[125px]"
-                    : "h-[137px] md:h-[166px] lg:h-[100px] xl:h-[120px] 2xl:h-[145px]"
-                }`}
-                imgClassName={
-                  isDark
-                    ? "h-[105px] md:h-[125px] lg:h-[78px] xl:h-[95px] 2xl:h-[115px] w-auto object-contain"
-                    : "h-[125px] md:h-[152px] lg:h-[90px] xl:h-[110px] 2xl:h-[132px] w-auto object-contain"
-                }
-                holidayImgClassName={
-                  isDark
-                    ? "h-[52px] md:h-[62px] lg:h-[40px] xl:h-[48px] 2xl:h-[58px] w-auto object-contain"
-                    : "h-[62px] md:h-[73px] lg:h-[48px] xl:h-[56px] 2xl:h-[68px] w-auto object-contain"
-                }
+                wrapperClassName="flex-shrink-0 transition-transform duration-300 flex items-center"
+                imgClassName="h-[72px] sm:h-[88px] md:h-[104px] lg:h-[88px] xl:h-[104px] 2xl:h-[120px] max-w-[50vw] sm:max-w-none w-auto object-contain"
+                holidayImgClassName="h-[60px] sm:h-[72px] md:h-[84px] lg:h-[72px] xl:h-[84px] 2xl:h-[96px] max-w-[50vw] sm:max-w-none w-auto object-contain"
               />
             </Link>
 
-            {/* Beta badge — positioned snug against logo */}
-            <div className="flex-shrink-0 -ml-1 sm:-ml-0.5 self-center">
-              <BetaBadge />
-            </div>
+            {/* IMPLEMENTATION NOTE: BETA badge removed to free header space on mobile
+                and signal production readiness. BetaBadge component preserved for
+                future feature-flag reintroduction if needed. */}
 
             {/* Desktop Navigation */}
             <nav className="hidden lg:flex items-center justify-center flex-1 min-w-0 mx-1 xl:mx-3 overflow-hidden" aria-label="Main navigation">
@@ -297,7 +296,7 @@ export function Layout() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(1); }}
-                className={`inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`hidden sm:inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-[#5865F2] border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-[#5865F2] border border-gray-200"
@@ -334,7 +333,7 @@ export function Layout() {
               <button
                 onClick={toggleAccent}
                 onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(3); }}
-                className={`inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`hidden sm:inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
@@ -353,7 +352,7 @@ export function Layout() {
                 onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(4); }}
                 aria-label={`Sound volume: ${soundVolume}. Click to cycle.`}
                 aria-pressed={soundVolume !== "off"}
-                className={`inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
+                className={`hidden sm:inline-flex relative p-2 md:p-2.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"

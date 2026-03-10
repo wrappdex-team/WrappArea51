@@ -262,7 +262,7 @@ export function LandingProduct() {
             <span
               className="italic bg-clip-text text-transparent"
               style={{
-                backgroundImage: `linear-gradient(135deg, ${BLUE}, ${CYAN})`,
+                backgroundImage: `linear-gradient(135deg, ${BLUE}, ${BLUE}cc)`,
                 WebkitBackgroundClip: "text",
               }}
             >
@@ -279,7 +279,7 @@ export function LandingProduct() {
             <span
               className="font-semibold bg-clip-text text-transparent"
               style={{
-                backgroundImage: `linear-gradient(90deg, ${BLUE}, ${VIOLET})`,
+                backgroundImage: `linear-gradient(90deg, ${BLUE}, ${BLUE}cc)`,
                 WebkitBackgroundClip: "text",
               }}
             >
