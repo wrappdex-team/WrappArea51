@@ -126,6 +126,19 @@ export function BuySell() {
 
   const walletAddress = hashPackSession?.accountId || "";
 
+  // IMPLEMENTATION NOTE — topUpDeliveryAddress resolves to the correct wallet
+  // address for the selected top-up currency: EVM address for USDC/USDT (MetaMask),
+  // Hedera account ID for HBAR/HBARX (HashPack). Validated before use.
+  const isEvmCurrency = isEvmTopUpCurrency(topUpCurrency);
+  const evmAddress = metaMaskAccount?.address && isValidEvmAddress(metaMaskAccount.address) ? metaMaskAccount.address : "";
+  const topUpDeliveryAddress = (() => {
+    if (isEvmCurrency) {
+      return evmAddress;
+    }
+    const hAddr = hederaAccount || walletAddress;
+    return hAddr && isValidHederaAddress(hAddr) ? hAddr : "";
+  })();
+
   // ── Live HBAR price for header widget ──
   const [livePrice, setLivePrice] = useState(0);
   const [priceChange, setPriceChange] = useState(0);
