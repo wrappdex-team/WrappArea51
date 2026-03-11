@@ -10,10 +10,18 @@
  * Routes:
  *   POST /make-server-54299934/lp-history   → log a new operation
  *   GET  /make-server-54299934/lp-history   → fetch user's history
+ *
+ * Auth:
+ *   POST — requires ED25519 session token; accountId in body must match
+ *          session.accountId to prevent one user from writing to another
+ *          user's LP history (HIGH-01 ghost audit finding).
+ *   GET  — requires accountId query param (read-only, session optional).
  */
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
+import { ROUTE_PREFIX } from "./shared.ts";
+import { requireAuth } from "./auth.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -45,7 +53,6 @@ interface LpHistoryEntry {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const PREFIX = "/make-server-54299934";
 const KV_PREFIX = "lp:v2:";
 const MAX_HISTORY_PER_USER = 50;
 
@@ -54,7 +61,16 @@ const MAX_HISTORY_PER_USER = 50;
 export function registerLpHistoryRoutes(app: Hono) {
 
   // ── POST: Log a new LP operation ──────────────────────────────────
-  app.post(`${PREFIX}/lp-history`, async (c) => {
+  app.post(`${ROUTE_PREFIX}/lp-history`, async (c) => {
+    // IMPLEMENTATION NOTE — Require session auth so only the wallet owner
+    // can write to their own LP history. Without this, anyone can call this
+    // endpoint with an arbitrary accountId and pollute another user's history
+    // (ghost audit HIGH-01). Session.accountId is compared against body.accountId
+    // to enforce ownership. (requireAuth validates the X-Session-Token header
+    // against the KV session store.)
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
+
     try {
       const body = await c.req.json() as {
         accountId: string;
@@ -63,6 +79,13 @@ export function registerLpHistoryRoutes(app: Hono) {
 
       if (!body.accountId || !body.entry) {
         return c.json({ error: "Missing accountId or entry" }, 400);
+      }
+
+      // IMPLEMENTATION NOTE — Prevent cross-account writes: session must match
+      // the accountId being written. This is the core HIGH-01 fix.
+      if (auth.accountId !== body.accountId) {
+        console.log(`[LP-15] AUTH MISMATCH: session=${auth.accountId} body=${body.accountId}`);
+        return c.json({ error: "Session account does not match request accountId" }, 403);
       }
 
       const { accountId, entry } = body;
@@ -93,7 +116,7 @@ export function registerLpHistoryRoutes(app: Hono) {
   });
 
   // ── GET: Fetch user's LP history ──────────────────────────────────
-  app.get(`${PREFIX}/lp-history`, async (c) => {
+  app.get(`${ROUTE_PREFIX}/lp-history`, async (c) => {
     try {
       const accountId = c.req.query("accountId");
       if (!accountId) {

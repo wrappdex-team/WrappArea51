@@ -9,6 +9,7 @@
 
 import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
 import { log } from "../logger";
+import { getSessionToken } from "../auth";
 
 const BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 
@@ -37,12 +38,20 @@ export async function logLpOperation(
   entry: Omit<LpHistoryEntry, "timestamp">,
 ): Promise<void> {
   try {
+    // IMPLEMENTATION NOTE — Include session token so the server can verify
+    // the caller is the wallet owner (HIGH-01 fix — POST /lp-history now
+    // requires requireAuth). If no session exists, the log attempt will
+    // silently fail (non-critical — LP history is a display-only feature).
+    const sessionToken = getSessionToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${publicAnonKey}`,
+    };
+    if (sessionToken) headers["X-Session-Token"] = sessionToken;
+
     const response = await fetch(`${BASE_URL}/lp-history`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${publicAnonKey}`,
-      },
+      headers,
       body: JSON.stringify({
         accountId,
         entry: {

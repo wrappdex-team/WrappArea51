@@ -194,21 +194,27 @@ export function BuySell() {
   // ── Server-fetched ChangeNOW widget URLs ──
   const [crossChainUrl, setCrossChainUrl] = useState("");
   const [topUpUrl, setTopUpUrl] = useState("");
-
-  // IMPLEMENTATION NOTE — Wallet-aware address routing for Top Up:
-  //   HBAR  → Hedera wallet (HashPack) → 0.0.xxxxx
-  //   USDC  → EVM wallet (MetaMask) → 0x... (ERC-20 on Ethereum)
-  //   USDT  → EVM wallet (MetaMask) → 0x... (ERC-20 on Ethereum)
-  const isEvmCurrency = isEvmTopUpCurrency(topUpCurrency);
-  const evmAddress = metaMaskAccount?.address || "";
-  const topUpDeliveryAddress = isEvmCurrency ? evmAddress : walletAddress;
+  // IMPLEMENTATION NOTE — Track URL fetch failures so the UI never shows
+  // an indefinite loading spinner when the server returns an error (e.g.
+  // CHANGENOW_LINK_ID not yet set → 503). Separate flags per tab so
+  // retrying cross-chain doesn't clear a top-up error and vice versa.
+  const [crossChainUrlError, setCrossChainUrlError] = useState(false);
+  const [topUpUrlError, setTopUpUrlError] = useState(false);
 
   // Fetch cross-chain widget URL when dark mode changes or tab is active
   useEffect(() => {
     if (activeTab !== "crosschain") return;
     let cancelled = false;
+    setCrossChainUrlError(false);
     fetchWidgetUrl({ mode: "crosschain", isDark: String(isDark), from: "btc", to: "hbar" })
-      .then(url => { if (!cancelled && url) setCrossChainUrl(url); });
+      .then(url => {
+        if (cancelled) return;
+        if (url) {
+          setCrossChainUrl(url);
+        } else {
+          setCrossChainUrlError(true);
+        }
+      });
     return () => { cancelled = true; };
   }, [activeTab, isDark]);
 
@@ -216,6 +222,7 @@ export function BuySell() {
   useEffect(() => {
     if (activeTab !== "topup" || !fiatConsent) return;
     let cancelled = false;
+    setTopUpUrlError(false);
     const params: Record<string, string> = {
       mode: "topup",
       isDark: String(isDark),
@@ -223,7 +230,14 @@ export function BuySell() {
     };
     if (topUpDeliveryAddress) params.topUpAddress = topUpDeliveryAddress;
     fetchWidgetUrl(params)
-      .then(url => { if (!cancelled && url) setTopUpUrl(url); });
+      .then(url => {
+        if (cancelled) return;
+        if (url) {
+          setTopUpUrl(url);
+        } else {
+          setTopUpUrlError(true);
+        }
+      });
     return () => { cancelled = true; };
   }, [activeTab, isDark, topUpCurrency, topUpDeliveryAddress, fiatConsent]);
 
@@ -321,6 +335,27 @@ export function BuySell() {
                     referrerPolicy="strict-origin-when-cross-origin"
                     allow="clipboard-write"
                   />
+                ) : crossChainUrlError ? (
+                  // IMPLEMENTATION NOTE — Show actionable error instead of infinite
+                  // spinner when the server fails to return a widget URL (e.g. the
+                  // CHANGENOW_LINK_ID env var has not been set in Supabase secrets,
+                  // or there is a transient network error). Retry resets the error
+                  // flag and re-triggers the useEffect by toggling activeTab state.
+                  <div className={`flex flex-col items-center justify-center gap-4 ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} style={{ height: 440 }}>
+                    <AlertCircle className={`w-8 h-8 ${isDark ? "text-amber-400/60" : "text-amber-500"}`} />
+                    <div className="text-center px-6">
+                      <p className={`text-sm font-semibold mb-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>Widget unavailable</p>
+                      <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                        The exchange service could not be reached. Please try again.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { setCrossChainUrl(""); setCrossChainUrlError(false); setActiveTab("swap"); setTimeout(() => setActiveTab("crosschain"), 50); }}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-pink-400 border border-pink-500/20" : "bg-pink-50 hover:bg-pink-100 text-pink-600 border border-pink-200"}`}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Retry
+                    </button>
+                  </div>
                 ) : (
                   <div className="flex items-center justify-center" style={{ height: 440 }}>
                     <RefreshCw className={`w-5 h-5 animate-spin ${isDark ? "text-pink-400/40" : "text-gray-400"}`} />
@@ -531,6 +566,24 @@ export function BuySell() {
                     referrerPolicy="strict-origin-when-cross-origin"
                     allow="clipboard-write"
                   />
+                </div>
+              ) : topUpUrlError ? (
+                // IMPLEMENTATION NOTE — Error state mirrors cross-chain tab.
+                // Shown when server can't build the top-up widget URL.
+                <div className={`flex flex-col items-center justify-center gap-4 ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} style={{ height: 440 }}>
+                  <AlertCircle className={`w-8 h-8 ${isDark ? "text-amber-400/60" : "text-amber-500"}`} />
+                  <div className="text-center px-6">
+                    <p className={`text-sm font-semibold mb-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>Widget unavailable</p>
+                    <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                      The payment service could not be reached. Please try again.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setTopUpUrl(""); setTopUpUrlError(false); setActiveTab("swap"); setTimeout(() => setActiveTab("topup"), 50); }}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${isDark ? "bg-slate-800 hover:bg-slate-700 text-pink-400 border border-pink-500/20" : "bg-pink-50 hover:bg-pink-100 text-pink-600 border border-pink-200"}`}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Retry
+                  </button>
                 </div>
               ) : (
                 <div className={`flex items-center justify-center ${isDark ? "bg-[#0d0d1a]" : "bg-white"}`} style={{ height: 440 }}>

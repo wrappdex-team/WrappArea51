@@ -290,13 +290,14 @@ export function Layout() {
                 </svg>
               </a>
               </Tip>
-              <Tip content="Join WRAPpDEX Discord">
+              <Tip content="Join WRAPpDEX Discord — Community Support">
               <a
                 href="https://discord.gg/ZFnfRFxQZ"
                 target="_blank"
                 rel="noopener noreferrer"
+                aria-label="Join WRAPpDEX Discord community support"
                 onMouseEnter={() => { if (vipActive && vipPrefs.features.vip_sounds) playVipNavNote(1); }}
-                className={`hidden sm:inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
+                className={`inline-flex p-2 md:p-2.5 rounded-lg transition-all duration-300 ${
                   isDark
                     ? "bg-slate-800/50 hover:bg-slate-700 text-slate-300 hover:text-[#5865F2] border border-pink-500/20"
                     : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-[#5865F2] border border-gray-200"
