@@ -32,7 +32,7 @@ const roadmap: Quarter[] = [
       { text: "DAO governance with weighted voting & 8 categories", status: "shipped" },
       { text: "VIP token-gated system (token + NFT dual-path)", status: "shipped" },
       { text: "Cross-chain bridges (Squid, HashPort, Stargate)", status: "shipped" },
-      { text: "Bonzo Finance lending (Aave V2 on Hedera)", status: "shipped" },
+      { text: "Bonzo Finance lending (Aave V2 on Hedera)", status: "processing" },
       { text: "Pro charting: 10 timeframes, 6 technical indicators", status: "shipped" },
       { text: "AAVE & DAI onboarding (HashPort-bridged)", status: "shipped" },
       { text: "Circuit breakers for all external services", status: "shipped" },
@@ -48,7 +48,7 @@ const roadmap: Quarter[] = [
     items: [
       { text: "Back-end infrastructure hardening & security review", status: "planned" },
       { text: "Community growth & membership acquisition initiatives", status: "planned" },
-      { text: "Ivyfy native staking integration for WRAPpDEX", status: "planned" },
+      { text: "Ivyfy native staking integration for WRAPpDEX", status: "processing" },
       { text: "AMM engine development, stress testing & hardening", status: "planned" },
       { text: "Multi-hop swap execution (USDC-hop routes)", status: "planned" },
       { text: "Portfolio P&L analytics & reporting dashboard", status: "planned" },

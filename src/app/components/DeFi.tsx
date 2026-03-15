@@ -102,9 +102,21 @@ function formatCompact(n: number): string {
   return n.toLocaleString();
 }
 
+// IMPLEMENTATION NOTE — Lending admin-only lock. Bonzo Finance API integration
+// is pending (no response from their team in weeks). The Lend & Borrow tab is
+// locked for all users except the owner account. Set LENDING_LOCKED = false to
+// re-enable for everyone once the Bonzo API is confirmed and configured.
+const LENDING_LOCKED = true;
+const LENDING_ADMIN_ACCOUNT = "0.0.518487";
+
 export function DeFi() {
   const { isDark } = useTheme();
   const { primaryWallet, hederaAccount, hederaNetwork } = useWallet();
+
+  // IMPLEMENTATION NOTE — Admin bypass for the lending lock
+  const connectedAccountId = hederaAccount?.accountId || primaryWallet?.accountId || "";
+  const isLendingAdmin = connectedAccountId === LENDING_ADMIN_ACCOUNT;
+  const showLendingLock = LENDING_LOCKED && !isLendingAdmin;
 
   const isVip = useMemo(() => {
     if (!hederaAccount?.tokens) return false;
@@ -657,7 +669,46 @@ export function DeFi() {
       )}
 
       {/* ═══ LEND & BORROW TAB (Bonzo Finance) ═══ */}
-      {activeTab === "lend" && <BonzoLendBorrow />}
+      {activeTab === "lend" && !showLendingLock && <BonzoLendBorrow />}
+      {activeTab === "lend" && showLendingLock && (
+        <div className="max-w-lg mx-auto">
+          <div className={`rounded-2xl p-6 ${cardClass}`}>
+            {/* Lock Banner */}
+            <div className={`rounded-xl p-8 text-center ${
+              isDark
+                ? "bg-gradient-to-br from-amber-900/10 to-orange-900/10 border border-amber-500/20"
+                : "bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200"
+            }`}>
+              <div className={`w-16 h-16 rounded-2xl mx-auto mb-5 flex items-center justify-center ${
+                isDark ? "bg-amber-500/10" : "bg-amber-100"
+              }`}>
+                <Lock className={`w-8 h-8 ${isDark ? "text-amber-400" : "text-amber-600"}`} />
+              </div>
+              <h4 className={`text-lg font-bold mb-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
+                Lending Coming Soon
+              </h4>
+              <p className={`text-sm leading-relaxed max-w-sm mx-auto ${isDark ? "text-amber-400/70" : "text-amber-700/80"}`}>
+                Lending and borrowing features are temporarily locked while we finalize
+                our lending protocol integration. We're working to bring you a secure,
+                fully audited DeFi lending experience on Hedera.
+              </p>
+              <p className={`text-xs mt-4 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                Stay tuned for updates — this feature will be available to all VIP members soon.
+              </p>
+            </div>
+            <div className="mt-4 flex items-center justify-center gap-2 text-xs">
+              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${isDark ? "bg-pink-900/20 text-pink-400/50 border border-pink-500/10" : "bg-pink-50 text-pink-700/50 border border-pink-200/50"}`}>
+                <Zap className="w-2.5 h-2.5" />
+                Lending Protocol
+              </span>
+            </div>
+            <div className={`mt-2 flex items-center gap-2 text-xs ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+              <Shield className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Powered by Aave V2 architecture on Hedera — supply assets to earn interest, borrow against collateral.</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ STAKING TAB ═══ */}
       {activeTab === "staking" && (

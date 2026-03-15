@@ -236,19 +236,59 @@ export function LandingPartners() {
               href={partner.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex flex-col items-center justify-center px-6 py-10 sm:px-8 sm:py-12 bg-white hover:bg-slate-50 transition-all duration-500 group grayscale hover:grayscale-0 relative overflow-hidden"
+              className={`flex flex-col items-center justify-center px-6 py-10 sm:px-8 sm:py-12 bg-white hover:bg-slate-50 transition-all duration-500 group grayscale hover:grayscale-0 relative overflow-hidden${
+                partner.name === "Bonzo Finance" ? " pointer-events-none" : ""
+              }`}
+              {...(partner.name === "Bonzo Finance" ? { onClick: (e: React.MouseEvent) => e.preventDefault() } : {})}
             >
               <div
                 className="absolute inset-0 transform translate-y-full group-hover:translate-y-[98%] transition-transform duration-500"
                 style={{ backgroundColor: BLUE }}
               />
-              <PartnerLogo
-                name={partner.name}
-                serverBucketUrl={getServerUrl(partner.name)}
-                hardcodedBucketUrl={partner.bucketLogo}
-                fallbackUrl={partner.fallbackLogo}
-              />
-              <span className="text-[8px] sm:text-[9px] font-black text-slate-400 group-hover:text-black uppercase tracking-[0.25em] whitespace-nowrap transition-colors relative z-10">
+              {/* IMPLEMENTATION NOTE — Bonzo Finance logo is blurred with a
+                  "Lending Partner Coming Soon" overlay while the Bonzo API
+                  integration is pending. Remove the blur wrapper once confirmed. */}
+              {partner.name === "Bonzo Finance" ? (
+                <div className="relative flex flex-col items-center">
+                  <div className="blur-[6px] opacity-30">
+                    <PartnerLogo
+                      name={partner.name}
+                      serverBucketUrl={getServerUrl(partner.name)}
+                      hardcodedBucketUrl={partner.bucketLogo}
+                      fallbackUrl={partner.fallbackLogo}
+                    />
+                  </div>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center mb-2"
+                      style={{ background: `${BLUE}12`, border: `1px solid ${BLUE}20` }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={BLUE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </div>
+                    <span className="text-[7px] font-black uppercase tracking-[0.2em] text-slate-400 text-center leading-tight whitespace-nowrap">
+                      Lending Partner
+                    </span>
+                    <span className="text-[7px] font-black uppercase tracking-[0.2em] text-center leading-tight whitespace-nowrap" style={{ color: BLUE }}>
+                      Coming Soon
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <PartnerLogo
+                  name={partner.name}
+                  serverBucketUrl={getServerUrl(partner.name)}
+                  hardcodedBucketUrl={partner.bucketLogo}
+                  fallbackUrl={partner.fallbackLogo}
+                />
+              )}
+              <span className={`text-[8px] sm:text-[9px] font-black uppercase tracking-[0.25em] whitespace-nowrap transition-colors relative z-10${
+                partner.name === "Bonzo Finance"
+                  ? " text-slate-300 blur-[3px] select-none"
+                  : " text-slate-400 group-hover:text-black"
+              }`}>
                 {partner.name}
               </span>
             </a>
