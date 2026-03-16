@@ -61,6 +61,7 @@ const TermsOfService = lazy(() => retryImport(() => import("./components/TermsOf
 const PrivacyPolicy = lazy(() => retryImport(() => import("./components/PrivacyPolicy")).then(m => ({ default: m.PrivacyPolicy })));
 const WhitePaper = lazy(() => retryImport(() => import("./components/WhitePaper")).then(m => ({ default: m.WhitePaper })));
 const Branding = lazy(() => retryImport(() => import("./components/Branding")).then(m => ({ default: m.Branding })));
+const PenTest = lazy(() => retryImport(() => import("./components/PenTest")).then(m => ({ default: m.PenTest })));
 const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).then(m => ({ default: m.NotFound })));
 
 /**
@@ -95,6 +96,7 @@ function TermsGateLayout() {
  * /audit           → Security reports
  * /white-paper     → Wrapp Paper
  * /branding        → Brand identity
+ * /pentest         → Security penetration testing suite
  * /terms           → Terms of Service
  * /privacy         → Privacy Policy
  */
@@ -144,6 +146,7 @@ export const router = createBrowserRouter([
           { path: "privacy", Component: PrivacyPolicy },
           { path: "white-paper", Component: WhitePaper },
           { path: "branding", Component: Branding },
+          { path: "pentest", Component: PenTest },
           { path: "smart-liquidity", element: <Navigate to="/trading" replace /> },
           { path: "*", Component: NotFound },
         ],

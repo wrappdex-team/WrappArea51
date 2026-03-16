@@ -75,7 +75,7 @@ export const CHAIN_INFO: Record<
   1: { name: "Ethereum Mainnet", symbol: "ETH", explorer: "https://etherscan.io", color: "from-blue-500 to-indigo-500" },
   5: { name: "Goerli Testnet", symbol: "ETH", explorer: "https://goerli.etherscan.io", color: "from-yellow-500 to-amber-500" },
   11155111: { name: "Sepolia Testnet", symbol: "ETH", explorer: "https://sepolia.etherscan.io", color: "from-purple-500 to-violet-500" },
-  137: { name: "Polygon", symbol: "MATIC", explorer: "https://polygonscan.com", color: "from-purple-500 to-indigo-500" },
+  137: { name: "Polygon", symbol: "POL", explorer: "https://polygonscan.com", color: "from-purple-500 to-indigo-500" },
   56: { name: "BNB Smart Chain", symbol: "BNB", explorer: "https://bscscan.com", color: "from-yellow-500 to-orange-500" },
   42161: { name: "Arbitrum One", symbol: "ETH", explorer: "https://arbiscan.io", color: "from-blue-500 to-cyan-500" },
   10: { name: "Optimism", symbol: "ETH", explorer: "https://optimistic.etherscan.io", color: "from-red-500 to-pink-500" },
@@ -490,7 +490,7 @@ export async function fetchERC20Balances(
 const ADD_CHAIN_PARAMS: Record<number, any> = {
   137: {
     chainName: "Polygon Mainnet",
-    nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
+    nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
     rpcUrls: ["https://polygon-rpc.com"],
     blockExplorerUrls: ["https://polygonscan.com"],
   },
@@ -709,6 +709,313 @@ export async function fetchSolPrice(): Promise<number> {
   } catch {
     return 185;
   }
+}
+
+// ── Chain-Aware Native Token Price ───────────────────────────────────
+// IMPLEMENTATION NOTE — The original code used a single `ethPrice` for all
+// chains, causing wildly incorrect valuations when connected to Polygon,
+// BNB, or Avalanche (e.g. 61 POL × $2,282 ETH = $139k instead of ~$13).
+// This function returns the correct native token price per chain.
+
+/** Binance symbol mapping for each chain's native token */
+const NATIVE_BINANCE_SYMBOL: Record<number, { symbol: string; fallback: number }> = {
+  1:        { symbol: "ETHUSDT",   fallback: 2500 },
+  5:        { symbol: "ETHUSDT",   fallback: 2500 },
+  11155111: { symbol: "ETHUSDT",   fallback: 2500 },
+  42161:    { symbol: "ETHUSDT",   fallback: 2500 },  // Arbitrum uses ETH
+  10:       { symbol: "ETHUSDT",   fallback: 2500 },  // Optimism uses ETH
+  8453:     { symbol: "ETHUSDT",   fallback: 2500 },  // Base uses ETH
+  137:      { symbol: "POLUSDT",   fallback: 0.22 },  // Polygon (POL, fka MATIC)
+  56:       { symbol: "BNBUSDT",   fallback: 650 },
+  43114:    { symbol: "AVAXUSDT",  fallback: 25 },
+  295:      { symbol: "HBARUSDT",  fallback: 0.08 },  // Hedera (unusual via MM)
+  296:      { symbol: "HBARUSDT",  fallback: 0.08 },
+};
+
+/**
+ * Fetch the USD price of the native token for a given EVM chain.
+ * Falls back to fetchEthPrice() for unknown chains.
+ */
+export async function fetchNativeTokenPrice(chainId: number): Promise<number> {
+  const entry = NATIVE_BINANCE_SYMBOL[chainId];
+  if (!entry) return fetchEthPrice(); // default to ETH for unknown chains
+
+  // If it's an ETH chain, reuse fetchEthPrice to avoid duplicate calls
+  if (entry.symbol === "ETHUSDT") return fetchEthPrice();
+
+  try {
+    const res = await fetch(
+      `https://api.binance.com/api/v3/ticker/price?symbol=${entry.symbol}`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) {
+      // IMPLEMENTATION NOTE — Binance renamed MATIC→POL in 2024; if POLUSDT
+      // doesn't exist yet on their API, fall back to the legacy MATICUSDT pair.
+      if (chainId === 137) {
+        const fallbackRes = await fetch(
+          "https://api.binance.com/api/v3/ticker/price?symbol=MATICUSDT",
+          { signal: AbortSignal.timeout(8000) },
+        );
+        if (fallbackRes.ok) {
+          const d = await fallbackRes.json();
+          return parseFloat(d?.price) || entry.fallback;
+        }
+      }
+      return entry.fallback;
+    }
+    const data = await res.json();
+    return parseFloat(data?.price) || entry.fallback;
+  } catch {
+    // Polygon MATIC fallback on network error
+    if (chainId === 137) {
+      try {
+        const res = await fetch(
+          "https://api.binance.com/api/v3/ticker/price?symbol=MATICUSDT",
+          { signal: AbortSignal.timeout(8000) },
+        );
+        if (res.ok) {
+          const d = await res.json();
+          return parseFloat(d?.price) || entry.fallback;
+        }
+      } catch { /* use fallback */ }
+    }
+    return entry.fallback;
+  }
+}
+
+// ── ERC-20 Price Fetching ────────────────────────────────────────────
+// IMPLEMENTATION NOTE — Previously only stablecoins were priced (at $1).
+// Non-stablecoin ERC-20s (LINK, AAVE, UNI, WBTC) showed as $0, making
+// the portfolio under-report. This fetches real prices from Binance.
+
+/** Maps ERC-20 symbol → Binance trading pair */
+const ERC20_BINANCE_SYMBOL: Record<string, { pair: string; fallback: number }> = {
+  WBTC: { pair: "BTCUSDT",  fallback: 85000 },
+  LINK: { pair: "LINKUSDT", fallback: 14 },
+  UNI:  { pair: "UNIUSDT",  fallback: 7 },
+  AAVE: { pair: "AAVEUSDT", fallback: 120 },
+  // Stablecoins — hardcoded at $1, no API call needed
+  USDC: { pair: "",         fallback: 1 },
+  USDT: { pair: "",         fallback: 1 },
+  DAI:  { pair: "",         fallback: 1 },
+};
+
+/**
+ * Fetch USD prices for a list of ERC-20 symbols.
+ * Returns a Map<symbol, priceUsd>.
+ * Stablecoins are hardcoded at $1.00; others query Binance.
+ */
+export async function fetchERC20Prices(
+  symbols: string[],
+): Promise<Map<string, number>> {
+  const prices = new Map<string, number>();
+  const fetches: Promise<void>[] = [];
+
+  for (const sym of symbols) {
+    const entry = ERC20_BINANCE_SYMBOL[sym];
+    if (!entry) continue;
+
+    // Stablecoins — no API call
+    if (!entry.pair) {
+      prices.set(sym, entry.fallback);
+      continue;
+    }
+
+    fetches.push(
+      (async () => {
+        try {
+          const res = await fetch(
+            `https://api.binance.com/api/v3/ticker/price?symbol=${entry.pair}`,
+            { signal: AbortSignal.timeout(8000) },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            prices.set(sym, parseFloat(data?.price) || entry.fallback);
+          } else {
+            prices.set(sym, entry.fallback);
+          }
+        } catch {
+          prices.set(sym, entry.fallback);
+        }
+      })(),
+    );
+  }
+
+  await Promise.all(fetches);
+  return prices;
+}
+
+// ── Multi-Chain Balance Aggregation ──────────────────────────────────
+// IMPLEMENTATION NOTE — MetaMask's provider only queries the active chain.
+// To show the full portfolio value (like MetaMask's own "All popular networks"
+// view), we query public RPCs on every major chain in parallel.
+
+/** Public RPC endpoints for multi-chain balance queries (no auth required) */
+const PUBLIC_RPC: Record<number, string> = {
+  1:     "https://eth.llamarpc.com",
+  137:   "https://polygon-rpc.com",
+  42161: "https://arb1.arbitrum.io/rpc",
+  10:    "https://mainnet.optimism.io",
+  8453:  "https://mainnet.base.org",
+  56:    "https://bsc-dataseed.binance.org",
+  43114: "https://api.avax.network/ext/bc/C/rpc",
+};
+
+/** Chains to scan (mainnet only — no testnets) */
+const MULTI_CHAIN_IDS = [1, 137, 42161, 10, 8453, 56, 43114] as const;
+
+export interface MultiChainToken {
+  chainId: number;
+  chainName: string;
+  symbol: string;
+  name: string;
+  balance: number;
+  priceUsd: number;
+  valueUsd: number;
+  logo: string;
+  isNative: boolean;
+  /** For ERC-20s, the contract address; for native, empty */
+  address: string;
+}
+
+/** Chain logo URLs for display */
+export const CHAIN_LOGO: Record<number, string> = {
+  1:     "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+  137:   "https://assets.coingecko.com/coins/images/4713/small/polygon.png",
+  42161: "https://assets.coingecko.com/coins/images/16547/small/photo_2023-03-29_21.47.00.jpeg",
+  10:    "https://assets.coingecko.com/coins/images/25244/small/Optimism.png",
+  8453:  "https://assets.coingecko.com/coins/images/31164/small/baseIcon.png",
+  56:    "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
+  43114: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
+};
+
+/** Native token logos per chain */
+const NATIVE_LOGO: Record<number, string> = {
+  1:     "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  137:   "https://assets.coingecko.com/coins/images/4713/large/polygon.png",
+  42161: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  10:    "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  8453:  "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  56:    "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+  43114: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
+};
+
+/**
+ * Raw JSON-RPC call to a public endpoint.
+ */
+async function rpcCall(
+  rpcUrl: string,
+  method: string,
+  params: any[],
+): Promise<any> {
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`RPC ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message);
+  return json.result;
+}
+
+/**
+ * Fetch native + ERC-20 balances across ALL major EVM chains in parallel.
+ * Returns a flat list of tokens with non-zero balances, priced in USD.
+ */
+export async function fetchMultiChainBalances(
+  address: string,
+): Promise<MultiChainToken[]> {
+  const results: MultiChainToken[] = [];
+
+  // 1) Fetch all native token prices in one batch
+  const pricePromises = MULTI_CHAIN_IDS.map((cid) =>
+    fetchNativeTokenPrice(cid).then((p) => [cid, p] as const),
+  );
+  const priceEntries = await Promise.all(pricePromises);
+  const nativePrices = new Map(priceEntries);
+
+  // 2) For each chain, query native balance + known ERC-20s in parallel
+  const chainPromises = MULTI_CHAIN_IDS.map(async (chainId) => {
+    const rpcUrl = PUBLIC_RPC[chainId];
+    if (!rpcUrl) return;
+    const chain = CHAIN_INFO[chainId];
+    if (!chain) return;
+    const nativePrice = nativePrices.get(chainId) ?? 0;
+    const tokens: MultiChainToken[] = [];
+
+    // Native balance
+    try {
+      const hex = await rpcCall(rpcUrl, "eth_getBalance", [address, "latest"]);
+      const wei = hexToBigInt(hex);
+      if (wei > 0n) {
+        const balance = Number(wei) / 1e18;
+        tokens.push({
+          chainId,
+          chainName: chain.name,
+          symbol: chain.symbol,
+          name: chain.name,
+          balance,
+          priceUsd: nativePrice,
+          valueUsd: balance * nativePrice,
+          logo: NATIVE_LOGO[chainId] || "",
+          isNative: true,
+          address: "",
+        });
+      }
+    } catch { /* skip chain if RPC fails */ }
+
+    // ERC-20 balances
+    const tokenDefs = KNOWN_ERC20S[chainId];
+    if (tokenDefs && tokenDefs.length > 0) {
+      const erc20Symbols = tokenDefs.map((t) => t.symbol);
+      // Fetch ERC-20 prices for this chain's tokens
+      let erc20PriceMap = new Map<string, number>();
+      try {
+        erc20PriceMap = await fetchERC20Prices(erc20Symbols);
+      } catch { /* use fallbacks */ }
+
+      const erc20Promises = tokenDefs.map(async (tokenDef) => {
+        try {
+          const data = encodeBalanceOf(address);
+          const hex = await rpcCall(rpcUrl, "eth_call", [
+            { to: tokenDef.address, data },
+            "latest",
+          ]);
+          const rawBN = hexToBigInt(hex);
+          if (rawBN === 0n) return;
+          const balance = Number(rawBN) / Math.pow(10, tokenDef.decimals);
+          const price = erc20PriceMap.get(tokenDef.symbol) ??
+            (["USDC", "USDT", "DAI"].includes(tokenDef.symbol) ? 1 : 0);
+          tokens.push({
+            chainId,
+            chainName: chain.name,
+            symbol: tokenDef.symbol,
+            name: tokenDef.name,
+            balance,
+            priceUsd: price,
+            valueUsd: balance * price,
+            logo: tokenDef.logo,
+            isNative: false,
+            address: tokenDef.address,
+          });
+        } catch { /* skip token */ }
+      });
+      await Promise.all(erc20Promises);
+    }
+
+    return tokens;
+  });
+
+  const chainResults = await Promise.all(chainPromises);
+  for (const tokens of chainResults) {
+    if (tokens) results.push(...tokens);
+  }
+
+  // Sort by value descending
+  results.sort((a, b) => b.valueUsd - a.valueUsd);
+  return results;
 }
 
 // ── EVM Transaction History ──────────────────────────────────────────

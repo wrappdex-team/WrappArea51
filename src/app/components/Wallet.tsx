@@ -31,11 +31,15 @@ import {
   formatAddress,
   getExplorerAddressUrl,
   fetchERC20Balances,
+  fetchERC20Prices,
+  fetchMultiChainBalances,
   type ERC20Balance,
+  type MultiChainToken,
   fetchEvmTransactions,
   type EvmTransaction,
   getExplorerTxUrl,
   CHAIN_INFO,
+  CHAIN_LOGO,
   enrichEvmTransactions,
 } from "../utils/metamask";
 import {
@@ -321,7 +325,11 @@ export function Wallet() {
   const [showDust, setShowDust] = useState(false);
   const [showAllTxns, setShowAllTxns] = useState(false);
   const [erc20Balances, setErc20Balances] = useState<ERC20Balance[]>([]);
+  const [erc20PricesLocal, setErc20PricesLocal] = useState<Map<string, number>>(new Map());
   const [loadingErc20, setLoadingErc20] = useState(false);
+  // Multi-chain aggregated balances (all networks)
+  const [multiChainTokens, setMultiChainTokens] = useState<MultiChainToken[]>([]);
+  const [loadingMultiChain, setLoadingMultiChain] = useState(false);
   const [hbarhPrice, setHbarhPrice] = useState<number>(0);
   const [lpTokenPrice, setLpTokenPrice] = useState<number>(0);
 
@@ -346,7 +354,7 @@ export function Wallet() {
     hbarPrice,
     refreshHederaBalance,
     metaMaskAccount,
-    ethPrice,
+    nativeTokenPrice,
     refreshMetaMaskBalance,
     disconnectMetaMask,
     hashPackSession,
@@ -477,18 +485,52 @@ export function Wallet() {
     }
   }, [hederaAccount?.accountId, hederaAccount?.network]);
 
-  // Fetch ERC-20 balances when MetaMask account or chain changes
+  // Fetch ERC-20 balances and prices when MetaMask account or chain changes
   useEffect(() => {
     if (metaMaskAccount) {
       setLoadingErc20(true);
       fetchERC20Balances(metaMaskAccount.address, metaMaskAccount.chainId)
-        .then(setErc20Balances)
+        .then((tokens) => {
+          setErc20Balances(tokens);
+          // IMPLEMENTATION NOTE — Fetch real-time prices for non-stablecoin
+          // ERC-20s so the portfolio isn't under-reported. Previously only
+          // stablecoins were priced at $1 and everything else showed $0.
+          const nonStableSymbols = tokens
+            .map((t) => t.symbol)
+            .filter((s) => !["USDC", "USDT", "DAI"].includes(s));
+          if (nonStableSymbols.length > 0) {
+            fetchERC20Prices(nonStableSymbols)
+              .then(setErc20PricesLocal)
+              .catch(() => { /* use fallbacks in the price map */ });
+          }
+        })
         .catch(() => setErc20Balances([]))
         .finally(() => setLoadingErc20(false));
     } else {
       setErc20Balances([]);
+      setErc20PricesLocal(new Map());
     }
   }, [metaMaskAccount?.address, metaMaskAccount?.chainId]);
+
+  // IMPLEMENTATION NOTE — Fetch balances across ALL EVM chains simultaneously
+  // so the wallet shows the true aggregate portfolio, not just the active chain.
+  useEffect(() => {
+    if (metaMaskAccount) {
+      setLoadingMultiChain(true);
+      fetchMultiChainBalances(metaMaskAccount.address)
+        .then(setMultiChainTokens)
+        .catch(() => setMultiChainTokens([]))
+        .finally(() => setLoadingMultiChain(false));
+    } else {
+      setMultiChainTokens([]);
+    }
+  }, [metaMaskAccount?.address]);
+
+  // Compute multi-chain total USD value
+  const multiChainTotalUsd = useMemo(
+    () => multiChainTokens.reduce((s, t) => s + t.valueUsd, 0),
+    [multiChainTokens],
+  );
 
   // Fetch recent transactions when Hedera account is connected
   useEffect(() => {
@@ -740,28 +782,54 @@ export function Wallet() {
     return result;
   }, [significantHoldings, holdings, dustTotalUsd, isVip, isDark]);
 
-  // EVM donut data
+  // EVM donut data — now powered by multi-chain aggregation
+  // IMPLEMENTATION NOTE — Uses multiChainTokens (all networks) for the donut
+  // chart and portfolio total, giving users a true cross-chain portfolio view.
   const STABLECOINS = useMemo(() => new Set(["USDC", "USDT", "DAI"]), []);
   const evmDonutData = useMemo(() => {
+    if (multiChainTokens.length > 0) {
+      // Aggregate by symbol for the donut chart
+      const bySymbol = new Map<string, number>();
+      for (const t of multiChainTokens) {
+        bySymbol.set(t.symbol, (bySymbol.get(t.symbol) ?? 0) + t.valueUsd);
+      }
+      const items: Array<{ name: string; value: number; color: string }> = [];
+      let i = 0;
+      for (const [sym, val] of bySymbol) {
+        if (val > 0.01) {
+          items.push({ name: sym, value: val, color: CHART_COLORS[i % CHART_COLORS.length] });
+          i++;
+        }
+      }
+      items.sort((a, b) => b.value - a.value);
+      return items;
+    }
+    // Fallback to single-chain if multi-chain hasn't loaded yet
     const items: Array<{ name: string; value: number; color: string }> = [];
-    const nativeVal = metaMaskAccount ? parseFloat(metaMaskAccount.balanceEth) * ethPrice : 0;
+    const nativeVal = metaMaskAccount ? parseFloat(metaMaskAccount.balanceEth) * nativeTokenPrice : 0;
     if (nativeVal > 0) {
       items.push({ name: metaMaskAccount?.nativeSymbol || "ETH", value: nativeVal, color: "#3b82f6" });
     }
-    erc20Balances.forEach((t, i) => {
-      const val = STABLECOINS.has(t.symbol) ? t.balance : 0; // only stablecoins priced
-      if (val > 0) items.push({ name: t.symbol, value: val, color: CHART_COLORS[(i + 3) % CHART_COLORS.length] });
-    });
     return items;
-  }, [metaMaskAccount, ethPrice, erc20Balances, STABLECOINS]);
+  }, [multiChainTokens, metaMaskAccount, nativeTokenPrice]);
 
   // Totals
   const hederaTotalUsd = useMemo(() => holdings.reduce((s, h) => s + h.value, 0), [holdings]);
   const evmTotalUsd = useMemo(() => {
-    const nativeVal = metaMaskAccount ? parseFloat(metaMaskAccount.balanceEth) * ethPrice : 0;
-    const erc20Val = erc20Balances.reduce((s, t) => s + (STABLECOINS.has(t.symbol) ? t.balance : 0), 0);
+    // Use multi-chain total when available, fall back to single-chain
+    if (multiChainTokens.length > 0) return multiChainTotalUsd;
+    const nativeVal = metaMaskAccount ? parseFloat(metaMaskAccount.balanceEth) * nativeTokenPrice : 0;
+    const erc20Val = erc20Balances.reduce((s, t) => {
+      let tokenPrice = 0;
+      if (STABLECOINS.has(t.symbol)) {
+        tokenPrice = 1;
+      } else if (erc20PricesLocal.has(t.symbol)) {
+        tokenPrice = erc20PricesLocal.get(t.symbol)!;
+      }
+      return s + t.balance * tokenPrice;
+    }, 0);
     return nativeVal + erc20Val;
-  }, [metaMaskAccount, ethPrice, erc20Balances, STABLECOINS]);
+  }, [multiChainTokens, multiChainTotalUsd, metaMaskAccount, nativeTokenPrice, erc20Balances, erc20PricesLocal, STABLECOINS]);
   const totalPortfolioUsd = hederaTotalUsd + evmTotalUsd;
 
   const hbarhToken = holdings.find((h) => h.isHbarh);
@@ -796,6 +864,12 @@ export function Wallet() {
     setIsRefreshingMM(true);
     await refreshMetaMaskBalance();
     if (metaMaskAccount) {
+      // Refresh multi-chain balances (all networks)
+      try {
+        const mcTokens = await fetchMultiChainBalances(metaMaskAccount.address);
+        setMultiChainTokens(mcTokens);
+      } catch { /* non-critical */ }
+      // Also refresh single-chain ERC-20 for backward compat
       try {
         const tokens = await fetchERC20Balances(metaMaskAccount.address, metaMaskAccount.chainId);
         setErc20Balances(tokens);
@@ -1331,8 +1405,8 @@ export function Wallet() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold">MetaMask</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isDark ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-600"}`}>
-                          {metaMaskAccount.chainName}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isDark ? "bg-orange-500/20 text-orange-400" : "bg-orange-100 text-orange-600"}`}>
+                          All Networks
                         </span>
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
@@ -1364,64 +1438,93 @@ export function Wallet() {
                   </div>
                 </div>
 
-                {/* Native balance */}
-                <div className={`grid grid-cols-2 gap-2 mb-4`}>
-                  <div className={`p-3 rounded-lg ${isDark ? "bg-black/20" : "bg-gray-50"}`}>
-                    <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>{metaMaskAccount.nativeSymbol}</div>
-                    <div className="font-bold">
-                      {parseFloat(metaMaskAccount.balanceEth) >= 0.01
-                        ? parseFloat(metaMaskAccount.balanceEth).toLocaleString(undefined, { maximumFractionDigits: 4 })
-                        : parseFloat(metaMaskAccount.balanceEth).toFixed(6)}
-                    </div>
-                    <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                      {formatUsd(parseFloat(metaMaskAccount.balanceEth) * ethPrice)}
-                    </div>
-                  </div>
-                  <div className={`p-3 rounded-lg ${isDark ? "bg-black/20" : "bg-gray-50"}`}>
-                    <div className={`text-[10px] mb-0.5 ${isDark ? "text-slate-500" : "text-gray-400"}`}>{metaMaskAccount.nativeSymbol} Price</div>
-                    <div className="font-bold">{formatUsd(ethPrice)}</div>
-                    <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>CoinGecko</div>
-                  </div>
+                {/* Multi-chain balances (all networks) */}
+                <div className={`flex items-center gap-1.5 mb-2`}>
+                  <span className={`text-[10px] uppercase tracking-wider font-bold ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    All Networks
+                  </span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isDark ? "bg-orange-500/15 text-orange-400" : "bg-orange-100 text-orange-600"}`}>
+                    {multiChainTokens.length} token{multiChainTokens.length !== 1 ? "s" : ""}
+                  </span>
+                  {loadingMultiChain && (
+                    <RefreshCw className="w-3 h-3 animate-spin text-orange-400" />
+                  )}
                 </div>
-
-                {/* ERC-20 tokens */}
-                {loadingErc20 ? (
-                  <div className="space-y-2 py-2" role="status" aria-label="Loading ERC-20 balances">
-                    {Array.from({ length: 3 }).map((_, i) => (
+                {loadingMultiChain && multiChainTokens.length === 0 ? (
+                  <div className="space-y-2 py-2" role="status" aria-label="Scanning all networks">
+                    {Array.from({ length: 5 }).map((_, i) => (
                       <div key={i} className="flex items-center justify-between py-2">
                         <div className="flex items-center gap-2">
                           <div className={`w-7 h-7 rounded-full ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
                           <div>
                             <div className={`h-3.5 w-14 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden mb-1`}><div className="absolute inset-0 skeleton-shimmer" /></div>
-                            <div className={`h-2.5 w-10 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
+                            <div className={`h-2.5 w-20 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
                           </div>
                         </div>
                         <div className={`h-3.5 w-16 rounded ${isDark ? "bg-white/[0.04]" : "bg-gray-200/60"} relative overflow-hidden`}><div className="absolute inset-0 skeleton-shimmer" /></div>
                       </div>
                     ))}
-                    <span className="sr-only">Loading ERC-20 balances...</span>
+                    <span className="sr-only">Scanning all EVM networks...</span>
                   </div>
-                ) : erc20Balances.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {erc20Balances.map((token) => (
-                      <div key={token.address} className={`flex items-center justify-between p-2.5 rounded-lg transition-colors ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-50"}`}>
+                ) : multiChainTokens.length > 0 ? (
+                  <div className="space-y-1">
+                    {multiChainTokens.map((token, idx) => (
+                      <div
+                        key={`${token.chainId}-${token.symbol}-${token.address || "native"}`}
+                        className={`flex items-center justify-between p-2.5 rounded-lg transition-colors ${isDark ? "hover:bg-white/[0.03]" : "hover:bg-gray-50"}`}
+                      >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <img src={token.logo} alt={token.symbol} className="w-7 h-7 rounded-full flex-shrink-0" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                          <div className="relative flex-shrink-0">
+                            <img
+                              src={token.logo}
+                              alt={token.symbol}
+                              className="w-7 h-7 rounded-full"
+                              onError={(e) => {
+                                e.currentTarget.src = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="#374151"/><text x="20" y="25" text-anchor="middle" fill="white" font-size="14" font-weight="bold">${token.symbol[0]}</text></svg>`)}`;
+                              }}
+                            />
+                            {/* Chain badge */}
+                            {CHAIN_LOGO[token.chainId] && (
+                              <img
+                                src={CHAIN_LOGO[token.chainId]}
+                                alt={token.chainName}
+                                className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full ring-1 ring-black/40"
+                                onError={(e) => { e.currentTarget.style.display = "none"; }}
+                              />
+                            )}
+                          </div>
                           <div className="min-w-0">
-                            <div className="font-bold text-sm">{token.symbol}</div>
-                            <div className={`text-[10px] font-mono ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                              {token.address.slice(0, 6)}...{token.address.slice(-4)}
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-sm">{token.symbol}</span>
+                              {token.isNative && (
+                                <span className={`text-[8px] px-1 py-px rounded ${isDark ? "bg-blue-500/15 text-blue-400" : "bg-blue-100 text-blue-600"}`}>
+                                  Native
+                                </span>
+                              )}
+                            </div>
+                            <div className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                              {token.chainName}
                             </div>
                           </div>
                         </div>
                         <div className="text-right flex-shrink-0 ml-2">
-                          <div className="font-bold text-sm">{formatBal(token.balance)}</div>
-                          {STABLECOINS.has(token.symbol) && (
-                            <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>{formatUsd(token.balance)}</div>
+                          <div className="font-bold text-sm">
+                            {token.balance >= 0.01
+                              ? token.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })
+                              : token.balance.toFixed(6)}
+                          </div>
+                          {token.valueUsd > 0 && (
+                            <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                              {formatUsd(token.valueUsd)}
+                            </div>
                           )}
                         </div>
                       </div>
                     ))}
+                  </div>
+                ) : !loadingMultiChain ? (
+                  <div className={`text-center py-4 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    No tokens found across networks
                   </div>
                 ) : null}
               </div>

@@ -39,7 +39,7 @@ import {
 
 export function Layout() {
   const location = useLocation();
-  const { connectedWallets, disconnectWallet, primaryWallet, hederaAccount, hbarPrice, metaMaskAccount, ethPrice, hashPackProfile, hashPackSession } = useWallet();
+  const { connectedWallets, disconnectWallet, primaryWallet, hederaAccount, hbarPrice, metaMaskAccount, nativeTokenPrice, hashPackProfile, hashPackSession } = useWallet();
   const { theme, toggleTheme, isDark, accent, toggleAccent, isSky } = useTheme();
   const brandLogos = useBrandLogos();
   const partnerLogos = usePartneredLogos();
@@ -455,7 +455,7 @@ export function Layout() {
                         )}
                         {metaMaskAccount && primaryWallet.type === "ethereum" && primaryWallet.connector === "MetaMask" && (
                           <div className="text-xs text-orange-400 font-bold">
-                            <AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth)} decimals={4} suffix={` ${metaMaskAccount.nativeSymbol}`} /> (~$<AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth) * ethPrice} decimals={2} />)
+                            <AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth)} decimals={4} suffix={` ${metaMaskAccount.nativeSymbol}`} /> (~$<AnimatedNumber value={parseFloat(metaMaskAccount.balanceEth) * nativeTokenPrice} decimals={2} />)
                           </div>
                         )}
                       </div>

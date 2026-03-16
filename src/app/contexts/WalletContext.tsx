@@ -21,6 +21,8 @@ import {
   isMobileBrowser,
   fetchEthPrice,
   fetchSolPrice,
+  fetchNativeTokenPrice,
+  fetchERC20Prices,
   CHAIN_INFO,
   signPersonalMessage,
   connectMetaMaskSDK,
@@ -79,6 +81,8 @@ interface WalletContextType {
   // MetaMask / EVM
   metaMaskAccount: MetaMaskAccountInfo | null;
   ethPrice: number;
+  nativeTokenPrice: number;
+  erc20Prices: Map<string, number>;
   solPrice: number;
   isConnectingMetaMask: boolean;
   metaMaskError: string | null;
@@ -111,6 +115,8 @@ const DEFAULT_WALLET: WalletContextType = {
   setHederaNetwork: () => {},
   metaMaskAccount: null,
   ethPrice: 3500,
+  nativeTokenPrice: 3500,
+  erc20Prices: new Map(),
   solPrice: 185,
   isConnectingMetaMask: false,
   metaMaskError: null,
@@ -142,6 +148,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // MetaMask state
   const [metaMaskAccount, setMetaMaskAccount] = useState<MetaMaskAccountInfo | null>(null);
   const [ethPrice, setEthPrice] = useState(3500);
+  const [nativeTokenPrice, setNativeTokenPrice] = useState(3500);
+  const [erc20Prices, setErc20Prices] = useState<Map<string, number>>(new Map());
   const [solPrice, setSolPrice] = useState(185);
   const [isConnectingMetaMask, setIsConnectingMetaMask] = useState(false);
   const [metaMaskError, setMetaMaskError] = useState<string | null>(null);
@@ -211,6 +219,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
               explorerUrl: chain?.explorer || "",
             };
             setMetaMaskAccount(info);
+            fetchNativeTokenPrice(chainId).then(setNativeTokenPrice);
             setConnectedWallets((prev) => {
               const filtered = prev.filter((w) => !(w.type === "ethereum" && w.connector === "MetaMask"));
               return [...filtered, { address, type: "ethereum", connector: "MetaMask" }];
@@ -278,6 +287,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
                   }
                 : prev,
             );
+            // IMPLEMENTATION NOTE — Re-fetch native token price when chain
+            // changes so the portfolio isn't valued at the wrong rate
+            // (e.g. ETH price applied to POL balance).
+            fetchNativeTokenPrice(chainId).then(setNativeTokenPrice);
           }
         },
         onDisconnect: () => handleDisconnectMetaMask(),
@@ -298,6 +311,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const priceInterval = setInterval(() => {
         fetchEthPrice().then(setEthPrice);
         fetchSolPrice().then(setSolPrice);
+        if (metaMaskAccount) {
+          fetchNativeTokenPrice(metaMaskAccount.chainId).then(setNativeTokenPrice);
+        }
       }, 60000);
       return () => {
         clearInterval(interval);
@@ -398,6 +414,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           return [...filtered, { address: info.address, type: "ethereum", connector: "MetaMask" }];
         });
         fetchEthPrice().then(setEthPrice);
+        fetchNativeTokenPrice(info.chainId).then(setNativeTokenPrice);
         fetchSolPrice().then(setSolPrice);
         setIsConnectingMetaMask(false);
         return true;
@@ -436,6 +453,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return [...filtered, { address: info.address, type: "ethereum", connector: "MetaMask" }];
       });
       fetchEthPrice().then(setEthPrice);
+      fetchNativeTokenPrice(info.chainId).then(setNativeTokenPrice);
       fetchSolPrice().then(setSolPrice);
       setIsConnectingMetaMask(false);
       return true;
@@ -647,6 +665,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setHederaNetwork,
         metaMaskAccount,
         ethPrice,
+        nativeTokenPrice,
+        erc20Prices,
         solPrice,
         isConnectingMetaMask,
         metaMaskError,

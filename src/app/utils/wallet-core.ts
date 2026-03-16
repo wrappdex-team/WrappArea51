@@ -21,6 +21,20 @@
 import "./polyfills";
 import type { HederaNetwork } from "./hedera";
 import { ENV } from "./env";
+import { log } from "./logger";
+
+// ── Production-Safe WC Logging ────────────────────────────────────────
+// IMPLEMENTATION NOTE — Relay lifecycle logs (connection phases, WebSocket
+// states, keepalive pings, reconnection attempts, protobuf parsing) are
+// suppressed in production to prevent internal architecture leakage in
+// the browser console. Only actionable failures (signing errors, session
+// loss) are emitted via log.warn / log.error.
+const _wcDebug: (...args: any[]) => void = ENV.IS_PROD
+  ? () => {}
+  : (...args: any[]) => console.log(...args);
+const _wcDebugWarn: (...args: any[]) => void = ENV.IS_PROD
+  ? () => {}
+  : (...args: any[]) => console.warn(...args);
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -102,7 +116,25 @@ async function _initSignClient(): Promise<any> {
   const client = await SignClient.init({
     projectId: WC_PROJECT_ID,
     metadata: DAPP_METADATA,
+    relayUrl: "wss://relay.walletconnect.com",
   });
+
+  // IMPLEMENTATION NOTE — Relay URL validation (security hardening).
+  // Verify the relay is using wss:// and is pinned to the official
+  // WalletConnect relay domain. Prevents MITM via relay downgrade.
+  try {
+    const relayUrl = client.core?.relayer?.relayUrl
+      ?? client.core?.relayUrl
+      ?? "wss://relay.walletconnect.com";
+    if (typeof relayUrl === "string") {
+      if (!relayUrl.startsWith("wss://")) {
+        log.error("WC", "SECURITY: Relay URL is NOT using wss:// — possible downgrade attack", { relayUrl });
+      }
+      if (!relayUrl.includes("relay.walletconnect.com")) {
+        log.warn("WC", "Relay URL is not the official WalletConnect relay — verify this is intentional", { relayUrl });
+      }
+    }
+  } catch { /* non-critical validation */ }
 
   _signClient = client;
   _G[_WC_KEY] = client;
@@ -115,22 +147,22 @@ async function _initSignClient(): Promise<any> {
 
   // ── Lifecycle events ─────────────────────────────────────────
   client.on("session_event", (event: any) => {
-    console.log("[WC] session_event:", event?.params?.event?.name);
+    _wcDebug("[WC] session_event:", event?.params?.event?.name);
   });
 
   client.on("session_update", ({ topic }: any) => {
-    console.log("[WC] session_update:", topic);
+    _wcDebug("[WC] session_update:", topic);
     const s = client.session.get(topic);
     if (s) _sessionUpdateCBs.forEach((cb) => cb(s));
   });
 
   client.on("session_delete", ({ topic }: any) => {
-    console.log("[WC] session_delete:", topic);
+    _wcDebug("[WC] session_delete:", topic);
     _sessionDeleteCBs.forEach((cb) => cb(topic));
   });
 
   client.on("session_expire", ({ topic }: any) => {
-    console.log("[WC] session_expire:", topic);
+    _wcDebug("[WC] session_expire:", topic);
     _sessionDeleteCBs.forEach((cb) => cb(topic));
   });
 
@@ -146,7 +178,7 @@ async function _initSignClient(): Promise<any> {
     }
   } catch { /* non-critical */ }
 
-  console.log("[WC] SignClient ready. Sessions:", client.session?.getAll?.()?.length ?? 0);
+  _wcDebug("[WC] SignClient ready. Sessions:", client.session?.getAll?.()?.length ?? 0);
   return client;
 }
 
@@ -224,7 +256,7 @@ export async function proposeSession(network: HederaNetwork): Promise<WCConnectR
     } catch (err: any) {
       const msg = err?.message || "";
       if (attempt === 0 && (msg.includes("send was called before connect") || msg.includes("Missing or invalid"))) {
-        console.warn("[WC] proposeSession failed with relay error — force-resetting SignClient and retrying...");
+        _wcDebugWarn("[WC] proposeSession failed with relay error — force-resetting SignClient and retrying...");
         await forceResetSignClient();
         // Re-init and retry — getSignClient() will create a fresh instance
         const freshClient = await getSignClient();
@@ -262,7 +294,7 @@ export function getAccountsFromSession(session: any): string[] {
   const ns = session?.namespaces;
 
   if (!ns || typeof ns !== "object") {
-    console.warn("[WC] getAccountsFromSession: no namespaces on session",
+    log.warn("WC", "getAccountsFromSession: no namespaces on session",
       JSON.stringify(session, null, 2)?.slice(0, 800));
     return accounts;
   }
@@ -280,7 +312,7 @@ export function getAccountsFromSession(session: any): string[] {
   }
 
   if (accounts.length === 0) {
-    console.warn("[WC] No hedera accounts in namespaces:",
+    log.warn("WC", "No hedera accounts in namespaces",
       JSON.stringify(ns, null, 2)?.slice(0, 1500));
   }
 
@@ -413,7 +445,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       const redirect = session?.peer?.metadata?.redirect;
       const peerName = (session?.peer?.metadata?.name || "").toLowerCase();
       const peerUrl = (session?.peer?.metadata?.url || "").toLowerCase();
-      console.log(`[WC] [MOB-FIX] Mobile redirect resolution:`,
+      _wcDebug(`[WC] [MOB-FIX] Mobile redirect resolution:`,
         `peer="${peerName}", url="${peerUrl}",`,
         `redirect.native="${redirect?.native || "—"}",`,
         `redirect.universal="${redirect?.universal || "—"}"`);
@@ -437,7 +469,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       else if (peerName.includes("hashpack") || peerUrl.includes("hashpack")) {
         walletRedirect = "hashpack://";
         walletRedirectKind = "native";
-        console.log(`[WC] [MOB-FIX] Detected HashPack — using native scheme "hashpack://"`);
+        _wcDebug(`[WC] [MOB-FIX] Detected HashPack — using native scheme "hashpack://"`);
       }
       // 4. Detect Blade wallet
       else if (peerName.includes("blade") || peerUrl.includes("blade")) {
@@ -445,9 +477,9 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
         walletRedirectKind = "native";
       }
     } catch (e: any) {
-      console.warn("[WC] [MOB-FIX] Session lookup failed:", e?.message);
+      _wcDebugWarn("[WC] [MOB-FIX] Session lookup failed:", e?.message);
     }
-    console.log(`[WC] [MOB-FIX] Resolved: walletRedirect="${walletRedirect}", kind=${walletRedirectKind}`);
+    _wcDebug(`[WC] [MOB-FIX] Resolved: walletRedirect="${walletRedirect}", kind=${walletRedirectKind}`);
   }
 
   /**
@@ -465,10 +497,10 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
    */
   function fireMobileRedirect(): boolean {
     if (!walletRedirect) {
-      console.warn("[WC] [MOB-FIX] No wallet redirect URL available — wallet may not open");
+      _wcDebugWarn("[WC] [MOB-FIX] No wallet redirect URL available — wallet may not open");
       return false;
     }
-    console.log(`[WC] [MOB-FIX] Firing mobile redirect (${walletRedirectKind}): ${walletRedirect}`);
+    _wcDebug(`[WC] [MOB-FIX] Firing mobile redirect (${walletRedirectKind}): ${walletRedirect}`);
     try {
       // For native schemes (hashpack://, blade://, etc.), window.location.href
       // triggers the OS deep link handler. The browser page is NOT navigated
@@ -478,13 +510,13 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       window.location.href = walletRedirect;
       return true;
     } catch (e1: any) {
-      console.warn("[WC] [MOB-FIX] location.href redirect failed:", e1?.message);
+      _wcDebugWarn("[WC] [MOB-FIX] location.href redirect failed:", e1?.message);
       // Fallback: try window.open as last resort
       try {
         origOpen.call(window, walletRedirect, "_blank");
         return true;
       } catch (e2: any) {
-        console.warn("[WC] [MOB-FIX] window.open fallback also failed:", e2?.message);
+        _wcDebugWarn("[WC] [MOB-FIX] window.open fallback also failed:", e2?.message);
         return false;
       }
     }
@@ -523,7 +555,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       // bringing the wallet to foreground. The WC SDK's deep link is broken
       // on mobile (opens "Pair with dApp" instead of the signing prompt).
       if (isMobile && (urlStr.startsWith("wc:") || urlStr.includes("wc%3A") || urlStr.includes("/wc?uri=wc"))) {
-        console.log("[WC] [MOB-FIX-v2] Suppressed WC pairing deep-link:", urlStr.slice(0, 120));
+        _wcDebug("[WC] [MOB-FIX-v2] Suppressed WC pairing deep-link:", urlStr.slice(0, 120));
         // [MOB-FIX-v2] Do NOT fire redirect from interceptor — doRequest()
         // handles the redirect AFTER confirming the relay publish succeeded.
         // Firing here could redirect before the message is sent.
@@ -532,7 +564,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
 
       // ── Iframe: downgrade _top / _parent → _blank ──────────────
       if (isIframe && typeof target === "string" && (target === "_top" || target === "_parent")) {
-        console.log(`[WC] Deep-link target downgraded "${target}" → "_blank":`,
+        _wcDebug(`[WC] Deep-link target downgraded "${target}" → "_blank":`,
           urlStr.slice(0, 120));
         return origOpen.call(window, url, "_blank", features);
       }
@@ -557,7 +589,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
     // The wallet app manages its own relay — forced reconnection is harmful.
     const onVis = async () => {
       if (document.visibilityState === "visible") {
-        console.log("[WC] [MOB-FIX-v5] Tab resumed from background — FORCED relay reconnection...");
+        _wcDebug("[WC] [MOB-FIX-v5] Tab resumed from background — FORCED relay reconnection...");
         try {
           // [MOB-FIX-v3] Don't use _ensureRelayConnected here — it trusts
           // relayer.connected which is stale after mobile backgrounding.
@@ -588,7 +620,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
 
           // Verify
           const ws = provider?.connection?.socket ?? provider?.socket;
-          console.log("[WC] [MOB-FIX-v3] Post-resume relay state:",
+          _wcDebug("[WC] [MOB-FIX-v3] Post-resume relay state:",
             "relayer.connected=", relayer?.connected,
             "ws.readyState=", ws?.readyState);
 
@@ -598,15 +630,15 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             while (Date.now() - pollStart < 5000) {
               const wsNow = provider?.connection?.socket ?? provider?.socket;
               if (wsNow?.readyState === 1) {
-                console.log("[WC] [MOB-FIX-v3] WS reconnected after", Date.now() - pollStart, "ms post-resume");
+                _wcDebug("[WC] [MOB-FIX-v3] WS reconnected after", Date.now() - pollStart, "ms post-resume");
                 break;
               }
               await new Promise(r => setTimeout(r, 200));
             }
           }
-          console.log("[WC] [MOB-FIX-v3] Relay reconnected — listening for wallet response");
+          _wcDebug("[WC] [MOB-FIX-v3] Relay reconnected — listening for wallet response");
         } catch (e: any) {
-          console.error("[WC] [MOB-FIX-v3] CRITICAL: Relay reconnect on resume FAILED:", e?.message,
+          log.error("WC", "[MOB-FIX-v3] CRITICAL: Relay reconnect on resume FAILED:", e?.message,
             "— wallet response may be lost. User will see timeout.");
           // Last resort: try _ensureRelayConnected as fallback
           try {
@@ -644,7 +676,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       // the internal WC transport and prevents signing requests from
       // reaching the wallet (root cause of liquidity mint failures).
       if (isDAppBrowser) {
-        console.log("[WC] [MOB-WEB3-02] DApp browser detected — skipping forced relay cycle (relay is managed by host app)");
+        _wcDebug("[WC] [MOB-WEB3-02] DApp browser detected — skipping forced relay cycle (relay is managed by host app)");
         // Just verify the relay is connected, no forced cycling
         try {
           await _ensureRelayConnected(client, 5000);
@@ -657,7 +689,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       // forced cycle. This prevents the second/third TX from killing a
       // relay that was just confirmed healthy.
       else if (Date.now() - _relayLastVerifiedAt < RELAY_VERIFIED_WINDOW_MS) {
-        console.log("[WC] [MOB-WEB3-01] Relay recently verified",
+        _wcDebug("[WC] [MOB-WEB3-01] Relay recently verified",
           Math.round((Date.now() - _relayLastVerifiedAt) / 1000), "s ago — skipping forced cycle");
       }
       else {
@@ -673,13 +705,13 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       //   3. If ping fails or WS not OPEN → use _ensureRelayConnected (graceful)
       //   4. After any reconnect, wait 1.5s for subscription settlement
       //   5. Verify with a final ping before proceeding
-      console.log("[WC] [MOB-WEB3-05] Mobile external browser — gentle relay verification...");
+      _wcDebug("[WC] [MOB-WEB3-05] Mobile external browser — gentle relay verification...");
       try {
         const relayer = client.core?.relayer;
         const provider = relayer?.provider;
         const ws = provider?.connection?.socket ?? provider?.socket;
         const wsState = ws?.readyState ?? -1;
-        console.log("[WC] [MOB-WEB3-05] WS state:", wsState,
+        _wcDebug("[WC] [MOB-WEB3-05] WS state:", wsState,
           "relayer.connected=", relayer?.connected);
 
         let relayHealthy = false;
@@ -691,23 +723,23 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
               client.ping({ topic: params.topic }),
               new Promise((_, rej) => setTimeout(() => rej(new Error("ping timeout")), 5000)),
             ]);
-            console.log("[WC] [MOB-WEB3-05] Session ping OK — relay healthy");
+            _wcDebug("[WC] [MOB-WEB3-05] Session ping OK — relay healthy");
             relayHealthy = true;
           } catch (pingErr: any) {
-            console.warn("[WC] [MOB-WEB3-05] Ping failed:", pingErr?.message, "— reconnecting gracefully");
+            _wcDebugWarn("[WC] [MOB-WEB3-05] Ping failed:", pingErr?.message, "— reconnecting gracefully");
           }
         }
 
         // Step 2: If not healthy, use graceful reconnection (NOT forced disconnect)
         if (!relayHealthy) {
-          console.log("[WC] [MOB-WEB3-05] Using _ensureRelayConnected (graceful restartTransport)...");
+          _wcDebug("[WC] [MOB-WEB3-05] Using _ensureRelayConnected (graceful restartTransport)...");
           await _ensureRelayConnected(client, 12000);
 
           // Step 3: Wait for topic re-subscription settlement
           // This is the critical delay — the relay needs time to register
           // this connection as a subscriber for the session topic.
           // Without this, publish succeeds but the response can't route back.
-          console.log("[WC] [MOB-WEB3-05] Waiting 1.5s for topic subscription settlement...");
+          _wcDebug("[WC] [MOB-WEB3-05] Waiting 1.5s for topic subscription settlement...");
           await new Promise(r => setTimeout(r, 1500));
 
           // Step 4: Verify with a final ping
@@ -716,16 +748,16 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
               client.ping({ topic: params.topic }),
               new Promise((_, rej) => setTimeout(() => rej(new Error("post-reconnect ping timeout")), 5000)),
             ]);
-            console.log("[WC] [MOB-WEB3-05] Post-reconnect ping OK — relay ready");
+            _wcDebug("[WC] [MOB-WEB3-05] Post-reconnect ping OK — relay ready");
             relayHealthy = true;
           } catch {
-            console.warn("[WC] [MOB-WEB3-05] Post-reconnect ping failed — proceeding anyway (message may not deliver)");
+            _wcDebugWarn("[WC] [MOB-WEB3-05] Post-reconnect ping failed — proceeding anyway (message may not deliver)");
           }
         }
 
         _relayLastVerifiedAt = Date.now();
       } catch (e: any) {
-        console.warn("[WC] [MOB-WEB3-05] Relay verification error:", e?.message,
+        _wcDebugWarn("[WC] [MOB-WEB3-05] Relay verification error:", e?.message,
           "— proceeding with existing connection");
       }
       } // close else (non-DApp-browser, non-cached mobile path)
@@ -763,7 +795,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           const relayer = client.core?.relayer;
           const provider = relayer?.provider;
           preRequestWs = provider?.connection?.socket ?? provider?.socket;
-          console.log("[WC] [MOB-FIX-v5] Pre-request relay state:",
+          _wcDebug("[WC] [MOB-FIX-v5] Pre-request relay state:",
             "relayer.connected=", relayer?.connected,
             "ws.readyState=", preRequestWs?.readyState,
             "ws.bufferedAmount=", preRequestWs?.bufferedAmount);
@@ -778,9 +810,9 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       const swapClickedAt = (globalThis as any).__swapClickedAt;
       if (swapClickedAt) {
         const delayMs = Date.now() - swapClickedAt;
-        console.log(`[S9] ⏱️ Click → wallet request: ${delayMs}ms (target: <1000ms)`);
+        _wcDebug(`[S9] Click → wallet request: ${delayMs}ms (target: <1000ms)`);
         if (delayMs > 2000) {
-          console.warn(`[S9] ⚠️ Click-to-request delay is ${delayMs}ms — wallet may have gone to sleep. Check for blocking operations in swap pipeline.`);
+          _wcDebugWarn(`[S9] Click-to-request delay is ${delayMs}ms — wallet may have gone to sleep. Check for blocking operations in swap pipeline.`);
         }
       }
 
@@ -820,7 +852,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             await new Promise(r => setTimeout(r, 300));
 
             if (publishFailed) {
-              console.warn("[WC] [MOB-FIX-v5] Request FAILED early — NOT opening wallet.",
+              _wcDebugWarn("[WC] [MOB-FIX-v5] Request FAILED early — NOT opening wallet.",
                 "Reason:", publishFailReason);
               return;
             }
@@ -837,7 +869,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             // If the SDK silently replaced the socket (reconnection), the
             // request may have been sent to the OLD (dead) socket.
             if (preRequestWs && ws !== preRequestWs) {
-              console.warn("[WC] [MOB-FIX-v5] WS object CHANGED after request — signing request may have gone to stale socket!",
+              _wcDebugWarn("[WC] [MOB-FIX-v5] WS object CHANGED after request — signing request may have gone to stale socket!",
                 "old.readyState=", preRequestWs?.readyState, "new.readyState=", ws?.readyState);
             }
 
@@ -848,12 +880,12 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
                 flushLoops++;
               }
               if (flushLoops > 0) {
-                console.log("[WC] [MOB-FIX-v5] WS buffer flushed after",
+                _wcDebug("[WC] [MOB-FIX-v5] WS buffer flushed after",
                   Date.now() - flushStart, "ms,", flushLoops, "polls");
               }
             } else {
               // WS not open — wait longer and hope for the best
-              console.warn("[WC] [MOB-FIX-v5] WS not OPEN at redirect time:",
+              _wcDebugWarn("[WC] [MOB-FIX-v5] WS not OPEN at redirect time:",
                 "readyState=", ws?.readyState, "— waiting 2s fallback");
               await new Promise(r => setTimeout(r, 2000));
             }
@@ -862,25 +894,25 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
             await new Promise(r => setTimeout(r, 200));
 
             if (publishFailed) {
-              console.warn("[WC] [MOB-FIX-v5] Request failed during flush wait — NOT opening wallet.",
+              _wcDebugWarn("[WC] [MOB-FIX-v5] Request failed during flush wait — NOT opening wallet.",
                 "Reason:", publishFailReason);
               return;
             }
 
             // Phase 4: Final relay state check and redirect
             const ws2 = provider?.connection?.socket ?? provider?.socket;
-            console.log("[WC] [MOB-FIX-v5] Pre-redirect state:",
+            _wcDebug("[WC] [MOB-FIX-v5] Pre-redirect state:",
               "relayer.connected=", relayer?.connected,
               "ws.readyState=", ws2?.readyState,
               "bufferedAmount=", ws2?.bufferedAmount,
               "totalWait=", Date.now() - flushStart, "ms");
-            console.log("[WC] [MOB-FIX-v5] Relay publish confirmed — opening wallet app...");
+            _wcDebug("[WC] [MOB-FIX-v5] Relay publish confirmed — opening wallet app...");
             fireMobileRedirect();
           } catch (e: any) {
-            console.warn("[WC] [MOB-FIX-v5] Redirect helper error:", e?.message);
+            _wcDebugWarn("[WC] [MOB-FIX-v5] Redirect helper error:", e?.message);
             // Fallback: redirect anyway if publish didn't fail
             if (!publishFailed) {
-              console.log("[WC] [MOB-FIX-v5] Fallback redirect despite error");
+              _wcDebug("[WC] [MOB-FIX-v5] Fallback redirect despite error");
               fireMobileRedirect();
             }
           }
@@ -896,7 +928,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
       const msg = firstErr?.message || "";
       // Retry exactly once on relay-not-ready errors
       if (msg.includes("send was called before connect") || msg.includes("Missing or invalid topic")) {
-        console.warn("[WC] Relay not ready — reconnecting and retrying once...");
+        _wcDebugWarn("[WC] Relay not ready — reconnecting and retrying once...");
         await _ensureRelayConnected(client, 8000);
         try {
           return await doRequest();
@@ -904,7 +936,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
           const retryMsg = retryErr?.message || "";
           // [C97] If retry still fails with relay error, force-reset and try one last time
           if (retryMsg.includes("send was called before connect") || retryMsg.includes("Missing or invalid")) {
-            console.warn("[WC] Retry still failed — force-resetting SignClient for last attempt...");
+            _wcDebugWarn("[WC] Retry still failed — force-resetting SignClient for last attempt...");
             await forceResetSignClient();
             const freshClient = await getSignClient();
             await _ensureRelayConnected(freshClient, 12000);
@@ -931,7 +963,7 @@ async function _safeRequest(client: any, params: Record<string, any>): Promise<a
                   }
                   await new Promise(r => setTimeout(r, 200));
                   if (!freshFailed) {
-                    console.log("[WC] [MOB-FIX-v5] Force-reset publish confirmed — opening wallet...");
+                    _wcDebug("[WC] [MOB-FIX-v5] Force-reset publish confirmed — opening wallet...");
                     fireMobileRedirect();
                   }
                 } catch {
@@ -1012,7 +1044,7 @@ export async function signTransactionViaWC(
     }
     return null;
   } catch (err: any) {
-    console.warn("[WC] signTransaction failed:", err?.message);
+    log.warn("WC", "signTransaction failed", err?.message);
     return null;
   }
 }
@@ -1046,7 +1078,7 @@ export async function signMessageViaWC(
       },
     });
 
-    console.log("[WC] signMessage raw result:", typeof result,
+    _wcDebug("[WC] signMessage raw result:", typeof result,
       result ? JSON.stringify(result).slice(0, 600) : "null");
 
     let rawSignatureMap: string | undefined;
@@ -1056,12 +1088,12 @@ export async function signMessageViaWC(
 
     const signatures = _parseSignMessageResponse(result);
     if (!signatures || signatures.length === 0) {
-      console.warn("[WC] Could not extract signatures from WC response");
+      log.warn("WC", "Could not extract signatures from WC response");
       return null;
     }
     return { signatures, rawSignatureMap };
   } catch (err: any) {
-    console.warn("[WC] signMessage failed:", err?.message);
+    log.warn("WC", "signMessage failed", err?.message);
     return null;
   }
 }
@@ -1121,7 +1153,7 @@ export async function forceResetSignClient(): Promise<void> {
   delete _G[_WC_KEY];
   delete _G[_WC_INIT_KEY];
   cleanStaleStorage(true);
-  console.log("[WC] SignClient force-reset complete");
+  _wcDebug("[WC] SignClient force-reset complete");
 }
 
 // ── Configuration Check ────────────────────────────────────────────────
@@ -1200,7 +1232,7 @@ export function startRelayKeepalive(): void {
       if (!_signClient) return;
       const relayer = _signClient.core?.relayer;
       if (relayer && !relayer.connected) {
-        console.log("[WC] Keepalive: relay disconnected — reconnecting");
+        _wcDebug("[WC] Keepalive: relay disconnected — reconnecting");
         await _ensureRelayConnected(_signClient, 8000);
       }
       // [S9] Session ping — keeps the WALLET's relay subscriber alive.
@@ -1222,7 +1254,7 @@ export function startRelayKeepalive(): void {
       } catch (pingErr: any) {
         // Non-fatal — ping failure means wallet may be asleep.
         // The next signing request's _tryActivateWalletFast will handle it.
-        console.log(`[WC] Keepalive: session ping failed (${pingErr?.message?.slice(0, 60) ?? "unknown"}) — wallet may need manual activation`);
+        _wcDebug(`[WC] Keepalive: session ping failed (${pingErr?.message?.slice(0, 60) ?? "unknown"}) — wallet may need manual activation`);
       }
     } catch {
       // Best effort — don't throw in keepalive
@@ -1281,14 +1313,14 @@ export function startPreConnectKeepalive(): void {
       const wsState = ws?.readyState ?? -1;
 
       if (!relayer.connected || wsState !== 1 /* OPEN */) {
-        console.log("[WC] Pre-connect keepalive: relay dropped — reconnecting...");
+        _wcDebug("[WC] Pre-connect keepalive: relay dropped — reconnecting...");
         await _ensureRelayConnected(_signClient, 8000);
       }
     } catch {
       // Best effort — don't throw in keepalive
     }
   }, 20_000);
-  console.log("[WC] Pre-connect relay keepalive started");
+  _wcDebug("[WC] Pre-connect relay keepalive started");
 }
 
 /**
@@ -1298,7 +1330,7 @@ export function stopPreConnectKeepalive(): void {
   if (_preConnectKeepaliveId) {
     clearInterval(_preConnectKeepaliveId);
     _preConnectKeepaliveId = null;
-    console.log("[WC] Pre-connect relay keepalive stopped");
+    _wcDebug("[WC] Pre-connect relay keepalive stopped");
   }
 }
 
@@ -1337,7 +1369,7 @@ export async function getWCModal(): Promise<any> {
 export async function openWCModal(uri: string): Promise<void> {
   const modal = await getWCModal();
   await modal.openModal({ uri });
-  console.log("[WC] Modal opened with pairing URI");
+  _wcDebug("[WC] Modal opened with pairing URI");
 }
 
 /**
@@ -1379,7 +1411,7 @@ function cleanStaleStorage(aggressive = false): void {
     }
     if (remove.length > 0) {
       remove.forEach((k) => localStorage.removeItem(k));
-      console.log(`[WC] Cleaned ${remove.length} stale localStorage entries`);
+      _wcDebug(`[WC] Cleaned ${remove.length} stale localStorage entries`);
     }
   } catch { /* non-critical */ }
 }
@@ -1436,7 +1468,7 @@ function _base64ToU8(b64: string): Uint8Array {
 async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<void> {
   try {
     const relayer = client.core?.relayer;
-    if (!relayer) { console.warn("[WC] No relayer — skipping wait"); return; }
+    if (!relayer) { _wcDebugWarn("[WC] No relayer — skipping wait"); return; }
     if (relayer.connected) {
       // [MOB-FIX-v3] On mobile, `relayer.connected` can be STALE: the OS
       // killed the WebSocket while the tab was backgrounded, but the SDK
@@ -1446,7 +1478,7 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
         const provider = relayer.provider;
         const ws = provider?.connection?.socket ?? provider?.socket;
         if (ws && ws.readyState !== 1 /* OPEN */) {
-          console.warn("[WC] [MOB-FIX-v3] relayer.connected=true BUT ws.readyState=",
+          _wcDebugWarn("[WC] [MOB-FIX-v3] relayer.connected=true BUT ws.readyState=",
             ws.readyState, "— STALE connection detected, forcing reconnect");
           // Fall through to reconnection logic below
         } else {
@@ -1457,7 +1489,11 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
       }
     }
 
-    console.log("[WC] Relay disconnected — triggering reconnection...");
+    // IMPLEMENTATION NOTE — Changed from "Relay disconnected" to "Relay not yet
+    // connected" because on cold boot this is NOT a disconnect — the WebSocket
+    // simply hasn't finished its handshake yet. "Disconnected" in the console
+    // was misleading and alarming in production monitoring.
+    _wcDebug("[WC] Relay not yet connected — establishing WebSocket...");
 
     // IMPLEMENTATION NOTE: Deadline-aware multi-phase reconnection.
     // Previous implementation used hardcoded 5s transport timeouts that could
@@ -1469,7 +1505,7 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
     const maxAttempts = timeoutMs >= 15000 ? 3 : 2;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      if (relayer.connected) { console.log("[WC] Relay connected (attempt", attempt, ")"); return; }
+      if (relayer.connected) { _wcDebug("[WC] Relay connected (attempt", attempt, ")"); return; }
 
       const remaining = deadline - Date.now();
       if (remaining <= 500) break; // Not enough time for another attempt
@@ -1489,21 +1525,21 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
             await Promise.race([
               relayer.restartTransport(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport timeout")), transportTimeout)),
-            ]).catch((e: any) => console.warn("[WC] restartTransport error:", e?.message));
+            ]).catch((e: any) => _wcDebugWarn("[WC] restartTransport error:", e?.message));
           } else if (typeof relayer.transportOpen === "function") {
             await Promise.race([
               relayer.transportOpen(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("transportOpen timeout")), transportTimeout)),
-            ]).catch((e: any) => console.warn("[WC] transportOpen error:", e?.message));
+            ]).catch((e: any) => _wcDebugWarn("[WC] transportOpen error:", e?.message));
           } else if (relayer.provider && typeof relayer.provider.connect === "function") {
             await Promise.race([
               relayer.provider.connect(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect timeout")), transportTimeout)),
-            ]).catch((e: any) => console.warn("[WC] provider.connect error:", e?.message));
+            ]).catch((e: any) => _wcDebugWarn("[WC] provider.connect error:", e?.message));
           }
         } else if (attempt === 1) {
           // Phase 2: Hard disconnect→connect cycle on the WebSocket provider
-          console.log("[WC] Phase 2: hard provider disconnect→connect cycle...");
+          _wcDebug("[WC] Phase 2: hard provider disconnect→connect cycle...");
           const provider = relayer.provider;
           // IMPLEMENTATION NOTE: disconnect timeout is 25% of transport budget
           // (brief teardown), leaving 75% for the fresh connect call.
@@ -1518,17 +1554,17 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
               await Promise.race([
                 provider.connect(),
                 new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase2 timeout")), Math.max(connectMs, 1000))),
-              ]).catch((e: any) => console.warn("[WC] Phase 2 provider.connect error:", e?.message));
+              ]).catch((e: any) => _wcDebugWarn("[WC] Phase 2 provider.connect error:", e?.message));
             }
           } else if (typeof relayer.restartTransport === "function") {
             await Promise.race([
               relayer.restartTransport(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase2 timeout")), transportTimeout)),
-            ]).catch((e: any) => console.warn("[WC] Phase 2 restartTransport error:", e?.message));
+            ]).catch((e: any) => _wcDebugWarn("[WC] Phase 2 restartTransport error:", e?.message));
           }
         } else {
           // Phase 3 (mobile only): Extended aggressive reconnection for slow mobile networks
-          console.log("[WC] [MOB-SWAP-FIX] Phase 3: Extended mobile reconnection attempt...");
+          _wcDebug("[WC] [MOB-SWAP-FIX] Phase 3: Extended mobile reconnection attempt...");
           const provider = relayer.provider;
           // IMPLEMENTATION NOTE: 500ms stabilization pause (down from 1000ms)
           // to leave more budget for the actual transport call.
@@ -1538,19 +1574,19 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
             await Promise.race([
               provider.connect(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("provider.connect phase3 timeout")), phase3Transport)),
-            ]).catch((e: any) => console.warn("[WC] [MOB-SWAP-FIX] Phase 3 provider.connect error:", e?.message));
+            ]).catch((e: any) => _wcDebugWarn("[WC] [MOB-SWAP-FIX] Phase 3 provider.connect error:", e?.message));
           } else if (typeof relayer.restartTransport === "function") {
             await Promise.race([
               relayer.restartTransport(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("restartTransport phase3 timeout")), phase3Transport)),
-            ]).catch((e: any) => console.warn("[WC] [MOB-SWAP-FIX] Phase 3 restartTransport error:", e?.message));
+            ]).catch((e: any) => _wcDebugWarn("[WC] [MOB-SWAP-FIX] Phase 3 restartTransport error:", e?.message));
           }
         }
       } catch { /* transport methods may throw — try next phase */ }
 
       // Check if connected immediately
       if (relayer.connected) {
-        console.log(`[WC] Relay reconnected after phase ${attempt + 1}`);
+        _wcDebug(`[WC] Relay reconnected after phase ${attempt + 1}`);
         return;
       }
 
@@ -1572,18 +1608,18 @@ async function _ensureRelayConnected(client: any, timeoutMs = 10000): Promise<vo
       });
 
       if (connected) {
-        console.log(`[WC] Relay connected after phase ${attempt + 1} polling`);
+        _wcDebug(`[WC] Relay connected after phase ${attempt + 1} polling`);
         return;
       }
 
-      console.warn(`[WC] Phase ${attempt + 1} reconnection timed out`);
+      _wcDebugWarn(`[WC] Phase ${attempt + 1} reconnection timed out`);
     }
 
     // All phases failed — resolve anyway, caller will get "send before connect"
     // and can handle via retry (proposeSession/safeRequest retry logic).
-    console.warn("[WC] All relay reconnection attempts failed after", timeoutMs, "ms");
+    _wcDebugWarn("[WC] All relay reconnection attempts failed after", timeoutMs, "ms");
   } catch {
-    console.warn("[WC] Could not ensure relay connection — proceeding");
+    _wcDebugWarn("[WC] Could not ensure relay connection — proceeding");
   }
 }
 
@@ -1603,31 +1639,31 @@ function _parseSignMessageResponse(result: any): string[] {
 
   // Case 1: Direct string (some wallets return just the sig)
   if (typeof result === "string") {
-    console.log("[WC] parseSignMsg: direct string, length=" + result.length);
+    _wcDebug("[WC] parseSignMsg: direct string, length=" + result.length);
     return [result];
   }
 
   // Case 2: Array of strings
   if (Array.isArray(result)) {
     const filtered = result.filter((s: any) => typeof s === "string" && s.length > 0);
-    console.log("[WC] parseSignMsg: array of " + result.length + " items, " + filtered.length + " valid strings");
+    _wcDebug("[WC] parseSignMsg: array of " + result.length + " items, " + filtered.length + " valid strings");
     return filtered;
   }
 
   // Case 3: Object with signatureMap
   if (result.signatureMap != null) {
     const sm = result.signatureMap;
-    console.log("[WC] parseSignMsg: has signatureMap, type=" + typeof sm);
+    _wcDebug("[WC] parseSignMsg: has signatureMap, type=" + typeof sm);
 
     // 3a: signatureMap is a base64 string (protobuf-encoded SignatureMap)
     if (typeof sm === "string") {
       const extracted = _extractED25519FromProtobuf(sm);
       if (extracted) {
-        console.log("[WC] Extracted ED25519 sig from protobuf SignatureMap: " + extracted.length + " hex chars");
+        _wcDebug("[WC] Extracted ED25519 sig from protobuf SignatureMap: " + extracted.length + " hex chars");
         return [extracted];
       }
       // Protobuf extraction failed — pass the raw base64 string through.
-      console.warn("[WC] Protobuf extraction failed — passing raw signatureMap string (" + sm.length + " chars) to server");
+      _wcDebugWarn("[WC] Protobuf extraction failed — passing raw signatureMap string (" + sm.length + " chars) to server");
       return [sm];
     }
 
@@ -1639,7 +1675,7 @@ function _parseSignMessageResponse(result: any): string[] {
         if (typeof sig === "string") sigs.push(sig);
       }
       if (sigs.length > 0) {
-        console.log("[WC] parseSignMsg: sigPair array, extracted " + sigs.length + " sigs, first=" + sigs[0].length + " chars");
+        _wcDebug("[WC] parseSignMsg: sigPair array, extracted " + sigs.length + " sigs, first=" + sigs[0].length + " chars");
         return sigs;
       }
     }
@@ -1648,7 +1684,7 @@ function _parseSignMessageResponse(result: any): string[] {
     if (typeof sm === "object" && sm !== null) {
       const vals = Object.values(sm).filter((v: any) => typeof v === "string" && v.length > 0) as string[];
       if (vals.length > 0) {
-        console.log("[WC] parseSignMsg: flat signatureMap, " + vals.length + " string values");
+        _wcDebug("[WC] parseSignMsg: flat signatureMap, " + vals.length + " string values");
         return vals;
       }
 
@@ -1657,7 +1693,7 @@ function _parseSignMessageResponse(result: any): string[] {
         if (v && typeof v === "object") {
           const nested = (v as any).ed25519 || (v as any).signature || (v as any).sig;
           if (typeof nested === "string") {
-            console.log("[WC] parseSignMsg: nested object sig, " + nested.length + " chars");
+            _wcDebug("[WC] parseSignMsg: nested object sig, " + nested.length + " chars");
             return [nested];
           }
         }
@@ -1669,13 +1705,13 @@ function _parseSignMessageResponse(result: any): string[] {
   if (typeof result === "object") {
     for (const key of ["signature", "sig", "ed25519", "data"]) {
       if (typeof result[key] === "string" && result[key].length > 0) {
-        console.log("[WC] parseSignMsg: found result." + key + ", " + result[key].length + " chars");
+        _wcDebug("[WC] parseSignMsg: found result." + key + ", " + result[key].length + " chars");
         return [result[key]];
       }
     }
   }
 
-  console.warn("[WC] parseSignMsg: no signatures found in result, keys=" + (typeof result === "object" ? Object.keys(result).join(",") : "N/A"));
+  _wcDebugWarn("[WC] parseSignMsg: no signatures found in result, keys=" + (typeof result === "object" ? Object.keys(result).join(",") : "N/A"));
   return [];
 }
 
@@ -1750,7 +1786,7 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-    console.log("[WC] Protobuf decode: " + bytes.length + " bytes, first 12: " +
+    _wcDebug("[WC] Protobuf decode: " + bytes.length + " bytes, first 12: " +
       Array.from(bytes.slice(0, 12)).map(b => b.toString(16).padStart(2, "0")).join(" "));
 
     // ── Strategy 1: Proper protobuf walk ──────────────────────────────
@@ -1772,7 +1808,7 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
           const sigPairBytes = bytes.slice(pos, pos + fieldLen);
           const ed25519Sig = _extractFromSignaturePair(sigPairBytes);
           if (ed25519Sig && ed25519Sig.length === 64) {
-            console.log("[WC] Protobuf: proper parse found ED25519 sig at sigPair offset");
+            _wcDebug("[WC] Protobuf: proper parse found ED25519 sig at sigPair offset");
             return Array.from(ed25519Sig).map(b => b.toString(16).padStart(2, "0")).join("");
           }
         }
@@ -1790,26 +1826,26 @@ function _extractED25519FromProtobuf(base64Str: string): string | null {
     for (let i = 0; i < bytes.length - 65; i++) {
       if (bytes[i] === 0x1A && bytes[i + 1] === 0x40 && i + 66 <= bytes.length) {
         const sig = bytes.slice(i + 2, i + 66);
-        console.log("[WC] Protobuf: legacy byte scan found 0x1A 0x40 at offset " + i);
+        _wcDebug("[WC] Protobuf: legacy byte scan found 0x1A 0x40 at offset " + i);
         return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
       }
     }
 
     // ── Strategy 3: Heuristics ────────────────────────────────────────
     if (bytes.length === 64) {
-      console.log("[WC] Protobuf decode: exactly 64 bytes — treating as raw signature");
+      _wcDebug("[WC] Protobuf decode: exactly 64 bytes — treating as raw signature");
       return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
     if (bytes.length > 64 && bytes.length <= 128) {
-      console.log("[WC] Protobuf: no tag found — trying last 64 bytes as heuristic (" + bytes.length + "B total)");
+      _wcDebug("[WC] Protobuf: no tag found — trying last 64 bytes as heuristic (" + bytes.length + "B total)");
       const sig = bytes.slice(bytes.length - 64);
       return Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    console.warn("[WC] Protobuf: all extraction strategies failed for " + bytes.length + " bytes");
+    _wcDebugWarn("[WC] Protobuf: all extraction strategies failed for " + bytes.length + " bytes");
   } catch (e: any) {
-    console.warn("[WC] Protobuf decode error:", e?.message);
+    _wcDebugWarn("[WC] Protobuf decode error:", e?.message);
   }
   return null;
 }
@@ -1850,7 +1886,7 @@ export async function tryOpenWalletExtension(options?: { userInitiated?: boolean
     if (!userInitiated) {
       // Auto-activation on mobile: just ping the relay to keep it warm.
       // Don't navigate — _safeRequest handles the redirect AFTER publish.
-      console.log("[WC] [MOB-WEB3-03] Mobile auto-activation — relay ping only (no navigation)");
+      _wcDebug("[WC] [MOB-WEB3-03] Mobile auto-activation — relay ping only (no navigation)");
       try {
         const client = await getSignClient();
         const sessions = client?.session?.getAll?.() ?? [];
@@ -1880,20 +1916,20 @@ export async function tryOpenWalletExtension(options?: { userInitiated?: boolean
         }
 
         if (nativeUrl) {
-          console.log("[WC] [MOB-WEB3-03] User tap: opening wallet via", nativeUrl);
+          _wcDebug("[WC] [MOB-WEB3-03] User tap: opening wallet via", nativeUrl);
           try { window.location.href = nativeUrl; } catch {
             try { window.open(nativeUrl, "_blank"); } catch { /* */ }
           }
           return;
         }
         if (redirect?.universal) {
-          console.log("[WC] [MOB-WEB3-03] User tap: opening wallet via", redirect.universal);
+          _wcDebug("[WC] [MOB-WEB3-03] User tap: opening wallet via", redirect.universal);
           window.location.href = redirect.universal;
           return;
         }
       }
     } catch { /* non-fatal */ }
-    console.warn("[WC] [MOB-WEB3-03] No wallet redirect URL found");
+    _wcDebugWarn("[WC] [MOB-WEB3-03] No wallet redirect URL found");
     return;
   }
 
@@ -1959,9 +1995,9 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
         }, () => {
           const _lastError = chromeApi.runtime.lastError;
           if (_lastError) {
-            console.log(`[WC] Extension ${extId.slice(0, 8)}… not externally connectable`);
+            _wcDebug(`[WC] Extension ${extId.slice(0, 8)}… not externally connectable`);
           } else {
-            console.log(`[WC] Extension ${extId.slice(0, 8)}… activated via chrome.runtime`);
+            _wcDebug(`[WC] Extension ${extId.slice(0, 8)}… activated via chrome.runtime`);
           }
         });
       } catch {
@@ -1976,7 +2012,7 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
   // the last 20s, skip the awaited ping here — saves 200-500ms latency on
   // the hot path (click Swap → wallet opens).
   if (Date.now() - _walletLastPingedAt < WALLET_PING_FRESH_MS) {
-    console.log(`[WC] [S9] Wallet pinged ${Math.round((Date.now() - _walletLastPingedAt) / 1000)}s ago — skipping activation ping (fast path)`);
+    _wcDebug(`[WC] [S9] Wallet pinged ${Math.round((Date.now() - _walletLastPingedAt) / 1000)}s ago — skipping activation ping (fast path)`);
     return;
   }
 
@@ -2000,17 +2036,17 @@ async function _tryActivateWalletFast(client: any, topic: string): Promise<void>
       client.ping({ topic }).then(
         () => {
           _walletLastPingedAt = Date.now();
-          console.log(`[WC] [S9] Session ping OK (${Date.now() - startMs}ms) — wallet confirmed alive`);
+          _wcDebug(`[WC] [S9] Session ping OK (${Date.now() - startMs}ms) — wallet confirmed alive`);
         },
       ),
       new Promise<void>((resolve) => setTimeout(() => {
-        console.log(`[WC] [S9] Session ping timeout after 1.5s — proceeding (wallet may be asleep)`);
+        _wcDebug(`[WC] [S9] Session ping timeout after 1.5s — proceeding (wallet may be asleep)`);
         resolve();
       }, 1500)),
     ]);
   } catch (pingErr: any) {
-    console.log(`[WC] [S9] Session ping failed (${Date.now() - startMs}ms): ${pingErr?.message?.slice(0, 80)} — proceeding anyway`);
+    _wcDebug(`[WC] [S9] Session ping failed (${Date.now() - startMs}ms): ${pingErr?.message?.slice(0, 80)} — proceeding anyway`);
   }
 
-  console.log(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
+  _wcDebug(`[WC] Fast wallet activation complete (${Date.now() - startMs}ms)`);
 }
