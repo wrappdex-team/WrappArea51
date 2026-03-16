@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { HBARH_LOGO_DARK as hbarhLogo } from "../assets/brand";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
-import { getSessionToken } from "../utils/auth";
+import { authenticate, authHeaders } from "../utils/auth";
 import { verifyVipEligibilityDirect } from "../utils/vip";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -141,19 +141,16 @@ interface SpinResult {
   error?: string;
 }
 
+// IMPLEMENTATION NOTE — Security Audit 2026-03-16: Spin POST now requires
+// ED25519 session auth (HIGH-02 fix). Previously accepted body.accountId
+// without cryptographic proof, enabling grief attacks on any VIP wallet.
 async function requestSpin(accountId: string): Promise<SpinResult | null> {
   try {
-    const sessionToken = getSessionToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${publicAnonKey}`,
-    };
-    if (sessionToken) headers["X-Session-Token"] = sessionToken;
-
+    const sessionToken = await authenticate(accountId);
     const res = await fetch(`${API_BASE}/spin`, {
       method: "POST",
-      headers,
-      body: JSON.stringify({ accountId }),
+      headers: authHeaders(sessionToken),
+      body: JSON.stringify({}),
     });
     const data = await res.json();
     if (!res.ok) {

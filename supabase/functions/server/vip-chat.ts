@@ -16,7 +16,7 @@ import {
   withKvLock, POOL_LOCK_RETRY_INTERVAL_MS, ROUTE_PREFIX,
 } from "./shared.ts";
 import type { KvLockConfig } from "./shared.ts";
-import { requireOwner, logAdminAction } from "./auth.ts";
+import { requireOwner, requireAuth, logAdminAction } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -70,28 +70,28 @@ export function registerVipChatRoutes(app: Hono): void {
     }
   });
 
-  // POST /vip-chat/messages — Wallet-connected + Mirror Node VIP-verified
+  // POST /vip-chat/messages — ED25519 session-authenticated + Mirror Node VIP-verified
   //
-  // Auth model: the caller provides their accountId in the request body.
-  // The server independently verifies VIP eligibility against Hedera Mirror
-  // Node on every send (cached 5 min). An attacker who spoofs an accountId
-  // gains nothing — the Mirror Node check confirms the claimed account
-  // actually holds 100M+ HBAR.h or a VIP NFT. Combined with IP rate
-  // limiting, per-account cooldowns, and the ban list, the chat is
-  // protected against impersonation spam without requiring a signed session.
+  // IMPLEMENTATION NOTE — Security Audit 2026-03-16: Changed from body.accountId
+  // to ED25519 session auth. Previously, the caller provided accountId in the
+  // request body and the server only verified VIP status via Mirror Node.
+  // While VIP status couldn't be faked, IDENTITY could — an attacker could
+  // post messages impersonating any VIP wallet holder. This was CRITICAL-02.
+  //
+  // Now requires a cryptographically verified ED25519 session. The accountId
+  // comes from the session token, not from the request body.
   app.post(`${ROUTE_PREFIX}/vip-chat/messages`, async (c) => {
     try {
       const ip = getClientIp(c);
       if (await isRateLimited(ip)) return c.json({ error: "Too many requests" }, 429);
 
-      const body = await c.req.json();
-      const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
-      const text = sanitizeString(typeof body.text === "string" ? body.text : "", VIP_CHAT_MAX_CHARS);
+      // ── ED25519 session required — no body.accountId fallback ──
+      const auth = await requireAuth(c);
+      if (auth instanceof Response) return auth;
+      const accountId = auth.accountId;
 
-      // Validate accountId format
-      if (!accountId || !isValidHederaAccountId(accountId)) {
-        return c.json({ error: "Valid Hedera account ID required (connect your wallet)" }, 400);
-      }
+      const body = await c.req.json();
+      const text = sanitizeString(typeof body.text === "string" ? body.text : "", VIP_CHAT_MAX_CHARS);
 
       // Ban check
       const bans: string[] = (await kv.get(VIP_CHAT_BANS_KEY)) ?? [];

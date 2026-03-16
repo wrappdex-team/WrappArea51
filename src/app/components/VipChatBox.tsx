@@ -12,6 +12,7 @@ import { Crown, MessageSquare, ChevronUp, ChevronDown, AlertCircle, Loader2, Che
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { playTokenHover, playVipConfirm } from "../utils/sounds";
 import { log } from "../utils/logger";
+import { authenticate, authHeaders } from "../utils/auth";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 const MAX_WORDS = 25;
@@ -122,13 +123,15 @@ export function VipChatBox({
     setError("");
 
     try {
+      // IMPLEMENTATION NOTE — Security Audit 2026-03-16: VIP chat POST now
+      // requires ED25519 session auth (CRITICAL-02 fix). The session token
+      // cryptographically proves wallet ownership — body.accountId alone was
+      // spoofable and allowed impersonation of any VIP wallet.
+      const sessionToken = await authenticate(accountId);
       const res = await fetch(`${API}/vip-chat/messages`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ accountId, text }),
+        headers: authHeaders(sessionToken),
+        body: JSON.stringify({ text }),
       });
       const data = await res.json();
 

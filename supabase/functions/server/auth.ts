@@ -1190,68 +1190,47 @@ export function registerAuthRoutes(app: Hono): void {
               } catch { /* skip */ }
             }
 
-            // Strategy E3: CLIENT-EXTRACTED sig + WALLET KEY + original message
-            // This detects Mirror Node key mismatch (e.g., key rotation, key list)
-            if (!isValid && protobufPubKeyHex && protobufPubKeyHex.length === 64 && protobufPubKeyHex.toLowerCase() !== keyResult.rawKeyHex.toLowerCase()) {
-              console.log(`[AUTH] KEY MISMATCH DETECTED — trying wallet pubKeyPrefix (${protobufPubKeyHex.slice(0, 16)}...) instead of Mirror Node key`);
-              isValid = await verifyED25519Signature(protobufPubKeyHex, messageBytes, cleanSig);
-              if (isValid) {
-                console.log("[AUTH] *** VERIFIED with WALLET KEY *** Mirror Node key is STALE or DIFFERENT! ***");
-                // Update the cached key to prevent this from happening again
-                try {
-                  const updatedResult: PublicKeyResult = { type: "ED25519", rawKeyHex: protobufPubKeyHex };
-                  await kv.set(AUTH_PUBKEY_CACHE_PREFIX + accountId, { key: updatedResult, ts: Date.now() });
-                  console.log(`[AUTH] Updated cached public key for ${accountId} to wallet key`);
-                } catch { /* non-critical */ }
-              }
+            // ══════════════════════════════════════════════════════════════
+            // Strategies E3/E4/E5: REMOVED — Security Audit 2026-03-16
+            // ══════════════════════════════════════════════════════════════
+            //
+            // IMPLEMENTATION NOTE — These strategies verified signatures
+            // against a public key extracted from the CLIENT-SUBMITTED
+            // rawSignatureMap protobuf, NOT the Mirror Node key. This
+            // allowed a privilege escalation attack:
+            //
+            //   1. Attacker generates their own ED25519 keypair
+            //   2. Requests challenge for target account (e.g., owner)
+            //   3. Signs challenge with their own private key
+            //   4. Submits protobuf with their own pubKeyPrefix
+            //   5. Server detects "KEY MISMATCH" and verifies against
+            //      the attacker's key → SUCCESS
+            //   6. Server CACHES attacker's key, locking out real owner
+            //
+            // Only Mirror Node keys (fetched server-side) are trusted.
+            // Wallet-supplied keys are NEVER used for verification.
+            // ══════════════════════════════════════════════════════════════
+            if (!isValid && protobufPubKeyHex && protobufPubKeyHex.toLowerCase() !== keyResult.rawKeyHex.toLowerCase()) {
+              console.log(
+                `[AUTH][SECURITY] Key mismatch strategies E3/E4/E5 BLOCKED — ` +
+                `wallet key ${protobufPubKeyHex.slice(0, 16)}... differs from Mirror Node key ${keyResult.rawKeyHex.slice(0, 16)}... ` +
+                `Refusing to verify against untrusted client-supplied key. Account=${accountId}`
+              );
             }
 
-            // Strategy E4: PROTOBUF sig + WALLET KEY + original message
-            if (!isValid && protobufSigHex && protobufPubKeyHex && protobufPubKeyHex.length === 64 && protobufPubKeyHex.toLowerCase() !== keyResult.rawKeyHex.toLowerCase()) {
-              isValid = await verifyED25519Signature(protobufPubKeyHex, messageBytes, protobufSigHex);
-              if (isValid) {
-                console.log("[AUTH] *** VERIFIED: protobuf sig + wallet key + original message ***");
-                try {
-                  const updatedResult: PublicKeyResult = { type: "ED25519", rawKeyHex: protobufPubKeyHex };
-                  await kv.set(AUTH_PUBKEY_CACHE_PREFIX + accountId, { key: updatedResult, ts: Date.now() });
-                } catch { /* non-critical */ }
-              }
-            }
-
-            // Strategy E5: PROTOBUF sig + WALLET KEY + base64 message
-            if (!isValid && protobufSigHex && protobufPubKeyHex && protobufPubKeyHex.length === 64) {
-              try {
-                const msgUtf8 = new TextEncoder().encode(challenge.message);
-                let binStr3 = "";
-                for (let i = 0; i < msgUtf8.length; i++) binStr3 += String.fromCharCode(msgUtf8[i]);
-                const b64Msg3 = btoa(binStr3);
-                const b64MsgBytes3 = new TextEncoder().encode(b64Msg3);
-                isValid = await verifyED25519Signature(protobufPubKeyHex, b64MsgBytes3, protobufSigHex);
-                if (isValid) console.log("[AUTH] *** VERIFIED: protobuf sig + wallet key + base64 message ***");
-              } catch { /* skip */ }
-            }
-
-            // Strategy E6: Window scan over raw protobuf bytes with BOTH keys
+            // Strategy E6: Window scan over raw protobuf bytes — MIRROR NODE KEY ONLY
+            // IMPLEMENTATION NOTE — Wallet key verification removed from E6 window scan
+            // (same attack vector as E3/E4/E5). Only the Mirror Node key is used.
             if (!isValid && rawBytes.length > 64) {
-              console.log(`[AUTH] All targeted strategies failed — window scanning rawSignatureMap (${rawBytes.length - 63} windows) with both keys`);
+              console.log(`[AUTH] All targeted strategies failed — window scanning rawSignatureMap (${rawBytes.length - 63} windows) with Mirror Node key ONLY`);
               for (let offset = 0; offset <= rawBytes.length - 64; offset++) {
                 const w64 = rawBytes.slice(offset, offset + 64);
                 const wHex = bytesToHex(w64);
-                // Try Mirror Node key
-                let wValid = await verifySignature(keyResult.rawKeyHex, messageBytes, wHex);
+                const wValid = await verifySignature(keyResult.rawKeyHex, messageBytes, wHex);
                 if (wValid) {
                   console.log(`[AUTH] rawSignatureMap window scan matched at offset ${offset} with Mirror Node key`);
                   isValid = true;
                   break;
-                }
-                // Try wallet key if different
-                if (protobufPubKeyHex && protobufPubKeyHex.length === 64 && protobufPubKeyHex.toLowerCase() !== keyResult.rawKeyHex.toLowerCase()) {
-                  wValid = await verifyED25519Signature(protobufPubKeyHex, messageBytes, wHex);
-                  if (wValid) {
-                    console.log(`[AUTH] rawSignatureMap window scan matched at offset ${offset} with WALLET key`);
-                    isValid = true;
-                    break;
-                  }
                 }
               }
             }
@@ -1262,62 +1241,32 @@ export function registerAuthRoutes(app: Hono): void {
       }
 
       // ══════════════════════════════════════════════════════════════════════
-      // Strategy F: Wallet Attestation (Secure Fallback)
+      // Strategy F: REMOVED — Security Audit 2026-03-16
       // ══════════════════════════════════════════════════════════════════════
       //
-      // HashPack's hedera_signMessage WalletConnect implementation signs the
-      // message bytes in a format that differs from raw UTF-8 message bytes.
-      // Empirically confirmed: key match=true, self-test=true, sig=64B clean,
-      // all message-variant strategies exhausted.
+      // IMPLEMENTATION NOTE — Strategy F ("Wallet Attestation") was removed
+      // because it accepted authentication WITHOUT cryptographic signature
+      // verification. It only checked that:
+      //   1. The submitted data contained 64 bytes (any random bytes)
+      //   2. A pubKeyPrefix in the protobuf matched the Mirror Node key
+      //   3. The self-test passed (tests library, not the actual signature)
       //
-      // The wallet internally transforms the message before signing (likely
-      // via the @hashgraph/sdk Signer which may apply protobuf framing,
-      // prehashing, or domain separation). Without access to HashPack's
-      // internal signing pipeline, we cannot reproduce those exact bytes.
+      // Since public keys are publicly obtainable from Hedera Mirror Node,
+      // an attacker could construct a fake protobuf SignatureMap containing
+      // the target account's public key + random 64 bytes, and Strategy F
+      // would accept it as "wallet attestation." This is equivalent to
+      // WCO audit Finding 3 (Weak Admin Verify Logic) — CVSS 9.8 CRITICAL.
       //
-      // The protobuf SignatureMap IS cryptographic proof of wallet ownership:
-      //   1. pubKeyPrefix matches the on-chain key (Mirror Node)
-      //   2. Cannot forge a valid SignatureMap without the private key
-      //   3. Challenge is single-use, time-limited, account-bound
-      //   4. User explicitly approved signing in their wallet
-      //
-      // Acceptance criteria (ALL must be true):
-      //   - preDecodedSig is a clean 64-byte ED25519 signature
-      //   - protobufPubKeyHex matches keyResult.rawKeyHex exactly
-      //   - protobufSigHex is a valid 128-char hex string (64 bytes)
-      //   - Self-test confirms crypto libraries function correctly
+      // All authentication MUST verify the signature cryptographically
+      // against the exact challenge message using the Mirror Node public key.
       // ══════════════════════════════════════════════════════════════════════
       if (!isValid && preDecodedSig && preDecodedSig.length === 64 && protobufPubKeyHex && protobufSigHex) {
-        const mirrorKeyLower = keyResult.rawKeyHex.toLowerCase();
-        const walletKeyLower = protobufPubKeyHex.toLowerCase();
-        // Keys match exactly, OR wallet key is a prefix/suffix of mirror key
-        // (protobuf pubKeyPrefix may be truncated)
-        const keysMatchExact = mirrorKeyLower === walletKeyLower;
-        const keysMatchPartial = mirrorKeyLower.endsWith(walletKeyLower) || walletKeyLower.endsWith(mirrorKeyLower);
-        const keysMatch = keysMatchExact || keysMatchPartial;
-        const sigIs64Bytes = protobufSigHex.length === 128 && /^[0-9a-fA-F]+$/.test(protobufSigHex);
-
-        if (keysMatch && sigIs64Bytes) {
-          // Run the appropriate self-test based on key type
-          const selfTest = keyResult.type === "ECDSA_SECP256K1"
-            ? await selfTestECDSA_SECP256K1()
-            : await selfTestED25519();
-          if (selfTest.ok) {
-            console.log(
-              `[AUTH] *** WALLET ATTESTATION ACCEPTED *** ` +
-              `Account=${accountId} keyType=${keyResult.type} pubKeyMatch=${keysMatchExact ? "exact" : "partial"} sigBytes=64 selfTest=OK ` +
-              `challenge=${challengeId} — Wallet signed different message bytes than server expected. ` +
-              `Protobuf SignatureMap with matching on-chain key accepted as proof of wallet ownership.`
-            );
-            isValid = true;
-          } else {
-            console.log(`[AUTH] Wallet attestation REJECTED — self-test failed: ${selfTest.details}`);
-          }
-        } else {
-          console.log(
-            `[AUTH] Wallet attestation skipped: keysMatch=${keysMatch} (exact=${keysMatchExact} partial=${keysMatchPartial}) sigIs64Bytes=${sigIs64Bytes}`
-          );
-        }
+        console.log(
+          `[AUTH][SECURITY] Strategy F (wallet attestation) BLOCKED — ` +
+          `this bypass was removed in security audit 2026-03-16. ` +
+          `Account=${accountId} challenge=${challengeId}. ` +
+          `All auth requires cryptographic signature verification.`
+        );
       }
 
       if (!isValid) {

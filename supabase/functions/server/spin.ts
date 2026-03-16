@@ -8,7 +8,7 @@ import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
   secureRandomFloat, secureRandomInt, generateTicketId, ROUTE_PREFIX,
 } from "./shared.ts";
-import { validateSession } from "./auth.ts";
+import { validateSession, requireAuth } from "./auth.ts";
 import { requireOwner, logAdminAction } from "./auth.ts";
 import { verifyVipEligibilityFull } from "./vip.ts";
 
@@ -44,7 +44,15 @@ export function registerSpinRoutes(app: Hono): void {
   });
 
   // POST /spin — Server-determined outcome via CSPRNG.
-  // accountId from session token (preferred) OR from body with Mirror Node VIP gate.
+  //
+  // IMPLEMENTATION NOTE — Security Audit 2026-03-16: Changed from optional
+  // body.accountId fallback to MANDATORY ED25519 session auth. Previously,
+  // unauthenticated callers could spin as any VIP wallet by spoofing
+  // body.accountId. While VIP status was verified, IDENTITY was not —
+  // enabling grief attacks (consuming another wallet's cooldown) and
+  // prize theft. This was HIGH-02.
+  //
+  // Now requires a cryptographically verified ED25519 session.
 
   app.post(`${ROUTE_PREFIX}/spin`, async (c) => {
     try {
@@ -53,39 +61,24 @@ export function registerSpinRoutes(app: Hono): void {
         return c.json({ error: "Rate limited — try again in a minute" }, 429);
       }
 
-      // ── Identify the account ──
-      // Prefer authenticated session; fall back to body.accountId + Mirror Node VIP check.
-      let accountId: string;
+      // ── ED25519 session required — no body.accountId fallback ──
+      const auth = await requireAuth(c);
+      if (auth instanceof Response) return auth;
+      const accountId = auth.accountId;
+      console.log(`[Spin] Authenticated via ED25519 session: ${accountId}`);
 
-      const session = await validateSession(c);
-      if (session) {
-        accountId = session.accountId;
-        console.log(`[Spin] Authenticated via session: ${accountId}`);
-      } else {
-        // No session — accept accountId from body and verify VIP via Mirror Node
-        let body: any;
-        try { body = await c.req.json(); } catch { body = {}; }
-        const rawId = typeof body.accountId === "string" ? body.accountId.trim() : "";
-        if (!rawId || !/^0\.0\.\d+$/.test(rawId)) {
-          return c.json({ error: "Valid Hedera account ID required (e.g. 0.0.12345)", code: "INVALID_ACCOUNT" }, 400);
-        }
-        accountId = sanitizeString(rawId, 20);
-
-        // ── Mirror Node VIP gate ──
-        // Must hold >= 100M HBAR.ħ OR >= 1 VIP NFT to spin.
-        console.log(`[Spin] No session — verifying VIP via Mirror Node for ${accountId}`);
-        const vipStatus = await verifyVipEligibilityFull(accountId);
-        if (!vipStatus.eligible) {
-          console.log(`[Spin] VIP FAILED: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance ?? 0}`);
-          return c.json({
-            error: "VIP access required — hold 100M+ HBAR.ħ tokens, a VIP NFT, or 156,250+ LP tokens to spin",
-            code: "VIP_REQUIRED",
-            tokenBalance: vipStatus.tokenBalance,
-            nftCount: vipStatus.nftCount,
-          }, 403);
-        }
-        console.log(`[Spin] VIP verified: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance ?? 0}`);
+      // ── VIP gate — verify eligibility even with valid session ──
+      const vipStatus = await verifyVipEligibilityFull(accountId);
+      if (!vipStatus.eligible) {
+        console.log(`[Spin] VIP FAILED: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance ?? 0}`);
+        return c.json({
+          error: "VIP access required — hold 100M+ HBAR.ħ tokens, a VIP NFT, or 156,250+ LP tokens to spin",
+          code: "VIP_REQUIRED",
+          tokenBalance: vipStatus.tokenBalance,
+          nftCount: vipStatus.nftCount,
+        }, 403);
       }
+      console.log(`[Spin] VIP verified: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance ?? 0}`);
 
       const now = Date.now();
 
