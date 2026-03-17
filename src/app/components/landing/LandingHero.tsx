@@ -44,25 +44,28 @@ function Word({
 }) {
   return (
     <motion.span
-      className="inline-block whitespace-nowrap"
+      className="inline-block overflow-visible whitespace-nowrap"
       variants={{ visible: { transition: { staggerChildren: 0.025 } } }}
     >
       {text.split("").map((ch, i) => (
         <motion.span
           key={i}
           variants={letterUp}
-          className={`inline-block cursor-default select-none ${italic ? "italic" : ""}`}
+          className={`inline-block overflow-visible cursor-default select-none ${italic ? "italic" : ""}`}
           style={
             gradient
               ? {
                   background: `linear-gradient(135deg, ${BLUE}, ${BLUE}cc)`,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
-                  paddingLeft: "0.06em",
-                  paddingRight: "0.06em",
-                  marginLeft: "-0.03em",
-                  marginRight: "-0.03em",
-                  ...(ch === "g" && { paddingBottom: "0.15em", marginBottom: "-0.15em" }),
+                  paddingLeft: "0.12em",
+                  paddingRight: "0.12em",
+                  marginLeft: "-0.06em",
+                  marginRight: "-0.06em",
+                  paddingTop: "0.1em",
+                  paddingBottom: "0.25em",
+                  marginTop: "-0.1em",
+                  marginBottom: "-0.25em",
                 }
               : undefined
           }
