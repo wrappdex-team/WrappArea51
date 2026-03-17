@@ -1509,15 +1509,19 @@ export function Wallet() {
                         </div>
                         <div className="text-right flex-shrink-0 ml-2">
                           <div className="font-bold text-sm">
-                            {token.balance >= 0.01
-                              ? token.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })
-                              : token.balance.toFixed(6)}
+                            {token.valueUsd >= 0.01
+                              ? formatUsd(token.valueUsd)
+                              : token.valueUsd > 0
+                                ? "<$0.01"
+                                : "$0.00"}
                           </div>
-                          {token.valueUsd > 0 && (
-                            <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                              {formatUsd(token.valueUsd)}
-                            </div>
-                          )}
+                          <div className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                            {token.balance >= 0.01
+                              ? `${token.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${token.symbol}`
+                              : token.balance > 0
+                                ? `<0.00001 ${token.symbol}`
+                                : `0 ${token.symbol}`}
+                          </div>
                         </div>
                       </div>
                     ))}

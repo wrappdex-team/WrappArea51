@@ -14,6 +14,8 @@
  *   - Chain switching uses standard EIP-3326 / EIP-3085
  */
 
+import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+
 // ── ERC-20 Token Registry ────────────────────────────────────────────
 
 export interface ERC20TokenDef {
@@ -38,6 +40,13 @@ const KNOWN_ERC20S: Record<number, ERC20TokenDef[]> = {
     { symbol: "LINK", name: "Chainlink", address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", decimals: 18, logo: "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png" },
     { symbol: "UNI", name: "Uniswap", address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", decimals: 18, logo: "https://assets.coingecko.com/coins/images/12504/large/uni.jpg" },
     { symbol: "AAVE", name: "Aave", address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", decimals: 18, logo: "https://assets.coingecko.com/coins/images/12645/large/aave-token-round.png" },
+    { symbol: "ZRO", name: "LayerZero", address: "0x6985884C4392D348587B19cb9eAAf157F13271cd", decimals: 18, logo: "https://assets.coingecko.com/coins/images/28206/large/ftxG9_TJ_400x400.jpeg" },
+    { symbol: "SHIB", name: "Shiba Inu", address: "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", decimals: 18, logo: "https://assets.coingecko.com/coins/images/11939/large/shiba.png" },
+    { symbol: "PEPE", name: "Pepe", address: "0x6982508145454Ce325dDbE47a25d4ec3d2311933", decimals: 18, logo: "https://assets.coingecko.com/coins/images/29850/large/pepe-token.jpeg" },
+    { symbol: "ARB", name: "Arbitrum", address: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1", decimals: 18, logo: "https://assets.coingecko.com/coins/images/16547/large/photo_2023-03-29_21.47.00.jpeg" },
+    { symbol: "MATIC", name: "Polygon (Migrated)", address: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", decimals: 18, logo: "https://assets.coingecko.com/coins/images/4713/large/polygon.png" },
+    { symbol: "LDO", name: "Lido DAO", address: "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32", decimals: 18, logo: "https://assets.coingecko.com/coins/images/13573/large/Lido_DAO.png" },
+    { symbol: "WETH", name: "Wrapped Ether", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18, logo: "https://assets.coingecko.com/coins/images/2518/large/weth.png" },
   ],
   137: [
     { symbol: "USDC", name: "USD Coin", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
@@ -51,6 +60,8 @@ const KNOWN_ERC20S: Record<number, ERC20TokenDef[]> = {
   ],
   8453: [
     { symbol: "USDC", name: "USD Coin", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
+    { symbol: "BRETT", name: "Brett", address: "0x532f27101965dd16442E59d40670FaF5eBB142E4", decimals: 18, logo: "https://assets.coingecko.com/coins/images/35529/large/1000050750.png" },
+    { symbol: "WETH", name: "Wrapped Ether", address: "0x4200000000000000000000000000000000000006", decimals: 18, logo: "https://assets.coingecko.com/coins/images/2518/large/weth.png" },
   ],
   10: [
     { symbol: "USDC", name: "USD Coin", address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", decimals: 6, logo: "https://assets.coingecko.com/coins/images/6319/large/usdc.png" },
@@ -794,6 +805,14 @@ const ERC20_BINANCE_SYMBOL: Record<string, { pair: string; fallback: number }> =
   LINK: { pair: "LINKUSDT", fallback: 14 },
   UNI:  { pair: "UNIUSDT",  fallback: 7 },
   AAVE: { pair: "AAVEUSDT", fallback: 120 },
+  ZRO:  { pair: "ZROUSDT",  fallback: 3 },
+  SHIB: { pair: "SHIBUSDT", fallback: 0.00001 },
+  PEPE: { pair: "PEPEUSDT", fallback: 0.000001 },
+  ARB:  { pair: "ARBUSDT",  fallback: 0.8 },
+  MATIC:{ pair: "MATICUSDT",fallback: 0.22 },
+  LDO:  { pair: "LDOUSDT",  fallback: 1.5 },
+  BRETT:{ pair: "",          fallback: 0 },  // Not on Binance — use 1inch prices
+  WETH: { pair: "ETHUSDT",  fallback: 2500 },
   // Stablecoins — hardcoded at $1, no API call needed
   USDC: { pair: "",         fallback: 1 },
   USDT: { pair: "",         fallback: 1 },
@@ -848,9 +867,30 @@ export async function fetchERC20Prices(
 // ── Multi-Chain Balance Aggregation ──────────────────────────────────
 // IMPLEMENTATION NOTE — MetaMask's provider only queries the active chain.
 // To show the full portfolio value (like MetaMask's own "All popular networks"
-// view), we query public RPCs on every major chain in parallel.
+// view), we use two strategies in priority order:
+//
+//   1) PRIMARY: 1inch Balance + Price APIs via our server proxy
+//      - No CORS issues (server-to-server)
+//      - Discovers ALL tokens on each chain (not just our registry)
+//      - API key stays server-side
+//
+//   2) FALLBACK: Direct RPC calls to public endpoints
+//      - Used if the 1inch API is unavailable
+//      - Only queries our KNOWN_ERC20S registry
+//      - May fail due to CORS on some public RPCs
+//
+// Both strategies run in parallel across all chains for speed.
 
-/** Public RPC endpoints for multi-chain balance queries (no auth required) */
+/** Server proxy base for 1inch API calls */
+const INCH_PROXY = `https://${projectId}.supabase.co/functions/v1/make-server-54299934/1inch`;
+
+/** Standard headers for server proxy calls */
+const proxyHeaders = {
+  Authorization: `Bearer ${publicAnonKey}`,
+  "Content-Type": "application/json",
+};
+
+/** Public RPC endpoints — fallback only (1inch API is primary) */
 const PUBLIC_RPC: Record<number, string> = {
   1:     "https://eth.llamarpc.com",
   137:   "https://polygon-rpc.com",
@@ -876,6 +916,8 @@ export interface MultiChainToken {
   isNative: boolean;
   /** For ERC-20s, the contract address; for native, empty */
   address: string;
+  /** Decimals of the token (for display precision) */
+  decimals?: number;
 }
 
 /** Chain logo URLs for display */
@@ -900,8 +942,25 @@ const NATIVE_LOGO: Record<number, string> = {
   43114: "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
 };
 
+/** 1inch native token address sentinel */
+const NATIVE_TOKEN_ADDR = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+/** Default decimals for native tokens (18 for all EVM chains) */
+const NATIVE_DECIMALS = 18;
+
 /**
- * Raw JSON-RPC call to a public endpoint.
+ * Build a token logo URL from the 1inch CDN.
+ */
+function tokenLogoUrl(chainId: number, address: string, _symbol: string): string {
+  const addrLower = address.toLowerCase();
+  if (addrLower === NATIVE_TOKEN_ADDR || !address) {
+    return NATIVE_LOGO[chainId] || `https://tokens.1inch.io/v1.2/${chainId}/${NATIVE_TOKEN_ADDR}.png`;
+  }
+  return `https://tokens.1inch.io/v1.2/${chainId}/${addrLower}.png`;
+}
+
+/**
+ * Raw JSON-RPC call to a public endpoint. (Fallback only.)
  */
 async function rpcCall(
   rpcUrl: string,
@@ -921,91 +980,256 @@ async function rpcCall(
 }
 
 /**
+ * PRIMARY: Fetch token balances for a single chain via 1inch Balance API
+ * (proxied through our server). Returns raw balance map: { address: rawBalanceStr }.
+ */
+async function fetchInchBalances(
+  chainId: number,
+  wallet: string,
+): Promise<Record<string, string>> {
+  const res = await fetch(`${INCH_PROXY}/balance/${chainId}/${wallet}`, {
+    headers: proxyHeaders,
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`1inch balance API ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  return await res.json();
+}
+
+/**
+ * Fetch USD prices for tokens on a chain via 1inch Price API.
+ * Returns: { "0xaddr": "priceUsd", ... }
+ */
+async function fetchInchPrices(
+  chainId: number,
+  tokenAddresses?: string[],
+): Promise<Record<string, string>> {
+  let url = `${INCH_PROXY}/price/${chainId}`;
+  if (tokenAddresses && tokenAddresses.length > 0) {
+    url += `?tokens=${tokenAddresses.join(",")}`;
+  }
+  const res = await fetch(url, {
+    headers: proxyHeaders,
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    throw new Error(`1inch price API ${res.status}`);
+  }
+  return await res.json();
+}
+
+/** Short-form address for unknown tokens */
+function shortenAddress(addr: string): string {
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+/**
+ * Fetch token balances for a single chain using the 1inch API.
+ * Combines balance + price data into MultiChainToken[].
+ */
+async function fetchChainViaInch(
+  chainId: number,
+  wallet: string,
+): Promise<MultiChainToken[]> {
+  const chain = CHAIN_INFO[chainId];
+  if (!chain) return [];
+
+  // Fetch balances — returns { "0xaddr": "rawBalance", ... }
+  const balances = await fetchInchBalances(chainId, wallet);
+  if (!balances || typeof balances !== "object") return [];
+
+  // Filter to non-zero balances
+  const nonZeroAddrs = Object.entries(balances)
+    .filter(([, raw]) => {
+      try { return BigInt(raw) > 0n; } catch { return false; }
+    })
+    .map(([addr]) => addr.toLowerCase());
+
+  if (nonZeroAddrs.length === 0) return [];
+
+  // Fetch prices for non-zero tokens
+  let prices: Record<string, string> = {};
+  try {
+    prices = await fetchInchPrices(chainId, nonZeroAddrs);
+  } catch {
+    // If price API fails, fall back to native price + stablecoin defaults
+  }
+
+  // Build known token lookup for metadata enrichment
+  const knownByAddr = new Map<string, ERC20TokenDef>();
+  const defs = KNOWN_ERC20S[chainId];
+  if (defs) {
+    for (const d of defs) knownByAddr.set(d.address.toLowerCase(), d);
+  }
+
+  // Also fetch native price via Binance as backup
+  let nativePrice = 0;
+  try {
+    nativePrice = await fetchNativeTokenPrice(chainId);
+  } catch { /* use 1inch price */ }
+
+  const tokens: MultiChainToken[] = [];
+
+  for (const addr of nonZeroAddrs) {
+    const rawBal = balances[addr] || balances[Object.keys(balances).find(k => k.toLowerCase() === addr) || ""] || "0";
+    let bal: bigint;
+    try { bal = BigInt(rawBal); } catch { continue; }
+    if (bal <= 0n) continue;
+
+    const isNative = addr.toLowerCase() === NATIVE_TOKEN_ADDR;
+    const known = knownByAddr.get(addr.toLowerCase());
+
+    // Determine decimals
+    const decimals = isNative ? NATIVE_DECIMALS : (known?.decimals ?? 18);
+    const balance = Number(bal) / Math.pow(10, decimals);
+
+    // Determine price
+    // IMPLEMENTATION NOTE — The 1inch Price API v1.1 returns prices denominated
+    // in the chain's native token, scaled by 1e18 (wei units). For example, on
+    // Ethereum mainnet, ETH returns "1000000000000000000" (1e18 = 1 ETH in ETH),
+    // and AAVE at ~0.05 ETH returns "~5e16". To convert to USD:
+    //   priceUsd = (inchRawPrice / 1e18) * nativeTokenUsdPrice
+    const inchPrice = prices[addr] || prices[Object.keys(prices).find(k => k.toLowerCase() === addr) || ""];
+    let priceUsd = 0;
+    if (inchPrice) {
+      const rawPrice = parseFloat(inchPrice);
+      if (rawPrice > 0 && nativePrice > 0) {
+        // Convert from native-token-wei denomination to USD
+        priceUsd = (rawPrice / 1e18) * nativePrice;
+      }
+    }
+    // For native tokens, use the Binance price directly (more reliable)
+    if (isNative) priceUsd = nativePrice;
+    // Stablecoin fallback
+    if (!priceUsd && known && ["USDC", "USDT", "DAI"].includes(known.symbol)) priceUsd = 1;
+
+    // Determine symbol and name
+    const symbol = isNative ? chain.symbol : (known?.symbol ?? shortenAddress(addr));
+    const name = isNative ? chain.name : (known?.name ?? symbol);
+
+    // Skip dust (< $0.001 for ERC-20s without known metadata)
+    const valueUsd = balance * priceUsd;
+    if (!isNative && !known && valueUsd < 0.001 && balance < 0.0001) continue;
+
+    tokens.push({
+      chainId,
+      chainName: chain.name,
+      symbol,
+      name,
+      balance,
+      priceUsd,
+      valueUsd,
+      logo: isNative
+        ? (NATIVE_LOGO[chainId] || "")
+        : (known?.logo || tokenLogoUrl(chainId, addr, symbol)),
+      isNative,
+      address: isNative ? "" : addr,
+      decimals,
+    });
+  }
+
+  return tokens;
+}
+
+/**
+ * FALLBACK: Fetch balances for a single chain via direct RPC calls.
+ * Used when the 1inch API is unavailable.
+ */
+async function fetchChainViaRpc(
+  chainId: number,
+  wallet: string,
+): Promise<MultiChainToken[]> {
+  const rpcUrl = PUBLIC_RPC[chainId];
+  if (!rpcUrl) return [];
+  const chain = CHAIN_INFO[chainId];
+  if (!chain) return [];
+
+  const nativePrice = await fetchNativeTokenPrice(chainId).catch(() => 0);
+  const tokens: MultiChainToken[] = [];
+
+  // Native balance
+  try {
+    const hex = await rpcCall(rpcUrl, "eth_getBalance", [wallet, "latest"]);
+    const wei = hexToBigInt(hex);
+    if (wei > 0n) {
+      const balance = Number(wei) / 1e18;
+      tokens.push({
+        chainId, chainName: chain.name, symbol: chain.symbol,
+        name: chain.name, balance, priceUsd: nativePrice,
+        valueUsd: balance * nativePrice, logo: NATIVE_LOGO[chainId] || "",
+        isNative: true, address: "",
+      });
+    }
+  } catch (err) {
+    console.warn(`[Wallet] RPC eth_getBalance failed for chain ${chainId}:`, err);
+  }
+
+  // ERC-20 balances
+  const tokenDefs = KNOWN_ERC20S[chainId];
+  if (tokenDefs && tokenDefs.length > 0) {
+    let erc20PriceMap = new Map<string, number>();
+    try { erc20PriceMap = await fetchERC20Prices(tokenDefs.map(t => t.symbol)); } catch { /* fallback */ }
+
+    await Promise.all(tokenDefs.map(async (tokenDef) => {
+      try {
+        const data = encodeBalanceOf(wallet);
+        const hex = await rpcCall(rpcUrl, "eth_call", [{ to: tokenDef.address, data }, "latest"]);
+        const rawBN = hexToBigInt(hex);
+        if (rawBN === 0n) return;
+        const balance = Number(rawBN) / Math.pow(10, tokenDef.decimals);
+        const price = erc20PriceMap.get(tokenDef.symbol) ??
+          (["USDC", "USDT", "DAI"].includes(tokenDef.symbol) ? 1 : 0);
+        tokens.push({
+          chainId, chainName: chain.name, symbol: tokenDef.symbol,
+          name: tokenDef.name, balance, priceUsd: price,
+          valueUsd: balance * price, logo: tokenDef.logo,
+          isNative: false, address: tokenDef.address,
+        });
+      } catch { /* skip */ }
+    }));
+  }
+
+  return tokens;
+}
+
+/**
  * Fetch native + ERC-20 balances across ALL major EVM chains in parallel.
  * Returns a flat list of tokens with non-zero balances, priced in USD.
+ *
+ * Strategy: Try 1inch API first (production-grade, all tokens discovered),
+ * fall back to direct RPC for any chain that fails.
  */
 export async function fetchMultiChainBalances(
   address: string,
 ): Promise<MultiChainToken[]> {
   const results: MultiChainToken[] = [];
 
-  // 1) Fetch all native token prices in one batch
-  const pricePromises = MULTI_CHAIN_IDS.map((cid) =>
-    fetchNativeTokenPrice(cid).then((p) => [cid, p] as const),
-  );
-  const priceEntries = await Promise.all(pricePromises);
-  const nativePrices = new Map(priceEntries);
-
-  // 2) For each chain, query native balance + known ERC-20s in parallel
+  // Query all chains in parallel — each chain tries 1inch, then RPC fallback
   const chainPromises = MULTI_CHAIN_IDS.map(async (chainId) => {
-    const rpcUrl = PUBLIC_RPC[chainId];
-    if (!rpcUrl) return;
-    const chain = CHAIN_INFO[chainId];
-    if (!chain) return;
-    const nativePrice = nativePrices.get(chainId) ?? 0;
-    const tokens: MultiChainToken[] = [];
-
-    // Native balance
+    // Primary: 1inch API via server proxy
     try {
-      const hex = await rpcCall(rpcUrl, "eth_getBalance", [address, "latest"]);
-      const wei = hexToBigInt(hex);
-      if (wei > 0n) {
-        const balance = Number(wei) / 1e18;
-        tokens.push({
-          chainId,
-          chainName: chain.name,
-          symbol: chain.symbol,
-          name: chain.name,
-          balance,
-          priceUsd: nativePrice,
-          valueUsd: balance * nativePrice,
-          logo: NATIVE_LOGO[chainId] || "",
-          isNative: true,
-          address: "",
-        });
+      const tokens = await fetchChainViaInch(chainId, address);
+      if (tokens.length > 0) {
+        console.log(`[Wallet] Chain ${chainId}: ${tokens.length} tokens via 1inch API`);
+        return tokens;
       }
-    } catch { /* skip chain if RPC fails */ }
-
-    // ERC-20 balances
-    const tokenDefs = KNOWN_ERC20S[chainId];
-    if (tokenDefs && tokenDefs.length > 0) {
-      const erc20Symbols = tokenDefs.map((t) => t.symbol);
-      // Fetch ERC-20 prices for this chain's tokens
-      let erc20PriceMap = new Map<string, number>();
-      try {
-        erc20PriceMap = await fetchERC20Prices(erc20Symbols);
-      } catch { /* use fallbacks */ }
-
-      const erc20Promises = tokenDefs.map(async (tokenDef) => {
-        try {
-          const data = encodeBalanceOf(address);
-          const hex = await rpcCall(rpcUrl, "eth_call", [
-            { to: tokenDef.address, data },
-            "latest",
-          ]);
-          const rawBN = hexToBigInt(hex);
-          if (rawBN === 0n) return;
-          const balance = Number(rawBN) / Math.pow(10, tokenDef.decimals);
-          const price = erc20PriceMap.get(tokenDef.symbol) ??
-            (["USDC", "USDT", "DAI"].includes(tokenDef.symbol) ? 1 : 0);
-          tokens.push({
-            chainId,
-            chainName: chain.name,
-            symbol: tokenDef.symbol,
-            name: tokenDef.name,
-            balance,
-            priceUsd: price,
-            valueUsd: balance * price,
-            logo: tokenDef.logo,
-            isNative: false,
-            address: tokenDef.address,
-          });
-        } catch { /* skip token */ }
-      });
-      await Promise.all(erc20Promises);
+    } catch (err) {
+      console.warn(`[Wallet] 1inch API failed for chain ${chainId}, trying RPC fallback:`, err);
     }
 
-    return tokens;
+    // Fallback: Direct RPC
+    try {
+      const tokens = await fetchChainViaRpc(chainId, address);
+      if (tokens.length > 0) {
+        console.log(`[Wallet] Chain ${chainId}: ${tokens.length} tokens via RPC fallback`);
+      }
+      return tokens;
+    } catch (err) {
+      console.warn(`[Wallet] RPC fallback also failed for chain ${chainId}:`, err);
+      return [];
+    }
   });
 
   const chainResults = await Promise.all(chainPromises);
