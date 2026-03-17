@@ -1,3 +1,9 @@
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): UI DISPLAY ONLY.
+// All mutation calls (executeSwap, addLiquidity, removeLiquidity, createPool)
+// route through smart-liquidity.ts → /pools/* endpoints which are DEAD CODE
+// (amm.ts not registered in index.tsx). All mutations 404 harmlessly.
+// Active execution path: atomic-swap-client.ts → atomic-signer.ts.
+
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { log } from "../utils/logger";
 import {
@@ -48,7 +54,7 @@ import { AmmPrelaunchBanner } from "./AmmPrelaunchBanner";
 
 // ── Swap Panel ──────────────────────────────────────────────────────
 
-// ┌────────────────────��────────────────────────────────────────────────┐
+// ┌────────────────────────────────────────────────────────────────────┐
 // │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
 // │  SwapPanel returns AmmPrelaunchBanner while AMM is locked.        │
 // │  Remove the early-return when AMM_PRELAUNCH_LOCKED = false.       │

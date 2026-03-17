@@ -1,6 +1,10 @@
 /**
  * LPPositionTracker — Atomic Pool LP Position Dashboard
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): READ-ONLY display.
+ * Reads LP balances from Mirror Node (public chain data). Add/Remove
+ * modals use atomic-swap-client.ts (authenticated). SAFE.
+ *
  * Displays the user's LP token holdings across all deployed atomic pools.
  * Reads positions directly from Mirror Node via fetchAllUserLPPositions()
  * — no server dependency, no KV. Share-of-pool and estimated token amounts

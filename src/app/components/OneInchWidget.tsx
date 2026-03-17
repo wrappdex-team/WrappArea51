@@ -44,6 +44,7 @@ import {
 import { Tip } from "./Tip";
 import { useTheme } from "../contexts/ThemeContext";
 import { useWallet } from "../contexts/WalletContext";
+import { getSessionToken } from "../utils/auth";
 import { isVipEligible } from "../utils/vip";
 import {
   playVipCashRegister,
@@ -236,8 +237,18 @@ const POPULAR_TOKENS = MODULE_POPULAR_TOKENS as Record<number, TokenInfo[]>;
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
 
 async function apiGet(path: string): Promise<any> {
+  // IMPLEMENTATION NOTE: PEN-05 — Include ED25519 session token for
+  // authenticated 1inch proxy endpoints.
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${publicAnonKey}`,
+    Accept: "application/json",
+  };
+  const sessionToken = getSessionToken();
+  if (sessionToken) {
+    headers["X-Session-Token"] = sessionToken;
+  }
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${publicAnonKey}`, Accept: "application/json" },
+    headers,
     signal: AbortSignal.timeout(12000),
   });
   const data = await res.json();

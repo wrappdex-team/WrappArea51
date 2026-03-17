@@ -20,6 +20,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
+import { requireAuth } from "./auth.ts";
+import { isRateLimited, getClientIp } from "./shared.ts";
 
 const VT_API_BASE = "https://transfer.layerzero-api.com/v1";
 const PREFIX = "/make-server-54299934/stargate-vt";
@@ -143,6 +145,25 @@ const ALLOWED_RPC_HOSTS = new Set([
   "rpc.coredao.org",
 ]);
 
+// IMPLEMENTATION NOTE: W3-04 — Restrict RPC methods to read-only calls
+// to prevent abuse of the proxy for state-changing transactions.
+const ALLOWED_RPC_METHODS = new Set([
+  "eth_getBalance",
+  "eth_call",
+  "eth_blockNumber",
+  "eth_getBlockByNumber",
+  "eth_chainId",
+  "net_version",
+  "eth_getTransactionReceipt",
+  "eth_getTransactionByHash",
+  "eth_getCode",
+  "eth_estimateGas",
+  "eth_gasPrice",
+  "eth_maxPriorityFeePerGas",
+  "eth_feeHistory",
+  "eth_getTokenBalance",
+]);
+
 export function registerStargateVtProxyRoutes(app: InstanceType<typeof Hono>) {
   // ── Public endpoint ────────────────────────────────────────────────
   // GET /stargate-vt/tokens?...
@@ -153,32 +174,59 @@ export function registerStargateVtProxyRoutes(app: InstanceType<typeof Hono>) {
   });
 
   // ── Authenticated endpoints ────────────────────────────────────────
+  // IMPLEMENTATION NOTE: PEN-04 — All VT API proxy endpoints now require
+  // wallet auth + rate limiting to prevent API key quota abuse.
+
   // POST /stargate-vt/quotes
   app.post(`${PREFIX}/quotes`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
+
     const body = await c.req.text();
-    console.log(`[stargate-vt-proxy] POST /quotes (${body.length} bytes)`);
+    console.log(`[stargate-vt-proxy] POST /quotes by ${auth.accountId} (${body.length} bytes)`);
     return proxyToVT("/quotes", "POST", "", body, true);
   });
 
   // POST /stargate-vt/build-user-steps
   app.post(`${PREFIX}/build-user-steps`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
+
     const body = await c.req.text();
-    console.log(`[stargate-vt-proxy] POST /build-user-steps (${body.length} bytes)`);
+    console.log(`[stargate-vt-proxy] POST /build-user-steps by ${auth.accountId} (${body.length} bytes)`);
     return proxyToVT("/build-user-steps", "POST", "", body, true);
   });
 
   // GET /stargate-vt/status?txHash=...
   app.get(`${PREFIX}/status`, async (c) => {
+    const ip = getClientIp(c);
+    if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
+
     const qs = new URL(c.req.url).search.replace(/^\?/, "");
-    console.log(`[stargate-vt-proxy] GET /status?${qs.slice(0, 100)}`);
+    console.log(`[stargate-vt-proxy] GET /status by ${auth.accountId}?${qs.slice(0, 100)}`);
     return proxyToVT("/status", "GET", qs, null, true);
   });
 
   // ── RPC Proxy for balance checks ──────────────────────────────────
-  // POST /stargate-vt/rpc — Proxies JSON-RPC calls to allowed EVM RPCs
-  // to avoid browser CORS issues with public RPC endpoints.
+  // IMPLEMENTATION NOTE: PEN-04 — RPC proxy now requires auth, rate limiting,
+  // and restricts JSON-RPC methods to a read-only allowlist.
   app.post(`${PREFIX}/rpc`, async (c) => {
     try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+      const auth = await requireAuth(c);
+      if (auth instanceof Response) return auth;
+
       const { rpcUrl, ...rpcBody } = await c.req.json();
 
       if (!rpcUrl || typeof rpcUrl !== "string") {
@@ -198,7 +246,14 @@ export function registerStargateVtProxyRoutes(app: InstanceType<typeof Hono>) {
         return c.json({ error: `RPC host not allowed: ${hostname}` }, 403);
       }
 
-      console.log(`[stargate-vt-proxy] RPC proxy -> ${hostname} method=${rpcBody.method}`);
+      // Validate the RPC method is in our read-only allowlist
+      const method = rpcBody?.method;
+      if (!method || typeof method !== "string" || !ALLOWED_RPC_METHODS.has(method)) {
+        console.log(`[stargate-vt-proxy] RPC method denied: ${method}`);
+        return c.json({ error: `RPC method not allowed: ${method}` }, 403);
+      }
+
+      console.log(`[stargate-vt-proxy] RPC proxy by ${auth.accountId} -> ${hostname} method=${method}`);
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10_000);

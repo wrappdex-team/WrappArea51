@@ -1,6 +1,17 @@
 /**
  * Smart Liquidity Engine — Real KV-Backed AMM Pools on Hedera
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): DEAD CODE — SERVER ROUTES UNREACHABLE.
+ * This client calls /pools/swap, /pools/liquidity/add, /pools/liquidity/remove
+ * which are defined in amm.ts. But amm.ts is NOT registered in index.tsx —
+ * registerAmmRoutes() is NEVER called. All 3 mutations return 404 from the
+ * server. No fund movement is possible through this module. UI components
+ * that import from here (TradingSwapPanel, SmartLiquidity, TradingPoolsSection)
+ * use it for display/quoting only; any execution attempt fails harmlessly.
+ *
+ * Active swap execution path: atomic-swap-client.ts → atomic-signer.ts
+ * (fully authenticated, rate-limited, math-validated — see PEN-06/07/08 notes).
+ *
  * All pool state lives on the server (KV-backed). This client module:
  *   - Fetches real pool data from the server (no mock reserves)
  *   - Requests swap quotes computed by the server's constant-product AMM

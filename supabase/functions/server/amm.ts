@@ -1,4 +1,9 @@
 // ══════════════════════════════════════════════════════════════════════
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): CONFIRMED DEAD CODE.
+// This file is NOT imported in index.tsx. registerAmmRoutes() is NEVER
+// called. Zero routes from this file are reachable. Verified by grep:
+//   grep -r "from.*['\"]\.\/amm['\"]" → 0 results in index.tsx
+// ══════════════════════════════════════════════════════════════════════
 // ╔═══════════════════════════════════════════════════════════════════╗
 // ║  DEPRECATED — KV-BACKED AMM (superseded by atomic-signer.ts)    ║
 // ║                                                                   ║

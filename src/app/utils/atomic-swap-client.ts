@@ -1,6 +1,12 @@
 /**
  * Atomic Swap Client — End-to-End Swap Orchestration
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): ALL server calls verified secure.
+ *   - requestServerCoSign()      → sends X-Session-Token (ED25519 auth)
+ *   - requestLiquidityCoSign()   → sends X-Session-Token (ED25519 auth)
+ *   - fetchSwapHistory()         → sends X-Session-Token (ED25519 auth)
+ *   Server rejects unauthenticated callers with 401. No bypass vectors.
+ *
  * This module orchestrates the full atomic swap lifecycle:
  *
  *   1. Quote:  Client reads reserves from Mirror Node, computes AMM output

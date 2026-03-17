@@ -24,6 +24,7 @@
 
 import { log } from "../logger";
 import { projectId, publicAnonKey } from "../../../../utils/supabase/info";
+import { getSessionToken } from "../auth";
 import type { OneInchError, OneInchErrorKind } from "./types";
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -349,10 +350,16 @@ async function request<T>(
       externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
       try {
+        // IMPLEMENTATION NOTE: PEN-05 — Include ED25519 session token for
+        // authenticated 1inch proxy endpoints (swap, fusion build/submit).
         const headers: Record<string, string> = {
           Accept: "application/json",
           Authorization: `Bearer ${publicAnonKey}`,
         };
+        const sessionToken = getSessionToken();
+        if (sessionToken) {
+          headers["X-Session-Token"] = sessionToken;
+        }
         if (body !== undefined && method !== "GET") {
           headers["Content-Type"] = "application/json";
         }

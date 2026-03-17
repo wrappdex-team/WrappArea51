@@ -55,7 +55,7 @@ const QUOTE_CACHE_TTL_MS = 10_000;
  * the Fusion v2 field mapping fix (fromTokenAddress/toTokenAddress) is
  * deployed. If the endpoint 404s, the OLD server is still live and the
  * "invalid address" bug will still occur.
- * ══════════════════════════════════════════════════════════════════════ */
+ * ════════════════════════���═════════════════════════════════════════════ */
 
 /**
  * Deployment status of the 1inch server proxy.
@@ -1009,10 +1009,11 @@ export async function checkFusionAllowance(
 /**
  * Send an approval transaction for the 1inch router to spend a token.
  *
- * IMPLEMENTATION NOTE: This is the ONE place in Fusion where the user
- * pays gas — a single ERC-20 approve() call. After this, all Fusion
- * swaps for this token are gasless. We request max approval to avoid
- * repeated approval txs.
+ * SECURITY AUDIT T2-B (2026-03-17): Callers MUST pass the exact swap amount
+ * to request exact-amount approval. If amount is omitted, the 1inch API
+ * returns MaxUint256 (infinite) approval — an unnecessary risk surface.
+ * If the router contract is ever compromised, infinite approvals allow
+ * the attacker to drain ALL approved tokens from every user who approved.
  *
  * @returns Transaction hash of the approval
  */
@@ -1125,7 +1126,10 @@ export async function ensureFusionApproval(
   onStatus?.("approving");
   log.info(TAG, "Token needs approval for Fusion — sending approval tx");
 
-  const txHash = await sendApprovalTransaction(chainId, tokenAddress);
+  // SECURITY AUDIT T2-B (2026-03-17): Pass exact amount to prevent infinite approval.
+  // Previously called without amount, causing 1inch to return MaxUint256 approval —
+  // if the router contract is ever compromised, attacker could drain all approved tokens.
+  const txHash = await sendApprovalTransaction(chainId, tokenAddress, amount);
 
   onStatus?.("waiting");
   const mined = await waitForTransaction(txHash, 60_000);

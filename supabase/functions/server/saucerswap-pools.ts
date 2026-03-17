@@ -2,6 +2,11 @@
 // SAUCERSWAP POOL DATA — Server-Side Proxy & Cache
 // ═══════════════════════════════════════════════════════════════════════
 //
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): ALL 2 routes are READ-ONLY
+// GET endpoints (/saucerswap/pools, /saucerswap/pools/debug). No state
+// changes. Rate limited. Queries public SaucerSwap API data. SAFE.
+// ═══════════════════════════════════════════════════════════════════════
+//
 // Proxies SaucerSwap V1 + V2 pool data for the DeFi dashboard.
 //
 //   Endpoints:

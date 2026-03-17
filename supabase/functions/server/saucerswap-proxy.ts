@@ -2,6 +2,11 @@
 // SAUCERSWAP API PROXY — Server-Side Key Protection
 // ═══════════════════════════════════════════════════════════════════════
 //
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): 1 route — GET /ss-proxy.
+// READ-ONLY proxy with path allowlist. API key stays server-side.
+// Rate limited. No state changes. SAFE.
+// ═══════════════════════════════════════════════════════════════════════
+//
 // [C108] Transparent proxy for SaucerSwap API requests. Keeps the partner
 // API key (SAUCERSWAP_API_KEY) server-side to prevent client-side abuse
 // of rate limits. Replaces the former client-side SAUCERSWAP_PARTNER_ID

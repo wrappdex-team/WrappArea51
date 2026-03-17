@@ -32,6 +32,7 @@ import {
   Shield,
 } from "lucide-react";
 import { playSwapSuccess } from "../utils/sounds";
+import { HBARH_BRANDING_DARK } from "../assets/brand";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -71,7 +72,7 @@ const CONFETTI_COLORS = [
   "#fbbf24", // amber-400 (accent pop)
 ];
 
-/* ─── Haptic helper ─────────────────────────────────────────────────── */
+/* ─── Haptic helper ───────────────────────────────────────────────��─── */
 
 function triggerHaptic() {
   try {
@@ -334,16 +335,13 @@ function BrandWordmark() {
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: 0.3, duration: 0.4 }}
-      className="flex items-center gap-1 mb-1"
+      className="flex items-center justify-center mb-1"
     >
-      <span className="text-[10px] sm:text-[11px] font-extrabold tracking-widest uppercase text-slate-500">
-        Powered by
-      </span>
-      <span className="text-[10px] sm:text-[11px] font-extrabold tracking-widest uppercase">
-        <span className="text-white">WRAP</span>
-        <span style={{ color: "#1D63ED" }}>p</span>
-        <span className="text-slate-400">DEX</span>
-      </span>
+      <img
+        src={HBARH_BRANDING_DARK}
+        alt="WRAPpDEX"
+        className="h-5 sm:h-6 w-auto"
+      />
     </motion.div>
   );
 }

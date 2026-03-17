@@ -32,6 +32,7 @@ import { log } from "./logger";
 import { switchChain, getChainId, getEthereumProvider } from "./metamask";
 import { NATIVE_TOKEN_ADDRESS } from "./stargate-chains";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getSessionToken } from "./auth";
 
 /* ══════════════════════════════════════════════════════════════
  * Constants
@@ -288,12 +289,22 @@ async function vtFetch(url: string, init?: RequestInit): Promise<Response> {
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
+    // IMPLEMENTATION NOTE: PEN-04 — Include ED25519 session token for
+    // authenticated stargate-vt proxy endpoints (quotes, build-user-steps, rpc).
+    const authHeaders: Record<string, string> = {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${publicAnonKey}`,
+    };
+    const sessionToken = getSessionToken();
+    if (sessionToken) {
+      authHeaders["X-Session-Token"] = sessionToken;
+    }
+
     const res = await fetch(url, {
       ...init,
       signal: controller.signal,
       headers: {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${publicAnonKey}`,
+        ...authHeaders,
         ...(init?.headers ?? {}),
       },
     });

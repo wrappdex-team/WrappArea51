@@ -2,6 +2,11 @@
 // AMM Math — Shared Pure Functions (Constant-Product x * y = k)
 // ══════════════════════════════════════════════════════════════════════
 //
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): PURE MATH ONLY — zero routes,
+// zero network calls. Imported by atomic-signer.ts (which validates all
+// math server-side before co-signing). No attack surface. SAFE.
+// ══════════════════════════════════════════════════════════════════════
+//
 // Single source of truth for all AMM math across the server.
 // Imported by:
 //   - amm.ts              (deprecated KV-backed AMM — reference only)

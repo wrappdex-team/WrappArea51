@@ -2,6 +2,37 @@
 // ATOMIC SIGNER — Hedera-Native CryptoTransfer Co-Signing Oracle
 // ══════════════════════════════════════════════════════════════════════
 //
+// ╔═══════════════════════════════════════════════════════════════════╗
+// ║  SECURITY AUDIT — PEN-06/07/08 (2026-03-17)                     ║
+// ║                                                                   ║
+// ║  ALL state-changing routes verified LOCKED:                       ║
+// ║    POST /atomic/sign-swap       → requireAuth + acct rate limit  ║
+// ║    POST /atomic/sign-liquidity  → requireAuth + acct match       ║
+// ║    GET  /atomic/history/:id     → requireAuth + acct match       ║
+// ║    POST /atomic/admin/kill-switch → requireOwner                 ║
+// ║    GET  /atomic/admin/kill-switch → requireOwner                 ║
+// ║    POST /amm/kill               → requireOwner                   ║
+// ║    POST /amm/resume             → requireOwner                   ║
+// ║                                                                   ║
+// ║  Public read-only (pool data, reserves, status, tokens):         ║
+// ║    GET /atomic/pools, /pools/:id/reserves, /status, /tokens,     ║
+// ║    GET /amm/kill-switch — NO auth needed (public chain data)     ║
+// ║                                                                   ║
+// ║  Defense layers (cumulative):                                     ║
+// ║    1. ED25519 session auth (requireAuth)                          ║
+// ║    2. Per-IP rate limiting (isRateLimited)                        ║
+// ║    3. Per-account rate limiting (isAccountRateLimited)            ║
+// ║    4. Account match (user can only sign own TXs)                  ║
+// ║    5. Kill switch (emergency halt all co-signing)                ║
+// ║    6. TX type gate SEC-13 (only CryptoTransfer allowed)          ║
+// ║    7. TX content validation SEC-14 (exact amounts/accounts)      ║
+// ║    8. Replay protection SEC-15 (TX ID dedup in KV)               ║
+// ║    9. Independent reserve read SEC-07 (Mirror Node, not client)  ║
+// ║   10. Math tolerance ≤1 raw unit (BigInt rounding only)          ║
+// ║                                                                   ║
+// ║  VERDICT: No unauthenticated mutation paths. No bypass vectors.  ║
+// ╚═══════════════════════════════════════════════════════════════════╝
+//
 // This module is the WRAPpDEX signing oracle:
 //   - It does NOT hold pool state (reserves are on-chain token balances)
 //   - It does NOT compute swap amounts for clients (clients compute locally)

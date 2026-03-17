@@ -1,6 +1,12 @@
 /**
  * TradingSwapPanel — Premium AMM Swap with Glow, Sound & Motion
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): UI DISPLAY ONLY.
+ * Swap execution calls smart-liquidity.ts → POST /pools/swap which 404s
+ * (amm.ts routes not registered). Quote display uses public read-only
+ * endpoints. No funds can move through this panel's legacy KV-AMM path.
+ * Active swap execution uses atomic-swap-client.ts → atomic-signer.ts.
+ *
  * Uses the atomic CryptoTransfer AMM engine (constant-product math).
  * Features: animated borders, neon glow, sound effects, particle bursts.
  *
@@ -141,7 +147,7 @@ export function TradingSwapPanel({ isDark, onTokenChange }: TradingSwapPanelProp
 
   // ── AMM Kill Switch Status ──────────────────────────────────────
   const [ammHalted, setAmmHalted] = useState(false);
-  // ┌───��─────────────────────────────────────────────────────────────────┐
+  // ┌────────────────────────────────────────────────────────────────────┐
   // │  IMPLEMENTATION NOTE — PRE-LAUNCH LOCK                             │
   // │  ammPrelaunch is set from the kill-switch endpoint's               │
   // │  prelaunchLocked field. When true, the entire swap body is         │

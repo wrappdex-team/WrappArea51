@@ -2,6 +2,13 @@
 // SAUCERSWAP ENGINE — Server-Side Swap Brain
 // ═══════════════════════════════════════════════════════════════════════
 //
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): ALL 6 routes are READ-ONLY
+// GET endpoints (balance, association, resolve-evm, detect-pool, tokens,
+// engine-status). No state-changing operations. No auth required — these
+// query public chain data via Mirror Node / SaucerSwap API. Rate limited.
+// No mutation paths exist. VERDICT: SAFE.
+// ═══════════════════════════════════════════════════════════════════════
+//
 // [C44] Phase 1 — Balance, association, EVM resolution endpoints.
 // [C45] Phase 1 continued — Server-side pool detection with parallel
 //       V2 fee-tier probing, SaucerSwap API pool lookup, and on-chain

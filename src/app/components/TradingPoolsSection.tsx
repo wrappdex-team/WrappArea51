@@ -1,6 +1,12 @@
 /**
  * TradingPoolsSection — Pool Management below the chart
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): UI DISPLAY ONLY.
+ * Imports from smart-liquidity.ts (read-only pool data) and
+ * atomic-swap-engine.ts (client-side math). No direct mutation calls.
+ * Add/Remove liquidity modals delegate to atomic-swap-client.ts which
+ * is fully authenticated (requireAuth + SEC-13/14/15). SAFE.
+ *
  * Shows pool stats, pool cards, and pool creation — all integrated
  * into the unified Trading terminal with animations and glow effects.
  */

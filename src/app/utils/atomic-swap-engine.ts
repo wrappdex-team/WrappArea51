@@ -1,6 +1,12 @@
 /**
  * Atomic Swap Engine — Client-Side Constant-Product AMM on Hedera
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): CLIENT-SIDE MATH ONLY.
+ * This module computes AMM quotes locally — it cannot execute swaps alone.
+ * All execution requires server co-signing (atomic-signer.ts) which
+ * independently validates math, checks auth, and enforces rate limits.
+ * A malicious client computing bad math is caught by SEC-07/SEC-14.
+ *
  * ALL swap math runs in the browser. No server dependency for computation.
  * Reserves are the pool account's actual on-chain token balances, read via
  * Hedera Mirror Node REST API. Settlement is an atomic CryptoTransfer.

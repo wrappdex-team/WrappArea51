@@ -55,6 +55,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import { isRateLimited, getClientIp, oneInchBreaker, isHttpFailure, CircuitBreakerOpenError } from "./shared.ts";
+import { requireAuth } from "./auth.ts";
 import { keccak_256 } from "npm:@noble/hashes@1.7.1/sha3";
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -523,9 +524,17 @@ export function registerOneInchRoutes(app: Hono) {
   // ── GET /1inch/swap/:chainId ─────────────────────────────────────
   // Returns pre-built swap transaction calldata for signing.
   // Required query: src, dst, amount, from, slippage
+  //
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth to prevent API key
+  // quota abuse. The `receiver` param is stripped server-side — output tokens
+  // MUST go to the sender (`from`). This prevents phishing attacks where
+  // crafted calldata redirects swap output to an attacker's address.
   app.get(`${PREFIX}/swap/:chainId`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     const chainId = parseChainId(c.req.param("chainId"));
     if (!chainId) return c.json({ error: "Unsupported chain" }, 400);
@@ -547,7 +556,9 @@ export function registerOneInchRoutes(app: Hono) {
     });
     if (q.disableEstimate === "true") params.set("disableEstimate", "true");
     if (q.protocols) params.set("protocols", q.protocols);
-    if (q.receiver && isValidWalletAddress(q.receiver)) params.set("receiver", q.receiver);
+    // IMPLEMENTATION NOTE: PEN-05 — receiver param STRIPPED. Output tokens
+    // always go to `from` address. Passing receiver=attacker would let crafted
+    // calldata redirect funds if the user blindly signs.
     if (q.referrer && isValidWalletAddress(q.referrer)) params.set("referrer", q.referrer);
 
     const { status, body } = await upstreamFetch("GET", swapUrl(chainId, "/swap", params.toString()));
@@ -719,10 +730,14 @@ export function registerOneInchRoutes(app: Hono) {
   // Build a Fusion order — returns EIP-712 typed data for the user to sign.
   // The user signs this with eth_signTypedData_v4 (zero gas cost).
   //
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth.
   // Body: { quoteId, walletAddress, preset, ... }
   app.post(`${PREFIX}/fusion/build/:chainId`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     const chainId = parseChainId(c.req.param("chainId"), FUSION_CHAINS);
     if (!chainId) return c.json({ error: "Fusion not supported on this chain" }, 400);
@@ -774,9 +789,11 @@ export function registerOneInchRoutes(app: Hono) {
     // Only include optional fields the quoter actually supports
     if (body.preset) cleanBody.preset = body.preset;
     if (typeof body.secretsCount === "number") cleanBody.secretsCount = body.secretsCount;
-    if (body.receiver && isValidEthAddress(body.receiver)) {
-      cleanBody.receiver = eip55Checksum(body.receiver as string);
-    }
+    // SECURITY AUDIT T2-A (2026-03-17): receiver forced to walletAddress.
+    // Previously passed through user-supplied receiver, allowing social-engineering
+    // attacks where crafted orders redirect Fusion+ output to an attacker address.
+    // Same defense as PEN-05 (Swap API) and fusion-plus-sdk.ts line 1012.
+    cleanBody.receiver = walletForBuild;
     if (body.source) cleanBody.source = body.source;
     if (typeof body.nonce === "string" || typeof body.nonce === "number") cleanBody.nonce = body.nonce;
     if (typeof body.permit === "string") cleanBody.permit = body.permit;
@@ -813,14 +830,18 @@ export function registerOneInchRoutes(app: Hono) {
   // ── POST /1inch/fusion/submit/:chainId ───────────────────────────
   // Submit a signed Fusion order to the resolver network.
   //
-  // IMPLEMENTATION NOTE: This is the most security-sensitive Fusion route.
-  // The body contains the user's EIP-712 signature. We forward it unchanged
-  // to 1inch — the proxy never reads, stores, or logs the signature.
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth. This is the most
+  // security-sensitive Fusion route. The body contains the user's EIP-712
+  // signature. We forward it unchanged to 1inch — the proxy never reads,
+  // stores, or logs the signature.
   //
   // Body: { orderHash, signature, quoteId, ... }
   app.post(`${PREFIX}/fusion/submit/:chainId`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     const chainId = parseChainId(c.req.param("chainId"), FUSION_CHAINS);
     if (!chainId) return c.json({ error: "Fusion not supported on this chain" }, 400);
@@ -1029,6 +1050,7 @@ export function registerOneInchRoutes(app: Hono) {
   // ── POST /1inch/fusion-plus/build ────────────────────────────────
   // Build a cross-chain order — returns EIP-712 typed data for signing.
   //
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth.
   // IMPLEMENTATION NOTE (Round 3): Diagnostics proved /quote/build is LIVE
   // (400 not 404) but needs FULL swap params — same as /quote/receive — not
   // just quoteId. R1: "walletAddress not provided" (body ignored). R2: "amount
@@ -1040,6 +1062,9 @@ export function registerOneInchRoutes(app: Hono) {
   app.post(`${PREFIX}/fusion-plus/build`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1189,6 +1214,7 @@ export function registerOneInchRoutes(app: Hono) {
   });
 
   // ── POST /1inch/fusion-plus/place-order ──────────────────────────
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth.
   // IMPLEMENTATION NOTE (2026-03-04): On-chain escrow creation discovery.
   //
   // 1inch.com uses an ON-CHAIN `create()` tx for cross-chain Fusion+.
@@ -1197,6 +1223,9 @@ export function registerOneInchRoutes(app: Hono) {
   app.post(`${PREFIX}/fusion-plus/place-order`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1266,13 +1295,17 @@ export function registerOneInchRoutes(app: Hono) {
   // ── POST /1inch/fusion-plus/submit ───────────────────────────────
   // Submit a signed cross-chain order to the resolver network.
   //
-  // IMPLEMENTATION NOTE: Same security posture as Fusion submit —
-  // the signature is forwarded opaquely, never logged or stored.
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth. Same security
+  // posture as Fusion submit — the signature is forwarded opaquely,
+  // never logged or stored.
   //
   // Body: { orderHash, signature, quoteId, ... }
   app.post(`${PREFIX}/fusion-plus/submit`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try {
@@ -1319,10 +1352,14 @@ export function registerOneInchRoutes(app: Hono) {
   // Reveal an HTLC secret for a cross-chain order fill.
   // Used in the Fusion+ atomic swap resolution flow.
   //
+  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth.
   // Body: { orderHash, secret }
   app.post(`${PREFIX}/fusion-plus/submit-secret`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try {

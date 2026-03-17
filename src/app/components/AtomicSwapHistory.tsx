@@ -1,6 +1,10 @@
 /**
  * AtomicSwapHistory — On-Chain Swap Activity Log
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): READ-ONLY with auth.
+ * Fetches via GET /atomic/history/:accountId (requireAuth + account match).
+ * User can only see their own history. SAFE.
+ *
  * Displays the user's atomic swap history fetched from the server's
  * KV-backed history endpoint. Each entry was written at co-sign time
  * by the sign-swap handler in atomic-signer.ts.

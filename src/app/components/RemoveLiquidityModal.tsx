@@ -1,6 +1,9 @@
 /**
  * RemoveLiquidityModal — Atomic Pool Liquidity Withdrawal
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): Uses atomic-swap-client.ts
+ * → POST /atomic/sign-liquidity (requireAuth + account match). SAFE.
+ *
  * Full-featured modal for removing liquidity from WRAPpDEX atomic pools.
  * Reads the user's LP token balance from Mirror Node, previews output
  * amounts via constant-product burn math, handles token associations,

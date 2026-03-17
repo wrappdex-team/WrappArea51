@@ -2,6 +2,11 @@
 // SAUCERSWAP QUOTE ENGINE  [C46]
 // ═══════════════════════════════════════════════════════════════════════
 //
+// SECURITY AUDIT PEN-06/07/08 (2026-03-17): 1 route — GET /saucerswap/quote.
+// READ-ONLY. Returns price quotes from on-chain/API data. Rate limited.
+// No state changes, no auth required. SAFE.
+// ═══════════════════════════════════════════════════════════════════════
+//
 // Server-side quote fetching with parallel multi-strategy racing.
 // All strategies run concurrently via Promise.allSettled() and the
 // best quote is selected by confidence ranking.
@@ -44,7 +49,7 @@ import {
   type PoolVersionInfo,
 } from "./saucerswap-engine.ts";
 
-// ═════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════���═══════════════════
 // CONSTANTS
 // ═════════════════════════════════════════════════════════════════════
 

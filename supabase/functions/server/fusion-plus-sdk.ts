@@ -2,6 +2,15 @@
 // 1inch Fusion+ SDK-Based Cross-Chain Swap Engine
 // =======================================================================
 //
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  SECURITY AUDIT T1-A (2026-03-17)                                   ║
+// ║  3 POST routes (sdk-order, sdk-submit, create-tx) — requireAuth()   ║
+// ║  added to all state-changing routes. Prevents anonymous API key      ║
+// ║  quota abuse (DoS vector). Fund risk was already LOW (EIP-712 sig   ║
+// ║  required in MetaMask), but auth closes the quota-burn attack.       ║
+// ║  GET sdk-health remains unauthenticated (read-only diagnostics).    ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+//
 // IMPLEMENTATION NOTE (2026-03-03, SDK Adoption):
 // Rounds 1-6 of /quote/build endpoint diagnostics ALL failed. The official
 // @1inch/cross-chain-sdk NEVER calls /quote/build — it constructs
@@ -28,6 +37,7 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import { isRateLimited, getClientIp, oneInchBreaker, isHttpFailure, CircuitBreakerOpenError } from "./shared.ts";
+import { requireAuth } from "./auth.ts";
 
 // =======================================================================
 // Constants
@@ -1488,6 +1498,10 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
+    // SECURITY AUDIT T1-A: requireAuth() prevents anonymous API key quota abuse
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
+
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
 
@@ -1543,6 +1557,10 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
   app.post(`${PREFIX}/fusion-plus/sdk-submit`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    // SECURITY AUDIT T1-A: requireAuth() prevents anonymous API key quota abuse
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1739,6 +1757,10 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
   app.post(`${PREFIX}/fusion-plus/create-tx`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+
+    // SECURITY AUDIT T1-A: requireAuth() prevents anonymous API key quota abuse
+    const auth = await requireAuth(c);
+    if (auth instanceof Response) return auth;
 
     let reqBody: Record<string, unknown>;
     try { reqBody = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }

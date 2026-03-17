@@ -1,6 +1,9 @@
 /**
  * AddLiquidityModal — Atomic Pool Liquidity Provision
  *
+ * SECURITY AUDIT PEN-06/07/08 (2026-03-17): Uses atomic-swap-client.ts
+ * → POST /atomic/sign-liquidity (requireAuth + account match). SAFE.
+ *
  * Full-featured modal for adding liquidity to WRAPpDEX atomic pools.
  * Reads reserves from Mirror Node, computes proportional deposits
  * via constant-product math, handles token associations, and executes
