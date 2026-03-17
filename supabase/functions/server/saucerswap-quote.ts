@@ -2014,12 +2014,43 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
     const inputToken    = c.req.query("inputToken") || "";
     const outputToken   = c.req.query("outputToken") || "";
     const amountIn      = c.req.query("amountIn") || "";
-    const slippage      = parseFloat(c.req.query("slippage") || "3");
+    const slippageRaw   = parseFloat(c.req.query("slippage") || "3");
     const inputDecimals = parseInt(c.req.query("inputDecimals") || "8", 10);
     const outputDecimals = parseInt(c.req.query("outputDecimals") || "8", 10);
     const network       = normalizeNetwork(c.req.query("network"));
     const inputAliasId  = c.req.query("inputAliasId");
     const outputAliasId = c.req.query("outputAliasId");
+
+    // ── [W3-03] Slippage bounds validation ──────────────────────────────
+    // IMPLEMENTATION NOTE — Critical DEX safety guard.
+    //
+    // Extreme slippage (e.g. 99%) enables sandwich attacks that can drain
+    // nearly 100% of trade value. Standard DEX practice:
+    //   Uniswap:    default 0.5%, warns at 5%
+    //   SushiSwap:  default 0.5%, max ~50%
+    //   1inch:      default 1%, max 50%
+    //
+    // We enforce: MIN 0.01% (prevents division-by-zero edge cases),
+    //             MAX 50%   (anything higher is almost certainly malicious
+    //                        or a client bug — still generous for low-
+    //                        liquidity Hedera pairs).
+    //
+    // If out of range we CLAMP (not reject) so existing swap flows never
+    // break, and flag `slippageCapped` in the response so the client can
+    // surface a warning if needed.
+    const SLIPPAGE_MIN = 0.01;
+    const SLIPPAGE_MAX = 50;
+    let slippage = slippageRaw;
+    let slippageCapped = false;
+    if (Number.isNaN(slippage) || slippage < SLIPPAGE_MIN) {
+      console.log(`[SS-Quote] Slippage ${slippageRaw} below minimum — clamping to ${SLIPPAGE_MIN}%`);
+      slippage = SLIPPAGE_MIN;
+      slippageCapped = true;
+    } else if (slippage > SLIPPAGE_MAX) {
+      console.log(`[SS-Quote] ⚠ SUSPICIOUS: Slippage ${slippageRaw}% exceeds ${SLIPPAGE_MAX}% maximum — clamped. Possible sandwich attack vector or client bug.`);
+      slippage = SLIPPAGE_MAX;
+      slippageCapped = true;
+    }
 
     // Validate inputs
     if (!inputToken || (!inputToken.startsWith("0.0.") && inputToken !== "HBAR")) {
@@ -2137,6 +2168,11 @@ export function registerSaucerswapQuoteRoutes(app: Hono): void {
         poolInfo,
         fromCache: wasCached,
         durationMs,
+        // [W3-03] Slippage enforcement transparency — lets the client
+        // know if the requested slippage was clamped to safe bounds.
+        slippageUsed: slippage,
+        slippageCapped,
+        ...(slippageCapped ? { slippageRequested: slippageRaw } : {}),
         // [C100 Step 4] Diagnostics: how many dynamic aliases are active
         dynamicAliases: _dynamicAliasMap?.size ?? 0,
         // [STEP1] Validated route for client execution passthrough
