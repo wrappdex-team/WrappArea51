@@ -49,7 +49,20 @@ app.use(
     origin: "*",
     allowHeaders: ["Content-Type", "Authorization", "X-Session-Token", "X-Account-Id"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    exposeHeaders: ["Content-Length"],
+    // IMPLEMENTATION NOTE — Security headers (CSP, HSTS, X-Frame-Options, etc.) are
+    // set by the middleware below, but CORS hides them from JavaScript unless listed
+    // here. Exposing their names is harmless (not secrets) and allows the PenTest
+    // security scanner to verify they're present.
+    exposeHeaders: [
+      "Content-Length",
+      "Content-Security-Policy",
+      "Strict-Transport-Security",
+      "X-Frame-Options",
+      "X-Content-Type-Options",
+      "X-XSS-Protection",
+      "Referrer-Policy",
+      "Permissions-Policy",
+    ],
     maxAge: 600,
   }),
 );
