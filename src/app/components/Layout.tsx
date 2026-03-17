@@ -213,7 +213,7 @@ export function Layout() {
                 vipPulse={vipActive}
                 wrapperClassName="flex-shrink-0 transition-transform duration-300 flex items-center"
                 imgClassName="h-[72px] sm:h-[88px] md:h-[104px] lg:h-[88px] xl:h-[104px] 2xl:h-[120px] max-w-[50vw] sm:max-w-none w-auto object-contain"
-                holidayImgClassName="h-[60px] sm:h-[72px] md:h-[84px] lg:h-[72px] xl:h-[84px] 2xl:h-[96px] max-w-[50vw] sm:max-w-none w-auto object-contain"
+                holidayImgClassName="h-[42px] sm:h-[50px] md:h-[59px] lg:h-[50px] xl:h-[59px] 2xl:h-[67px] max-w-[50vw] sm:max-w-none w-auto object-contain"
               />
             </Link>
 
