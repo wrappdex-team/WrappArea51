@@ -32,7 +32,7 @@ import type {
   FusionPresetQuote,
 } from "./types";
 
-/* ═════════════════════════════��═══════════════════════════════════════
+/* ════════════════════════════════════════════════════════════════════
  * Constants
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -1025,7 +1025,10 @@ export async function getSdkHealth(
  * On app mount, we check for pending orders and resume polling.
  * ══════════════════════════════════════════════════════════════════════ */
 
-const HTLC_SECRET_KEY = "wrappdex:1inch:htlc-pending";
+// IMPLEMENTATION NOTE: AIKIDO-80 — Renamed from HTLC_SECRET_KEY to avoid
+// false-positive "exposed secret" alerts. This is a localStorage key name,
+// not a credential.
+const HTLC_STORAGE_KEY = "wrappdex:1inch:htlc-pending";
 
 export interface PendingHtlcOrder {
   orderHash: string;
@@ -1044,7 +1047,7 @@ export interface PendingHtlcOrder {
 /** Persist HTLC secret for a pending cross-chain order. SAFETY-CRITICAL. */
 export function persistHtlcSecret(order: PendingHtlcOrder): void {
   try {
-    localStorage.setItem(HTLC_SECRET_KEY, JSON.stringify(order));
+    localStorage.setItem(HTLC_STORAGE_KEY, JSON.stringify(order));
     log.info(TAG, `[HTLC] Persisted secret for order ${order.orderHash.slice(0, 14)}...`);
   } catch {
     log.warn(TAG, `[HTLC] CRITICAL: Failed to persist HTLC secret! Order ${order.orderHash.slice(0, 14)}...`);
@@ -1054,7 +1057,7 @@ export function persistHtlcSecret(order: PendingHtlcOrder): void {
 /** Load a pending HTLC order from localStorage (null if none). */
 export function loadPendingHtlcOrder(): PendingHtlcOrder | null {
   try {
-    const raw = localStorage.getItem(HTLC_SECRET_KEY);
+    const raw = localStorage.getItem(HTLC_STORAGE_KEY);
     if (!raw) return null;
     const order = JSON.parse(raw) as PendingHtlcOrder;
     // Validate it has the critical fields
@@ -1068,7 +1071,7 @@ export function loadPendingHtlcOrder(): PendingHtlcOrder | null {
 /** Clear the pending HTLC order (call when order reaches terminal state). */
 export function clearPendingHtlcOrder(): void {
   try {
-    localStorage.removeItem(HTLC_SECRET_KEY);
+    localStorage.removeItem(HTLC_STORAGE_KEY);
     log.info(TAG, `[HTLC] Cleared pending order from localStorage`);
   } catch {
     // ignore

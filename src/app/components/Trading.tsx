@@ -942,7 +942,9 @@ export function Trading() {
       </div>
 
       {/* Liquidity Pools Section */}
-      <TradingPoolsSection isDark={isDark} />
+      <div className="mt-4">
+        <TradingPoolsSection isDark={isDark} />
+      </div>
 
       {/* LP Position Tracker — visible to all connected users */}
       {hederaAccount && (

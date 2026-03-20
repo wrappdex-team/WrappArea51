@@ -340,7 +340,7 @@ export function Layout() {
                     : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
                 }`}
               >
-                <span className="text-sm md:text-base leading-none select-none" role="img" aria-label={isSky ? "Sky Blue mode" : "Pink mode"}>
+                <span className="w-4 h-4 md:w-5 md:h-5 flex items-center justify-center text-sm md:text-base leading-none select-none" role="img" aria-label={isSky ? "Sky Blue mode" : "Pink mode"}>
                   {isSky ? "🩵" : "🩷"}
                 </span>
               </button>

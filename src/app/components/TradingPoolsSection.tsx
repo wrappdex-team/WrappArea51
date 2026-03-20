@@ -312,7 +312,7 @@ export function TradingPoolsSection({ isDark }: TradingPoolsSectionProps) {
   const inputClass = isDark ? "bg-slate-800/50 border border-pink-500/10" : "bg-gray-50 border border-gray-200";
 
   return (
-    <div className={`rounded-b-xl overflow-hidden ${isDark ? "bg-slate-900/20 border border-t-0 border-pink-500/20" : "bg-white border border-t-0 border-gray-200"}`}>
+    <div className={`rounded-xl overflow-hidden ${isDark ? "bg-slate-900/20 border border-pink-500/20" : "bg-white border border-gray-200"}`}>
       {/* Section header */}
       <div
         className={`px-4 py-3 flex items-center justify-between cursor-pointer transition-colors ${isDark ? "hover:bg-slate-800/20" : "hover:bg-gray-50"}`}
