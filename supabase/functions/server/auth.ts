@@ -19,6 +19,20 @@ import { getClientIp, isRateLimited, isValidHederaAccountId, ROUTE_PREFIX, HEDER
 import nacl from "npm:tweetnacl@1.0.3";
 import { secp256k1 } from "npm:@noble/curves@1.6.0/secp256k1";
 
+// IMPLEMENTATION NOTE: AIKIDO-80 — Constant-time string comparison to prevent
+// timing side-channels on token comparisons. While not practically exploitable
+// in this DEX (attacker already holds the token, network jitter drowns signal),
+// this is applied as defense-in-depth best practice.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  const enc = new TextEncoder();
+  const bufA = enc.encode(a);
+  const bufB = enc.encode(b);
+  let diff = 0;
+  for (let i = 0; i < bufA.length; i++) diff |= bufA[i] ^ bufB[i];
+  return diff === 0;
+}
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const AUTH_CHALLENGE_PREFIX = "auth_ch_";
@@ -1419,7 +1433,8 @@ export function registerAuthRoutes(app: Hono): void {
         const session: AuthSession | null = await kv.get(AUTH_SESSION_PREFIX + token);
         if (session?.accountId) {
           const indexed: string | null = await kv.get(AUTH_ACCT_SESSION_PREFIX + session.accountId);
-          if (indexed === token) {
+          // AIKIDO-80: Use constant-time comparison (defense-in-depth)
+          if (indexed && timingSafeEqual(indexed, token)) {
             kv.del(AUTH_ACCT_SESSION_PREFIX + session.accountId).catch(() => {});
           }
         }
