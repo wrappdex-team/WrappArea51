@@ -23,7 +23,7 @@ interface SEOHeadProps {
 }
 
 const BASE_TITLE = "WRAPpDEX";
-const DEFAULT_DESC = "Decentralized exchange on the Hedera network — swap, trade, stake, and bridge with HashPack wallet integration.";
+const DEFAULT_DESC = "WRAPpDEX is an institutional-grade decentralized exchange built on Hedera. Swap tokens, trade with real-time charts, provide liquidity, bridge cross-chain, and govern via DAO — all with sub-3-second finality and HashPack wallet integration.";
 const DEFAULT_IMAGE = "https://www.wrappdex.io/og-image.png";
 const BASE_URL = "https://www.wrappdex.io";
 
@@ -40,7 +40,7 @@ function setMeta(name: string, content: string, isProperty = false): void {
 
 export function SEOHead({ title, description, path, image }: SEOHeadProps) {
   useEffect(() => {
-    const fullTitle = title ? `${title} | ${BASE_TITLE}` : `${BASE_TITLE} — Decentralized Exchange`;
+    const fullTitle = title ? `${title} | ${BASE_TITLE}` : `${BASE_TITLE} — Decentralized Exchange on Hedera | Swap, Trade & Bridge`;
     const desc = description || DEFAULT_DESC;
     const url = path ? `${BASE_URL}${path}` : BASE_URL;
     const img = image || DEFAULT_IMAGE;
@@ -58,12 +58,19 @@ export function SEOHead({ title, description, path, image }: SEOHeadProps) {
     setMeta("og:image", img, true);
     setMeta("og:type", "website", true);
     setMeta("og:site_name", BASE_TITLE, true);
+    setMeta("og:image:width", "1200", true);
+    setMeta("og:image:height", "630", true);
+    setMeta("og:image:alt", fullTitle, true);
+    setMeta("og:locale", "en_US", true);
 
     // Twitter Card
     setMeta("twitter:card", "summary_large_image");
+    setMeta("twitter:site", "@WRAPpDEX");
+    setMeta("twitter:creator", "@WRAPpDEX");
     setMeta("twitter:title", fullTitle);
     setMeta("twitter:description", desc);
     setMeta("twitter:image", img);
+    setMeta("twitter:image:alt", fullTitle);
 
     // Canonical
     let canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;

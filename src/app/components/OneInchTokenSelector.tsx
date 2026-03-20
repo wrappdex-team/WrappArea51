@@ -385,7 +385,7 @@ export const OneInchTokenSelector = memo(function OneInchTokenSelector({
                     }`}
                   >
                     {t.logoURI ? (
-                      <img src={t.logoURI} alt="" className="w-4 h-4 rounded-full"
+                      <img src={t.logoURI} alt={t.symbol} className="w-4 h-4 rounded-full"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                     ) : (
                       <div className="w-4 h-4 rounded-full bg-gradient-to-br from-pink-500 to-purple-500" />
@@ -419,7 +419,7 @@ export const OneInchTokenSelector = memo(function OneInchTokenSelector({
                     }`}
                   >
                     {t.logoURI ? (
-                      <img src={t.logoURI} alt="" className="w-3.5 h-3.5 rounded-full"
+                      <img src={t.logoURI} alt={t.symbol} className="w-3.5 h-3.5 rounded-full"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                     ) : null}
                     {t.symbol}

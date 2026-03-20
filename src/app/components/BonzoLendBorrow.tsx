@@ -323,7 +323,7 @@ function ActionModal({
                 className="flex-1 bg-transparent outline-none text-xl font-bold tabular-nums"
               />
               <div className="flex items-center gap-1.5 shrink-0">
-                <img src={market.logo} alt="" className="w-5 h-5 rounded-full" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                <img src={market.logo} alt={market.symbol} className="w-5 h-5 rounded-full" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                 <span className="text-sm font-bold">{market.symbol}</span>
               </div>
             </div>

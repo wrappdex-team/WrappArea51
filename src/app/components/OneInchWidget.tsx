@@ -2749,7 +2749,7 @@ export function OneInchWidget() {
               ) : (
                 <>
                   {partnerLogos.metamask ? (
-                    <img src={partnerLogos.metamask} alt="" className="w-5 h-5 rounded" />
+                    <img src={partnerLogos.metamask} alt="MetaMask" className="w-5 h-5 rounded" />
                   ) : (
                     <Wallet className="w-4 h-4" />
                   )}
@@ -3033,7 +3033,7 @@ export function OneInchWidget() {
 
             <div className="flex items-center gap-1.5 mb-3">
               <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
-                {fromToken.logoURI && <img src={fromToken.logoURI} alt="" className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                {fromToken.logoURI && <img src={fromToken.logoURI} alt={fromToken.symbol} className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
                 <span className="text-xs font-bold">{fromToken.symbol}</span>
               </div>
               <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
@@ -3042,7 +3042,7 @@ export function OneInchWidget() {
               </span>
               <ArrowRight className={`w-3 h-3 ${isDark ? "text-pink-400" : "text-pink-600"}`} />
               <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isDark ? "bg-slate-700/60" : "bg-gray-200"}`}>
-                {toToken.logoURI && <img src={toToken.logoURI} alt="" className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                {toToken.logoURI && <img src={toToken.logoURI} alt={toToken.symbol} className="w-4 h-4 rounded-full" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
                 <span className="text-xs font-bold">{toToken.symbol}</span>
               </div>
             </div>

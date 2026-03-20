@@ -501,7 +501,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-sm transition-colors mb-3"
                     >
-                      <img src={partnerLogos.metamask} alt="" className="w-5 h-5 rounded" />
+                      <img src={partnerLogos.metamask} alt="MetaMask" className="w-5 h-5 rounded" />
                       Open in MetaMask
                     </a>
                     <button
