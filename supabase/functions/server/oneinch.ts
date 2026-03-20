@@ -525,16 +525,14 @@ export function registerOneInchRoutes(app: Hono) {
   // Returns pre-built swap transaction calldata for signing.
   // Required query: src, dst, amount, from, slippage
   //
-  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth to prevent API key
-  // quota abuse. The `receiver` param is stripped server-side — output tokens
-  // MUST go to the sender (`from`). This prevents phishing attacks where
-  // crafted calldata redirects swap output to an attacker's address.
+  // IMPLEMENTATION NOTE: PEN-05 revised — ED25519 requireAuth removed because
+  // 1inch swaps use EVM wallets (MetaMask), not Hedera wallets. Auth is
+  // inapplicable here. Protection is via: rate limiting, input validation,
+  // receiver stripping (output MUST go to sender), and server-side API key.
+  // The actual transaction is signed by MetaMask — no fund-safety risk.
   app.get(`${PREFIX}/swap/:chainId`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     const chainId = parseChainId(c.req.param("chainId"));
     if (!chainId) return c.json({ error: "Unsupported chain" }, 400);
@@ -730,14 +728,11 @@ export function registerOneInchRoutes(app: Hono) {
   // Build a Fusion order — returns EIP-712 typed data for the user to sign.
   // The user signs this with eth_signTypedData_v4 (zero gas cost).
   //
-  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth.
+  // IMPLEMENTATION NOTE: PEN-05 revised — requireAuth removed (EVM wallet flow).
   // Body: { quoteId, walletAddress, preset, ... }
   app.post(`${PREFIX}/fusion/build/:chainId`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     const chainId = parseChainId(c.req.param("chainId"), FUSION_CHAINS);
     if (!chainId) return c.json({ error: "Fusion not supported on this chain" }, 400);
@@ -835,13 +830,11 @@ export function registerOneInchRoutes(app: Hono) {
   // signature. We forward it unchanged to 1inch — the proxy never reads,
   // stores, or logs the signature.
   //
+  // IMPLEMENTATION NOTE: PEN-05 revised — requireAuth removed (EVM wallet flow).
   // Body: { orderHash, signature, quoteId, ... }
   app.post(`${PREFIX}/fusion/submit/:chainId`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     const chainId = parseChainId(c.req.param("chainId"), FUSION_CHAINS);
     if (!chainId) return c.json({ error: "Fusion not supported on this chain" }, 400);
@@ -1059,12 +1052,10 @@ export function registerOneInchRoutes(app: Hono) {
   //
   // Client sends: { srcChainId, dstChainId, srcTokenAddress, dstTokenAddress,
   //                  amount, walletAddress, enableEstimate?, quoteId? }
+  // IMPLEMENTATION NOTE: PEN-05 revised — requireAuth removed (EVM wallet flow).
   app.post(`${PREFIX}/fusion-plus/build`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1220,12 +1211,10 @@ export function registerOneInchRoutes(app: Hono) {
   // 1inch.com uses an ON-CHAIN `create()` tx for cross-chain Fusion+.
   // MetaMask shows: NativeOrders contract, Method: Create, sends ETH value.
   // This endpoint discovers which API endpoint returns the tx data.
+  // IMPLEMENTATION NOTE: PEN-05 revised — requireAuth removed (EVM wallet flow).
   app.post(`${PREFIX}/fusion-plus/place-order`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1299,13 +1288,11 @@ export function registerOneInchRoutes(app: Hono) {
   // posture as Fusion submit — the signature is forwarded opaquely,
   // never logged or stored.
   //
+  // IMPLEMENTATION NOTE: PEN-05 revised — requireAuth removed (EVM wallet flow).
   // Body: { orderHash, signature, quoteId, ... }
   app.post(`${PREFIX}/fusion-plus/submit`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try {
@@ -1352,14 +1339,11 @@ export function registerOneInchRoutes(app: Hono) {
   // Reveal an HTLC secret for a cross-chain order fill.
   // Used in the Fusion+ atomic swap resolution flow.
   //
-  // IMPLEMENTATION NOTE: PEN-05 — Requires wallet auth.
+  // IMPLEMENTATION NOTE: PEN-05 revised — requireAuth removed (EVM wallet flow).
   // Body: { orderHash, secret }
   app.post(`${PREFIX}/fusion-plus/submit-secret`, async (c) => {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
-
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
 
     let body: Record<string, unknown>;
     try {

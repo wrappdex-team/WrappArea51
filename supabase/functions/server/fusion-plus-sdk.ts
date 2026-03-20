@@ -1498,9 +1498,7 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    // SECURITY AUDIT T1-A: requireAuth() prevents anonymous API key quota abuse
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
+    // SECURITY AUDIT T1-A revised: requireAuth removed — EVM wallet flow (MetaMask).
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1558,9 +1556,7 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    // SECURITY AUDIT T1-A: requireAuth() prevents anonymous API key quota abuse
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
+    // SECURITY AUDIT T1-A revised: requireAuth removed — EVM wallet flow (MetaMask).
 
     let body: Record<string, unknown>;
     try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
@@ -1758,9 +1754,7 @@ export function registerFusionPlusSdkRoutes(app: Hono) {
     const ip = getClientIp(c);
     if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
 
-    // SECURITY AUDIT T1-A: requireAuth() prevents anonymous API key quota abuse
-    const auth = await requireAuth(c);
-    if (auth instanceof Response) return auth;
+    // SECURITY AUDIT T1-A revised: requireAuth removed — EVM wallet flow (MetaMask).
 
     let reqBody: Record<string, unknown>;
     try { reqBody = await c.req.json(); } catch { return c.json({ error: "Invalid JSON body" }, 400); }
