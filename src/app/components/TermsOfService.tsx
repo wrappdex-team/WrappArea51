@@ -837,8 +837,8 @@ export function TermsOfService() {
       <ul className={listClass}>
         <li>
           <span className={boldInline}>Discord:</span>{" "}
-          <a href="https://discord.gg/ZFnfRFxQZ" target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-300 underline underline-offset-2">
-            discord.gg/ZFnfRFxQZ
+          <a href="https://discord.com/invite/8w36D2TGc" target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-300 underline underline-offset-2">
+            discord.com/invite/8w36D2TGc
           </a>
         </li>
         <li>

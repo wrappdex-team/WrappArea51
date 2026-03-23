@@ -27,7 +27,7 @@ import { verifyVipEligibilityDirect } from "../utils/vip";
 //   - Math.random() below is COSMETIC ONLY (sparkles, confetti, audio jitter)
 // ═══════════════════════════════════════════════════════════════════════
 
-// ── Config ─────────────────────────────────────────────────────────
+// ��─ Config ─────────────────────────────────────────────────────────
 
 /** Cooldown between spins in milliseconds (24 hours). */
 const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -36,7 +36,7 @@ const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const SPIN_STORAGE_KEY = "hbarh_dao_spin_";
 
 /** Discord invite link for prize claims */
-const DISCORD_LINK = "https://discord.gg/ZFnfRFxQZ";
+const DISCORD_LINK = "https://discord.com/invite/8w36D2TGc";
 
 /** Supabase API base URL for winner endpoints */
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;

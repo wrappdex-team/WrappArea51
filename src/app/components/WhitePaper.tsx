@@ -2207,7 +2207,7 @@ export function WhitePaper() {
                   Launch App
                 </Link>
                 <a
-                  href="https://discord.gg/ZFnfRFxQZ"
+                  href="https://discord.com/invite/8w36D2TGc"
                   target="_blank"
                   rel="noopener noreferrer"
                   className={`px-6 py-3 rounded-xl font-bold text-sm border transition-colors inline-flex items-center gap-2 ${

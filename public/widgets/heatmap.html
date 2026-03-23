@@ -3,13 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <!--
-    Permissive CSP for the QC heatmap widget.
-    This page is loaded via iframe src= so it gets its own CSP,
-    completely independent of the parent page's restrictive policy.
-    img-src * ensures coin logos load from any upstream CDN.
-  -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://quantifycrypto.com; style-src 'unsafe-inline'; img-src * data: blob:; connect-src https://quantifycrypto.com https://*.quantifycrypto.com; font-src 'none'" />
+  <!-- IMPLEMENTATION NOTE: Relaxed CSP — iframe sandbox provides isolation from parent page -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://quantifycrypto.com https://*.quantifycrypto.com; style-src 'unsafe-inline' https://quantifycrypto.com https://*.quantifycrypto.com https://fonts.googleapis.com; img-src * data: blob:; connect-src https://quantifycrypto.com https://*.quantifycrypto.com; font-src https://fonts.googleapis.com https://fonts.gstatic.com https://*.quantifycrypto.com; frame-src 'none'" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {

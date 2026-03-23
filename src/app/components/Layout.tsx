@@ -292,7 +292,7 @@ export function Layout() {
               </Tip>
               <Tip content="Join WRAPpDEX Discord — Community Support">
               <a
-                href="https://discord.gg/ZFnfRFxQZ"
+                href="https://discord.com/invite/8w36D2TGc"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="Join WRAPpDEX Discord community support"

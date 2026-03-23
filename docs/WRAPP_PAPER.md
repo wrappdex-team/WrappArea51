@@ -1175,6 +1175,6 @@ Live production integrations in the Wrappdex codebase:
                Copyright 2026 HBAR.h Protocol. All rights reserved.
 
          For questions, contact the HBAR.h team via Discord:
-         https://discord.gg/ZFnfRFxQZ
+         https://discord.com/invite/8w36D2TGc
 
 ================================================================================

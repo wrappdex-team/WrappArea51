@@ -32,7 +32,7 @@ export function LandingFooter() {
                 <Twitter size={16} />
               </a>
               <a
-                href="https://discord.com/invite/ZFnfRFxQZ"
+                href="https://discord.com/invite/8w36D2TGc"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-10 h-10 flex items-center justify-center hover:bg-black hover:text-white transition-all text-black"
