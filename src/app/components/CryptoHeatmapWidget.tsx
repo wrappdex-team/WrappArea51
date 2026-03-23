@@ -11,7 +11,9 @@ import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 // ── Constants ────────────────────────────────────────────────────────
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-54299934`;
-const SANDBOX = "allow-scripts allow-same-origin";
+// IMPLEMENTATION NOTE: sandbox removed — the widget HTML files are our own static
+// assets with no sensitive data; the QC widget script needs full network access
+// (fetch/XHR to quantifycrypto.com) that sandbox restrictions can silently break.
 const SERVER_VERIFY_INTERVAL_MS = 5 * 60 * 1000; // Re-verify every 5 min
 
 // ── VIP verification state machine ──────────────────────────────────
@@ -99,7 +101,7 @@ async function verifyVipOnServer(): Promise<{
 
 // ═════════════════════════════════════════════════════════════════════
 // Component
-// ════════════════════════════════════════════════════════════════════���
+// ════════════════════════════════════════════════════════════════════
 
 export function CryptoHeatmapWidget() {
   const { isDark } = useTheme();
@@ -436,7 +438,6 @@ export function CryptoHeatmapWidget() {
         <div className="w-full overflow-hidden">
           <iframe
             src={tickerUrl}
-            sandbox={SANDBOX}
             scrolling="no"
             title="Crypto Price Ticker"
             onLoad={handleTickerLoad}
@@ -465,7 +466,6 @@ export function CryptoHeatmapWidget() {
         >
           <iframe
             src={heatmapUrl}
-            sandbox={SANDBOX}
             scrolling="no"
             title="Top 50 Crypto Heatmap"
             onLoad={handleHeatmapLoad}
