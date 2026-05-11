@@ -5,16 +5,6 @@ import { TermsGate } from "./components/TermsGate";
 
 /**
  * Retry wrapper for dynamic imports.
- *
- * Vite occasionally fails to fetch a dynamically imported module on the first
- * attempt — especially right after dependency changes, when stale pre-bundle
- * cache can cause "TypeError: Failed to fetch dynamically imported module".
- * Retrying after a short delay (with a cache-busting query parameter) resolves
- * these transient failures without requiring a full page reload.
- *
- * Cache-busting: On retry, we append `?t=<timestamp>` to the module URL by
- * re-importing with `import()`. Vite treats the timestamped URL as a fresh
- * request, bypassing any stale browser or service-worker cache.
  */
 function retryImport<T>(
   importFn: () => Promise<T>,
@@ -23,17 +13,13 @@ function retryImport<T>(
 ): Promise<T> {
   return importFn().catch((err) => {
     if (retries <= 0) throw err;
-
-    // Detect chunk-load failures specifically
     const msg = err?.message || "";
     const isChunkError =
       msg.includes("Failed to fetch dynamically imported module") ||
       msg.includes("Loading chunk") ||
       msg.includes("Loading CSS chunk") ||
       msg.includes("error loading dynamically imported module");
-
-    if (!isChunkError) throw err; // Don't retry non-chunk errors
-
+    if (!isChunkError) throw err;
     return new Promise<T>((resolve, reject) => {
       setTimeout(() => {
         retryImport(importFn, retries - 1, delay * 1.5)
@@ -44,10 +30,8 @@ function retryImport<T>(
   });
 }
 
-// Landing page — standalone, no DEX chrome
+// Lazy-loaded components
 const LandingPage = lazy(() => retryImport(() => import("./components/landing/LandingPage")).then(m => ({ default: m.LandingPage })));
-
-// Lazy-load all route components for code splitting (with retry)
 const Dashboard = lazy(() => retryImport(() => import("./components/Dashboard")).then(m => ({ default: m.Dashboard })));
 const Trading = lazy(() => retryImport(() => import("./components/Trading")).then(m => ({ default: m.Trading })));
 const SwapPage = lazy(() => retryImport(() => import("./components/SwapPage")).then(m => ({ default: m.SwapPage })));
@@ -62,17 +46,10 @@ const PrivacyPolicy = lazy(() => retryImport(() => import("./components/PrivacyP
 const WhitePaper = lazy(() => retryImport(() => import("./components/WhitePaper")).then(m => ({ default: m.WhitePaper })));
 const Branding = lazy(() => retryImport(() => import("./components/Branding")).then(m => ({ default: m.Branding })));
 const PenTest = lazy(() => retryImport(() => import("./components/PenTest")).then(m => ({ default: m.PenTest })));
+const Predict = lazy(() => retryImport(() => import("./components/Predict")).then(m => ({ default: m.Predict })));   // ← ADDED
 const NotFound = lazy(() => retryImport(() => import("./components/NotFound")).then(m => ({ default: m.NotFound })));
 
-/**
- * TermsGateLayout — wraps the DEX Layout with the Beta Terms gate.
- *
- * IMPLEMENTATION NOTE: TermsGate must live INSIDE the router tree (not above
- * RouterProvider) so it mounts fresh when the user navigates from the landing
- * page (/) to any DEX route (/markets, /swap, etc.). When it was above the
- * router, client-side navigation never triggered a re-render and the gate
- * only appeared on full page refresh.
- */
+/** TermsGateLayout wrapper */
 function TermsGateLayout() {
   return (
     <TermsGate>
@@ -81,27 +58,7 @@ function TermsGateLayout() {
   );
 }
 
-/**
- * Route Architecture — wrappdex.io
- *
- * /                → Institutional landing page (no DEX chrome)
- * /markets         → DEX Dashboard (default DEX entry)
- * /trading         → Trading terminal
- * /swap            → Token swap
- * /buy-sell        → Fiat on/off ramp
- * /defi            → DeFi hub
- * /wallet          → Portfolio & wallet
- * /dao             → Governance
- * /bridges         → Cross-chain
- * /audit           → Security reports
- * /white-paper     → Wrapp Paper
- * /branding        → Brand identity
- * /pentest         → Security penetration testing suite
- * /terms           → Terms of Service
- * /privacy         → Privacy Policy
- */
-
-/** Transparent pass-through wrapper — Suspense boundary for the landing page lazy chunk */
+/** RootShell for landing page */
 function RootShell() {
   return (
     <Suspense
@@ -125,10 +82,7 @@ export const router = createBrowserRouter([
     path: "/",
     Component: RootShell,
     children: [
-      // Landing page — clean institutional site, no DEX layout, no terms gate
       { index: true, Component: LandingPage },
-
-      // DEX application — TermsGate blocks access until beta terms accepted
       {
         Component: TermsGateLayout,
         children: [
@@ -147,6 +101,7 @@ export const router = createBrowserRouter([
           { path: "white-paper", Component: WhitePaper },
           { path: "branding", Component: Branding },
           { path: "pentest", Component: PenTest },
+          { path: "predict", Component: Predict },                    // ← ADDED
           { path: "smart-liquidity", element: <Navigate to="/trading" replace /> },
           { path: "*", Component: NotFound },
         ],
