@@ -1,11 +1,27 @@
+# Wrappdex MVP
 
-  # Crypto Currency Exchange (Copy)
+**Institutional-Grade DeFi Exchange on Hedera Hashgraph**
 
-  This is a code bundle for Crypto Currency Exchange (Copy). The original project is available at https://www.figma.com/design/0f1CnXQDz2qy8szq55byW3/Crypto-Currency-Exchange--Copy-.
+Premium trading platform with CLPR, wrapped assets, and upcoming prediction markets.
 
-  ## Running the code
+## Features
+- Swap & Trade Terminal
+- Bridge with CLPR
+- DeFi modules
+- DAO governance
+- Prediction Markets (coming soon)
 
-  Run `npm i` to install the dependencies.
+Live at [wrappdex.io](https://wrappdex.io)
 
-  Run `npm run dev` to start the development server.
-  
+## Tech Stack
+- Hedera Hashgraph
+- React + Vite + TypeScript
+- Tailwind + shadcn/ui
+- HashPack + WalletConnect
+
+## Roadmap
+- Prediction Markets on CLPR-wrapped tokens
+- Full DAO activation at ~$2M MCAP
+- Hgraph MCP integration
+
+Join the community and help us build the future of DeFi on Hedera!
