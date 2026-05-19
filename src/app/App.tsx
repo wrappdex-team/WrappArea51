@@ -7,7 +7,6 @@ import { RouterProvider } from "react-router";
 import { router } from "./routes";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { WalletProvider } from "./contexts/WalletContext";
-import { DynamicSDKWrapper, isDynamicSDKAvailable } from "./components/DynamicSDKWrapper";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { SigningProvider } from "./contexts/SigningContext";
 import { PartneredLogosProvider } from "./contexts/PartneredLogosContext";
@@ -36,50 +35,6 @@ const _wcPrewarm = getSignClient().then(() => {
   // Non-critical — if it fails here, connectHashPack will retry on demand
 });
 
-/**
- * LazyDynamicBridge — only loads the Dynamic ↔ WalletContext bridge
- * when the Dynamic SDK has been successfully initialized.
- * This avoids eager static imports of @dynamic-labs/sdk-react-core
- * in the main module graph, which would cause App.tsx to fail if the
- * SDK can't be loaded.
- */
-function LazyDynamicBridge() {
-  const [Bridge, setBridge] = useState<React.ComponentType | null>(null);
-
-  useEffect(() => {
-    // Check periodically until SDK is available (loaded async by DynamicSDKWrapper)
-    const check = () => {
-      if (isDynamicSDKAvailable) {
-        import("./utils/dynamic-bridge")
-          .then((mod) => setBridge(() => mod.DynamicWalletBridge))
-          .catch((err) =>
-            log.warn("App", "Failed to load DynamicWalletBridge", err.message)
-          );
-        return true;
-      }
-      return false;
-    };
-
-    if (check()) return;
-
-    // Poll briefly in case SDK is still loading
-    const timer = setInterval(() => {
-      if (check()) clearInterval(timer);
-    }, 500);
-
-    // Stop polling after 10 seconds
-    const timeout = setTimeout(() => clearInterval(timer), 10000);
-
-    return () => {
-      clearInterval(timer);
-      clearTimeout(timeout);
-    };
-  }, []);
-
-  if (!Bridge) return null;
-  return <Bridge />;
-}
-
 export default function App() {
   useEffect(() => {
     // Initialize production monitoring & diagnostics on first render
@@ -101,18 +56,15 @@ export default function App() {
 
   return (
     <AppErrorBoundary>
-      <DynamicSDKWrapper>
-        <ThemeProvider>
-          <WalletProvider>
-            <SigningProvider>
-              <PartneredLogosProvider>
-                <LazyDynamicBridge />
-                <RouterProvider router={router} />
-              </PartneredLogosProvider>
-            </SigningProvider>
-          </WalletProvider>
-        </ThemeProvider>
-      </DynamicSDKWrapper>
+      <ThemeProvider>
+        <WalletProvider>
+          <SigningProvider>
+            <PartneredLogosProvider>
+              <RouterProvider router={router} />
+            </PartneredLogosProvider>
+          </SigningProvider>
+        </WalletProvider>
+      </ThemeProvider>
     </AppErrorBoundary>
   );
 }

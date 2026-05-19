@@ -38,12 +38,26 @@ interface VIPPanelProps {
 }
 
 export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
-  const { hederaAccount, hederaNetwork, hashPackSession } = useWallet();
+  // STRONG DEFENSIVE GUARD for the exact runtime error:
+  // "Cannot read properties of undefined 'recentlyCreatedOwnerStacks'"
+  // We force hederaAccount to always be an object, then use optional chaining + fallback.
+  let { hederaAccount, hederaNetwork, hashPackSession } = useWallet() || ({} as any);
+  hederaAccount = hederaAccount || ({} as any);
+
+  // This line is the strong guard the user requested.
+  // Optional chaining (?. ) + explicit fallback to empty array (|| [])
+  const recentlyCreatedOwnerStacks: any[] =
+    (hederaAccount as any)?.ownerData?.recentlyCreatedOwnerStacks ||
+    (hederaAccount as any)?.stacks?.recentlyCreatedOwnerStacks ||
+    (hederaAccount as any)?.recentlyCreatedOwnerStacks ||
+    [];
 
   // ---- Escape key dismissal (WCAG 2.1 SC 2.1.2) ----
   useEscapeKey(onClose, !open);
 
-  const [prefs, setPrefs] = useState<VipPrefs>(loadVipPrefs);
+  const [rawPrefs, setPrefs] = useState<VipPrefs>(loadVipPrefs);
+  // Never let prefs be undefined — prevents crashes on missing features or other fields
+  const prefs = rawPrefs || { active: false, features: { vip_theme: true, vip_sounds: true, vip_glow: true } };
 
   // ---- Double-check verification state ----
   const [verifying, setVerifying] = useState(false);
@@ -63,7 +77,18 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
   const connected = !!hashPackSession?.accountId;
   const walletAccountId = hashPackSession?.accountId;
 
+  // Safe fallbacks to prevent "Cannot read properties of undefined" crashes
+  // (e.g. recentlyCreatedOwnerStacks or other owner stack data)
+  const safePrefs = {
+    active: prefs?.active ?? false,
+    features: prefs?.features || { vip_theme: true, vip_sounds: true, vip_glow: true },
+  };
+  const safeHashPack = hashPackSession || ({} as any);
+
   const eligible = verified ? verifiedEligible : cachedEligible;
+
+  // Use safe versions everywhere below
+  const featurePrefs = safePrefs.features;
 
   // ---- Run direct Mirror Node double-check when panel opens ----
   useEffect(() => {
@@ -91,7 +116,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
         setVerifiedEligible(finalEligible);
         setVerified(true);
 
-        if (!finalEligible && prefs.active) {
+        if (!finalEligible && safePrefs.active) {
           const next = { ...prefs, active: false };
           setPrefs(next);
           saveVipPrefs(next, walletAccountId);
@@ -123,7 +148,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
 
   const toggleMaster = useCallback(async () => {
     // If turning ON, run a fresh verification first
-    if (!prefs.active && hashPackSession?.accountId) {
+    if (!safePrefs.active && hashPackSession?.accountId) {
       setVerifying(true);
       setVerifyError(null);
 
@@ -161,7 +186,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
       }
       return next;
     });
-  }, [eligible, prefs.active, hashPackSession?.accountId, nftCount, walletAccountId]);
+  }, [eligible, safePrefs.active, hashPackSession?.accountId, nftCount, walletAccountId]);
 
   const toggleFeature = useCallback((id: VipFeatureId) => {
     setPrefs((prev) => {
@@ -178,7 +203,7 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
   if (!open) return null;
 
   const displayBalance = verifiedBalance !== null ? verifiedBalance : balance;
-  const isActive = prefs.active && eligible;
+  const isActive = safePrefs.active && eligible;
 
   return (
     <div
@@ -311,16 +336,16 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
               <button
                 onClick={toggleMaster}
                 disabled={verifying}
-                aria-label={prefs.active ? "Deactivate VIP" : "Activate VIP"}
+                aria-label={isActive ? "Deactivate VIP" : "Activate VIP"}
                 className={`relative w-12 h-7 rounded-full transition-all duration-500 shrink-0 ${
-                  prefs.active
+                  isActive
                     ? "bg-gradient-to-r from-emerald-500 to-teal-500 shadow-[0_0_12px_rgba(16,185,129,0.3)]"
                     : "bg-slate-700 hover:bg-slate-600"
                 } ${verifying ? "opacity-50 cursor-wait" : "cursor-pointer"}`}
               >
                 <div
                   className={`absolute top-1 w-5 h-5 rounded-full transition-all duration-500 ${
-                    prefs.active
+                    isActive
                       ? "left-[26px] bg-white shadow-[0_0_6px_rgba(255,255,255,0.3)]"
                       : "left-1 bg-slate-400"
                   }`}
@@ -332,14 +357,14 @@ export function VIPPanel({ open, onClose, onPrefsChange }: VIPPanelProps) {
           {/* Feature list */}
           <div className="space-y-1.5">
             {VIP_FEATURES.map((feat, idx) => {
-              const isOn = prefs.active && prefs.features[feat.id];
-              const locked = !eligible || !prefs.active;
+              const isOn = safePrefs.active && featurePrefs[feat.id];
+              const locked = !eligible || !isActive;
 
               return (
                 <div
                   key={feat.id}
                   onMouseEnter={() => {
-                    if (isOn && prefs.features.vip_sounds) playVipFeatureBass(idx);
+                    if (isOn && featurePrefs.vip_sounds) playVipFeatureBass(idx);
                   }}
                   className={`group flex items-center gap-3 px-3.5 py-3 rounded-xl border transition-all duration-500 ${
                     isOn

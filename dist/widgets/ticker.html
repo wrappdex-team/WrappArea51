@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <!-- IMPLEMENTATION NOTE: No CSP needed — iframe sandbox="allow-scripts allow-same-origin" provides isolation -->
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      overflow: hidden;
+      min-height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    body::-webkit-scrollbar { display: none; }
+    body { -ms-overflow-style: none; scrollbar-width: none; }
+    *:not(html):not(body) {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.10) transparent;
+    }
+    *:not(html):not(body)::-webkit-scrollbar { width: 4px; height: 4px; }
+    *:not(html):not(body)::-webkit-scrollbar-track { background: transparent; }
+    *:not(html):not(body)::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
+    *:not(html):not(body)::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+    *:not(html):not(body)::-webkit-scrollbar-corner { background: transparent; }
+    qc-price-ticker-widget { display: block; width: 100%; }
+  </style>
+  <script>
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var theme = params.get('theme') === 'light' ? 'light' : 'dark';
+      var bg = theme === 'dark' ? '#080a12' : '#f8fafc';
+      document.documentElement.style.background = bg;
+      document.addEventListener('DOMContentLoaded', function() {
+        document.body.style.background = bg;
+        var widget = document.querySelector('qc-price-ticker-widget');
+        if (widget) {
+          widget.setAttribute('bg', bg);
+          widget.setAttribute('theme', theme);
+        }
+      });
+    })();
+  </script>
+</head>
+<body>
+  <!-- COPY QC WIDGET TAG AND SCRIPT BELOW -->
+  <qc-price-ticker-widget
+    mode="custom"
+    top-coins="true"
+    gainers-and-losers="true"
+    bg="#080a12"
+    theme="dark"
+    currency="USD">
+  </qc-price-ticker-widget>
+  <script src="https://quantifycrypto.com/widgets/marquee/js/qc-price-ticker-widget.js"></script>
+</body>
+</html>

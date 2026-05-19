@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════════════════
+# WRAPpDEX — robots.txt
+# SEO Phase 1, Step 1D
+# ═══════════════════════════════════════════════════════════════════════
+
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://www.wrappdex.io/sitemap.xml
+
+# Disallow internal/admin paths
+Disallow: /pentest
+Disallow: /widgets/
