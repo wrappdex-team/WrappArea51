@@ -45,8 +45,15 @@
         frame-src — changenow.io (swap/topup widget), app.hashport.network
                         (HashPort bridge widget), studio.squidrouter.com (Squid/Axelar
                         cross-chain bridge iframe widget), WalletConnect verify iframes,
+ feature/professional-polish
+                        (legacy references removed — current stack uses native HashPack + WalletConnect).
+
+        worker-src    — blob: for WalletConnect / crypto library inline workers.
+
+
                         Dynamic SDK (passkey / secure-enclave iframes).
         worker-src — blob: for WalletConnect / crypto library inline workers.
+ main
       Not expressible via meta tag (requires HTTP header for production):
         - frame-ancestors (use X-Frame-Options or Vercel headers)
         - report-uri / report-to (use Vercel headers + Sentry CSP endpoint)
@@ -65,6 +72,23 @@
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="WRAPpDEX" />
+feature/professional-polish
+    <meta property="og:title" content="WRAPpDEX — Hedera DEX + Prediction Markets | Trade, Bridge & Bet On-Chain" />
+    <meta property="og:description" content="Institutional-grade DEX on Hedera with real-time trading, cross-chain bridging, DAO governance, and on-chain Prediction Markets. Sub-3s finality, HashPack native." />
+    <meta property="og:url" content="https://www.wrappdex.io" />
+    <!-- 
+      og:image: Replace with a high-quality 1200×630 social preview showing the WRAPpDEX UI 
+      (Swap interface + active Prediction Markets). Upload to /public/og-image.png for self-hosting.
+      Current external URL is a placeholder for production domain.
+    -->
+    <meta property="og:image" content="https://www.wrappdex.io/og-image.png" />
+    <meta property="og:image:secure_url" content="https://www.wrappdex.io/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="WRAPpDEX — Hedera DEX and On-Chain Prediction Markets" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:locale" content="en_US" />
+
     <meta property="og:title" content="WRAPpDEX — Decentralized Exchange on Hedera" />
     <meta property="og:description" content="Institutional-grade decentralized exchange on Hedera. Swap, trade, bridge, provide liquidity, and govern via DAO with sub-3-second finality." />
     <meta property="og:url" content="https://wrappdex.io" />
@@ -72,12 +96,25 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="WRAPpDEX — Decentralized Exchange on Hedera" />
+ main
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
+ feature/professional-polish
+    <meta name="twitter:site" content="@WRAPpDEX" />
+    <meta name="twitter:creator" content="@WRAPpDEX" />
+    <meta name="twitter:title" content="WRAPpDEX — Hedera DEX + Prediction Markets" />
+    <meta name="twitter:description" content="Trade, bridge & bet on-chain on Hedera. Real-time DEX + fully on-chain Prediction Markets with sub-3s finality." />
+    <meta name="twitter:image" content="https://www.wrappdex.io/og-image.png" />
+    <meta name="twitter:image:alt" content="WRAPpDEX — Hedera DEX and On-Chain Prediction Markets" />
+
+    <!--  SEO Phase 1: Canonical URL  -->
+    <link rel="canonical" href="https://www.wrappdex.io" />
+
     <meta name="twitter:title" content="WRAPpDEX — Decentralized Exchange on Hedera" />
     <meta name="twitter:description" content="Institutional-grade DEX on Hedera. Swap, trade, bridge, provide liquidity, and govern via DAO with sub-3-second finality." />
     <meta name="twitter:image" content="https://wrappdex.io/og-image.png" />
+main
 
         <!-- Favicons + Social Icon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -95,7 +132,7 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
 
-    <!-- ═══ SEO Phase 1: Noscript fallback for crawlers (Step 1G) ═══ -->
+    <!--  SEO Phase 1: Noscript fallback for crawlers (Step 1G)  -->
     <noscript>
       <div style="max-width:800px;margin:40px auto;padding:20px;font-family:system-ui,sans-serif;color:#0f172a">
         <h1>WRAPpDEX — Decentralized Exchange on Hedera</h1>

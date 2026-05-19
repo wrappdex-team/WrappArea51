@@ -21,11 +21,8 @@ import {
 import {
   HASHPACK_LOGO,
   METAMASK_LOGO,
-  DYNAMIC_LOGO,
 } from "../assets/brand";
-import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 import { usePartneredLogos } from "../contexts/PartneredLogosContext";
-import { useDynamicContext, useIsLoggedIn, useDynamicModals } from "@dynamic-labs/sdk-react-core";
 import { getSignClient, getWCModal } from "../utils/wallet-core";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 
@@ -104,56 +101,20 @@ function sendUriToHashPackExtension(uri: string): Promise<boolean> {
   });
 }
 
-/**
- * Dynamic SDK hook results forwarded from DynamicHooksBridge.
- * Defaults are safe no-ops for when the SDK is unavailable.
- */
-interface DynamicHooksResult {
-  setShowAuthFlow: (show: boolean) => void;
-  isLoggedIn: boolean;
-  setShowLinkNewWalletModal: (show: boolean) => void;
-  available: boolean;
-}
-
-const DYNAMIC_HOOKS_DEFAULTS: DynamicHooksResult = {
-  setShowAuthFlow: () => {},
-  isLoggedIn: false,
-  setShowLinkNewWalletModal: () => {},
-  available: false,
-};
-
-/**
- * Bridge component rendered ONLY when the Dynamic SDK has initialized.
- * Hooks are called unconditionally inside this component (Rules of Hooks
- * compliant). Results are forwarded to the parent via a stable callback ref.
- */
-function DynamicHooksBridge({ onUpdateRef }: { onUpdateRef: React.RefObject<(h: DynamicHooksResult) => void> }) {
-  const { setShowAuthFlow } = useDynamicContext();
-  const isLoggedIn = useIsLoggedIn();
-  const { setShowLinkNewWalletModal } = useDynamicModals();
-
-  useEffect(() => {
-    onUpdateRef.current?.({ setShowAuthFlow, isLoggedIn, setShowLinkNewWalletModal, available: true });
-  }, [setShowAuthFlow, isLoggedIn, setShowLinkNewWalletModal, onUpdateRef]);
-
-  return null;
-}
-
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface WalletConnectModalProps {
   onClose: () => void;
 }
 
-type WalletId = "hashpack" | "metamask" | "dynamic";
+type WalletId = "hashpack" | "metamask";
 
 type ConnectionStep =
   | "list"
   | "wc-connecting"
   | "wc-success"
   | "metamask-connect"
-  | "metamask-success"
-  | "dynamic-connect";
+  | "metamask-success";
 
 interface WalletOption {
   id: WalletId;
@@ -184,20 +145,12 @@ const WALLET_OPTIONS: WalletOption[] = [
     description: "Browser extension",
     isWC: false,
   },
-  {
-    id: "dynamic",
-    name: "Dynamic",
-    logo: DYNAMIC_LOGO,
-    badge: "Multi-chain",
-    badgeColor: "blue",
-    description: "Email, social, or 300+ wallets",
-    isWC: false,
-  },
 ];
 
 // ── Shared Components ──────────────────────────────────────────────────
 
-function ModalShell({ children, maxW = "max-w-md" }: { children: ReactNode; maxW?: string }) {
+// Shared Components
+function ModalShell({ children, maxW = "max-w-md" }: { children: React.ReactNode; maxW?: string }) {
   return (
     <div
       className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-md p-4"
@@ -294,15 +247,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // Escape key dismissal (WCAG 2.1 SC 2.1.2)
   useEscapeKey(onClose);
 
-  // Dynamic Labs — programmatic auth flow trigger.
-  // DynamicHooksBridge is a child component that only mounts when the SDK is
-  // available, keeping all hook calls unconditional (Rules of Hooks compliant).
-  const [dynamicHooks, setDynamicHooks] = useState<DynamicHooksResult>(DYNAMIC_HOOKS_DEFAULTS);
-  const dynamicUpdateRef = useRef((h: DynamicHooksResult) => setDynamicHooks(h));
-  dynamicUpdateRef.current = (h: DynamicHooksResult) => setDynamicHooks(h);
-
-  const { setShowAuthFlow, isLoggedIn: isLoggedInDynamic, setShowLinkNewWalletModal } = dynamicHooks;
-
   const [step, setStep] = useState<ConnectionStep>("list");
   const [selectedWallet, setSelectedWallet] = useState<WalletOption | null>(null);
   const [localSession, setLocalSession] = useState<HashPackSession | null>(null);
@@ -332,29 +276,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
       detectHashPackExtension().then(setHashPackDetected);
     }
   }, []);
-
-  // ── Dynamic Connect ──────────────────────────────────────────────
-  //
-  // Opens the Dynamic Labs auth modal (email, social, 300+ wallets).
-  // Our modal closes and hands off to Dynamic's UI (themed via
-  // dynamic-theme.css). The DynamicWalletBridge syncs the resulting
-  // wallet back into WalletContext automatically.
-  //
-  // When the user is already logged in via Dynamic, we show the
-  // "link new wallet" modal instead of the auth flow to avoid the
-  // SDK deprecation warning.
-
-  const handleDynamicConnect = useCallback(() => {
-    // Close our wallet modal — Dynamic opens its own themed overlay
-    onClose();
-    if (isLoggedInDynamic) {
-      // Already authenticated → show the "link additional wallet" modal
-      setShowLinkNewWalletModal(true);
-    } else {
-      // Not authenticated → show the full auth/connect flow
-      setShowAuthFlow(true);
-    }
-  }, [onClose, isLoggedInDynamic, setShowAuthFlow, setShowLinkNewWalletModal]);
 
   // ── WalletConnect Connect ────────────────────────────────────
   //
@@ -438,18 +359,12 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     }
   };
 
-  // Stable bridge element — rendered in every return branch to keep Dynamic
-  // hooks mounted consistently (React reconciles by position in the tree).
-  const dynamicBridge = isDynamicSDKAvailable
-    ? <DynamicHooksBridge onUpdateRef={dynamicUpdateRef} />
-    : null;
-
   // ══════════════════════════════════════════════════════════
   // METAMASK CONNECTING
   // ═════════════════════════════════════════════════════════════
   if (step === "metamask-connect") {
     return (
-      <> {dynamicBridge}
+      <> 
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-8">
@@ -554,7 +469,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // ════════════════════════════════════════════════════════════
   if (step === "metamask-success" && metaMaskAccount) {
     return (
-      <>{dynamicBridge}
+      <>
       <ModalShell>
         <SuccessScreen label="Connected" accountId={formatAddress(metaMaskAccount.address)} onClose={onClose} />
       </ModalShell>
@@ -571,7 +486,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     const showQR = pairingUri && !hashPackDetected && !isMobileBrowser();
 
     return (
-      <>{dynamicBridge}
+      <>
       <ModalShell>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-6">
@@ -693,7 +608,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   const sessionForSuccess = localSession || hashPackSession;
   if (step === "wc-success" && sessionForSuccess) {
     return (
-      <>{dynamicBridge}
+      <>
       <ModalShell>
         <SuccessScreen label="Connected" accountId={sessionForSuccess.accountId} onClose={onClose} />
       </ModalShell>
@@ -705,7 +620,7 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
   // MAIN WALLET LIST
   // ═════════════════════════════════════════════════════════════
   return (
-    <>{dynamicBridge}
+    <>
     <ModalShell>
       <div className="p-6">
         {/* Header */}
@@ -775,32 +690,6 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
           </div>
           <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-orange-500/10 transition-colors">
             <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-orange-400 transition-colors" />
-          </div>
-        </button>
-
-        {/* Multi-chain Divider */}
-        <div className="flex items-center gap-3 my-4">
-          <span className="text-[10px] text-white/20 tracking-widest uppercase">Multi-chain</span>
-          <div className="flex-1 h-px bg-white/[0.06]" />
-        </div>
-
-        {/* Dynamic */}
-        <button
-          onClick={handleDynamicConnect}
-          className="group w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 border border-white/[0.06] hover:border-blue-500/30 hover:bg-white/[0.02] text-left mb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50"
-        >
-          <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
-            <img src={partnerLogos.dynamic} alt="Dynamic" className="w-11 h-11 object-cover" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-sm text-white/90">Dynamic</span>
-              <Badge color="blue">Multi-chain</Badge>
-            </div>
-            <p className="text-xs text-white/30">Email, social, or 300+ wallets</p>
-          </div>
-          <div className="w-8 h-8 rounded-lg bg-white/[0.03] flex items-center justify-center shrink-0 group-hover:bg-blue-500/10 transition-colors">
-            <ExternalLink className="w-4 h-4 text-white/15 group-hover:text-blue-400 transition-colors" />
           </div>
         </button>
 

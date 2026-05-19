@@ -1,0 +1,29 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+var _pagination = require("./pagination.js");
+describe(__filename, function() {
+    describe('validate', function() {
+        it('should return null for nulls', function() {
+            var request = new _pagination.PaginationRequest(undefined, undefined);
+            expect(request.validate()).toBe(null);
+        });
+        it('should return error for limit < 1', function() {
+            var request = new _pagination.PaginationRequest(undefined, 0);
+            expect(request.validate()).toBe('limit should be in range between 1 and 500');
+        });
+        it('should return error for limit > 500', function() {
+            var request = new _pagination.PaginationRequest(undefined, 501);
+            expect(request.validate()).toBe('limit should be in range between 1 and 500');
+        });
+        it('should return error for page < 1', function() {
+            var request = new _pagination.PaginationRequest(0, undefined);
+            expect(request.validate()).toBe('page should be >= 1');
+        });
+        it('should return null for valid inputs', function() {
+            var request = new _pagination.PaginationRequest(1, 10);
+            expect(request.validate()).toBe(null);
+        });
+    });
+});

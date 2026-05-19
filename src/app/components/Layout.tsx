@@ -3,9 +3,10 @@ import { useLocation, Link } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import {
   TrendingUp, BarChart3, ArrowRightLeft, DollarSign,
-  Droplets, Wallet, Vote, Globe, Shield,
+  Droplets, Wallet, Vote, Globe, Shield,Zap,
   Sun, Moon, Crown, LogOut, Menu,
   VolumeOff, Volume1, Volume2, AlertTriangle,
+  Feather,
 } from "lucide-react";
 import { Toaster } from "sonner";
 
@@ -105,6 +106,7 @@ export function Layout() {
     { path: "/defi", label: "DeFi", icon: Droplets },
     { path: "/wallet", label: "Wallet", icon: Wallet },
     { path: "/dao", label: "DAO", icon: Vote },
+    { path: "/predict", label: "Predict", icon: Feather },
   ];
 
   // Secondary items shown in the mobile "More" sheet drawer

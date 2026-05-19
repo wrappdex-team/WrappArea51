@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "test:contracts": "npx hardhat test contracts/test/PredictionMarket.test.cjs --network hardhat"
   },
   "dependencies": {
     "@1inch/byte-utils": "^3.1.7",
@@ -14,8 +15,7 @@
     "@1inch/fusion-sdk": "^2.4.6",
     "@1inch/limit-order-protocol-utils": "^4.0.1",
     "@1inch/limit-order-sdk": "^5.2.3",
-    "@dynamic-labs/ethereum": "^4.61.2",
-    "@dynamic-labs/sdk-react-core": "^4.61.2",
+
     "@hashgraph/sdk": "^2.80.0",
     "@metamask/sdk": "^0.34.0",
     "@noble/hashes": "^2.0.1",
@@ -60,6 +60,7 @@
     "motion": "^12.34.0",
     "next-themes": "0.4.6",
     "process": "^0.11.10",
+    "protobufjs": "^8.4.0",
     "qrcode.react": "^4.2.0",
     "react-day-picker": "8.10.1",
     "react-hook-form": "7.55.0",
@@ -73,9 +74,15 @@
     "viem": "^2.45.3"
   },
   "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^3.0.0",
+    "@openzeppelin/contracts": "^5.6.1",
     "@tailwindcss/vite": "4.1.12",
     "@vitejs/plugin-react": "4.7.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.19.2",
     "tailwindcss": "4.1.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
     "vite": "6.3.5"
   },
   "peerDependencies": {

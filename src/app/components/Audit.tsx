@@ -20,7 +20,6 @@ import {
 import { restoreSession, getCurrentHashConnect } from "../utils/hashpack";
 import { getSessionToken, getSessionAccountId } from "../utils/auth";
 import { isMetaMaskInstalled } from "../utils/metamask";
-import { isDynamicSDKAvailable } from "./DynamicSDKWrapper";
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -256,11 +255,11 @@ export function Audit() {
           : "Not detected",
     });
 
-    // Dynamic Labs SDK
+    // Dynamic Labs SDK — removed during wallet simplification (now pure HashPack + WalletConnect)
     items.push({
       label: "Dynamic SDK",
-      status: isDynamicSDKAvailable ? "ok" : "degraded",
-      value: isDynamicSDKAvailable ? "Loaded" : "Unavailable",
+      status: "degraded",
+      value: "Removed (native HashPack + WC only)",
     });
 
     setWalletChecks(items);
@@ -455,7 +454,7 @@ export function Audit() {
           </div>
           <div>
             <h2 className={`text-sm font-semibold ${heading}`}>Wallet &amp; Auth</h2>
-            <p className={`text-xs ${muted}`}>WalletConnect, HashPack, MetaMask, Dynamic Labs, session tokens</p>
+            <p className={`text-xs ${muted}`}>WalletConnect, HashPack, MetaMask, session tokens</p>
           </div>
         </div>
 
