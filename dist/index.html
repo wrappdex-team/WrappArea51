@@ -5,22 +5,17 @@
     <!--
       Content-Security-Policy — enforcing mode.
       Placed before any resource loads so the policy is active from first byte.
-
       Directive inventory (each domain justified by codebase audit):
-
-        script-src    — 'unsafe-inline' required for Vite modulepreload polyfill and
+        script-src — 'unsafe-inline' required for Vite modulepreload polyfill and
                         error-fallback onclick handler in main.tsx. External scripts:
                         changenow.io (stepper-connector.js), quantifycrypto.com
                         (heatmap/ticker widgets inside srcdoc iframes inherit parent CSP).
-
-        style-src     — 'unsafe-inline' covers Tailwind utilities, inline style attrs,
+        style-src — 'unsafe-inline' covers Tailwind utilities, inline style attrs,
                         and Dynamic SDK injected CSS. fonts.googleapis.com for Inter /
                         JetBrains Mono. app.dynamic.xyz for SDK legacy Safari styles.
-
-        font-src      — fonts.gstatic.com (Google Fonts files), cdn.jsdelivr.net
+        font-src — fonts.gstatic.com (Google Fonts files), cdn.jsdelivr.net
                         (Dynamic SDK DM Sans @font-face), data: for inline font URIs.
-
-        img-src       — Supabase storage (partnered logos signed URLs),
+        img-src — Supabase storage (partnered logos signed URLs),
                          coingecko / saucerswap / 1inch / coinmarketcap token icons,
                          coin-images.coingecko.com (CoinGecko CDN migration target),
                          changenow logo, Dynamic SDK assets, WC explorer wallet icons
@@ -34,13 +29,12 @@
                          www.google.com (favicon fallback for partner logos),
                          altlantis.io (AltLantis partner logo),
                          data: SVGs, blob: canvas exports.
-
                         NOTE: The QC ticker/heatmap widgets are now served as
                         static HTML files in /public/widgets/ via src= iframes,
                         each with their own permissive <meta> CSP (img-src *).
                         This decouples them from the parent page's img-src entirely.
                         The wildcards above are retained as defense-in-depth.
-        connect-src   — Supabase edge functions, SaucerSwap / CoinGecko / CoinCap /
+        connect-src — Supabase edge functions, SaucerSwap / CoinGecko / CoinCap /
                         Binance / Alternative.me APIs, Bonzo lending protocol,
                         Hedera mirror nodes + JSON-RPC relays (mainnet + testnet),
                         Ethereum RPCs (Chainlink price feeds), EVM RPCs (1inch),
@@ -48,35 +42,33 @@
                         Dynamic Labs SDK + auth API, Farcaster relay,
                         quantifycrypto widget API (bare + wildcard subdomains),
                         DexScreener API (HBAR.h token price oracle — primary source).
-
-        frame-src     — changenow.io (swap/topup widget), app.hashport.network
+        frame-src — changenow.io (swap/topup widget), app.hashport.network
                         (HashPort bridge widget), studio.squidrouter.com (Squid/Axelar
                         cross-chain bridge iframe widget), WalletConnect verify iframes,
                         (legacy references removed — current stack uses native HashPack + WalletConnect).
 
         worker-src    — blob: for WalletConnect / crypto library inline workers.
 
-      Not expressible via meta tag (requires HTTP header for production):
-        - frame-ancestors  (use X-Frame-Options or Vercel headers)
-        - report-uri / report-to  (use Vercel headers + Sentry CSP endpoint)
 
+                        Dynamic SDK (passkey / secure-enclave iframes).
+        worker-src — blob: for WalletConnect / crypto library inline workers.
+
+      Not expressible via meta tag (requires HTTP header for production):
+        - frame-ancestors (use X-Frame-Options or Vercel headers)
+        - report-uri / report-to (use Vercel headers + Sentry CSP endpoint)
       Rollout note: to monitor without blocking, temporarily change the
       http-equiv value to "Content-Security-Policy-Report-Only" and add a
       report-uri via server headers. Switch back to enforcing after validation.
     -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://changenow.io https://quantifycrypto.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://app.dynamic.xyz; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net data:; img-src 'self' data: blob: https://ehmlclowiedoqncymegi.supabase.co https://assets.coingecko.com https://coin-images.coingecko.com https://www.saucerswap.finance https://tokens.1inch.io https://s2.coinmarketcap.com https://changenow.io https://app.dynamic.xyz https://iconic.dynamic-static-assets.com https://dynamic-static-assets.com https://quantifycrypto.com https://www.quantifycrypto.com https://*.quantifycrypto.com https://lcw.nyc3.cdn.digitaloceanspaces.com https://*.digitaloceanspaces.com https://*.livecoinwatch.com https://explorer-api.walletconnect.com https://explorer.walletconnect.com https://images.unsplash.com https://avatars.githubusercontent.com https://www.google.com https://altlantis.io; connect-src 'self' https://ehmlclowiedoqncymegi.supabase.co https://api.saucerswap.finance https://api.alternative.me https://api.coingecko.com https://api.coincap.io https://rest.coincap.io https://api.binance.com https://mainnet-data-staging.bonzo.finance https://mainnet-public.mirrornode.hedera.com https://testnet.mirrornode.hedera.com https://mainnet.hashio.io https://testnet.hashio.io https://ethereum-rpc.publicnode.com https://rpc.ankr.com https://cloudflare-eth.com https://eth.llamarpc.com https://1rpc.io https://polygon-rpc.com https://bsc-dataseed1.binance.org https://arb1.arbitrum.io wss://relay.walletconnect.org https://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.com https://echo.walletconnect.com https://pulse.walletconnect.com https://rpc.walletconnect.org https://verify.walletconnect.com https://verify.walletconnect.com https://explorer-api.walletconnect.com https://app.dynamic.xyz https://app.dynamicauth.com https://dynamic-static-assets.com https://iconic.dynamic-static-assets.com https://relay.farcaster.xyz https://quantifycrypto.com https://*.quantifycrypto.com https://api.dexscreener.com https://api.etherscan.io https://api-goerli.etherscan.io https://api-sepolia.etherscan.io https://api.polygonscan.com https://api.bscscan.com https://api.basescan.org https://api.arbiscan.io; frame-src 'self' https://changenow.io https://app.hashport.network https://studio.squidrouter.com https://verify.walletconnect.com https://verify.walletconnect.org https://app.dynamic.xyz; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://app.dynamic.xyz; manifest-src 'self'; upgrade-insecure-requests" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5" />
 
-    <!-- ═══ SEO Phase 1: Title + Meta (Step 1A/1B/1H) ═══ -->
+    <!-- SEO + Social Meta Tags -->
     <title>WRAPpDEX — Decentralized Exchange on Hedera | Swap, Trade & Bridge</title>
     <meta name="description" content="WRAPpDEX is an institutional-grade decentralized exchange built on Hedera. Swap tokens, trade with real-time charts, provide liquidity, bridge cross-chain, and govern via DAO — all with sub-3-second finality and HashPack wallet integration." />
-    <meta name="keywords" content="WRAPpDEX, Hedera, decentralized exchange, DEX, swap, trade, bridge, DeFi, HBAR, liquidity, institutional, custody, HashPack, SaucerSwap, DAO, governance, crypto" />
-    <meta name="author" content="WRAPpDEX" />
-    <meta name="theme-color" content="#0f172a" />
-    <meta name="robots" content="index, follow" />
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
 
-    <!-- ═══ SEO Phase 1: Open Graph (Step 1C) ═══ -->
+    <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="WRAPpDEX" />
     <meta property="og:title" content="WRAPpDEX — Hedera DEX + Prediction Markets | Trade, Bridge & Bet On-Chain" />
@@ -95,7 +87,15 @@
     <meta property="og:image:type" content="image/png" />
     <meta property="og:locale" content="en_US" />
 
-    <!-- ═══ SEO Phase 1: Twitter Card (Step 1C) ═══ -->
+    <meta property="og:title" content="WRAPpDEX — Decentralized Exchange on Hedera" />
+    <meta property="og:description" content="Institutional-grade decentralized exchange on Hedera. Swap, trade, bridge, provide liquidity, and govern via DAO with sub-3-second finality." />
+    <meta property="og:url" content="https://wrappdex.io" />
+    <meta property="og:image" content="https://wrappdex.io/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="WRAPpDEX — Hedera DEX and On-Chain Prediction Markets" />
+
+    <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@WRAPpDEX" />
     <meta name="twitter:creator" content="@WRAPpDEX" />
@@ -104,81 +104,32 @@
     <meta name="twitter:image" content="https://www.wrappdex.io/og-image.png" />
     <meta name="twitter:image:alt" content="WRAPpDEX — Hedera DEX and On-Chain Prediction Markets" />
 
-    <!-- ═══ SEO Phase 1: Canonical URL ═══ -->
+    <!-- SEO Phase 1: Canonical URL -->
     <link rel="canonical" href="https://www.wrappdex.io" />
+main
 
-    <!-- ═══ SEO Phase 1: Favicons (Step 1F) ═══
-         IMPLEMENTATION NOTE: favicon-16x16.png and og-image.png uploaded.
-         Still needed: favicon-32x32.png, apple-touch-icon.png (180x180),
-         icon-192x192.png, icon-512x512.png.
-    -->
+        <!-- Favicons + Social Icon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/og-image.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/og-image.png" />
     <link rel="manifest" href="/site.webmanifest" />
 
-    <!-- ═══ SEO Phase 1: Font preconnect (render perf) ═══ -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!--
-      SEO Phase 2A: Google Fonts loaded via <link> instead of CSS @import
-      to eliminate render-blocking. The @import in fonts.css is kept as
-      fallback but this <link> preloads the stylesheet.
-    -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" />
-    <!-- IMPLEMENTATION NOTE: preload removed — the <link rel="stylesheet"> above already fetches eagerly -->
-
-    <!-- ═══ SEO Phase 1: Structured Data JSON-LD ═══ -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "WRAPpDEX",
-      "url": "https://www.wrappdex.io",
-      "description": "Institutional-grade decentralized exchange built on the Hedera network. Swap, trade, bridge, and govern digital assets with sub-3-second finality.",
-      "applicationCategory": "FinanceApplication",
-      "operatingSystem": "Web",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD"
-      },
-      "creator": {
-        "@type": "Organization",
-        "name": "WRAPpDEX",
-        "url": "https://www.wrappdex.io",
-        "logo": "https://www.wrappdex.io/favicon-16x16.png",
-        "sameAs": [
-          "https://x.com/WRAPpDEX",
-          "https://www.linkedin.com/company/wrappdex",
-          "https://discord.com/invite/8w36D2TGc"
-        ]
-      }
-    }
-    </script>
-
-    <!-- ═══ SEO Phase 4: Google Analytics 4 placeholder ═══
-         IMPLEMENTATION NOTE: Replace G-XXXXXXXXXX with your real GA4 Measurement ID.
-         Create one at https://analytics.google.com → Admin → Data Streams → Web
-    -->
-    <!-- <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-XXXXXXXXXX');
-    </script> -->
-    <script type="module" crossorigin src="/assets/index-BLH3Q6Id.js"></script>
+    <script type="module" crossorigin src="/assets/index-CMqye7_P.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/vendor-react-B0SBynOV.js">
     <link rel="modulepreload" crossorigin href="/assets/vendor-hedera-B5ktXgY9.js">
     <link rel="modulepreload" crossorigin href="/assets/vendor-radix-RhZIsNsR.js">
     <link rel="modulepreload" crossorigin href="/assets/vendor-charts-Dm2lmjWk.js">
     <link rel="stylesheet" crossorigin href="/assets/index-ZuaHGOIc.css">
   </head>
+
   <body>
     <div id="root"></div>
 
-    <!-- ═══ SEO Phase 1: Noscript fallback for crawlers (Step 1G) ═══ -->
+    <!--  SEO Phase 1: Noscript fallback for crawlers (Step 1G)  -->
     <noscript>
       <div style="max-width:800px;margin:40px auto;padding:20px;font-family:system-ui,sans-serif;color:#0f172a">
         <h1>WRAPpDEX — Decentralized Exchange on Hedera</h1>
