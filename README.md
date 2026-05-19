@@ -1,6 +1,3 @@
-# Wrappdex MVP
-
-feature/professional-polish
 # WRAPpDEX
 
 > Institutional-grade decentralized exchange and on-chain Prediction Markets platform built natively on Hedera Hashgraph.
