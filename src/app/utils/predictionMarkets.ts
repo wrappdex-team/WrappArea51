@@ -25,8 +25,24 @@ export const HEDERA_MAINNET_RPC = "https://mainnet.hashio.io/api";
 export const HEDERA_EVM_DECIMALS = 18; // Uniform across all contracts, viem clients, and nativeCurrency for Hedera EVM (msg.value uses 18dec)
 
 // Update these after running the deploy script on desired network
-export const FACTORY_ADDRESS_TESTNET = "0x0000000000000000000000000000000000000000"; // TODO: replace with real
-export const FACTORY_ADDRESS_MAINNET = "0x0000000000000000000000000000000000000000";
+// ─────────────────────────────────────────────────────────────────────────────
+// Testnet-only Prediction Markets (Phase 1)
+// All other WRAPpDEX modules (DEX, bridges, DAO, etc.) remain fully active on mainnet.
+// Prediction Markets tab is explicitly restricted to Hedera Testnet (chain 296) for this phase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Testnet accounts provided for roles (EVM addresses derived from these Hedera account IDs):
+// tester1 (test user): 0.0.8095815
+// TN Treasury (fee recipient): 0.0.9006841
+// Market resolution (RESOLVER_ROLE): 0.0.9006850
+// Admin (owner / deployer of Factory): 0.0.9006979
+
+// HGraph MCP integration for real-time data / oracle feeds / resolution monitoring
+export const HGRAPH_API_KEY = "sk_prod_bdc6459b669dd01dfed5e4af9d28eabf5b20dd25";
+export const HGRAPH_TESTNET_URL = "https://testnet.hgraph.io/v1/graphql";
+
+export const FACTORY_ADDRESS_TESTNET = "0x0000000000000000000000000000000000000000"; // Deploy with Admin 0.0.9006979 on testnet, then update this address
+export const FACTORY_ADDRESS_MAINNET = "0x0000000000000000000000000000000000000000"; // Not used for predictions in this phase
 
 const FACTORY_ABI = [
   "function createMarket(string question, string asset, uint256 endTime) payable returns (address)",
@@ -298,4 +314,77 @@ export async function ensureHederaEVMNetwork(): Promise<void> {
       });
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HGraph MCP Integration (real-time market data, oracle feeds, resolution monitoring)
+// Uses the provided prod key for authenticated GraphQL queries on Testnet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function queryHGraph(query: string, variables: Record<string, any> = {}): Promise<any> {
+  try {
+    const res = await fetch(HGRAPH_TESTNET_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": HGRAPH_API_KEY,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+    const json = await res.json();
+    if (json.errors) {
+      console.warn("[HGraph] Query errors", json.errors);
+      return null;
+    }
+    return json.data;
+  } catch (e) {
+    console.warn("[HGraph] Fetch failed", e);
+    return null;
+  }
+}
+
+// Example oracle / real-time enrichment (adjust query to your HGraph schema for prices or resolver account activity 0.0.9006850)
+export async function fetchHGraphOraclePrice(asset: string): Promise<number | null> {
+  const data = await queryHGraph(`
+    query GetPrice($symbol: String!) {
+      token(where: { symbol: { _eq: $symbol } }) {
+        current_price_usd
+      }
+    }
+  `, { symbol: asset });
+  return data?.token?.[0]?.current_price_usd ?? null;
+}
+
+// Claim winnings for a resolved market (user must have winning position)
+export async function claimWinningsOnChain(marketAddress: string): Promise<string> {
+  const provider = await getEvmProvider();
+  const walletClient = createWalletClient({ transport: custom(provider) });
+  const [account] = await walletClient.getAddresses();
+
+  const hash = await walletClient.writeContract({
+    account,
+    address: marketAddress as `0x${string}`,
+    abi: MARKET_ABI,
+    functionName: "claimWinnings",
+  });
+
+  return hash;
+}
+
+// Get user's stake in a market (for claim UI)
+export async function getUserStake(marketAddress: string, user: string): Promise<{ yes: number; no: number }> {
+  const provider = await getEvmProvider();
+  const publicClient = createPublicClient({ transport: custom(provider) });
+
+  const [yes, no] = await publicClient.readContract({
+    address: marketAddress as `0x${string}`,
+    abi: parseAbi(["function getUserStake(address user) view returns (uint256 yes, uint256 no)"]),
+    functionName: "getUserStake",
+    args: [user as `0x${string}`],
+  });
+
+  return {
+    yes: Number(yes) / 1e18,
+    no: Number(no) / 1e18,
+  };
 }
