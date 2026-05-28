@@ -1,4 +1,5 @@
-import { loadVipPrefs } from "./vip";
+import { loadVipPrefs, isVipEligible } from "./vip";
+import type { HederaTokenBalance } from "./hedera";
 
 let audioCtx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
@@ -68,6 +69,11 @@ export function getVolumeMultiplier(): number {
 function isMuted(): boolean { return resolveVolume() === "off"; }
 export function setSoundMuted(muted: boolean): void { setSoundVolume(muted ? "off" : "high"); }
 export function getSoundMuted(): boolean { return isMuted(); }
+
+// Re-export internal audio graph so feature modules (Predict, etc.) can
+// participate in the single master volume / mute system instead of
+// creating rogue AudioContexts that bypass Settings.
+export { getAudioContext, getMasterOutput };
 
 function getAudioContext(): AudioContext {
   if (!audioCtx) audioCtx = new AudioContext();
@@ -950,4 +956,35 @@ export function playSwapSuccess(): void {
     bell.start(now + 0.08);
     bell.stop(now + 0.7);
   } catch { /* audio not supported */ }
+}
+
+// ── VIP Sound Gate (single source of truth) ────────────────────────────
+
+/**
+ * Returns true only when ALL of the following are satisfied:
+ *   1. Global sound volume is not "off" (respects the main volume toggle / cycle)
+ *   2. User has a real VIP-eligible wallet (≥100M HBAR.h or VIP NFT)
+ *   3. VIP master switch is ON (prefs.active)
+ *   4. The "Premium Sound FX" (vip_sounds) feature toggle is enabled
+ *
+ * Use this in any prediction / trading / VIP-adjacent component before
+ * calling play* functions that should be VIP-only + respect global mute.
+ */
+export function shouldPlayVipSounds(
+  tokens: HederaTokenBalance[] | null | undefined,
+  network: string,
+  accountId?: string
+): boolean {
+  if (getSoundMuted()) return false;
+  if (!tokens || tokens.length === 0) return false;
+  try {
+    const prefs = loadVipPrefs(accountId);
+    return (
+      isVipEligible(tokens, network) &&
+      prefs.active &&
+      (prefs.features.vip_sounds ?? false)
+    );
+  } catch {
+    return false;
+  }
 }

@@ -133,7 +133,16 @@ const WALLET_OPTIONS: WalletOption[] = [
     logo: HASHPACK_LOGO,
     badge: "Hedera",
     badgeColor: "purple",
-    description: "Extension or mobile",
+    description: "Extension or mobile (Mainnet)",
+    isWC: true,
+  },
+  {
+    id: "hashpack-testnet",
+    name: "HashPack (Testnet)",
+    logo: HASHPACK_LOGO,
+    badge: "Hedera Testnet",
+    badgeColor: "blue",
+    description: "For Prediction Markets on Testnet",
     isWC: true,
   },
   {
@@ -302,9 +311,10 @@ export function WalletConnectModal({ onClose }: WalletConnectModalProps) {
     onClose();
 
     // Let the standard WC modal handle URI delivery to HashPack.
-    // No skipWCModal, no hideWCModal — the WC modal is what works.
+    // Use "testnet" for the dedicated Prediction Markets option so testnet accounts appear.
+    const networkToUse: "mainnet" | "testnet" = wallet.id === "hashpack-testnet" ? "testnet" : "mainnet";
     const result = await connectHashPack(
-      "mainnet",
+      networkToUse,
       (uri: string) => {
         setPairingUri(uri);
       },
