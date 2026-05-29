@@ -1,5 +1,9 @@
 {
+feature/professional-polish
   "buildCommand": "npm run build",
+
+  "buildCommand": "chmod +x node_modules/.bin/vite && npm run build",
+ main
   "outputDirectory": "dist",
   "rewrites": [
     {
