@@ -959,6 +959,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   totalWinningSideStake: number;
   totalLosingSideStake: number;
   winningSide: 'YES' | 'NO' | null;
+  alreadyPaid: boolean;
 }> {
   // Use reliable fetch so UI claimables and history always see the real PLACE_BET records
   // (even when HGraph is lagging behind raw consensus).
@@ -996,7 +997,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   }
 
   if (!winningSide) {
-    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null };
+    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null, alreadyPaid: false };
   }
 
   // Re-walk to get user's stake on the actual winning side
@@ -1019,7 +1020,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   const totalLosing = winningSide === 'YES' ? totalNo : totalYes;
 
   if (myStake === 0) {
-    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide };
+    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide, alreadyPaid: false };
   }
 
   // === Check for existing PAYOUT (critical for refresh persistence) ===
@@ -1045,6 +1046,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
       totalWinningSideStake: totalWinning,
       totalLosingSideStake: totalLosing,
       winningSide,
+      alreadyPaid: true,
     };
   }
 
@@ -1070,6 +1072,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     totalWinningSideStake: totalWinning,
     totalLosingSideStake: totalLosing,
     winningSide,
+    alreadyPaid: false,
   };
 }
 

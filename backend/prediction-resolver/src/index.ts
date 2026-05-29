@@ -271,6 +271,138 @@ app.get('/api/prediction/claimable', async (req, res) => {
 });
 
 /**
+ * New robust endpoint for personal prediction history (Portfolio & Claim Center).
+ * Runs the wide topic scan server-side (where Mirror works reliably) and returns
+ * the enriched history + claimables for the given account.
+ * This bypasses all browser CSP / DNS issues for the user history view.
+ */
+app.get('/api/prediction/user-history', async (req, res) => {
+  try {
+    const { account } = req.query;
+    if (!account) {
+      return res.status(400).json({ error: 'account required' });
+    }
+
+    // Use the same reliable wide scan the resolver already trusts
+    const { fetchReliableTopicMessages } = await import('./resolver');
+    const messages = await fetchReliableTopicMessages(8000); // wide scan for history
+
+    const userId = (account as string).trim();
+
+    const userBets: Record<string, { myStake: number; side: string }> = {};
+    const marketResolutions: Record<string, { winner: string; closingPrice: number }> = {};
+    const userPayouts: Record<string, { amount: number; txId?: string }> = {};
+
+    for (const row of messages) {
+      try {
+        const raw = row.message || '';
+        // Reuse the existing decode if exported, otherwise basic
+        let decoded = raw;
+        if (raw.startsWith('\\x')) {
+          try {
+            const clean = raw.replace(/\\x/g, '');
+            const bytes = new Uint8Array(clean.match(/.{1,2}/g)!.map((b: string) => parseInt(b, 16)));
+            decoded = new TextDecoder().decode(bytes);
+          } catch {}
+        } else if (/^[A-Za-z0-9+/=]+$/.test(raw) && raw.length > 16) {
+          try { decoded = Buffer.from(raw, 'base64').toString('utf8'); } catch {}
+        }
+
+        const p = JSON.parse(decoded || '{}');
+
+        if (p.type === 'PLACE_BET') {
+          const msgUser = (p.user || p.submittedBy || '').toString().trim();
+          if (msgUser !== userId) continue;
+
+          const mid = p.marketId;
+          if (!userBets[mid]) userBets[mid] = { myStake: 0, side: p.side };
+          userBets[mid].myStake += Number(p.amount) || 0;
+        }
+
+        if (p.type === 'MARKET_RESOLVED') {
+          const mid = p.marketId;
+          if (!marketResolutions[mid]) {
+            marketResolutions[mid] = {
+              winner: (p.winner || '').toUpperCase(),
+              closingPrice: p.closingPrice || 0,
+            };
+          }
+        }
+
+        if (p.type === 'PAYOUT') {
+          const recipient = (p.recipient || p.to || '').toString().trim();
+          if (recipient !== userId) continue;
+
+          const mid = p.marketId;
+          const amt = Number(p.amount) || 0;
+          if (!userPayouts[mid] || amt > userPayouts[mid].amount) {
+            userPayouts[mid] = { amount: amt, txId: p.transactionId || p.txId };
+          }
+        }
+      } catch {}
+    }
+
+    // Build the same shape the frontend expects
+    const history: any[] = [];
+    const claimables: any[] = [];
+
+    for (const mid of Object.keys(userBets)) {
+      const betInfo = userBets[mid];
+      const resolution = marketResolutions[mid];
+      const paidInfo = userPayouts[mid];
+
+      // Use the existing claimable calculator for owed logic
+      const payoutCalc = await (await import('./resolver')).computePayoutForUser(mid, userId);
+
+      const userWon = resolution ? (resolution.winner === betInfo.side) : false;
+      const actualPaid = paidInfo?.amount || payoutCalc.owed || 0;
+
+      const profitMultiple = (betInfo.myStake > 0 && actualPaid > betInfo.myStake)
+        ? (actualPaid / betInfo.myStake).toFixed(2)
+        : null;
+
+      const item = {
+        marketId: mid,
+        question: `Will HBAR be ${betInfo.side} the price at resolution?`,
+        myStake: betInfo.myStake,
+        userSide: betInfo.side,
+        totalWinningPool: payoutCalc.totalWinningSideStake || 0,
+        claimable: payoutCalc.owed || 0,
+        alreadyPaid: payoutCalc.alreadyPaid || !!paidInfo,
+        resolved: !!resolution,
+        userWon,
+        sharePercent: (payoutCalc.totalWinningSideStake || 0) > 0
+          ? ((betInfo.myStake / (payoutCalc.totalWinningSideStake || 1)) * 100).toFixed(1)
+          : "0.0",
+        creationPrice: null,
+        closingPrice: resolution?.closingPrice || null,
+        resolutionWinner: resolution?.winner || null,
+        betSequence: null,
+        actualPaid,
+        payoutTxId: paidInfo?.txId || null,
+        profitMultiple,
+        claimedAmount: actualPaid || undefined,
+      };
+
+      if (betInfo.myStake > 0) {
+        history.push(item);
+      }
+      if ((payoutCalc.owed || 0) > 0 && !item.alreadyPaid) {
+        claimables.push({ ...item });
+      }
+    }
+
+    res.json({
+      myHistory: history.slice(0, 25),
+      myClaimables: claimables,
+    });
+  } catch (err: any) {
+    console.error('[Resolver] user-history error:', err);
+    res.status(500).json({ error: err.message || 'History calculation failed' });
+  }
+});
+
+/**
  * Lightweight volume reconciliation endpoint.
  * Used by the frontend for real-time volume accuracy ("Reconcile Volume" + smart auto-refresh).
  * Returns current YES/NO stakes + participant counts for a specific fast game.
