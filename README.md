@@ -1,200 +1,176 @@
 # WRAPpDEX
 
-> Institutional-grade decentralized exchange and on-chain Prediction Markets platform built natively on Hedera Hashgraph.
+> **Fast. On-Chain. Hedera-Native.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built on Hedera](https://img.shields.io/badge/Built%20on-Hedera-00A3E0?logo=hedera)](https://hedera.com)
-[![Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://vercel.com)
+[![Live](https://img.shields.io/badge/Live%20on-wrappdex.io-black?logo=vercel)](https://wrappdex.io)
 
-**WRAPpDEX** delivers sub-3-second finality, native HashPack integration, real-time trading, cross-chain bridging, DAO governance, and fully on-chain **Prediction Markets** — all with institutional security standards.
+Play short-duration parimutuel prediction games on HBAR price that settle automatically in **~28 seconds** with beautiful cryptographic receipts. Real money. Real settlement. Powered directly by the Hedera Consensus Service.
 
-Live: [wrappdex.io](https://www.wrappdex.io)
+Backed by a capable DeFi hub: native SaucerSwap routing, 1inch aggregation, and best-in-class bridges (HashPort, Squid, Stargate).
 
----
-
-## Features
-
-- **High-Performance DEX** — Instant swaps, limit orders, and deep liquidity on Hedera.
-- **Real-Time Charts & Analytics** — Professional-grade trading interface with candlesticks, order book, and on-chain data.
-- **Cross-Chain Bridging** — Seamless movement of assets via HashPort, Squid, and other trusted bridges.
-- **DAO Governance** — On-chain proposals, voting, and treasury management via the WRAPpDEX DAO.
-- **VIP Features** — Premium themes, sounds, and glow for eligible token/NFT holders.
-- **On-Chain Prediction Markets** — Binary Yes/No markets with parimutuel payouts, role-gated resolution, 2-hour delay, and full on-chain settlement (new v1 engine).
-- **Native Wallet Experience** — First-class HashPack support + WalletConnect + MetaMask EVM (no heavy third-party wallet SDKs).
+**Live:** [wrappdex.io](https://wrappdex.io)
 
 ---
 
-## Prediction Markets (Highlight)
+## The Hedera Fast Games Experience
 
-The newest flagship feature: fully on-chain binary prediction markets.
+This is the one thing you can do on Hedera today that feels genuinely new.
 
-- Parimutuel payouts with platform fee (1.5%)
-- 18-decimal EVM precision on Hedera
-- 2-hour resolution delay + role-based resolver
-- 90-day claim protection window
-- Emergency pause + cancel controls
-- Graceful demo mode when factory not deployed
+Short-duration (10 or 20 minute) parimutuel markets on HBAR price direction ("Higher" or "Lower"). Create a game or join as a predictor. When the window closes, the resolver settles automatically using reliable Hedera data. Winners claim proportional payouts in ~28 seconds.
 
-Markets are created and settled directly on Hedera EVM. The frontend is 100% integrated into the existing WRAPpDEX UI with zero branding or UX deviation.
+Everything is recorded immutably on **Hedera Consensus Service topic 0.0.9017517** with rich structured memos — including bet sequencing, fees, and user context for perfect auditability.
 
-See `contracts/PredictionMarket.sol` + `MarketFactory.sol` and `src/app/utils/predictionMarkets.ts`.
+### Why Players Love It
 
----
+| ⚡ ~28 Second Automatic Payouts | 🎫 Private Hashgraph Game Tickets |
+|--------------------------------|-----------------------------------|
+| Sub-30s settlement after resolution. No waiting hours or days. The resolver acts as a reliable server-side "belt" for data accuracy (bypasses browser CSP/DNS issues). | Premium private receipts in your Portfolio & Claim Center. Profit multiples, entry "fishing data", multiple direct HashScan proof links. Only visible to you — derived purely from public HCS. |
 
-## How It Works
+| 🔗 Fully On-Chain via HCS | 📊 Real Portfolio & Claim Center |
+|---------------------------|----------------------------------|
+| No slow oracles. No centralized servers holding your bets. Immutable, human-readable memos + on-chain history pulled live via the resolver. | Track every game, claim winnings with one click, see your complete cryptographic audit trail. Duplicate-claim protection built in. |
 
-1. Connect with HashPack (or EVM wallet for markets).
-2. Trade, provide liquidity, bridge, or participate in DAO.
-3. For Prediction Markets: create or bet on real-world events with on-chain resolution.
-4. VIP users unlock cosmetic and sound enhancements.
+### Fast Games vs Traditional Prediction Markets
 
-All core logic lives on Hedera (smart contracts + Mirror Node + Consensus Service where applicable). No custodial risk.
+| Aspect                  | WRAPpDEX Fast Games (HCS)              | Traditional / Other Chains              |
+|-------------------------|----------------------------------------|-----------------------------------------|
+| Resolution Window       | 10–20 minutes                          | 2+ hours (often days)                   |
+| Settlement              | ~28 seconds automatic                  | Hours to days (oracle + manual)         |
+| Audit Trail             | Rich HCS memos + multiple HashScan links | Basic on-chain events or off-chain      |
+| Oracle Dependency       | None (resolver + Hedera consensus)     | Heavy (slow, expensive, centralized)    |
+| Receipt Experience      | Beautiful private "Game Tickets"       | Generic tx hashes                       |
+| Best For                | Fast, fun, real-money micro-prediction | Long-form event betting                 |
 
----
-
-## Security
-
-- Multiple independent security reviews performed (see `docs/SEC-AUDIT-*.md`).
-- OpenZeppelin v5 patterns in contracts (ReentrancyGuard, AccessControl, Pausable).
-- Strict CEI ordering + pull-based payouts.
-- 18-decimal standardization for Hedera EVM.
-- No Dynamic Labs / heavy wallet SDKs in production bundle (native HashPack + WalletConnect only).
-- Content-Security-Policy + strict referrers in production.
-- .env.example + never-committed private keys for deployments.
-
-**Responsible Disclosure**: See `.github/SECURITY.md`.
+The only short-duration, automatically settled parimutuel games on Hedera with cryptographic receipts you’ll actually want to keep.
 
 ---
 
-## Roadmap
+## What You Can Play Right Now
 
-- [x] Core DEX + charts + bridging
-- [x] DAO governance + VIP system
-- [x] On-chain Prediction Markets v1 (binary, parimutuel, secure resolution)
-- [ ] HCS-based oracle resolution for markets
-- [ ] Advanced order types & limit book on-chain
-- [ ] Mobile-first PWA enhancements
-- [ ] More cross-chain routes + HTS native support
+| Experience       | Status          | Highlights |
+|------------------|-----------------|------------|
+| **Predict (Fast Games)** ★★★★★ | Production (testnet) | 10/20-min HBAR Higher/Lower • ~28s auto-payouts • Rich private receipts • Full claim center |
+| **Swap** ★★★★ | Active (VIP for full) | SaucerSwap V1/V2 primary (native HBAR↔WHBAR, multi-hop, pool routes) • 1inch Fusion+ for EVM chains • Server proxy for reliability |
+| **Bridges** ★★★★ | Fully implemented | HashPort (official Hedera ↔ EVM) • Squid (Axelar, 60+ chains) • Stargate (LayerZero omnichain) — dedicated branded widgets |
+| **DeFi** ★★★ | Active | Bonzo Finance lend & borrow integration |
+| **DAO** ★★★ | Functional | On-chain proposals, voting, governance |
+| **Trade** ★★★ | Active | Professional charts, order flow, real-time data |
+| **Wallet** ★★★ | Active | Multi-chain view (Hedera + EVM + Solana) |
+| **Buy/Sell** ★★★ | Active | Fiat on/off-ramp style flows |
 
----
-
-## Tech Stack
-
-**Frontend**
-- Vite + React 18 + TypeScript + Tailwind
-- Recharts / Lightweight Charts
-- Native HashPack + WalletConnect + MetaMask
-
-**Smart Contracts**
-- Solidity 0.8.20+ on Hedera EVM (Hardhat)
-- OpenZeppelin v5
-- Parimutuel Prediction Market engine
-
-**Infrastructure**
-- Hedera Mirror Node + JSON-RPC
-- Supabase (edge functions, storage for logos)
-- Vercel (edge + static)
-
-**Prediction Markets Specific**
-- 18-decimal native value handling
-- Factory + per-market contracts
-- Role-gated resolution with timelock
+Everything lives in one clean, premium interface with light/dark + VIP theming.
 
 ---
 
-## Getting Started (Local)
+## Why This Feels Different on Hedera
 
-```bash
-git clone https://github.com/<your-org>/wrapparea51.git
-cd wrapparea51
-npm install
-npm run dev
-```
+Hedera Consensus Service gives us something no other chain delivers at this speed and cost:
 
-For Prediction Markets contracts:
+- **Sub-30-second finality** for game resolution and payouts — the resolver watches the topic, computes proportional math server-side, and executes claims.
+- **Immutable, human-readable memos** on every action (betSequence, fees, side, user). Perfect for players, auditors, and scripts.
+- **No oracle lag or cost** for short-duration games. The resolver provides reliable pricing data as a trusted but transparent layer.
+- **Beautiful private receipts** that feel like high-end trading confirmations, not just tx hashes.
 
-```bash
-cp .env.example .env
-# fill HEDERA_EVM_PRIVATE_KEY (testnet only)
-npx hardhat compile
-npx hardhat run contracts/scripts/deploy-prediction-markets.ts --network hederaTestnet
-```
-
-Update the factory address in `src/app/utils/predictionMarkets.ts`.
+This is parimutuel prediction markets done the Hedera way: fast, verifiable, and actually fun.
 
 ---
 
-## Deployment
+## Swap & Liquidity Engine
 
-- **Vercel** (recommended): Connect repo → `npm run build` → Deploy. Uses `vercel.json` for SPA routing.
-- Contracts are deployed separately via Hardhat (see `contracts/README.md`).
+**Primary path: SaucerSwap (native Hedera excellence)**
 
----
+- Direct V1 and V2 routing with real-time pool data (TVL, volume, fees).
+- Multi-hop discovery, smart route selection, and native HBAR ↔ WHBAR wrapping.
+- On-chain execution via HashPack — no middlemen.
 
-## Contributing
+**Secondary path: 1inch Fusion+ (advanced / EVM reach)**
 
-We welcome contributions from the Hedera and broader DeFi community.
+- Aggregator access to deep liquidity on Ethereum, Polygon, BSC, Arbitrum, Optimism, Base.
+- Server-side quote + build proxy for better reliability and cross-chain intent support.
 
-Please read:
-- [CONTRIBUTING.md](.github/CONTRIBUTING.md)
-- [CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md)
+**Note:** Full Swap interface is currently VIP-gated (token/NFT holdings unlock premium themes, sounds, glow, and advanced features). Non-VIP users can still explore the hub.
 
-Good first issues are labeled `good first issue`.
-
----
-
-## Security
-
-See [SECURITY.md](.github/SECURITY.md) for reporting vulnerabilities.
-
-We take security seriously — especially around Prediction Market resolution, fee handling, and wallet integrations.
+Supporting instant swaps via ChangeNOW affiliate integration (server-side redirects).
 
 ---
 
-## License
+## Cross-Chain Access
 
-MIT — see [LICENSE](LICENSE).
+Move assets in and out of Hedera with confidence:
 
----
+- **HashPort** — The official Hedera bridge (Hedera ↔ EVM). Strongest native option with excellent branding and UX.
+- **Squid (Axelar)** — 60+ chains, powerful cross-chain swaps + transfers in one widget.
+- **Stargate (LayerZero)** — Omnichain liquidity, instant finality, unified experience.
 
-## Links
-
-- Website: [wrappdex.io](https://www.wrappdex.io)
-- Twitter / X: [@WRAPpDEX](https://x.com/WRAPpDEX)
-- Discord: [Community](https://discord.com/invite/8w36D2TGc)
-- Contracts: `contracts/` (audited patterns, open for review)
-- Prediction Markets: `contracts/PredictionMarket.sol` + frontend integration in `src/app/utils/predictionMarkets.ts`
+Each bridge has its own dedicated, clearly branded widget inside the app. No guessing which route is best — just pick the one that matches your needs.
 
 ---
 
-**Built with ❤️ on Hedera. Designed for institutions. Open for the community.**
+## The Full Platform
 
-*This repository contains the complete frontend + smart contract sources for WRAPpDEX.*
-  
+WRAPpDEX is a complete Hedera-native DeFi hub:
 
-**Institutional-Grade DeFi Exchange on Hedera Hashgraph**
+- **DeFi** — Lend, borrow, and earn via Bonzo Finance integration.
+- **DAO** — Real governance. Create and vote on proposals that shape the protocol.
+- **Trade** — Advanced terminal with lightweight charts, depth, and on-chain order awareness.
+- **Wallet** — Clean multi-chain portfolio view (Hedera HTS + EVM + Solana).
+- **Buy/Sell** — On-ramps and off-ramps for getting in and out with fiat.
+- **VIP System** — Cosmetic and functional unlocks (themes, sounds, glow, full Swap access) based on holdings.
 
-Premium trading platform with CLPR, wrapped assets, and upcoming prediction markets.
+All modules share the same premium design language and Hedera-first wallet experience (HashPack native + EVM fallbacks).
 
-## Features
-- Swap & Trade Terminal
-- Bridge with CLPR
-- DeFi modules
-- DAO governance
-- Prediction Markets (coming soon)
+---
 
-Live at [wrappdex.io](https://wrappdex.io)
+## Trust, Security & Reality
 
-## Tech Stack
-- Hedera Hashgraph
-- React + Vite + TypeScript
-- Tailwind + shadcn/ui
-- HashPack + WalletConnect
+We are honest about where we are:
 
-## Roadmap
-- Prediction Markets on CLPR-wrapped tokens
-- Full DAO activation at ~$2M MCAP
-- Hgraph MCP integration
+- **Fast Games (Predict)**: Production-ready on testnet. ~28s automatic payouts with duplicate-claim protection and proportional math. Edge cases around extreme load or data freshness are actively monitored and improved.
+- **Swap**: Strong native routing via SaucerSwap. 1inch path is implemented but shows occasional reliability notes in logs. VIP-gated for the full experience.
+- **Bridges**: Fully functional widgets for three best-in-class providers, including the official Hedera bridge.
+- **Legacy Layer**: Older EVM-based prediction market contracts exist in the repo history/backup. The active flagship is the HCS-native Fast Games. We do not lead with outdated 2-hour resolution experiences.
 
-Join the community and help us build the future of DeFi on Hedera!
- main
+**Security Posture**
+- Hedera Consensus Service as immutable source of truth for all Fast Games.
+- Resolver operates with clear, auditable logic (open for review).
+- Multiple security reviews performed (see `docs/SEC-AUDIT-*.md` and `docs/SEC-AUDIT-2026-02-DAO-AUTH-FIX.md`).
+- OpenZeppelin v5 patterns in legacy contracts; strict CEI, pull-based payouts, and careful key handling throughout.
+- Content-Security-Policy + production referrer hardening.
+- Responsible disclosure: see `.github/SECURITY.md` or contact the team.
+
+No overclaims. No hidden custodial risk. Everything that matters is verifiable on Hedera.
+
+---
+
+## Getting Started
+
+1. **Visit the app** — [wrappdex.io](https://wrappdex.io)
+2. **Connect HashPack** (recommended for the full native Hedera experience) or any EVM wallet for bridges/Swap.
+3. **Try Predict (Fast Games)** — Create a 10- or 20-minute HBAR Higher/Lower game or join an existing one with real HBAR. Watch it resolve and claim in ~28 seconds.
+4. **Open your Portfolio & Claim Center** — See your Private Hashgraph Game Tickets with full proof links and fishing data.
+5. **Explore the hub** — Swap (if VIP), bridge assets via HashPort/Squid/Stargate, check DAO proposals, or use the Trade terminal.
+
+**Need HBAR?** Use the built-in Buy/Sell flows or bridge from any major chain.
+
+**Developers:** Full source (frontend + resolver backend + legacy contracts) is in this repository. See `DEPLOYMENT_CHECKLIST.md`, `MASTER_PLAN_Volume_Accuracy_Memos_Private_Receipts.md`, and `backend/prediction-resolver/`.
+
+---
+
+## Community & Links
+
+- **Website:** [wrappdex.io](https://wrappdex.io)
+- **X / Twitter:** [@WRAPpDEX](https://x.com/WRAPpDEX)
+- **Discord:** [Join the community](https://discord.com/invite/8w36D2TGc)
+- **GitHub:** [wrappdex-team/WrappArea51](https://github.com/wrappdex-team/WrappArea51)
+- **Audits & Docs:** `docs/` folder (security reviews, deployment guides, master plans)
+- **HashScan (Fast Games topic):** [0.0.9017517](https://hashscan.io/testnet/topic/0.0.9017517)
+
+**The most exciting thing you can actually do on Hedera today.**
+
+Built with care on Hedera Consensus Service. Open for the community.
+
+---
+
+*This repository contains the complete frontend, backend resolver, and supporting contracts for WRAPpDEX.*
