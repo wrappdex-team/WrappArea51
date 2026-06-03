@@ -13,9 +13,10 @@ import {
   TransferTransaction,
   Hbar,
 } from "@hashgraph/sdk";
+import { ENV } from "../../env";
 
 export const MASTER_TOPIC_ID = "0.0.9017517";
-const RESOLVER_BASE = 'http://localhost:4000'; // Authoritative payout oracle (single source of truth)
+const RESOLVER_BASE = ENV.RESOLVER_BASE; // Authoritative payout oracle (single source of truth). Configured via VITE_RESOLVER_URL (Railway URL in prod).
 
 // === Clean Bank-Grade Wallet Separation (Production Quality) ===
 const TREASURY_ACCOUNT = "0.0.9006841";           // Platform fees only (creation + 1% bet fees)

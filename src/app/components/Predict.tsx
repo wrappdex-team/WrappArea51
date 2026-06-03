@@ -21,8 +21,9 @@ import { useBrandLogos } from '../hooks/useBrandLogos';
 
 import { TreasuryAdminPanel } from './TreasuryAdminPanel';
 import { PredictionHistory } from './PredictionHistory';
+import { ENV } from '../utils/env';
 
-const RESOLVER_BASE = 'http://localhost:4000';
+const RESOLVER_BASE = ENV.RESOLVER_BASE;
 const ESCROW_ACCOUNT_ID = '0.0.9006979';
 const TREASURY_ACCOUNT_ID = '0.0.9006841';
 

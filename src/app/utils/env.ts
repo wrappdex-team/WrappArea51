@@ -84,4 +84,6 @@ export const ENV = {
   APP_NAME: "WRAPpDEX",
   APP_VERSION: import.meta.env.VITE_APP_VERSION || "1.0.0",
   APP_URL: import.meta.env.VITE_APP_URL || "https://www.wrappdex.io",
+  // Resolver backend (Railway in prod, localhost in dev). Set VITE_RESOLVER_URL in Vercel when switching.
+  RESOLVER_BASE: import.meta.env.VITE_RESOLVER_URL || 'http://localhost:4000',
 } as const;

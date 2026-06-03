@@ -1,6 +1,11 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import { createClient } from '@supabase/supabase-js';
+
+dotenv.config();
+
+// Local modules imported AFTER dotenv so .env (and future early supabase loads) are populated for any top-level checks in hedera/resolver
 import { 
   pollMirrorNodeForTransfers, 
   resolveAndPayout, 
@@ -12,19 +17,57 @@ import {
 } from './resolver';
 import { postCreateMarket, postPlaceBet } from './hedera';
 
-dotenv.config();
-
 const app = express();
 
-// Allow requests from the Vite frontend (localhost:5173)
+// CORS: configurable for dev (localhost:5173) + production (wrappdex.io on Vercel) + any previews.
+// Set ALLOWED_ORIGINS=https://wrappdex.io,http://localhost:5173 in Railway / Vercel env when ready.
+// Comma-separated, trimmed.
+const rawOrigins = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
+const allowedOrigins = rawOrigins.split(',').map(o => o.trim());
+
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
   credentials: true
 }));
 
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
+
+// Payout delay for Fast Games (configurable for different environments)
+const PAYOUT_DELAY_MS = Number(process.env.PAYOUT_DELAY_MS) || 28000;
+
+// Secure secret loading from Supabase kv_store (for secret coverage in Supabase)
+async function loadSecretsFromSupabase() {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (supabaseServiceKey && supabaseUrl) {
+    if (process.env.RESOLUTION_PRIVATE_KEY) {
+      console.log('[Resolver] RESOLUTION_PRIVATE_KEY already present from local .env (or Railway) — skipping Supabase kv_store fetch for it (local override takes precedence for dev).');
+    } else {
+      try {
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const { data, error } = await supabase
+          .from('kv_store_54299934')
+          .select('value')
+          .eq('key', 'resolution_private_key')
+          .single();
+        if (!error && data && data.value) {
+          process.env.RESOLUTION_PRIVATE_KEY = data.value;
+          const v = String(data.value);
+          console.log(`[Resolver] Loaded resolution private key from Supabase kv_store (redacted: ${v.substring(0, 4)}...${v.slice(-4)}, len=${v.length})`);
+        } else {
+          console.warn('[Resolver] Could not load resolution private key from Supabase kv_store, falling back to env');
+        }
+      } catch (e) {
+        console.warn('[Resolver] Error loading secrets from Supabase:', (e as Error).message);
+      }
+    }
+  } else {
+    console.log('[Resolver] No SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in env — not attempting kv_store load.');
+  }
+}
 
 // Health check
 app.get('/health', (req, res) => {
@@ -432,10 +475,10 @@ app.post('/api/prediction/resolve', async (req, res) => {
     // The resolver will use HGraph MCP as the source of truth for HBAR price when possible.
     await resolveAndPayout(marketId, winner, closingPrice || 0, winners || []);
 
-    // Phase 1: Schedule delayed automatic payout (25-30s window) for fast games
+    // Schedule delayed automatic payout for fast games (configurable window)
     if (marketId.startsWith('fast-')) {
       const { scheduleDelayedPayout } = await import('./resolver');
-      scheduleDelayedPayout(marketId, 28000);
+      scheduleDelayedPayout(marketId, PAYOUT_DELAY_MS);
     }
 
     res.json({ success: true });
@@ -560,7 +603,7 @@ app.post('/api/admin/schedule-payout', async (req, res) => {
     }
 
     const { scheduleDelayedPayout } = await import('./resolver');
-    scheduleDelayedPayout(marketId, Number(delayMs));
+    scheduleDelayedPayout(marketId, Number(delayMs) || PAYOUT_DELAY_MS);
 
     res.json({
       success: true,
@@ -723,7 +766,9 @@ setInterval(async () => {
 }, 60_000);
 
 app.listen(PORT, async () => {
+  await loadSecretsFromSupabase();
   console.log(`[Resolver] Prediction Market Resolver running on port ${PORT}`);
+  console.log(`[Resolver] Fast Game payout delay configured to: ${PAYOUT_DELAY_MS}ms`);
   console.log('[Resolver] Mirror polling + Fast Game auto-resolution loops active');
 
   // Phase 1: Load persisted active games for restart resilience
