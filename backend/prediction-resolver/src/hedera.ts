@@ -5,29 +5,49 @@ dotenv.config();
 
 const {
   RESOLUTION_ACCOUNT_ID,
-  RESOLUTION_PRIVATE_KEY,
   MASTER_TOPIC_ID,
   TREASURY_ACCOUNT_ID,
 } = process.env;
 
-if (!RESOLUTION_ACCOUNT_ID || !RESOLUTION_PRIVATE_KEY) {
-  throw new Error('Missing RESOLUTION_ACCOUNT_ID or RESOLUTION_PRIVATE_KEY in .env');
+if (!RESOLUTION_ACCOUNT_ID) {
+  throw new Error('Missing RESOLUTION_ACCOUNT_ID in .env (or Railway env vars). This is the privileged resolution/escrow account ID.');
+}
+if (!MASTER_TOPIC_ID) {
+  throw new Error('Missing MASTER_TOPIC_ID in environment. This must be provided via .env or Railway variables (e.g. 0.0.9017517).');
 }
 
 export const resolutionAccountId = AccountId.fromString(RESOLUTION_ACCOUNT_ID);
-// Support both DER-encoded (starts with 302e...) and raw 64-char hex ED25519 keys
-export const resolutionPrivateKey = RESOLUTION_PRIVATE_KEY!.startsWith('302e')
-  ? PrivateKey.fromString(RESOLUTION_PRIVATE_KEY!)
-  : PrivateKey.fromStringED25519(RESOLUTION_PRIVATE_KEY!);
-export const masterTopicId = MASTER_TOPIC_ID!;
-export const treasuryAccountId = TREASURY_ACCOUNT_ID || '0.0.9006841';
+export const masterTopicId = MASTER_TOPIC_ID;
+if (!TREASURY_ACCOUNT_ID) {
+  throw new Error('Missing TREASURY_ACCOUNT_ID in environment. This must be provided via .env or Railway variables.');
+}
+export const treasuryAccountId = TREASURY_ACCOUNT_ID;
+
+// Lazy private key loading. On Railway we do NOT set RESOLUTION_PRIVATE_KEY in env vars.
+// Instead loadSecretsFromSupabase() (called early in index.ts listen) will populate process.env.RESOLUTION_PRIVATE_KEY
+// from the Supabase kv_store before any payout or HCS post happens.
+// This prevents top-level throw at import time.
+let _resolutionPrivateKey: PrivateKey | null = null;
+function getResolutionPrivateKey(): PrivateKey {
+  if (!_resolutionPrivateKey) {
+    const keyStr = process.env.RESOLUTION_PRIVATE_KEY;
+    if (!keyStr) {
+      throw new Error('Missing RESOLUTION_PRIVATE_KEY in environment. For Railway: ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set (as secrets) so loadSecretsFromSupabase can fetch it from kv_store at startup.');
+    }
+    // Support both DER-encoded (starts with 302e...) and raw 64-char hex ED25519 keys
+    _resolutionPrivateKey = keyStr.startsWith('302e')
+      ? PrivateKey.fromString(keyStr)
+      : PrivateKey.fromStringED25519(keyStr);
+  }
+  return _resolutionPrivateKey;
+}
 
 let client: Client | null = null;
 
 export function getClient(): Client {
   if (!client) {
     client = Client.forTestnet();
-    client.setOperator(resolutionAccountId, resolutionPrivateKey);
+    client.setOperator(resolutionAccountId, getResolutionPrivateKey());
   }
   return client;
 }
@@ -80,7 +100,10 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
   // This is the most reliable "on-chain" source for HBAR/USD used by Hedera itself for fees.
   try {
     // Using Hedera's official dedicated testnet mirror node for better reliability
-    const mirrorBase = process.env.HEDERA_MIRROR_NODE || 'https://testnet.mirror.hedera.com';
+    const mirrorBase = process.env.HEDERA_MIRROR_NODE;
+    if (!mirrorBase) {
+      throw new Error('Missing HEDERA_MIRROR_NODE in environment for price source.');
+    }
     const mirrorUrl = `${mirrorBase}/api/v1/network/exchangerate`;
     const res = await fetch(mirrorUrl);
     if (!res.ok) throw new Error(`Mirror Node HTTP ${res.status}`);
@@ -250,7 +273,7 @@ export async function postPlaceBet(params: {
 
   // The perfect human + machine memo (uses "predict" language for all forward-facing / legal / HashScan visibility).
   const memo =
-    `PREDICTION | Master Topic: 0.0.9017517 | Market: ${params.marketId} | ` +
+    `PREDICTION | Master Topic: ${masterTopicId} | Market: ${params.marketId} | ` +
     `Side: ${sideText} | Amount: ${params.amount} HBAR | ${sequenceLabel} | ` +
     `User: ${params.user} | ${feeText} ` +
     `Recorded on HCS for cryptographic audit and user proof.`;
@@ -267,7 +290,7 @@ export async function postPlaceBet(params: {
     submittedBy: params.user,
     gameType: 'fast_updown',
     betSequence,                    // Machine-readable sequence number (internal)
-    masterTopicId: '0.0.9017517',   // Explicit reference for easy filtering across all tools
+    masterTopicId: masterTopicId,   // Explicit reference for easy filtering across all tools
     memo,                           // The gold-standard human-readable receipt (uses "predict" language for all forward-facing / legal visibility)
   };
 

@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
+import fetch from 'node-fetch';
 
 dotenv.config();
 
@@ -13,7 +14,8 @@ import {
   registerFastGameForAutoResolution,
   processClaim,
   retireDeadFastGames,
-  computePayoutForUser
+  computePayoutForUser,
+  shutdownResolver
 } from './resolver';
 import { postCreateMarket, postPlaceBet } from './hedera';
 
@@ -36,6 +38,9 @@ const PORT = process.env.PORT || 4000;
 
 // Payout delay for Fast Games (configurable for different environments)
 const PAYOUT_DELAY_MS = Number(process.env.PAYOUT_DELAY_MS) || 28000;
+
+// Store interval IDs for graceful shutdown
+let mirrorInterval, autoResolveInterval, heartbeatInterval;
 
 // Secure secret loading from Supabase kv_store (for secret coverage in Supabase)
 async function loadSecretsFromSupabase() {
@@ -495,7 +500,7 @@ app.post('/api/admin/force-payout', async (req, res) => {
   try {
     const { marketId, caller } = req.body;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -517,7 +522,7 @@ app.post('/api/admin/force-resolve', async (req, res) => {
   try {
     const { marketId, winner, closingPrice, caller } = req.body;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -547,7 +552,7 @@ app.post('/api/admin/re-record-bet', async (req, res) => {
   try {
     const { marketId, side, amount, user, platformFeeCollected, caller } = req.body;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -594,7 +599,7 @@ app.post('/api/admin/schedule-payout', async (req, res) => {
   try {
     const { marketId, caller, delayMs = 28000 } = req.body;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -621,7 +626,7 @@ app.post('/api/admin/cancel-scheduled-payout', async (req, res) => {
   try {
     const { marketId, caller } = req.body;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -648,7 +653,7 @@ app.get('/api/admin/unresolved-games', async (req, res) => {
   try {
     const caller = req.query.caller as string;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -669,7 +674,7 @@ app.post('/api/admin/simulate-payout', async (req, res) => {
   try {
     const { marketId, caller } = req.body;
 
-    if (caller !== process.env.TREASURY_ACCOUNT_ID && caller !== '0.0.9006841') {
+    if (caller !== process.env.TREASURY_ACCOUNT_ID) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -725,13 +730,13 @@ app.post('/api/prediction/retire-dead-fast-games', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 1. Mirror Node polling (fallback / funding detection)
-setInterval(() => {
+mirrorInterval = setInterval(() => {
   pollMirrorNodeForTransfers().catch(() => {});
 }, 30_000); // Reduced noise
 
 // 2. Fast Game auto-resolution loop
 // Uses the shared implementation from resolver.ts
-setInterval(async () => {
+autoResolveInterval = setInterval(async () => {
   try {
     await autoResolveExpiredFastGames();
   } catch (e) {
@@ -742,7 +747,7 @@ setInterval(async () => {
 // Phase 0/1 Heartbeat: Additional safety net scan every 60s.
 // Catches games that may have been missed due to restarts, timing, or transient price fetch issues.
 // This makes the resolver significantly more reliable without being aggressive.
-setInterval(async () => {
+heartbeatInterval = setInterval(async () => {
   try {
     await autoResolveExpiredFastGames();
 
@@ -765,7 +770,7 @@ setInterval(async () => {
   }
 }, 60_000);
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   await loadSecretsFromSupabase();
   console.log(`[Resolver] Prediction Market Resolver running on port ${PORT}`);
   console.log(`[Resolver] Fast Game payout delay configured to: ${PAYOUT_DELAY_MS}ms`);
@@ -826,4 +831,32 @@ app.listen(PORT, async () => {
       console.error('[Resolver] Error during startup payout recovery scan:', e);
     }
   }, 12000); // Give resolver time to fully initialize
+});
+
+// Production readiness: graceful shutdown for Railway / SIGTERM
+process.on('SIGTERM', () => {
+  console.log('[Resolver] SIGTERM received, starting graceful shutdown...');
+  clearInterval(mirrorInterval);
+  clearInterval(autoResolveInterval);
+  clearInterval(heartbeatInterval);
+  try { shutdownResolver(); } catch (e) { console.warn('[Resolver] shutdownResolver error (non-fatal):', (e as Error).message); }
+  server.close(() => {
+    console.log('[Resolver] HTTP server closed cleanly. Intervals and timers cleared.');
+    process.exit(0);
+  });
+  // Force exit after 10s if close hangs
+  setTimeout(() => {
+    console.error('[Resolver] Forced exit after graceful shutdown timeout.');
+    process.exit(1);
+  }, 10000).unref();
+});
+
+process.on('SIGINT', () => {
+  console.log('[Resolver] SIGINT received, shutting down...');
+  clearInterval(mirrorInterval);
+  clearInterval(autoResolveInterval);
+  clearInterval(heartbeatInterval);
+  try { shutdownResolver(); } catch (e) { console.warn('[Resolver] shutdownResolver error (non-fatal):', (e as Error).message); }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
 });

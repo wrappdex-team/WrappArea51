@@ -15,11 +15,17 @@ import fetch from 'node-fetch';
 import fs from 'fs/promises';
 import path from 'path';
 
-const MASTER_TOPIC_ID = process.env.MASTER_TOPIC_ID || '0.0.9017517';
-const RESOLUTION_ACCOUNT = process.env.RESOLUTION_ACCOUNT_ID || '0.0.9006850';
+const MASTER_TOPIC_ID = process.env.MASTER_TOPIC_ID!;
+const RESOLUTION_ACCOUNT = process.env.RESOLUTION_ACCOUNT_ID!;
+if (!MASTER_TOPIC_ID || !RESOLUTION_ACCOUNT) {
+  throw new Error('Missing MASTER_TOPIC_ID or RESOLUTION_ACCOUNT_ID in environment. These must be provided via .env or Railway variables.');
+}
 // Using Hedera's official dedicated testnet mirror node for better reliability
 // (previously was the public mirrornode.hedera.com which can be less stable)
-const MIRROR_NODE = process.env.HEDERA_MIRROR_NODE || 'https://testnet.mirror.hedera.com';
+const MIRROR_NODE = process.env.HEDERA_MIRROR_NODE;
+if (!MIRROR_NODE) {
+  throw new Error('Missing HEDERA_MIRROR_NODE in environment. Set to https://testnet.mirrornode.hedera.com or your dedicated mirror.');
+}
 
 // Phase 1: Lightweight persistence for active games (simple JSON file for restart resilience)
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -636,7 +642,9 @@ export async function autoResolveExpiredFastGames() {
 // Prevents the same user from claiming the same market multiple times.
 const claimedPayouts = new Set<string>();
 
-const HGRAPH_URL = "https://testnet.hedera.api.hgraph.io/v1/graphql";
+const HGRAPH_URL: string = process.env.HGRAPH_URL || (() => {
+  throw new Error('Missing HGRAPH_URL in environment. Provide your HGraph (or compatible GraphQL) endpoint for reliable topic reads (or the public testnet for dev only).');
+})();
 
 /**
  * Robust HCS topic message fetcher.
@@ -1588,4 +1596,27 @@ export async function simulatePayoutsForMarket(marketId: string) {
     payouts,
     note: 'Read-only simulation — no funds moved, no HCS messages posted',
   };
+}
+
+/**
+ * Production shutdown hook for graceful Railway SIGTERM.
+ * Clears all in-flight tie polling intervals and scheduled payout timers
+ * to avoid dangling handles during container stop.
+ */
+export function shutdownResolver() {
+  // Clear tie resolution polling intervals
+  for (const t of tieResolutionGames) {
+    if (t.intervalId) {
+      clearInterval(t.intervalId);
+    }
+  }
+  tieResolutionGames.length = 0;
+
+  // Clear scheduled payout setTimeouts
+  for (const handle of scheduledPayoutTimers.values()) {
+    clearTimeout(handle);
+  }
+  scheduledPayoutTimers.clear();
+
+  console.log('[Resolver] shutdownResolver: cleared tie intervals and scheduled payout timers');
 }

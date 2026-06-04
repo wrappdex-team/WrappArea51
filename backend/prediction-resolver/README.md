@@ -11,24 +11,32 @@ This backend solves the biggest pain point we've had:
 - User only signs HBAR transfers (the actual value movement).
 - After the transfer succeeds, the frontend calls this backend with the transfer details + market parameters.
 
-**Backend (using resolution key 0.0.9006850):**
+**Backend (using resolution key from Supabase kv or .env, e.g. 0.0.9006979):**
 - Verifies the incoming transfer.
 - Posts clean, reliable `CREATE_MARKET`, `PLACE_BET`, and `MARKET_RESOLVED` messages using the privileged resolution account.
 - Uses Scheduled Transactions for payouts (more secure and auditable).
+- Loads the private key securely from Supabase kv_store at startup (for Railway) or .env (local), never hard-coded.
 
-This completely removes the user-paid HCS signing problem.
+This completely removes the user-paid HCS signing problem. The private key is never in the frontend or committed code.
 
 ## Setup (Testnet)
 
 1. `cd backend/prediction-resolver`
 2. `npm install`
-3. Copy `.env.example` → `.env` and fill in:
-   - `RESOLUTION_PRIVATE_KEY` (the private key for 0.0.9006850 — **never commit this**)
+3. Copy `.env.example` to `.env` and fill real values (never commit .env):
+   - `RESOLUTION_ACCOUNT_ID=0.0.9006979`
+   - `RESOLUTION_PRIVATE_KEY=...` (the private key for the resolution account — **never commit this**; for Railway, omit this var and provide SUPABASE_* instead)
+   - `MASTER_TOPIC_ID=0.0.9017517`
+   - `TREASURY_ACCOUNT_ID=0.0.9006841`
+   - `SUPABASE_URL=...`
+   - `SUPABASE_SERVICE_ROLE_KEY=...` (for loading private key from kv_store)
 4. `npm run dev`
 
 The server will:
 - Expose HTTP endpoints the frontend can call after the user has paid.
-- Poll the Mirror Node every 15s as a fallback.
+- Poll the Mirror Node.
+- On startup, load private key from Supabase if not in .env (for prod/Railway).
+- Run auto-resolution and payout loops.
 
 ## Endpoints
 
@@ -39,10 +47,11 @@ The server will:
 ## Security Notes (Production Grade)
 
 - Never expose the resolution private key to the frontend.
-- In production, store the key in AWS KMS, Hashicorp Vault, or use a dedicated Hedera account with proper access controls.
-- Always verify incoming transfers on-chain before posting messages.
-- Use idempotency keys (marketId + transfer txId) to prevent duplicate messages.
-- Add proper authentication (JWT / API keys) on the API routes in production.
+- In production (Railway), do NOT set RESOLUTION_PRIVATE_KEY in env vars. Provide SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (as secret) instead; the resolver loads the private key from your Supabase kv_store_54299934 at startup using the service role (which is RLS-protected to service_role only).
+- Always verify incoming transfers on-chain before posting messages (done in the /bet and create endpoints).
+- Use idempotency via HCS checks (PAYOUT_CLOSED etc.) to prevent duplicate.
+- The admin routes use simple caller ID check (treasury account); for full prod, consider adding a shared secret or signed request for admin endpoints.
+- The .env file (with real key) must never be committed (it is gitignored). Use .env.example for template.
 
 ## Scheduled Transactions
 
