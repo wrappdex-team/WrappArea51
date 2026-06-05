@@ -36,12 +36,21 @@ const app = express();
 
 // CORS: configurable for dev (localhost:5173) + production (wrappdex.io on Vercel) + any previews.
 // Set ALLOWED_ORIGINS=https://wrappdex.io,http://localhost:5173 in Railway / Vercel env when ready.
-// Comma-separated, trimmed.
-const rawOrigins = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
-const allowedOrigins = rawOrigins.split(',').map(o => o.trim());
+// Comma-separated, trimmed. *.vercel.app previews are auto-allowed for convenience during smoke testing.
+const rawOrigins = process.env.ALLOWED_ORIGINS || 'http://localhost:5173,https://wrappdex.io';
+const allowedOrigins = rawOrigins.split(',').map(o => o.trim().toLowerCase());
+
+function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true; // non-browser / same-origin / server-to-server
+  const o = origin.toLowerCase();
+  if (allowedOrigins.some(a => a === o)) return true;
+  if (allowedOrigins.some(a => a.includes('*') && new RegExp('^' + a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*') + '$').test(o))) return true;
+  if (o.endsWith('.vercel.app') || o.includes('localhost') || o.includes('127.0.0.1') || o.includes('wrapparea51')) return true;
+  return false;
+}
 
 app.use(cors({
-  origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
+  origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
   credentials: true
 }));
 
@@ -86,7 +95,8 @@ async function loadSecretsFromSupabase() {
           const v = String(data.value);
           console.log(`[Resolver] Loaded resolution private key from Supabase kv_store (redacted: ${v.substring(0, 4)}...${v.slice(-4)}, len=${v.length})`);
         } else {
-          console.warn('[Resolver] Could not load resolution private key from Supabase kv_store, falling back to env');
+          const errInfo = error ? `error=${error.message} code=${error.code || 'n/a'}` : 'no matching row or empty value';
+          console.warn(`[Resolver] Could not load resolution private key from Supabase kv_store (${errInfo}), falling back to env`);
         }
       } catch (e) {
         console.warn('[Resolver] Error loading secrets from Supabase:', (e as Error).message);
@@ -95,6 +105,8 @@ async function loadSecretsFromSupabase() {
   } else {
     console.log('[Resolver] No SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in env — not attempting kv_store load.');
   }
+  const pkNow = process.env.RESOLUTION_PRIVATE_KEY;
+  console.log(`[Resolver] PK ready for HCS posts (create/bet/resolve/payout): ${pkNow ? 'YES (len=' + pkNow.length + ')' : 'NO — HCS writes will fail until provided via .env or Supabase load'}`);
 }
 
 // Health check
@@ -623,7 +635,7 @@ app.get('/api/prediction/active-fast-games', async (req, res) => {
   try {
     const { getActiveFastGamesState } = await import('./resolver');
     const state = getActiveFastGamesState();
-    res.json({ success: true, games: state.activeFastGames || [] });
+    res.json({ success: true, games: state.activeGames || [] });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -847,6 +859,17 @@ const server = app.listen({ port: PORT, host: '0.0.0.0' }, async () => {
   // If this shows 127.0.0.1 instead of 0.0.0.0, proxy from outside container will fail.
   const boundAddr = server.address();
   console.log(`[Resolver] CONFIRMED BOUND ADDRESS (from inside cb): ${JSON.stringify(boundAddr)}`);
+
+  // Warm the price health immediately so heartbeat logs show a real price even before first game auto-resolve,
+  // and /api/price/hbar is useful right away.
+  setTimeout(async () => {
+    try {
+      const { getCurrentHbarPriceWithAuditTrail } = await import('./resolver');
+      await getCurrentHbarPriceWithAuditTrail();
+    } catch (e: any) {
+      console.warn('[Resolver] Initial price warm failed (will retry on first resolution or /price call):', e.message);
+    }
+  }, 4000);
 
   // Phase 1: Load persisted active games for restart resilience
   try {

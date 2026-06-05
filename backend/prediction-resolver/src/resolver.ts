@@ -694,6 +694,36 @@ const HGRAPH_URL: string = process.env.HGRAPH_URL || (() => {
  * which serves raw consensus topic messages with very low latency. This is what HashScan uses.
  * Results are normalized to { message: string, consensus_timestamp?: string } shape.
  */
+/** Helper: paginate Mirror Node topic messages by following `links.next` (Mirror caps pages at ~100).
+ * Collects up to ~limit or maxPages pages. Used to make fetchReliable actually deliver large windows
+ * for volume, history, re-register etc when the topic has hundreds of messages.
+ */
+async function fetchMirrorTopicMessagesPaginated(order: 'asc' | 'desc', maxPages = 5): Promise<any[]> {
+  const numeric = MASTER_TOPIC_ID.split('.').pop()!;
+  const out: any[] = [];
+  let url = `${MIRROR_NODE}/api/v1/topics/${numeric}/messages?limit=100&order=${order}`;
+  for (let p = 0; p < maxPages; p++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) break;
+      const data: any = await res.json();
+      for (const m of data.messages || []) {
+        out.push({
+          message: m.message,
+          consensus_timestamp: m.consensus_timestamp,
+          sequence_number: m.sequence_number,
+        });
+      }
+      const next: string | undefined = data.links?.next;
+      if (!next || out.length >= 2000) break;
+      url = next.startsWith('http') ? next : `${MIRROR_NODE}${next}`;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
 export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
   // 1. Try HGraph (current primary in most paths)
   try {
@@ -725,45 +755,22 @@ export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
     for (const r of hg || []) add(r);
   } catch {}
 
-  // 2. Always also pull from official Mirror Node topic messages (authoritative fallback / complement)
+  // 2. Mirror asc (oldest-first pages via next links) — now actually paginates so large limits for history/volume work
   try {
-    const numeric = MASTER_TOPIC_ID.split('.').pop();
-    const url = `${MIRROR_NODE}/api/v1/topics/${numeric}/messages?limit=${Math.min(limit, 1000)}&order=asc`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data: any = await res.json();
-      for (const m of data.messages || []) {
-        // Mirror returns { message: base64string, consensus_timestamp, sequence_number, ... }
-        add({
-          message: m.message,              // base64 — our decoder will handle it
-          consensus_timestamp: m.consensus_timestamp,
-          sequence_number: m.sequence_number,
-        });
-      }
-      if (data.messages?.length) {
-        console.log(`[Resolver] Mirror Node contributed ${data.messages.length} topic messages (reliable path)`);
-      }
+    const pages = Math.max(2, Math.ceil(Math.min(limit, 2000) / 100));
+    const ascMsgs = await fetchMirrorTopicMessagesPaginated('asc', pages);
+    for (const r of ascMsgs) add(r);
+    if (ascMsgs.length && Math.random() < 0.05) {
+      console.log(`[Resolver] Mirror (asc paginated x${pages}) contributed ${ascMsgs.length} topic messages (reliable path)`);
     }
   } catch (e: any) {
     if (Math.random() < 0.2) console.warn('[Resolver] Mirror topic messages fallback error (non-fatal):', e?.message);
   }
 
-  // 3. Also fetch recent messages with order=desc to ensure we catch the very latest (e.g. just-posted MARKET_RESOLVED)
-  // This helps the alreadyResolved / hasResolved checks not miss recent posts due to lag or limited asc window.
+  // 3. Mirror desc (newest) — a few pages of recent is enough to catch just-posted MARKET_RESOLVED / latest bets
   try {
-    const numeric = MASTER_TOPIC_ID.split('.').pop();
-    const urlDesc = `${MIRROR_NODE}/api/v1/topics/${numeric}/messages?limit=${Math.min(limit, 1000)}&order=desc`;
-    const resDesc = await fetch(urlDesc);
-    if (resDesc.ok) {
-      const dataDesc: any = await resDesc.json();
-      for (const m of dataDesc.messages || []) {
-        add({
-          message: m.message,
-          consensus_timestamp: m.consensus_timestamp,
-          sequence_number: m.sequence_number,
-        });
-      }
-    }
+    const descMsgs = await fetchMirrorTopicMessagesPaginated('desc', 3);
+    for (const r of descMsgs) add(r);
   } catch (e: any) {
     if (Math.random() < 0.2) console.warn('[Resolver] Mirror recent (desc) fallback error (non-fatal):', e?.message);
   }
@@ -1265,13 +1272,12 @@ const scheduledPayoutTimers = new Map<string, NodeJS.Timeout>();
  */
 async function hasExistingPayout(marketId: string): Promise<boolean> {
   try {
-    const messages = await fetchTopicMessages(1500);
+    // Use reliable (HGraph+Mirror paginated) so we don't miss a recent PAYOUT_CLOSED due to HGraph lag or small page.
+    const messages = await fetchReliableTopicMessages(1500);
     for (const row of messages) {
       try {
         const raw = row.message || '';
-        const decoded = raw.startsWith('\\x')
-          ? Buffer.from(raw.replace(/\\x/g, ''), 'hex').toString('utf8')
-          : raw;
+        const decoded = decodeHcsMessage(raw);
         const p = JSON.parse(decoded);
         if (p.marketId === marketId && (p.type === 'PAYOUT' || p.type === 'PAYOUT_CLOSED')) {
           return true;
