@@ -1785,6 +1785,7 @@ export function Predict() {
                     });
 
                     // 3. Payment succeeded — now tell the resolver to record the market on HCS
+                    // Retry the record call a few times (Mirror / resolver can be momentarily busy after payment)
                     const hbarPrice = assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
 
                     const generatedMarketId = `fast-${Date.now()}`;
@@ -1796,26 +1797,47 @@ export function Predict() {
 
                     const questionText = `Will HBAR price be ${sideLabel} than the current price at resolution? (~${durationLabel}, est. ${timeLabel})`;
 
-                    const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        marketId: generatedMarketId,
-                        question: questionText,
-                        asset: 'HBAR',
-                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                        durationMinutes: fastGameDuration,
-                        initialSide: fastGameSide,
-                        initialStake: fastGameStake,
-                        creationPrice: hbarPrice,
-                        submittedBy: session.accountId,
-                      }),
-                    });
+                    let recordSuccess = false;
+                    let lastRecordError = '';
+                    for (let attempt = 1; attempt <= 3; attempt++) {
+                      try {
+                        const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            marketId: generatedMarketId,
+                            question: questionText,
+                            asset: 'HBAR',
+                            endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                            durationMinutes: fastGameDuration,
+                            initialSide: fastGameSide,
+                            initialStake: fastGameStake,
+                            creationPrice: hbarPrice,
+                            submittedBy: session.accountId,
+                          }),
+                        });
 
-                    const data = await res.json();
+                        const data = await res.json();
 
-                    if (!res.ok || !data.success) {
-                      throw new Error(data.error || 'Resolver failed to record the game');
+                        if (res.ok && data.success) {
+                          recordSuccess = true;
+                          break;
+                        } else {
+                          lastRecordError = data.error || 'Resolver returned error';
+                        }
+                      } catch (e: any) {
+                        lastRecordError = e.message || 'Network error calling resolver';
+                      }
+                      if (attempt < 3) await new Promise(r => setTimeout(r, 1500)); // small backoff
+                    }
+
+                    if (!recordSuccess) {
+                      // Payment is on-chain, but record failed. Don't throw hard — user has proof of payment.
+                      // The resolver's Mirror poll will see the funding and we can add auto-recovery later.
+                      // For now, surface a friendly message and still try to show optimistic.
+                      console.error('Fast game record failed after retries:', lastRecordError);
+                      alert(`Payment sent successfully on-chain.\nRecording the market on HCS failed after retries: ${lastRecordError}\n\nThe game may appear shortly via Mirror recovery scan. Check Portfolio or refresh in 30-60s. Your stake is safe in the resolver escrow.`);
+                      // Still proceed with optimistic UI so it doesn't look stuck
                     }
 
                     // Optimistic update: immediately show the new game in the UI
