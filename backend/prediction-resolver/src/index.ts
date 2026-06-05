@@ -4,7 +4,20 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import fetch from 'node-fetch';
 
-dotenv.config();
+dotenv.config({ override: false });
+
+// Early diagnostics (visible in Railway runtime logs immediately on `node dist/index.js`)
+console.log('[Resolver] === STARTUP DIAGNOSTICS ===');
+console.log(`[Resolver] Node ${process.version} | platform=${process.platform} | Railway PORT raw="${process.env.PORT}" | cwd=${process.cwd()}`);
+
+// Global safety nets: log anything that could crash the process after the "running" message (visible in Railway logs).
+// Node by default may terminate on uncaught/unhandled; these ensure we see the root cause instead of silent death + restart loop.
+process.on('uncaughtException', (err) => {
+  console.error('[Resolver] !!! UNCAUGHT EXCEPTION (this often explains "starts logging running but health never responds" or sudden death):', err);
+});
+process.on('unhandledRejection', (reason, _promise) => {
+  console.error('[Resolver] !!! UNHANDLED PROMISE REJECTION (check for missing .catch on async in loops or recovery):', reason);
+});
 
 // Local modules imported AFTER dotenv so .env (and future early supabase loads) are populated for any top-level checks in hedera/resolver
 import { 
@@ -34,7 +47,14 @@ app.use(cors({
 
 app.use(express.json());
 
-const PORT = parseInt(process.env.PORT || '4000', 10);
+const rawPort = process.env.PORT;
+console.log(`[Resolver] Raw PORT from env: "${rawPort}" (typeof=${typeof rawPort})`);
+let PORT = parseInt(rawPort || '4000', 10);
+if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
+  console.warn(`[Resolver] Computed PORT=${PORT} invalid, falling back to 4000`);
+  PORT = 4000;
+}
+console.log(`[Resolver] Final computed PORT=${PORT} (this is what we will bind to; must match Railway service Networking port + $PORT for proxy to reach us)`);
 
 // Payout delay for Fast Games (configurable for different environments)
 const PAYOUT_DELAY_MS = Number(process.env.PAYOUT_DELAY_MS) || 28000;
@@ -770,11 +790,18 @@ heartbeatInterval = setInterval(async () => {
   }
 }, 60_000);
 
-const server = app.listen(PORT, '0.0.0.0', async () => {
+// Use options object form for unambiguous host binding in containers (Railway, Docker, Fly, etc.)
+// Combined with top-level PORT log + post-bind address() confirmation to diagnose proxy reachability.
+const server = app.listen({ port: PORT, host: '0.0.0.0' }, async () => {
   await loadSecretsFromSupabase();
   console.log(`[Resolver] Prediction Market Resolver running on port ${PORT}`);
   console.log(`[Resolver] Fast Game payout delay configured to: ${PAYOUT_DELAY_MS}ms`);
   console.log('[Resolver] Mirror polling + Fast Game auto-resolution loops active');
+
+  // Confirm actual bound address for Railway container diagnostics.
+  // If this shows 127.0.0.1 instead of 0.0.0.0, proxy from outside container will fail.
+  const boundAddr = server.address();
+  console.log(`[Resolver] CONFIRMED BOUND ADDRESS (from inside cb): ${JSON.stringify(boundAddr)}`);
 
   // Phase 1: Load persisted active games for restart resilience
   try {
@@ -831,6 +858,16 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
       console.error('[Resolver] Error during startup payout recovery scan:', e);
     }
   }, 12000); // Give resolver time to fully initialize
+});
+
+// Attach listeners immediately after listen() returns (before or concurrent with 'listening' event + cb).
+// This guarantees we capture the real bound address for container proxy debugging.
+server.on('listening', () => {
+  const addr = server.address();
+  console.log(`[Resolver] LISTENING EVENT FIRED: bound=${JSON.stringify(addr)} | If host != '0.0.0.0'/'::' then Railway ingress proxy (external to container) cannot connect.`);
+});
+server.on('error', (err: any) => {
+  console.error('[Resolver] SERVER ERROR (e.g. EADDRINUSE, permission):', err && err.code ? err.code : err);
 });
 
 // Production readiness: graceful shutdown for Railway / SIGTERM
