@@ -615,6 +615,21 @@ app.get('/api/admin/active-games', async (req, res) => {
 });
 
 /**
+ * Public endpoint for the frontend to get current active fast games from the resolver's state.
+ * This avoids direct browser CORS issues with HGraph/Mirror when deployed on Vercel.
+ * The resolver keeps the authoritative in-memory list (populated from HCS on startup + creates).
+ */
+app.get('/api/prediction/active-fast-games', async (req, res) => {
+  try {
+    const { getActiveFastGamesState } = await import('./resolver');
+    const state = getActiveFastGamesState();
+    res.json({ success: true, games: state.activeFastGames || [] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * Treasury-only: Manually schedule a delayed automatic payout for a fast game.
  * Useful for testing or recovery.
  */

@@ -148,6 +148,28 @@ export async function fetchNativeActiveMarkets(): Promise<NativeMarket[]> {
  */
 export async function fetchFastGames(): Promise<FastGame[]> {
   try {
+    // Prefer the resolver's in-memory state (populated from HCS + live creates/bets).
+    // This avoids direct browser CORS problems with HGraph/Mirror when the FE is on Vercel.
+    // The resolver does the reliable fetching server-side.
+    const resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
+    if (resolverRes.ok) {
+      const data = await resolverRes.json();
+      if (data.success && Array.isArray(data.games) && data.games.length > 0) {
+        // Map the resolver's active list shape to the FE FastGame shape if needed (it is already close).
+        return data.games.map((g: any) => ({
+          ...g,
+          yesStake: g.yesStake || g.yes_stake || 0,
+          noStake: g.noStake || g.no_stake || 0,
+          yesParticipants: g.yesParticipants || g.yes_participants || 0,
+          noParticipants: g.noParticipants || g.no_participants || 0,
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn('[NativePM] Resolver active-fast-games fetch failed, falling back to direct HCS scan');
+  }
+
+  try {
     // Use reliable (HGraph + Mirror) so volumes from bets by *any* user (including other wallets)
     // appear promptly even when HGraph indexer lags. This directly fixes "bet from another account did not tally".
     const hgraphResponse = await getTopicMessagesReliable(MASTER_TOPIC_ID, 2000);
