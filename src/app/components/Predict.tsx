@@ -153,18 +153,28 @@ export function Predict() {
 
     const fetchModalHbarPrice = async () => {
       try {
-        const res = await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd'
-        );
+        // Use the resolver's authoritative Hedera price (PRIMARY source) for prediction accuracy and consistency
+        const res = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
         const json = await res.json();
-        const price = json['hedera-hashgraph']?.usd;
+        const price = json.price ?? json['hedera-hashgraph']?.usd;
         if (price) {
           setModalHbarPrice(price);
           setLastPriceUpdate(new Date());
           setPriceSecondsUntilRefresh(15);
         }
       } catch (e) {
-        console.warn('Modal HBAR price refresh failed');
+        console.warn('Modal HBAR price refresh from resolver failed, falling back to CoinGecko');
+        // fallback
+        try {
+          const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+          const json = await res.json();
+          const price = json['hedera-hashgraph']?.usd;
+          if (price) {
+            setModalHbarPrice(price);
+            setLastPriceUpdate(new Date());
+            setPriceSecondsUntilRefresh(15);
+          }
+        } catch {}
       }
     };
 
@@ -991,8 +1001,8 @@ export function Predict() {
   const formatPrice = (price: number | null) => {
     if (price === null || price === undefined) return 'N/A';
     if (price < 1) {
-      // Very low priced assets (HBAR etc.) → 4 decimals
-      return price.toFixed(4);
+      // Very low priced assets (HBAR etc.) → 6 decimals for prediction accuracy (matches resolver PRIMARY source)
+      return price.toFixed(6);
     }
     // Higher priced assets → show 3 decimals for better accuracy (e.g. SOL)
     return price.toFixed(3);
@@ -1112,7 +1122,7 @@ export function Predict() {
                       <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4">
                         <div>
                           <div className="text-[10px] text-white/50 tracking-widest">CREATION PRICE</div>
-                          <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(4) || '—'}</div>
+                          <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(6) || '—'}</div>
                         </div>
                         <div className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -1208,7 +1218,7 @@ export function Predict() {
                       {/* Basic graceful resolution notice (Tier 1) - shows outcome briefly if we have resolution data */}
                       {game.resolutionWinner && (
                         <div className="mb-3 px-3 py-1.5 rounded-2xl bg-[#00f9ff]/10 border border-[#00f9ff]/30 text-[#00f9ff] text-xs font-semibold">
-                          RESOLVED — Winner: {game.resolutionWinner} @ ${game.closingPrice?.toFixed(4) || '—'}
+                          RESOLVED — Winner: {game.resolutionWinner} @ ${game.closingPrice?.toFixed(6) || '—'}
                         </div>
                       )}
 
@@ -1580,7 +1590,7 @@ export function Predict() {
                 <div className="flex items-baseline gap-2">
                   <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR</span>
                   <span className={`font-mono font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(4)}
+                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
                   </span>
                 </div>
 
