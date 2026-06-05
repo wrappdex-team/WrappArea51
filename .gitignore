@@ -19,6 +19,7 @@ dist-ssr/
 .env.production.local
 backend/prediction-resolver/.env
 backend/prediction-resolver/.env.*
+!backend/prediction-resolver/.env.example
 
 # Logs
 logs
@@ -52,6 +53,7 @@ typechain-types/
 backend/prediction-resolver/node_modules/
 backend/prediction-resolver/dist/
 backend/prediction-resolver/.env
+!backend/prediction-resolver/.env.example
 backend/prediction-resolver/data/*.json
 
 # Misc
