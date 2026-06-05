@@ -60,5 +60,12 @@ backend/prediction-resolver/data/*.json
 nul~
 *.BROKEN-*
 
+# Windows 'nul' / '.null' ghost files (very common when doing `echo > nul` or similar in Git Bash / CMD mix on Windows; they create a real file named "nul")
+nul
+.null
+**/nul
+**/.null
+recovery-snapshots/
+
 # OS
 Thumbs.db

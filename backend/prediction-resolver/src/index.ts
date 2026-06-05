@@ -55,6 +55,9 @@ if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
   PORT = 4000;
 }
 console.log(`[Resolver] Final computed PORT=${PORT} (this is what we will bind to; must match Railway service Networking port + $PORT for proxy to reach us)`);
+if (!process.env.PORT) {
+  console.log(`[Resolver] (Local dev note) No PORT env — using fallback ${PORT}. If you get EADDRINUSE on Windows, try: PORT=4001 npm run dev  (or kill the process using port ${PORT})`);
+}
 
 // Payout delay for Fast Games (configurable for different environments)
 const PAYOUT_DELAY_MS = Number(process.env.PAYOUT_DELAY_MS) || 28000;

@@ -303,6 +303,7 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
       resolver: RESOLUTION_ACCOUNT,
     });
 
+    knownResolvedMarkets.add(marketId);
     console.log(`[Resolver] Posted MARKET_RESOLVED for ${marketId}`);
 
     // Phase 0/1 correctness fix for playable games:
@@ -320,6 +321,15 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
     } else {
       // Fast games always use the delayed automatic path for fairness and auditability
       console.log(`[Resolver] Fast game ${marketId} resolved via manual path — relying on scheduled automatic payouts`);
+    }
+
+    // Remove from active list for fast games (admin resolve path)
+    if (marketId.startsWith('fast-')) {
+      const ridx = activeFastGames.findIndex(g => g.marketId === marketId);
+      if (ridx !== -1) {
+        activeFastGames.splice(ridx, 1);
+        saveActiveGamesToDisk().catch(() => {});
+      }
     }
   } catch (err) {
     console.error('[Resolver] Resolution error:', err);
@@ -370,6 +380,9 @@ const recentResolutions: Array<{
 }> = [];
 const MAX_RECENT_RESOLUTIONS = 10;
 
+// Runtime memory of markets we have resolved in this process (helps prevent re-register races when on-chain checks are flaky due to indexer lag)
+const knownResolvedMarkets = new Set<string>();
+
 /** Phase 1: Load active games from disk for restart resilience */
 export async function loadActiveGamesFromDisk() {
   try {
@@ -378,7 +391,7 @@ export async function loadActiveGamesFromDisk() {
 
     if (Array.isArray(parsed.activeFastGames)) {
       activeFastGames.length = 0;
-      parsed.activeFastGames.forEach((g: any) => activeFastGames.push(g));
+      parsed.activeFastGames.filter((g: any) => !g.resolved).forEach((g: any) => activeFastGames.push(g));
     }
     if (Array.isArray(parsed.tieResolutionGames)) {
       tieResolutionGames.length = 0;
@@ -398,7 +411,7 @@ async function saveActiveGamesToDisk() {
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
     const data = {
-      activeFastGames,
+      activeFastGames: activeFastGames.filter(g => !g.resolved),
       tieResolutionGames: tieResolutionGames.map(t => ({
         marketId: t.marketId,
         creationPrice: t.creationPrice,
@@ -412,6 +425,22 @@ async function saveActiveGamesToDisk() {
 }
 
 export function registerFastGameForAutoResolution(marketId: string, endTime: number) {
+  // Guard against duplicate registration (prevents re-resolve loops when reRegister misses a recent MARKET_RESOLVED due to indexer lag or HGraph flakiness)
+  const existingIndex = activeFastGames.findIndex(g => g.marketId === marketId);
+  if (existingIndex !== -1) {
+    if (activeFastGames[existingIndex].resolved) {
+      console.log(`[Resolver] ${marketId} already resolved in memory, skipping register`);
+      knownResolvedMarkets.add(marketId);
+      return;
+    }
+    console.log(`[Resolver] Fast game ${marketId} already registered in active list`);
+    return;
+  }
+  if (knownResolvedMarkets.has(marketId)) {
+    console.log(`[Resolver] ${marketId} known resolved, skipping register`);
+    return;
+  }
+
   // We no longer store creationPrice in memory.
   // It is fetched from the immutable HCS topic at resolution time for maximum auditability.
   activeFastGames.push({ 
@@ -434,7 +463,7 @@ export async function autoResolveExpiredFastGames() {
 
     // Quick check to avoid re-processing games that already have a resolution on HCS
     try {
-      const recentMessages = await fetchReliableTopicMessages(500);
+      const recentMessages = await fetchReliableTopicMessages(5000);
       const alreadyResolved = recentMessages.some((m: any) => {
         try {
           const raw = m.message || '';
@@ -445,6 +474,7 @@ export async function autoResolveExpiredFastGames() {
       });
       if (alreadyResolved) {
         game.resolved = true;
+        knownResolvedMarkets.add(game.marketId);
         continue;
       }
     } catch {}
@@ -505,6 +535,7 @@ export async function autoResolveExpiredFastGames() {
                 resolver: RESOLUTION_ACCOUNT,
               });
 
+              knownResolvedMarkets.add(game.marketId);
               recordResolutionEvent({
                 marketId: game.marketId,
                 winner: tieWinner,
@@ -547,6 +578,7 @@ export async function autoResolveExpiredFastGames() {
                 resolver: RESOLUTION_ACCOUNT,
               });
 
+              knownResolvedMarkets.add(game.marketId);
               recordResolutionEvent({
                 marketId: game.marketId,
                 winner: forceWinner,
@@ -608,6 +640,7 @@ export async function autoResolveExpiredFastGames() {
         });
 
         game.resolved = true;
+        knownResolvedMarkets.add(game.marketId);
         console.log(
           `[Resolver] Auto-posted MARKET_RESOLVED for ${game.marketId} | ` +
           `Open: ${openPrice} → Close: ${closingPrice} | Winner: ${winner} | ` +
@@ -626,6 +659,14 @@ export async function autoResolveExpiredFastGames() {
     } catch (err) {
       console.error(`[Resolver] Failed to auto-resolve ${game.marketId}:`, err);
     }
+  }
+
+  // Clean resolved games from the active list (prevents re-registration races and list bloat from historical games).
+  // We mutate the const array in place.
+  const beforeClean = activeFastGames.length;
+  activeFastGames.splice(0, activeFastGames.length, ...activeFastGames.filter(g => !g.resolved));
+  if (activeFastGames.length !== beforeClean) {
+    saveActiveGamesToDisk().catch(() => {});
   }
 }
 
@@ -705,6 +746,26 @@ export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
     }
   } catch (e: any) {
     if (Math.random() < 0.2) console.warn('[Resolver] Mirror topic messages fallback error (non-fatal):', e?.message);
+  }
+
+  // 3. Also fetch recent messages with order=desc to ensure we catch the very latest (e.g. just-posted MARKET_RESOLVED)
+  // This helps the alreadyResolved / hasResolved checks not miss recent posts due to lag or limited asc window.
+  try {
+    const numeric = MASTER_TOPIC_ID.split('.').pop();
+    const urlDesc = `${MIRROR_NODE}/api/v1/topics/${numeric}/messages?limit=${Math.min(limit, 1000)}&order=desc`;
+    const resDesc = await fetch(urlDesc);
+    if (resDesc.ok) {
+      const dataDesc: any = await resDesc.json();
+      for (const m of dataDesc.messages || []) {
+        add({
+          message: m.message,
+          consensus_timestamp: m.consensus_timestamp,
+          sequence_number: m.sequence_number,
+        });
+      }
+    }
+  } catch (e: any) {
+    if (Math.random() < 0.2) console.warn('[Resolver] Mirror recent (desc) fallback error (non-fatal):', e?.message);
   }
 
   // Return newest first or oldest first? Existing code expects roughly asc; we keep as collected (Mirror asc)
@@ -916,7 +977,11 @@ export async function fetchTopicMessages(limit = 500) {
     const json: any = await res.json();
     return json?.data?.topic_message || [];
   } catch (e) {
-    console.error('[Resolver] HGraph fetch failed for payout calc', e);
+    // HGraph public testnet GraphQL is often flaky (returns HTML errors); Mirror fallback handles it.
+    // Log at low rate to avoid spam while still surfacing persistent issues.
+    if (Math.random() < 0.05) {
+      console.warn('[Resolver] HGraph fetch failed (non-fatal, using Mirror fallback)', (e as Error).message?.substring(0, 100));
+    }
     return [];
   }
 }
@@ -1434,6 +1499,7 @@ export async function forceResolveMarket(marketId: string, winner: 'YES' | 'NO',
     resolver: RESOLUTION_ACCOUNT,
   });
 
+  knownResolvedMarkets.add(marketId);
   recordResolutionEvent({
     marketId,
     winner,
@@ -1445,6 +1511,13 @@ export async function forceResolveMarket(marketId: string, winner: 'YES' | 'NO',
   // Always schedule the delayed payout for fast games after forced resolution
   if (marketId.startsWith('fast-')) {
     scheduleDelayedPayout(marketId, 28000);
+  }
+
+  // Remove from active list
+  const fidx = activeFastGames.findIndex(g => g.marketId === marketId);
+  if (fidx !== -1) {
+    activeFastGames.splice(fidx, 1);
+    saveActiveGamesToDisk().catch(() => {});
   }
 
   console.log(`[Resolver] Force resolved ${marketId} to ${winner} and scheduled payout`);
@@ -1460,7 +1533,7 @@ export async function forceResolveMarket(marketId: string, winner: 'YES' | 'NO',
  */
 export async function reRegisterOverdueFastGames() {
   try {
-    const messages = await fetchReliableTopicMessages(2000);
+    const messages = await fetchReliableTopicMessages(5000);
     const now = Math.floor(Date.now() / 1000);
     const seenMarkets = new Set<string>();
 
@@ -1474,7 +1547,11 @@ export async function reRegisterOverdueFastGames() {
           if (seenMarkets.has(p.marketId)) continue;
           seenMarkets.add(p.marketId);
 
-          // Check if already resolved on HCS
+          if (knownResolvedMarkets.has(p.marketId)) {
+            continue;
+          }
+
+          // Check if already resolved on HCS (use reliable fetch which includes Mirror fallback)
           const hasResolved = messages.some((m: any) => {
             try {
               const r = m.message || '';

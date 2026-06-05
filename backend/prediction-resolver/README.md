@@ -70,3 +70,17 @@ This architecture finally lets **any wallet** create and bet on markets safely, 
 ---
 
 Let me know when you're ready and I'll help wire the frontend calls to this backend.
+
+## Local development tips (Windows / Git Bash common issues)
+
+- Port conflicts (EADDRINUSE on 4000): 4000 is a popular dev port. Run with an explicit different port:
+  ```bash
+  PORT=4001 npm run dev
+  ```
+  Then test http://localhost:4001/health
+
+- "nul" or ".null" ghost file appearing in `git status`: This happens from `echo something > nul` in mixed cmd.exe / Git Bash sessions on Windows (cmd treats `nul` as the null device; bash creates a real file). The root `.gitignore` now catches it. Just `rm -f nul` and commit the ignore rules if needed.
+
+- HGraph "Unexpected token '<'" (HTML instead of JSON): The public HGraph endpoint sometimes returns an error HTML page (rate limit, no auth, etc.). The resolver treats it as non-fatal and falls back to the Hedera Mirror Node (you will see the "reliable path" log). This is expected during heavy testing.
+
+- Railway PORT: The service always receives a `PORT` env var from Railway (e.g. 8080). The code respects it + forces `0.0.0.0` bind so the Railway edge proxy can reach it. Never hard-code 4000 for the deployed version.

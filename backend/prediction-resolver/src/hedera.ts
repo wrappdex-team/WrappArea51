@@ -1,7 +1,7 @@
 import { Client, AccountId, PrivateKey, TopicMessageSubmitTransaction, TransferTransaction, Hbar, ScheduleCreateTransaction, Timestamp, ExchangeRate } from '@hashgraph/sdk';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ override: false });
 
 const {
   RESOLUTION_ACCOUNT_ID,
