@@ -633,9 +633,37 @@ app.get('/api/admin/active-games', async (req, res) => {
  */
 app.get('/api/prediction/active-fast-games', async (req, res) => {
   try {
-    const { getActiveFastGamesState } = await import('./resolver');
+    const { getActiveFastGamesState, getMarketVolume } = await import('./resolver');
     const state = getActiveFastGamesState();
-    res.json({ success: true, games: state.activeGames || [] });
+    const baseGames = state.activeGames || [];
+
+    // Enrich every active game with live volume/participant data from reliable HCS scan.
+    // This is critical so that when the deployed FE (Vercel) uses the resolver path for the list
+    // (to avoid browser CORS to HGraph/Mirror), the prediction cards still get correct
+    // yesStake/noStake/currentVolume for pool weights, odds bars, and "X HBAR" total.
+    // Without this, fetchFastGames takes the resolver branch, gets minimal {marketId, endTime...},
+    // defaults stakes to 0, and the volume ratio block + bars are hidden or show 0 even when
+    // bets are correctly recorded on-chain by the resolver. The direct-scan fallback only runs
+    // if resolver returns empty or errors.
+    const enriched = await Promise.all(baseGames.map(async (g: any) => {
+      try {
+        const vol = await getMarketVolume(g.marketId);
+        return {
+          ...g,
+          yesStake: vol.yesStake ?? 0,
+          noStake: vol.noStake ?? 0,
+          totalVolume: vol.totalVolume ?? 0,
+          currentVolume: vol.totalVolume ?? 0,
+          yesParticipants: vol.yesParticipants ?? 0,
+          noParticipants: vol.noParticipants ?? 0,
+          totalParticipants: (vol.yesParticipants ?? 0) + (vol.noParticipants ?? 0),
+        };
+      } catch {
+        return { ...g, yesStake: 0, noStake: 0, currentVolume: 0, totalVolume: 0 };
+      }
+    }));
+
+    res.json({ success: true, games: enriched });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
