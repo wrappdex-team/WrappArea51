@@ -630,6 +630,33 @@ app.get('/api/prediction/active-fast-games', async (req, res) => {
 });
 
 /**
+ * Simple server-side proxy for CoinGecko (and potentially other public APIs).
+ * This lets the FE on Vercel fetch market data without hitting CORS blocks
+ * from the browser (vercel.app origin is not allowed by CoinGecko etc.).
+ * All external data goes through the resolver, which we control CORS for.
+ */
+app.get('/api/proxy/coingecko/*', async (req, res) => {
+  try {
+    const subpath = (req.params as any)[0] || '';
+    const query = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+    const url = `https://api.coingecko.com/api/v3/${subpath}${query}`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': 'WrappDEX/1.0',
+        'Accept': 'application/json',
+      },
+    });
+    if (!r.ok) {
+      return res.status(r.status).json({ error: `CoinGecko ${r.status}` });
+    }
+    const data = await r.json();
+    res.json(data);
+  } catch (e: any) {
+    res.status(502).json({ error: 'coingecko proxy error', details: e.message });
+  }
+});
+
+/**
  * Treasury-only: Manually schedule a delayed automatic payout for a fast game.
  * Useful for testing or recovery.
  */

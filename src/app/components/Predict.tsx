@@ -869,7 +869,12 @@ export function Predict() {
   const fetchLivePrices = async () => {
     setIsLoadingPrices(true);
     try {
-      const response = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1');
+      // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko)
+      const isLive = !RESOLVER_BASE.includes('localhost');
+      const coingeckoUrl = isLive
+        ? `${RESOLVER_BASE}/api/proxy/coingecko/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1`
+        : 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+      const response = await fetch(coingeckoUrl);
       const data = await response.json();
       const liveAssets: Asset[] = data.map((coin: any) => ({
         symbol: coin.symbol.toUpperCase(),
