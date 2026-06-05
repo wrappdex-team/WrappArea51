@@ -34,7 +34,7 @@ app.use(cors({
 
 app.use(express.json());
 
-const PORT = process.env.PORT || 4000;
+const PORT = parseInt(process.env.PORT || '4000', 10);
 
 // Payout delay for Fast Games (configurable for different environments)
 const PAYOUT_DELAY_MS = Number(process.env.PAYOUT_DELAY_MS) || 28000;
@@ -770,7 +770,7 @@ heartbeatInterval = setInterval(async () => {
   }
 }, 60_000);
 
-const server = app.listen(PORT, async () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
   await loadSecretsFromSupabase();
   console.log(`[Resolver] Prediction Market Resolver running on port ${PORT}`);
   console.log(`[Resolver] Fast Game payout delay configured to: ${PAYOUT_DELAY_MS}ms`);
@@ -792,9 +792,9 @@ const server = app.listen(PORT, async () => {
   setTimeout(async () => {
     console.log('[Resolver] Running one-time startup automatic payout recovery scan...');
     try {
-      const { fetchTopicMessages, processAutomaticPayoutsForMarket } = await import('./resolver');
+      const { fetchReliableTopicMessages, processAutomaticPayoutsForMarket } = await import('./resolver');
 
-      const messages = await fetchTopicMessages(1500);
+      const messages = await fetchReliableTopicMessages(1500);
 
       const resolvedMarkets = new Set<string>();
       const closedMarkets = new Set<string>();
