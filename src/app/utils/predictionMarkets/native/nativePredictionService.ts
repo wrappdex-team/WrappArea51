@@ -763,3 +763,39 @@ export function prepareFastGamePayout(params: {
 
 // Re-export for UI components that need the reliable (HGraph + Mirror) topic scan
 export { getTopicMessagesReliable } from './hgraphClient';
+
+/**
+ * Fetch user's current HBAR balance for premium UX (e.g. dynamic max on stake sliders).
+ * Prefers resolver (for deployed Vercel CORS safety + consistent logging).
+ * Falls back to direct Mirror for local dev.
+ * SECURITY: Read-only public data. Slider max is UX only — backend resolver always re-verifies
+ * via getMirrorAccountBalance before accepting /bet or create records.
+ */
+export async function fetchUserHbarBalance(accountId: string): Promise<number> {
+  if (!accountId || !accountId.startsWith('0.0.')) return 0;
+
+  const isLive = !RESOLVER_BASE.includes('localhost');
+  if (isLive) {
+    try {
+      const res = await fetch(`${RESOLVER_BASE}/api/prediction/balance?account=${encodeURIComponent(accountId)}`);
+      if (res.ok) {
+        const j = await res.json();
+        return Number(j.balance) || 0;
+      }
+    } catch (e) {
+      console.warn('[NativePM] Resolver balance fetch failed, falling back to direct Mirror');
+    }
+  }
+
+  // Direct Mirror fallback (dev or resolver down)
+  try {
+    const url = `https://testnet.mirrornode.hedera.com/api/v1/accounts/${accountId}?transactions=false`;
+    const r = await fetch(url);
+    if (!r.ok) return 0;
+    const d: any = await r.json();
+    const tiny = Number(d.balance?.balance) || 0;
+    return tiny / 100_000_000;
+  } catch {
+    return 0;
+  }
+}

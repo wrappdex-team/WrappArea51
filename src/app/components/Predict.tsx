@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Zap, X, RefreshCw, TrendingUp } from 'lucide-react';
+import { Slider } from './ui/slider';
 import { useSigning } from '../contexts/SigningContext';
 import { useWallet } from '../contexts/WalletContext';
 import { signAndExecuteTransaction } from '../utils/wallet-core';
@@ -38,6 +39,7 @@ import {
   calculateFastGamePayout,
   getTopicMessagesReliable,
   MASTER_TOPIC_ID,
+  fetchUserHbarBalance,
 } from '../utils/predictionMarkets/native/nativePredictionService';
 
 interface Asset {
@@ -131,6 +133,7 @@ export function Predict() {
   const [fastGameDuration, setFastGameDuration] = useState<10 | 20>(10);
   const [fastGameSide, setFastGameSide] = useState<'YES' | 'NO'>('YES');
   const [fastGameStake, setFastGameStake] = useState(25);
+  const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
   // Modal-specific HBAR price (refreshes every 15s for UI accuracy)
@@ -142,6 +145,27 @@ export function Predict() {
   useEffect(() => {
     const interval = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Shared live HBAR price for cards tiny delta/chart (Phase 4). Poll resolver (Mirror PRIMARY).
+  const [liveHbarPrice, setLiveHbarPrice] = useState<number | null>(null);
+  const [livePriceTs, setLivePriceTs] = useState<number>(0);
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const res = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+        const j = await res.json();
+        const p = j.price ?? j['hedera-hashgraph']?.usd;
+        if (active && p) {
+          setLiveHbarPrice(p);
+          setLivePriceTs(Date.now());
+        }
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 4500); // ~4-5s as requested for premium live feel
+    return () => { active = false; clearInterval(id); };
   }, []);
 
   // 15-second HBAR price refresh + countdown when Create Fast Game modal is open
@@ -193,6 +217,25 @@ export function Predict() {
 
     return () => clearInterval(countdownInterval);
   }, [showFastGameModal]);
+
+  // Fetch real user HBAR balance (via resolver for prod consistency) when create modal opens or wallet changes.
+  // Used to drive "unlimited" slider max. SECURITY: UX only — backend always re-verifies before recording.
+  useEffect(() => {
+    if (!showFastGameModal || !hashPackSession?.accountId) {
+      setFastGameMaxBalance(null);
+      return;
+    }
+    (async () => {
+      try {
+        const bal = await fetchUserHbarBalance(hashPackSession.accountId);
+        // Leave small buffer for fees (create ~2.5 + 1% + network)
+        const safeMax = Math.max(1, Math.floor((bal - 3) * 100) / 100);
+        setFastGameMaxBalance(safeMax > 0 ? safeMax : null);
+      } catch {
+        setFastGameMaxBalance(null);
+      }
+    })();
+  }, [showFastGameModal, hashPackSession?.accountId]);
 
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' | 'info' }>>([]);
   const toastIdRef = React.useRef(0);
@@ -791,11 +834,15 @@ export function Predict() {
           if (g.marketId !== game.marketId) return g;
           const addYes = side === 'YES' ? stake : 0;
           const addNo = side === 'NO' ? stake : 0;
+          const addYesP = side === 'YES' ? 1 : 0;
+          const addNoP = side === 'NO' ? 1 : 0;
           return {
             ...g,
             currentVolume: (g.currentVolume || 0) + stake,
             yesStake: (g.yesStake || 0) + addYes,
             noStake: (g.noStake || 0) + addNo,
+            yesParticipants: (g.yesParticipants || 0) + addYesP,
+            noParticipants: (g.noParticipants || 0) + addNoP,
           };
         }));
 
@@ -1128,6 +1175,18 @@ export function Predict() {
                         <div>
                           <div className="text-[10px] text-white/50 tracking-widest">CREATION PRICE</div>
                           <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(6) || '—'}</div>
+                          {/* Live tiny delta (Phase 4 premium) — updates 3-5s via shared resolver price */}
+                          {liveHbarPrice != null && game.creationPrice != null && (
+                            <div className="text-[9px] mt-0.5 font-mono">
+                              {(() => {
+                                const delta = liveHbarPrice - game.creationPrice;
+                                const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
+                                const sign = delta >= 0 ? '▲' : '▼';
+                                const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                                return <span className={color}>{sign} ${Math.abs(delta).toFixed(5)} ({pct.toFixed(1)}%)</span>;
+                              })()}
+                            </div>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -1181,6 +1240,11 @@ export function Predict() {
                             <div className="flex justify-between text-[10px] mt-1 font-mono">
                               <div className="text-emerald-400">{yesStake.toFixed(1)}</div>
                               <div className="text-rose-400">{noStake.toFixed(1)}</div>
+                            </div>
+                            {/* User counts + sides (data from resolver volume enrichment) */}
+                            <div className="flex justify-between text-[9px] mt-0.5 text-white/60">
+                              <div>{(game.yesParticipants || 0)} users</div>
+                              <div>{(game.noParticipants || 0)} users</div>
                             </div>
                           </div>
                         );
@@ -1238,7 +1302,7 @@ export function Predict() {
 
                       {remaining > 30 && hashPackSession?.accountId && isBettingOpen && (
                         <div className="pt-4 border-t border-white/10">
-                          {/* Quick stake presets */}
+                          {/* Quick stake presets + mini slider for unlimited (max from balance if fetched) */}
                           <div className="flex justify-between items-center mb-2 text-xs">
                             <div className="text-white/50">Stake</div>
                             <div className="flex gap-1">
@@ -1260,6 +1324,19 @@ export function Predict() {
                               })}
                             </div>
                           </div>
+                          {/* Per-card mini slider (uses same game max if we cached it globally; falls back) */}
+                          <Slider
+                            min={1}
+                            max={fastGameMaxBalance && fastGameMaxBalance > 10 ? fastGameMaxBalance : 500}
+                            step={1}
+                            value={[gameStakes[game.marketId] || 10]}
+                            onValueChange={(vals) => {
+                              const v = Math.max(1, vals[0] || 1);
+                              const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
+                              setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
+                            }}
+                            className="mb-2"
+                          />
 
                           <div className="flex gap-2">
                             <button 
@@ -1685,29 +1762,49 @@ export function Predict() {
                 </div>
               </div>
 
-              {/* Stake with Presets */}
+              {/* Stake with Presets — now premium unlimited slider + live Mirror max */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  YOUR INITIAL STAKE (HBAR)
+                  YOUR INITIAL STAKE (HBAR) {fastGameMaxBalance != null ? `• max ~${fastGameMaxBalance.toFixed(1)} (live)` : ''}
                 </div>
 
                 <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
                   <input 
                     type="number" 
                     value={fastGameStake} 
-                    min={10}
+                    min={1}
+                    max={fastGameMaxBalance || undefined}
                     onChange={(e) => {
-                      const raw = parseInt(e.target.value);
-                      if (!isNaN(raw)) setFastGameStake(Math.max(0, raw));
+                      const raw = parseFloat(e.target.value);
+                      if (!isNaN(raw)) {
+                        const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, Math.max(1, raw)) : Math.max(1, raw);
+                        setFastGameStake(clamped);
+                      }
                     }}
                     className={`flex-1 bg-transparent text-xl font-mono focus:outline-none tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}
                   />
                   <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
                 </div>
 
-                {/* Quick Presets */}
-                <div className="flex gap-2">
-                  {[10, 25, 50, 100, 250].map((amt) => (
+                {/* Custom Slider (unlimited up to real balance via Mirror) */}
+                <Slider
+                  min={1}
+                  max={fastGameMaxBalance && fastGameMaxBalance > 1 ? fastGameMaxBalance : 1000}
+                  step={0.1}
+                  value={[fastGameStake]}
+                  onValueChange={(vals) => {
+                    const v = Math.max(1, vals[0] || 1);
+                    const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
+                    setFastGameStake(clamped);
+                  }}
+                  className="mb-3"
+                />
+
+                {/* Smart presets (respect dynamic max) */}
+                <div className="flex gap-2 flex-wrap">
+                  {[1, 5, 10, 25, 50, 100].filter(a => !fastGameMaxBalance || a <= fastGameMaxBalance).concat(
+                    fastGameMaxBalance != null && fastGameMaxBalance > 100 ? [Math.floor(fastGameMaxBalance)] : []
+                  ).slice(0, 7).map((amt) => (
                     <button
                       key={amt}
                       onClick={() => setFastGameStake(amt)}
@@ -1723,7 +1820,9 @@ export function Predict() {
                     </button>
                   ))}
                 </div>
-                <div className={`text-[10px] mt-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>or type any amount above</div>
+                <div className={`text-[10px] mt-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                  Slider max = your real-time HBAR balance (fetched via resolver + Hedera Mirror for prod safety). Backend always re-verifies.
+                </div>
               </div>
 
               {/* Tier 2: Clear Fee Breakdown - premium, exact, and honest (matches site aesthetic) */}

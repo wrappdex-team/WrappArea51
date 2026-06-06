@@ -506,6 +506,48 @@ app.get('/api/prediction/market-volume', async (req, res) => {
 });
 
 /**
+ * Public read-only balance endpoint (for premium UX: dynamic max on stake sliders).
+ * Proxies Mirror Node (public data) so deployed FE (Vercel) can fetch without CORS/DNS issues.
+ * SECURITY: This is READ-ONLY public Hedera data (no keys, no privileged actions).
+ * Always re-verify on sensitive paths (e.g. /bet already calls getMirrorAccountBalance before recording).
+ * Basic in-memory throttle to protect free-tier resolver.
+ */
+let balanceThrottle = new Map<string, number>();
+app.get('/api/prediction/balance', async (req, res) => {
+  try {
+    const { account } = req.query;
+    if (!account || typeof account !== 'string' || !account.startsWith('0.0.')) {
+      return res.status(400).json({ error: 'account (0.0.xxxx) required' });
+    }
+
+    // Very lightweight per-account throttle (1 req / 2s) — sufficient for slider UX.
+    const now = Date.now();
+    const last = balanceThrottle.get(account) || 0;
+    if (now - last < 2000) {
+      return res.status(429).json({ error: 'rate limited', retryAfterMs: 2000 - (now - last) });
+    }
+    balanceThrottle.set(account, now);
+
+    // Cleanup old entries occasionally
+    if (balanceThrottle.size > 1000) {
+      const cutoff = now - 60_000;
+      for (const [k, v] of balanceThrottle) if (v < cutoff) balanceThrottle.delete(k);
+    }
+
+    const { getMirrorAccountBalance } = await import('./resolver');
+    const balance = await getMirrorAccountBalance(account);
+    res.json({
+      account,
+      balance,
+      note: 'Sourced from Hedera Mirror (public). Client slider max only — resolver always re-verifies on /bet and create paths.',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Balance lookup failed' });
+  }
+});
+
+/**
  * Admin/Resolver can call this to resolve a market and trigger payouts.
  */
 app.post('/api/prediction/resolve', async (req, res) => {
