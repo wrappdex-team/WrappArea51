@@ -144,19 +144,18 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
       throw new Error(`Mirror Node produced invalid price: ${price}`);
     }
 
-    // Gate the detailed calc log: only on price change or at most once per minute.
-    // This stops the wall of identical "240992 cent_equiv / (30000 hbar_equiv * 100)" lines
-    // while still confirming the PRIMARY source periodically and on real updates.
-    const now = Date.now();
+    // Gate the detailed calc log: ONLY on actual price change or the very first fetch after startup.
+    // Periodic health pings (heartbeat, auto-resolve) will no longer spam the long "calculation" line
+    // when the official network rate is stable (which it is for long periods).
+    // The fetch still happens (via cache TTL) so /api/price/hbar and decisions get accurate recent values.
     const priceChanged = Math.abs(price - lastMirrorLogPrice) > 1e-8;
-    const dueForLog = (now - lastMirrorLogTs) > MIRROR_LOG_MIN_INTERVAL_MS;
-    if (priceChanged || dueForLog || lastMirrorLogPrice === 0) {
+    if (priceChanged || lastMirrorLogPrice === 0) {
       console.log(
         `[Resolver] ✅ Mirror Node Exchange Rate (PRIMARY - official Hedera network rate): $${price} | ` +
         `calculation: ${cent} cent_equiv / (${hbar} hbar_equiv * 100) | resolvedAt=${resolvedAt}`
       );
       lastMirrorLogPrice = price;
-      lastMirrorLogTs = now;
+      lastMirrorLogTs = Date.now();
     }
 
     return {
@@ -220,6 +219,7 @@ export async function postCreateMarket(params: {
   initialSide?: 'YES' | 'NO';
   initialStake?: number;
   creationPrice?: number;
+  creationPriceTime?: string;
   submittedBy: string;
 }) {
   // Phase 0: Detailed clean text memo for market creation (cryptographic proof + human audit)
@@ -241,6 +241,10 @@ export async function postCreateMarket(params: {
     gameType: 'fast_updown',   // Phase 0: Consistent organization across the entire topic for reliable queries
     memo,   // Phase 0: Clean detailed memo (plain text only, no special characters)
   };
+
+  if (params.creationPriceTime) {
+    message.creationPriceTime = params.creationPriceTime;
+  }
 
   return submitHcsMessage(message);
 }

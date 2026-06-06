@@ -1675,17 +1675,17 @@ export function Predict() {
                 <button onClick={() => setShowFastGameModal(false)}><X /></button>
               </div>
 
-              {/* Current HBAR Price - compact */}
+              {/* Current HBAR Price - compact. This is the official Hedera network rate the game will use for resolution (PRIMARY source). */}
               <div className="mt-2 text-xs">
                 <div className="flex items-baseline gap-2">
-                  <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR</span>
+                  <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR (official rate for this game)</span>
                   <span className={`font-mono font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
                     ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
                   </span>
                 </div>
                 {lastPriceUpdate && (
                   <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                    {lastPriceUpdate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • updates in {priceSecondsUntilRefresh}s
+                    {lastPriceUpdate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • updates in {priceSecondsUntilRefresh}s (resolver authoritative)
                   </div>
                 )}
               </div>
@@ -1893,9 +1893,20 @@ export function Predict() {
                       return "payment-sent";
                     });
 
-                    // 3. Payment succeeded — now tell the resolver to record the market on HCS
-                    // Retry the record call a few times (Mirror / resolver can be momentarily busy after payment)
-                    const hbarPrice = assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
+                    // 3. Payment succeeded — now get a *fresh* authoritative price from the resolver
+                    // at the exact moment after the user committed the on-chain payment.
+                    // This makes the creationPrice + timestamp for the game as accurate as possible.
+                    // The resolver will also do its own fresh fetch in the /create handler for extra authority.
+                    let hbarPrice = 0;
+                    let creationPriceTime: string | undefined;
+                    try {
+                      const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+                      const pJson = await pRes.json();
+                      hbarPrice = pJson.price || assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
+                      creationPriceTime = pJson.priceTime || pJson.resolvedAt;
+                    } catch {
+                      hbarPrice = assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
+                    }
 
                     const generatedMarketId = `fast-${Date.now()}`;
 
@@ -1922,6 +1933,7 @@ export function Predict() {
                             initialSide: fastGameSide,
                             initialStake: fastGameStake,
                             creationPrice: hbarPrice,
+                            creationPriceTime,
                             submittedBy: session.accountId,
                           }),
                         });

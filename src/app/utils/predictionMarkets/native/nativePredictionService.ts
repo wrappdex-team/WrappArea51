@@ -510,12 +510,14 @@ export async function createFastUpdownMarket(params: {
   durationMinutes: 5 | 10 | 20;
   initialStake: number;
   currentPrice: number;
+  currentPriceTime?: string;
 }) {
   const endTime = Math.floor(Date.now() / 1000) + (params.durationMinutes * 60);
 
   // Phase 0: Clean detailed memo (plain text only) so the user has a cryptographic record on HCS
   const sideText = params.direction === 'YES' ? 'YES (up)' : 'NO (down)';
-  const createMemo = `Create fast-${Date.now()}: Will HBAR be ${params.direction === 'YES' ? 'above' : 'below'} current price in ${params.durationMinutes} minutes? ${params.initialStake} HBAR initial stake on ${sideText}. Duration ${params.durationMinutes} minutes. Creation price ${params.currentPrice}. Created by ${params.accountId}. Full audit trail on HCS.`;
+  const timePart = params.currentPriceTime ? ` (as of ${params.currentPriceTime})` : '';
+  const createMemo = `Create fast-${Date.now()}: Will HBAR be ${params.direction === 'YES' ? 'above' : 'below'} current price in ${params.durationMinutes} minutes? ${params.initialStake} HBAR initial stake on ${sideText}. Duration ${params.durationMinutes} minutes. Creation price ${params.currentPrice}${timePart}. Created by ${params.accountId}. Full audit trail on HCS.`;
 
   const message: any = {
     type: "CREATE_MARKET",
@@ -534,6 +536,10 @@ export async function createFastUpdownMarket(params: {
     submittedBy: params.accountId,
     memo: createMemo,   // Phase 0: User-signed proof memo (plain text, no special characters)
   };
+
+  if (params.currentPriceTime) {
+    message.creationPriceTime = params.currentPriceTime;
+  }
 
   // Final production pattern for HashPack user-paid HCS:
   // Explicit TransactionId + freezeWith. This is the only way to satisfy

@@ -107,6 +107,32 @@ async function loadSecretsFromSupabase() {
   }
   const pkNow = process.env.RESOLUTION_PRIVATE_KEY;
   console.log(`[Resolver] PK ready for HCS posts (create/bet/resolve/payout): ${pkNow ? 'YES (len=' + pkNow.length + ')' : 'NO — HCS writes will fail until provided via .env or Supabase load'}`);
+
+  // === Surgical addition for HBAR price (SaucerSwap last-traded primary) ===
+  // This key is already stored in the same kv_store_54299934 and used by other live MVP parts
+  // (Supabase Edge Functions for swaps/pools). We load it additively only, never touching the PK path.
+  // Local .env takes precedence. If missing we gracefully fall back to current Mirror behavior.
+  if (!process.env.SAUCERSWAP_API_KEY && supabaseServiceKey && supabaseUrl) {
+    try {
+      const supabaseSaucer = createClient(supabaseUrl, supabaseServiceKey);
+      const saucerKeyRow = await supabaseSaucer
+        .from('kv_store_54299934')
+        .select('value')
+        .eq('key', 'saucerswap_api_key')
+        .single();
+      if (!saucerKeyRow.error && saucerKeyRow.data && saucerKeyRow.data.value) {
+        process.env.SAUCERSWAP_API_KEY = saucerKeyRow.data.value;
+        const v = String(saucerKeyRow.data.value);
+        console.log(`[Resolver] Loaded SaucerSwap API key from Supabase kv_store (redacted: ${v.substring(0, 4)}...${v.slice(-4)}, len=${v.length}) — for verified last-traded HBAR price`);
+      } else {
+        console.log('[Resolver] No saucerswap_api_key row in kv_store (or error) — SaucerSwap price path will be unavailable, falling back to Mirror for all games.');
+      }
+    } catch (e) {
+      console.warn('[Resolver] Error loading SaucerSwap key from Supabase (non-fatal):', (e as Error).message);
+    }
+  } else if (process.env.SAUCERSWAP_API_KEY) {
+    console.log('[Resolver] SAUCERSWAP_API_KEY already present (local .env or prior load) — using for verified HBAR last-traded price.');
+  }
 }
 
 // Health check
@@ -183,7 +209,8 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
       durationMinutes,
       initialSide,
       initialStake,
-      creationPrice,
+      creationPrice: clientCreationPrice,
+      creationPriceTime: clientCreationPriceTime,
       submittedBy,
     } = req.body;
 
@@ -191,6 +218,15 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
       console.warn('[Resolver] Missing required fields in request');
       return res.status(400).json({ error: 'Missing required fields' });
     }
+
+    // Resolver-authoritative fresh price at the moment the funded create record arrives.
+    // CRITICAL: we pass { critical: true } so the new multi-source SaucerSwap last-traded +
+    // direct contract verify + HGraph/Mirror tolerance cross happens with NO cache and full
+    // provenance logged + threaded. This is the exact "after when actually creating the prediction wager" moment.
+    const { getCurrentHbarPriceWithAuditTrail } = await import('./resolver');
+    const priceData = await getCurrentHbarPriceWithAuditTrail({ critical: true }).catch(() => null);
+    const creationPrice = priceData?.price ?? clientCreationPrice ?? 0;
+    const creationPriceTime = priceData?.priceTime ?? priceData?.resolvedAt ?? clientCreationPriceTime ?? new Date().toISOString();
 
     await postCreateMarket({
       marketId,
@@ -202,6 +238,7 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
       initialSide,
       initialStake,
       creationPrice,
+      creationPriceTime,
       submittedBy,
     });
 
