@@ -8,6 +8,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Zap, X, RefreshCw, TrendingUp } from 'lucide-react';
 import { Slider } from './ui/slider';
+import { motion, AnimatePresence } from 'motion';
 import { useSigning } from '../contexts/SigningContext';
 import { useWallet } from '../contexts/WalletContext';
 import { signAndExecuteTransaction } from '../utils/wallet-core';
@@ -130,7 +131,7 @@ export function Predict() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showBetModal, setShowBetModal] = useState(false);
   const [showFastGameModal, setShowFastGameModal] = useState(false);
-  const [fastGameDuration, setFastGameDuration] = useState<10 | 20>(10);
+  const [fastGameDuration, setFastGameDuration] = useState<10 | 20 | 60 | 240>(10); // extended support per master plan (1h/4h after polish)
   const [fastGameSide, setFastGameSide] = useState<'YES' | 'NO'>('YES');
   const [fastGameStake, setFastGameStake] = useState(25);
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
@@ -1700,13 +1701,14 @@ export function Predict() {
                   GAME DURATION
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {[10, 20].map((mins) => {
+                  {[10, 20, 60, 240].map((mins) => {
                     const isActive = fastGameDuration === mins;
-                    const predictMins = mins / 2;
+                    const predictMins = Math.floor(mins / 2);
+                    const label = mins >= 60 ? `${mins/60}h` : `${mins}m`;
                     return (
                       <button
                         key={mins}
-                        onClick={() => setFastGameDuration(mins as 10 | 20)}
+                        onClick={() => setFastGameDuration(mins as 10 | 20 | 60 | 240)}
                         className={`p-4 rounded-3xl transition-all border text-center
                           ${isActive 
                             ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
@@ -1716,8 +1718,9 @@ export function Predict() {
                           }`}
                       >
                         <div className="text-2xl font-bold tabular-nums tracking-tighter">
-                          {predictMins} / {mins} min
+                          {label}
                         </div>
+                        <div className="text-[10px] opacity-70">bet close ~{predictMins}{mins>=60?'h':'m'}</div>
                       </button>
                     );
                   })}
