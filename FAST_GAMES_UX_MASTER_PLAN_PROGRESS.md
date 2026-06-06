@@ -4,6 +4,8 @@
 **Backup:** Confirmed (Wrapp-area51 backup june05)
 **Status:** All core phases executed. Builds clean. Multiple commits. Ready for full smoke test with new features.
 
+**2026-06-06 update:** Critical HBAR price polling spam fix (15s in-memory TTL cache + change/60s gated logging for the Mirror calc + "Using PRIMARY" + SDK warn) applied directly to the main `wrapparea51` tree (not the emergency backup). 4.5s `liveHbarPrice` card poll slowed to 15s. Resolver `npm run build` clean. This eliminates the repeated identical `$0.08033` + calc lines you saw in Railway logs while preserving full Mirror PRIMARY provenance for resolutions.
+
 ## Summary of Executed Work (Phases 1-7 + fixes)
 - **Prep + all UI phases:** 
   - BE: New /api/prediction/balance endpoint (safe, throttled Mirror proxy for dynamic max).

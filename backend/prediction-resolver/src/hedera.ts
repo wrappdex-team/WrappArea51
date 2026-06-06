@@ -52,6 +52,14 @@ export function getClient(): Client {
   return client;
 }
 
+// --- Price log gating (prevents 5s identical spam from 20s/60s loops + tie 5s polling + /price hits) ---
+// The official Mirror rate (cent/hbar_equiv) changes infrequently; we still fetch on TTL in wrapper
+// but only emit the noisy detailed calc + SDK warning at most once per minute or on actual change.
+let lastSdkWarnTs = 0;
+let lastMirrorLogPrice = 0;
+let lastMirrorLogTs = 0;
+const MIRROR_LOG_MIN_INTERVAL_MS = 60_000;
+
 /**
  * Gets the official Hedera network exchange rate for HBAR.
  * This is the most authoritative "on-network" source for HBAR price.
@@ -79,7 +87,11 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     }
     throw new Error("SDK returned invalid or unparsable rate");
   } catch (e1) {
-    console.warn("[Resolver] ExchangeRate.getCurrentRate unavailable on this SDK build (expected on some versions):", (e1 as Error).message);
+    const now = Date.now();
+    if (now - lastSdkWarnTs > MIRROR_LOG_MIN_INTERVAL_MS) {
+      console.warn("[Resolver] ExchangeRate.getCurrentRate unavailable on this SDK build (expected on some versions):", (e1 as Error).message);
+      lastSdkWarnTs = now;
+    }
   }
 
   // Layer 2: Fallback cast (some SDK builds attach it directly on the Client)
@@ -132,10 +144,20 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
       throw new Error(`Mirror Node produced invalid price: ${price}`);
     }
 
-    console.log(
-      `[Resolver] ✅ Mirror Node Exchange Rate (PRIMARY - official Hedera network rate): $${price} | ` +
-      `calculation: ${cent} cent_equiv / (${hbar} hbar_equiv * 100) | resolvedAt=${resolvedAt}`
-    );
+    // Gate the detailed calc log: only on price change or at most once per minute.
+    // This stops the wall of identical "240992 cent_equiv / (30000 hbar_equiv * 100)" lines
+    // while still confirming the PRIMARY source periodically and on real updates.
+    const now = Date.now();
+    const priceChanged = Math.abs(price - lastMirrorLogPrice) > 1e-8;
+    const dueForLog = (now - lastMirrorLogTs) > MIRROR_LOG_MIN_INTERVAL_MS;
+    if (priceChanged || dueForLog || lastMirrorLogPrice === 0) {
+      console.log(
+        `[Resolver] ✅ Mirror Node Exchange Rate (PRIMARY - official Hedera network rate): $${price} | ` +
+        `calculation: ${cent} cent_equiv / (${hbar} hbar_equiv * 100) | resolvedAt=${resolvedAt}`
+      );
+      lastMirrorLogPrice = price;
+      lastMirrorLogTs = now;
+    }
 
     return {
       price,

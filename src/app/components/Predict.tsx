@@ -137,7 +137,7 @@ export function Predict() {
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
-  // Modal-specific HBAR price (refreshes every 15s for UI accuracy)
+  // Modal-specific HBAR price (refreshes every 30s while open; resolver /api/price/hbar is cached on backend)
   const [modalHbarPrice, setModalHbarPrice] = useState<number | null>(null);
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
   const [priceSecondsUntilRefresh, setPriceSecondsUntilRefresh] = useState(15);
@@ -148,7 +148,10 @@ export function Predict() {
     return () => clearInterval(interval);
   }, []);
 
-  // Shared live HBAR price for cards tiny delta/chart (Phase 4). Poll resolver (Mirror PRIMARY).
+  // Shared live HBAR price for cards tiny delta/chart (Phase 4).
+  // Backend now has 15s cache on /api/price/hbar (authoritative Mirror). We poll at 15s.
+  // For snappier visual movement on the live cards we rely on the fast coingecko assets (fetchLivePrices).
+  // This value is mainly for authoritative consistency with creationPrice.
   const [liveHbarPrice, setLiveHbarPrice] = useState<number | null>(null);
   const [livePriceTs, setLivePriceTs] = useState<number>(0);
   useEffect(() => {
@@ -165,11 +168,11 @@ export function Predict() {
       } catch {}
     };
     tick();
-    const id = setInterval(tick, 4500); // ~4-5s as requested for premium live feel
+    const id = setInterval(tick, 15000);
     return () => { active = false; clearInterval(id); };
   }, []);
 
-  // 15-second HBAR price refresh + countdown when Create Fast Game modal is open
+  // 30-second HBAR price refresh + countdown when Create Fast Game modal is open (uses resolver cache)
   useEffect(() => {
     if (!showFastGameModal) {
       setPriceSecondsUntilRefresh(15);

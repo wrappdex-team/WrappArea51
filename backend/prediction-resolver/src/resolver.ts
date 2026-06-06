@@ -370,6 +370,23 @@ let lastPriceHealth: {
   timestamp: string;
 } | null = null;
 
+// In-memory TTL cache + log gating for getCurrentHbarPriceWithAuditTrail.
+// Collapses the 20s autoResolve + 60s heartbeat + per-game + tie-5s + /api/price/hbar calls
+// into at most one real Mirror fetch every ~15s, and detailed "PRIMARY" provenance logs
+// only on actual change or once per minute. The authoritative Mirror rate itself moves rarely.
+let cachedPriceData: {
+  price: number;
+  priceTime: string;
+  resolvedAt: string;
+  source: string;
+  isStale: boolean;
+} | null = null;
+let cachedPriceAt = 0;
+const PRICE_CACHE_TTL_MS = 15_000;
+let lastWrapperLoggedPrice = 0;
+let lastWrapperLogTs = 0;
+const WRAPPER_LOG_MIN_INTERVAL_MS = 60_000;
+
 // Phase 1 Observability: Lightweight ring buffer of recent resolution decisions
 const recentResolutions: Array<{
   marketId: string;
@@ -882,22 +899,40 @@ export async function getCurrentHbarPriceWithAuditTrail(): Promise<{
   source: string;
   isStale: boolean;
 }> {
-  const resolvedAt = new Date().toISOString();
+  const now = Date.now();
+
+  // Serve from TTL cache if fresh. This is the main fix for the repeated identical
+  // Mirror calc spam (every 5s in Railway logs) while keeping resolution decisions
+  // using a reasonably current authoritative price (official rate changes slowly anyway).
+  if (cachedPriceData && (now - cachedPriceAt) < PRICE_CACHE_TTL_MS) {
+    // Return a copy with a fresh resolvedAt so callers see "we checked recently",
+    // but price/priceTime/source remain the last observed authoritative values.
+    return {
+      ...cachedPriceData,
+      resolvedAt: new Date().toISOString(),
+    };
+  }
 
   try {
     const networkRate = await getCurrentHbarExchangeRateFromNetwork();
 
-    // Phase 1 improvement: Cleaner logging. The underlying hedera function already handles
-    // layered fallbacks (SDK → Mirror Node). We only log success here.
     const isPrimary = networkRate.source.includes("SDK") || networkRate.source.includes("official");
     const prefix = isPrimary ? "PRIMARY" : "FALLBACK";
 
-    console.log(
-      `[Resolver] ✅ Using Hedera Network Exchange Rate (${prefix} for all prediction markets) | ` +
-      `price=$${networkRate.price.toFixed(6)} | source=${networkRate.source} | resolvedAt=${networkRate.resolvedAt}`
-    );
+    // Gate the "Using PRIMARY" log: only on price change from last logged or max once/minute.
+    // Prevents the second wave of spam lines that followed every Mirror calc in the logs.
+    const priceChanged = Math.abs(networkRate.price - lastWrapperLoggedPrice) > 1e-8;
+    const dueForLog = (now - lastWrapperLogTs) > WRAPPER_LOG_MIN_INTERVAL_MS;
+    if (priceChanged || dueForLog || lastWrapperLoggedPrice === 0) {
+      console.log(
+        `[Resolver] ✅ Using Hedera Network Exchange Rate (${prefix} for all prediction markets) | ` +
+        `price=$${networkRate.price.toFixed(6)} | source=${networkRate.source} | resolvedAt=${networkRate.resolvedAt}`
+      );
+      lastWrapperLoggedPrice = networkRate.price;
+      lastWrapperLogTs = now;
+    }
 
-    // Record for observability
+    // Record for observability (always update health on fresh fetch)
     lastPriceHealth = {
       price: networkRate.price,
       source: networkRate.source,
@@ -905,13 +940,19 @@ export async function getCurrentHbarPriceWithAuditTrail(): Promise<{
       timestamp: networkRate.resolvedAt,
     };
 
-    return {
+    const result = {
       price: networkRate.price,
       priceTime: networkRate.resolvedAt,
       resolvedAt: networkRate.resolvedAt,
       source: networkRate.source,
       isStale: false,
     };
+
+    // Populate cache for next callers (20s loops, 5s tie polls, /api/price/hbar from FE cards, etc.)
+    cachedPriceData = result;
+    cachedPriceAt = now;
+
+    return result;
   } catch (err: any) {
     // Phase 1: Demote from "CRITICAL" to warning. The hedera layer has multiple fallbacks.
     console.warn("[Resolver] Warning: All Hedera native price sources failed. Attempting emergency public fallback.", err.message);
@@ -923,23 +964,26 @@ export async function getCurrentHbarPriceWithAuditTrail(): Promise<{
       const cgPrice = cgJson?.["hedera-hashgraph"]?.usd;
 
       if (cgPrice && !isNaN(cgPrice)) {
-        const now = new Date().toISOString();
-        console.log(`[Resolver] ⚠️ Using CoinGecko emergency fallback | price=$${cgPrice} | resolvedAt=${now}`);
+        const nowIso = new Date().toISOString();
+        console.log(`[Resolver] ⚠️ Using CoinGecko emergency fallback | price=$${cgPrice} | resolvedAt=${nowIso}`);
 
         lastPriceHealth = {
           price: cgPrice,
           source: "CoinGecko (emergency public fallback — NOT Hedera native)",
           isStale: true,
-          timestamp: now,
+          timestamp: nowIso,
         };
 
-        return {
+        const fbResult = {
           price: cgPrice,
-          priceTime: now,
-          resolvedAt: now,
+          priceTime: nowIso,
+          resolvedAt: nowIso,
           source: "CoinGecko (emergency public fallback — NOT Hedera native)",
           isStale: true,
         };
+        cachedPriceData = fbResult;
+        cachedPriceAt = Date.now();
+        return fbResult;
       }
     } catch (cgErr) {
       console.warn("[Resolver] CoinGecko emergency fallback also failed.");
