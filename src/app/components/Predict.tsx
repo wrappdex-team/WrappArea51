@@ -1041,15 +1041,9 @@ export function Predict() {
     setShowBetModal(true);
   };
 
-  const placeBet = async () => {
-    alert("Bet flow temporarily simplified during recovery. Full flow will be restored in next step.");
-    setShowBetModal(false);
-  };
-
-  const createMarket = async () => {
-    alert("Create flow temporarily simplified during recovery.");
-    setShowCreateModal(false);
-  };
+  // REMOVED in Phase 7 cleanup (per master plan): old simplified bet/create flows (fast game is the active path now).
+  // Legacy modals (showBetModal/showCreateModal) and these functions were remnants from pre-fast-game recovery.
+  // Fast game create/bet fully wired via resolver with retries, optimistic, etc. Safe to drop.
 
   const formatPrice = (price: number | null) => {
     if (price === null || price === undefined) return 'N/A';
@@ -1105,7 +1099,7 @@ export function Predict() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
             <div>
               <h3 className="text-2xl font-semibold tracking-tight">HBAR Fast Guess</h3>
-              <p className={`text-sm ${isDark ? 'text-white/60' : 'text-slate-600'}`}>Up or Down from current price • 10 / 20 minutes</p>
+              <p className={`text-sm ${isDark ? 'text-white/60' : 'text-slate-600'}`}>Up or Down from current price • 10m / 20m / 1h / 4h</p>
             </div>
             <button onClick={() => setShowFastGameModal(true)}
               className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-semibold hover:brightness-110">
@@ -1125,7 +1119,7 @@ export function Predict() {
             ) : displayFastGames.filter((g: any) => !g.resolved).length === 0 ? (
               <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
                 <div>No active fast games right now.</div>
-                <div className="text-white/40 text-xs">Create one above or wait for others — games last 10-20 min and auto-settle on HCS with weighted payouts.</div>
+                <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
                 <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
               </div>
             ) : (
@@ -1427,7 +1421,7 @@ export function Predict() {
                 <div className={`${isDark ? 'text-white/75' : 'text-slate-700'} flex items-center gap-2`}>
                   <span className={`inline-block w-2 h-2 rounded-full ${portfolioCacheStatus === 'live' ? 'bg-emerald-400' : portfolioCacheStatus === 'cached' ? 'bg-[#00f9ff]' : 'bg-amber-400'}`} />
                   {lastPortfolioSync > 0 ? (
-                    <>Data last reconciled <span className="tabular-nums font-medium">{Math.max(0, Math.floor((Date.now() - lastPortfolioSync) / 1000))}</span>s ago <span className="opacity-70">({portfolioCacheStatus})</span></>
+                    <>Synced <span className="tabular-nums font-medium">{Math.max(0, Math.floor((Date.now() - lastPortfolioSync) / 1000))}</span>s ago via resolver <span className="opacity-70">({portfolioCacheStatus === 'stale' ? 'cached' : portfolioCacheStatus})</span></>
                   ) : (
                     'Connecting to resolver belt…'
                   )}
@@ -1662,7 +1656,7 @@ export function Predict() {
                 <div>
                   <div className="font-semibold text-xl tracking-tight">Create HBAR Fast Guess</div>
                   <div className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                    Up or Down • 10 / 20 min
+                    Up or Down • 10m / 20m / 1h / 4h
                   </div>
                 </div>
                 <button onClick={() => setShowFastGameModal(false)}><X /></button>

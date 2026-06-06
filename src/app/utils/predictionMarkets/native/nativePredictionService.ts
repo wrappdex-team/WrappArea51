@@ -20,12 +20,12 @@ const RESOLVER_BASE = ENV.RESOLVER_BASE; // Authoritative payout oracle (single 
 
 // === Clean Bank-Grade Wallet Separation (Production Quality) ===
 const TREASURY_ACCOUNT = "0.0.9006841";           // Platform fees only (creation + 1% bet fees)
-const RESOLUTION_ACCOUNT = "0.0.9006850";         // User stakes + payouts (escrow). Should be near 0 after all winners paid.
+const RESOLUTION_ACCOUNT = "0.0.9006979";         // User stakes + payouts (escrow) — canonical (matches Predict + resolver env). Backend always re-verifies.
 const NETWORK_FEE_ACCOUNT = "0.0.802";            // Hedera network / node fees (automatic, not controllable here)
 
 const ALLOWED_RESOLUTION_WALLETS = [
-  "0.0.9006850",   // Primary Market Resolution
-  "0.0.9006979",   // Admin
+  "0.0.9006979",   // Primary Market Resolution (resolver)
+  "0.0.9006841",   // Treasury (fees)
   "0.0.80958515",  // tester1
   "0.0.9037361",   // TEST2
   "0.0.8999737",   // New dev tester
