@@ -1296,68 +1296,66 @@ export function Predict() {
                         </div>
                       </div>
 
-                      {/* Stable wrapper to keep card height consistent when betting closes (e.g. after 5min on 10m game) */}
+                      {/* Stable bottom section: always rendered with min-height to prevent card "unstable" / layout jump when the 50% betting window closes (e.g. 5min on 10m game) */}
                       <div className="pt-4 border-t border-white/10 min-h-[68px]">
-                      {/* Stable bottom section (min-height + always rendered) so the card doesn't become "unstable" or jump when the 5-min betting window closes on short games */}
-                      <div className="pt-4 border-t border-white/10 min-h-[68px]">
-                        {remaining > 30 && hashPackSession?.accountId && isBettingOpen ? (
-                          {/* Quick stake presets + mini slider for unlimited (max from balance if fetched) */}
-                          <div className="flex justify-between items-center mb-2 text-xs">
-                            <div className="text-white/50">Stake</div>
-                            <div className="flex gap-1">
-                              {[10, 25, 50, 100].map((amt) => {
-                                const currentStake = gameStakes[game.marketId] || 10;
-                                return (
-                                  <button
-                                    key={amt}
-                                    onClick={() => setGameStakes(prev => ({ ...prev, [game.marketId]: amt }))}
-                                    className={`px-2 py-0.5 rounded text-xs transition-all border ${
-                                      currentStake === amt 
-                                        ? 'bg-white/20 border-white/30' 
-                                        : 'bg-white/5 border-white/10 hover:bg-white/10'
-                                    }`}
-                                  >
-                                    {amt}
-                                  </button>
-                                );
-                              })}
+                        {isBettingOpen && remaining > 30 && hashPackSession?.accountId ? (
+                          <>
+                            {/* Quick stake presets + mini slider */}
+                            <div className="flex justify-between items-center mb-2 text-xs">
+                              <div className="text-white/50">Stake</div>
+                              <div className="flex gap-1">
+                                {[10, 25, 50, 100].map((amt) => {
+                                  const currentStake = gameStakes[game.marketId] || 10;
+                                  return (
+                                    <button
+                                      key={amt}
+                                      onClick={() => setGameStakes(prev => ({ ...prev, [game.marketId]: amt }))}
+                                      className={`px-2 py-0.5 rounded text-xs transition-all border ${
+                                        currentStake === amt 
+                                          ? 'bg-white/20 border-white/30' 
+                                          : 'bg-white/5 border-white/10 hover:bg-white/10'
+                                      }`}
+                                    >
+                                      {amt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
+                            <Slider
+                              min={1}
+                              max={fastGameMaxBalance && fastGameMaxBalance > 10 ? fastGameMaxBalance : 500}
+                              step={1}
+                              value={[gameStakes[game.marketId] || 10]}
+                              onValueChange={(vals) => {
+                                const v = Math.max(1, vals[0] || 1);
+                                const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
+                                setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
+                              }}
+                              className="mb-2"
+                            />
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => handleFastBet(game, 'YES')} 
+                                className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
+                              >
+                                YES {(gameStakes[game.marketId] || 10)}
+                              </button>
+                              <button 
+                                onClick={() => handleFastBet(game, 'NO')} 
+                                className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
+                              >
+                                NO {(gameStakes[game.marketId] || 10)}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-center text-xs text-white/60 py-2">
+                            {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
                           </div>
-                          {/* Per-card mini slider (uses same game max if we cached it globally; falls back) */}
-                          <Slider
-                            min={1}
-                            max={fastGameMaxBalance && fastGameMaxBalance > 10 ? fastGameMaxBalance : 500}
-                            step={1}
-                            value={[gameStakes[game.marketId] || 10]}
-                            onValueChange={(vals) => {
-                              const v = Math.max(1, vals[0] || 1);
-                              const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
-                              setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
-                            }}
-                            className="mb-2"
-                          />
-
-                          <div className="flex gap-2">
-                            <button 
-                              onClick={() => handleFastBet(game, 'YES')} 
-                              className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
-                            >
-                              YES {(gameStakes[game.marketId] || 10)}
-                            </button>
-                            <button 
-                              onClick={() => handleFastBet(game, 'NO')} 
-                              className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
-                            >
-                              NO {(gameStakes[game.marketId] || 10)}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-center text-xs text-white/60 py-2">
-                          {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
-                        </div>
-                      )}
-                    </div> {/* end stable min-h bottom */}
+                        )}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
