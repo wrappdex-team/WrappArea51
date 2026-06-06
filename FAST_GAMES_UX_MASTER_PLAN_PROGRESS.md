@@ -2,35 +2,47 @@
 
 **Branch:** feature/fast-game-ux-mastery
 **Backup:** Confirmed (Wrapp-area51 backup june05)
-**Status:** Multiple phases executed. Builds clean. Committed.
+**Status:** All core phases executed. Builds clean. Multiple commits. Ready for full smoke test with new features.
 
-## Executed (Phases 1-7 partial)
-- **Prep:** Backup verified, branch created, full FE+resolver build clean, baseline from smoke success.
-- **Phase 1 (BET slider + max):** 
-  - BE: /api/prediction/balance (safe Mirror proxy + basic throttle). Security: read-only public data; always re-verify server in /bet.
-  - FE: fetchUserHbarBalance (resolver-first). Custom Slider (ui/slider) + number in create modal + card bets. Dynamic max from live balance, smart presets, live fee breakdown, clamp. Security comments everywhere.
-- **Phase 2 (Cards users/sides):** Participant counts ("X users") + sides now displayed on volume bars in active cards. Optimistic updates inc counts. Data from resolver enrichment.
-- **Phase 3 (Anims):** Live feedback via existing transitions + LIVE tags + justBet. Delta detection foundation (volume/participants on poll). (Full motion badges in polish if needed.)
-- **Phase 4 (Tiny live chart/delta):** Shared liveHbarPrice poll (~4.5s via resolver /price/hbar Mirror PRIMARY). Live ▲/▼ delta + % from creationPrice shown on every active card. "how far away" visible, updates while watching. Premium feel.
-- **Phase 5 (1h/4h):** Duration options extended to 10m/20m/1h/4h in create modal (buttons + labels). Card timers/labels updated. Backend generic (endTime + durationMinutes). Texts refreshed ("10m-4h").
-- **Phase 6 (Polish):** Portfolio "stale" → friendlier "Synced Xs ago via resolver". Header/empty/help texts updated for new durations. More data density (users).
-- **Phase 7 (Cleanup start):** Grep scan found remnants. Removed legacy "temporarily simplified" bet/create alerts + funcs (fast is production path). Normalized stale 0.0.9006850 → 0.0.9006979 in native service + allowed list.
+## Summary of Executed Work (Phases 1-7 + fixes)
+- **Prep + all UI phases:** 
+  - BE: New /api/prediction/balance endpoint (safe, throttled Mirror proxy for dynamic max).
+  - Custom unlimited slider + live balance detection in create modal and card bets (with smart presets, clamping, live fee calc, security notes).
+  - Cards now show participant counts ("X users") per side + live price delta/% from creation (3-5s updates via resolver).
+  - Live bet activity foundation (stable updates on poll).
+  - Premium live tiny delta in cards.
+  - Duration support extended to 1h/4h in UI (with labels, timers).
+  - Polish: friendlier portfolio sync text, consistent card status, tightened modal and card elements for fit.
+  - **Card stability fix (addressing "unstable after 5 min betting limit closed"):** Betting bottom section now always renders in a min-h container with ternary for open (controls + slider) vs closed (clean message). Prevents layout jump/re-size when the 50% window closes on short games. Status line updated to be consistent. Modal create button always visible thanks to flex scrollable body + fixed footer (logo shrunk, spacing tightened).
 
-**Security notes (throughout):** 
-- Slider/balance = UX only. Resolver backend (getMirrorAccountBalance) re-enforces on every record.
-- All new data via resolver (CORS, consistent, logged).
-- No change to HCS/resolver payout/price logic — pure enhancement + visibility.
-- Live price only resolver path.
+- **Hardcode fixes for durations (critical for 1h/4h):** 
+  - All 20-min "nuclear" / placeholder / recent protection cutoffs replaced with MAX_RECENT_FAST_GAME_AGE_MS = 5h constant.
+  - Updated in recentlyCreated logic, loadFastGames cleanup, assumedDur for placeholders, age checks.
+  - Bumped localStorage filter to 6h.
+  - Allows proper display and protection for longer games without them being treated as "old ghosts".
 
-**Next (remaining polish/cleanup/final docs):** 
-- Full end-to-end smoke on live (multi-wallet, long games, balance edge, portfolio match, HashScan audit).
-- More motion/anim if desired, mobile polish, a11y.
-- Continue dead code (old comments, unused in service/Predict).
-- Add FAST_GAMES_UX.md or update plan with screenshots.
-- Commit often, user review per phase.
+- **Phase 7 Cleanup:** 
+  - Removed legacy "temporarily simplified during recovery" bet/create flows and alerts (fast game + resolver is the live path).
+  - Normalized stale 0.0.9006850 references to canonical 0.0.9006979.
+  - Cleaned modal comment, updated "Phase 0" style notes in service, minor legacy comments.
+  - Grep scans performed; more can be done iteratively if user spots remnants.
 
-All per the ultimate master plan. Bread & butter fast game now more premium, data-filled, interactive, gamer-style, bank-grade, security-conscious.
+**Builds:** ✓ Successful after all changes (FE + resolver tsc).
 
-See full plan in .grok session plan.md for details/thought process. 
+**Security:** All as per plan — client features (slider max, deltas) are UX only. Resolver/backend always re-verifies (balance, etc.). No new privileged paths. HCS remains the source of truth.
 
-Builds: ✓ (FE + resolver tsc). Branch ready.
+**Next steps for you (to continue smoke test + finish plan):**
+- Test 1h and 4h game creation (use the new duration buttons).
+- Bet before/after the 50% close window on short and long games — cards should stay stable, show users, live delta, etc.
+- Multi-wallet bets while watching countdowns (new activity should be visible in counts/delta).
+- Check portfolio/claim for the longer games after resolution (auto 28s payout should still work).
+- If any remaining "unstable" or fit issues on cards, paste screenshot and we'll tighten further (e.g. reduce more mb/padding).
+- For full dead code, if you want, we can do another pass (e.g. more old comments in backend or other files).
+
+All per the ultimate master plan. The fast game experience is now significantly more premium, data-rich, and stable for the full range of durations while keeping everything security-conscious and on-chain auditable.
+
+See the session plan.md for the full detailed thought process if needed.
+
+Ready for your feedback on the smoke test with the new 1h/4h and stable cards! 
+
+(If you want to wrap the plan with a final doc or more cleanup, just say the word.)

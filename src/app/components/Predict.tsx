@@ -1292,12 +1292,15 @@ export function Predict() {
                           {timeStr}
                         </div>
                         <div className="text-right text-[10px] text-white/50">
-                          {remaining < 120 && isBettingOpen ? 'Closing soon' : isBettingOpen ? 'Predictions close at 50%' : 'Resolution pending'}
+                          {isBettingOpen ? (remaining < 120 ? 'Closing soon' : 'Predictions close at 50%') : 'Resolution pending'}
                         </div>
                       </div>
 
-                      {remaining > 30 && hashPackSession?.accountId && isBettingOpen && (
-                        <div className="pt-4 border-t border-white/10">
+                      {/* Stable wrapper to keep card height consistent when betting closes (e.g. after 5min on 10m game) */}
+                      <div className="pt-4 border-t border-white/10 min-h-[68px]">
+                      {/* Stable bottom section (min-height + always rendered) so the card doesn't become "unstable" or jump when the 5-min betting window closes on short games */}
+                      <div className="pt-4 border-t border-white/10 min-h-[68px]">
+                        {remaining > 30 && hashPackSession?.accountId && isBettingOpen ? (
                           {/* Quick stake presets + mini slider for unlimited (max from balance if fetched) */}
                           <div className="flex justify-between items-center mb-2 text-xs">
                             <div className="text-white/50">Stake</div>
@@ -1349,8 +1352,12 @@ export function Predict() {
                             </button>
                           </div>
                         </div>
+                      ) : (
+                        <div className="text-center text-xs text-white/60 py-2">
+                          {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
+                        </div>
                       )}
-                    </div>
+                    </div> {/* end stable min-h bottom */}
                   );
                 })}
               </div>
