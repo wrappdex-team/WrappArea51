@@ -255,18 +255,19 @@ export function Predict() {
 
   // Session-persistent "recently active" cache (survives hard refresh, tab switch, come back).
   // Any marketId you *create or bet on* (including bets placed while viewing as another wallet in the same browser)
-  // is force-kept in the UI list for ~90-120 minutes. This defeats HGraph lag for both your own games
-  // and games other participants bet on while you are watching.
+  // is force-kept in the UI list for up to ~5 hours (covers 4h games + HGraph lag buffer).
+  // This defeats HGraph lag for both your own games and games other participants bet on while watching.
+  const MAX_RECENT_FAST_GAME_AGE_MS = 5 * 60 * 60 * 1000; // 5 hours
   const [recentlyCreatedMarketIds, setRecentlyCreatedMarketIds] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('recentlyCreatedFastGames');
       if (saved) {
         const parsed = JSON.parse(saved) as Record<string, number>;
-        // Only keep entries from the last 2 hours to avoid long-term pollution
-        const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+        // Only keep entries from the last 6 hours to avoid long-term pollution (supports 4h games)
+        const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
         const filtered = new Set(
           Object.entries(parsed)
-            .filter(([, ts]) => typeof ts === 'number' && ts > twoHoursAgo)
+            .filter(([, ts]) => typeof ts === 'number' && ts > sixHoursAgo)
             .map(([id]) => id)
         );
         return filtered;
@@ -306,15 +307,15 @@ export function Predict() {
         const nowSec = now / 1000;
         const ageSec = nowSec - creationSec;
 
-        // Nuclear hard limit: never create placeholder for anything older than 20 minutes from creation.
-        // This is the main kill switch for lingering ghosts.
-        if (ageSec > 20 * 60) {
+        // Nuclear hard limit: never create placeholder for anything older than the recent protection window.
+        // Increased to support 1h/4h games + HGraph lag. This is the main kill switch for lingering ghosts.
+        if (ageSec > MAX_RECENT_FAST_GAME_AGE_MS / 1000) {
           return;
         }
 
         // Fixed endTime based purely on creation timestamp + max duration (in seconds).
         // Never use "now + X" here — that causes the timer to reset on every render.
-        const assumedMaxDurSec = 20 * 60;
+        const assumedMaxDurSec = Math.max(20 * 60, (240) * 60); // support up to 4h games
         const fixedEndTimeSec = creationSec + assumedMaxDurSec;
 
         // If we're already past the natural end + small grace, do not create placeholder.
@@ -352,14 +353,14 @@ export function Predict() {
         const creationSec = Math.floor(cTsMs / 1000);
         const ageSec = nowSec - creationSec;
 
-        // Hard nuclear cutoff at 20 minutes from creation for ANY recent game.
-        // This is the primary defense against old ghosts.
-        if (ageSec > 20 * 60) {
+        // Hard nuclear cutoff at the recent protection window from creation for ANY recent game.
+        // Increased to support 1h/4h games. This is the primary defense against old ghosts.
+        if (ageSec > MAX_RECENT_FAST_GAME_AGE_MS / 1000) {
           return false;
         }
 
         // Natural expiration based on creation time + max duration + grace.
-        const assumedMaxDur = 20 * 60;
+        const assumedMaxDur = Math.max(20 * 60, 240 * 60); // support up to 4h games
         const naturalEndSec = creationSec + assumedMaxDur;
         const graceSec = 5 * 60;
 
@@ -483,8 +484,8 @@ export function Predict() {
     // Aggressive cleanup on every load — correct units (cTs is ms)
     setRecentlyCreatedMarketIds(currentSet => {
       const nowSec = Date.now() / 1000;
-      const MAX_AGE_SEC = 40 * 60;
-      const assumedMaxDur = 20 * 60;
+      const MAX_AGE_SEC = MAX_RECENT_FAST_GAME_AGE_MS / 1000;
+      const assumedMaxDur = Math.max(20 * 60, 240 * 60); // support up to 4h games
       const grace = 5 * 60;
 
       const newSet = new Set(currentSet);
@@ -1634,25 +1635,29 @@ export function Predict() {
         )}
       </div>
 
-      {/* Fast Game Modal (simplified for boot) */}
+      {/* Fast Game Create Modal — premium bank-grade UX with live balance, 4 durations, slider, etc. */}
       {showFastGameModal && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4" onClick={() => setShowFastGameModal(false)}>
-          <div className={`rounded-3xl w-full max-w-[480px] p-6 ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+          <div 
+            className={`rounded-3xl w-full max-w-[480px] max-h-[92vh] flex flex-col overflow-hidden ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} 
+            onClick={e => e.stopPropagation()}
+          >
 
-            {/* Dynamic WRAPpDEX Logo (pulls main wordmark from Supabase + respects holidays) */}
-            <div className="flex justify-center mb-4">
-              <HolidayLogo 
-                defaultDarkSrc={brandLogos.dark} 
-                defaultLightSrc={brandLogos.light} 
-                isDark={isDark} 
-                alt="WRAPpDEX" 
-                imgClassName="h-32 w-auto object-contain"
-                holidayImgClassName="h-32 w-auto object-contain"
-              />
-            </div>
+            {/* Header - fixed */}
+            <div className="flex-none p-5 pb-3">
+              {/* Dynamic WRAPpDEX Logo (smaller to save space) */}
+              <div className="flex justify-center mb-2">
+                <HolidayLogo 
+                  defaultDarkSrc={brandLogos.dark} 
+                  defaultLightSrc={brandLogos.light} 
+                  isDark={isDark} 
+                  alt="WRAPpDEX" 
+                  imgClassName="h-20 w-auto object-contain"
+                  holidayImgClassName="h-20 w-auto object-contain"
+                />
+              </div>
 
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-xl tracking-tight">Create HBAR Fast Guess</div>
                   <div className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
@@ -1662,33 +1667,24 @@ export function Predict() {
                 <button onClick={() => setShowFastGameModal(false)}><X /></button>
               </div>
 
-              {/* Current HBAR Price - Refreshes every 15s for UI accuracy */}
-              <div className="flex flex-col gap-0.5 text-xs">
+              {/* Current HBAR Price - compact */}
+              <div className="mt-2 text-xs">
                 <div className="flex items-baseline gap-2">
                   <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR</span>
                   <span className={`font-mono font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
                     ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
                   </span>
                 </div>
-
                 {lastPriceUpdate && (
-                  <div className={`text-[10px] flex items-center gap-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                    <span>
-                      {lastPriceUpdate.toLocaleDateString()} {lastPriceUpdate.toLocaleTimeString()}
-                    </span>
-                    <span className="text-emerald-400">
-                      • next in {priceSecondsUntilRefresh}s
-                    </span>
+                  <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                    {lastPriceUpdate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • updates in {priceSecondsUntilRefresh}s
                   </div>
                 )}
-
-                <div className="text-[9px] text-white/40 mt-0.5">
-                  Settlement price is captured at creation time for fairness
-                </div>
               </div>
             </div>
 
-            <div className="space-y-5">
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-auto px-5 space-y-3 pb-1 text-sm">
               {/* Duration - Minimal & Clean */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
@@ -1703,7 +1699,7 @@ export function Predict() {
                       <button
                         key={mins}
                         onClick={() => setFastGameDuration(mins as 10 | 20 | 60 | 240)}
-                        className={`p-4 rounded-3xl transition-all border text-center
+                        className={`p-3 rounded-2xl transition-all border text-center
                           ${isActive 
                             ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
                             : isDark 
@@ -1711,10 +1707,10 @@ export function Predict() {
                               : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-800'
                           }`}
                       >
-                        <div className="text-2xl font-bold tabular-nums tracking-tighter">
+                        <div className="text-xl font-bold tabular-nums tracking-tighter">
                           {label}
                         </div>
-                        <div className="text-[10px] opacity-70">bet close ~{predictMins}{mins>=60?'h':'m'}</div>
+                        <div className="text-[9px] opacity-70 leading-none">close ~{predictMins}{mins>=60?'h':'m'}</div>
                       </button>
                     );
                   })}
@@ -1730,7 +1726,7 @@ export function Predict() {
                   {/* YES / ABOVE */}
                   <button
                     onClick={() => setFastGameSide('YES')}
-                    className={`flex-1 py-4 rounded-3xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
+                    className={`flex-1 py-3 rounded-2xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
                       ${fastGameSide === 'YES' 
                         ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
                         : isDark 
@@ -1739,13 +1735,13 @@ export function Predict() {
                       }`}
                   >
                     <div className="font-bold tracking-widest">ABOVE</div>
-                    <div className="text-[10px] opacity-70 -mt-0.5">the current price</div>
+                    <div className="text-[9px] opacity-70 -mt-0.5">the current price</div>
                   </button>
 
                   {/* NO / BELOW */}
                   <button
                     onClick={() => setFastGameSide('NO')}
-                    className={`flex-1 py-4 rounded-3xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
+                    className={`flex-1 py-3 rounded-2xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
                       ${fastGameSide === 'NO' 
                         ? 'bg-rose-500 text-white border-rose-500 shadow-lg' 
                         : isDark 
@@ -1754,7 +1750,7 @@ export function Predict() {
                       }`}
                   >
                     <div className="font-bold tracking-widest">BELOW</div>
-                    <div className="text-[10px] opacity-70 -mt-0.5">the current price</div>
+                    <div className="text-[9px] opacity-70 -mt-0.5">the current price</div>
                   </button>
                 </div>
               </div>
@@ -1847,6 +1843,10 @@ export function Predict() {
                   1% goes to treasury. 2.5 HBAR funds the resolver and immutable record on 0.0.9017517.
                 </div>
               </div>
+            </div>
+
+            {/* Fixed footer with action button - always visible */}
+            <div className="flex-none p-5 pt-3 border-t border-white/10 bg-inherit">
               <button
                 onClick={async () => {
                   const session = hashPackSession;

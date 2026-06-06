@@ -275,7 +275,7 @@ export async function fetchFastGames(): Promise<FastGame[]> {
     });
 
     // Nuclear clean + return filter (relaxed for recent games):
-    // - Very recent games (< 10 minutes old by marketId) are always kept so they don't flicker away during creation.
+    // - Very recent games (by marketId timestamp) are always kept so they don't flicker away during creation (protection window increased for 1h/4h support).
     // - Older games still get the 6h creation + 1h endTime pruning.
     const nowMs = Date.now();
     const SIX_HOURS = 6 * 60 * 60 * 1000;
