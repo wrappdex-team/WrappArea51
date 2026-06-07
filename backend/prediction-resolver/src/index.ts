@@ -76,10 +76,19 @@ let mirrorInterval, autoResolveInterval, heartbeatInterval;
 
 // Secure secret loading from Supabase kv_store (for secret coverage in Supabase)
 async function loadSecretsFromSupabase() {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  let supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+  // Trim and basic normalization to avoid "Invalid path specified" PostgREST errors
+  supabaseUrl = supabaseUrl.trim().replace(/\/$/, ''); // remove trailing slash
+
   if (supabaseServiceKey && supabaseUrl) {
+    // Log redacted host for debugging (helps catch wrong URL like Edge Function URL instead of project URL)
+    try {
+      const host = new URL(supabaseUrl).host;
+      console.log(`[Resolver] Attempting Supabase kv load using host: ${host}`);
+    } catch {}
+
     if (process.env.RESOLUTION_PRIVATE_KEY) {
       console.log('[Resolver] RESOLUTION_PRIVATE_KEY already present from local .env (or Railway) — skipping Supabase kv_store fetch for it (local override takes precedence for dev).');
     } else {

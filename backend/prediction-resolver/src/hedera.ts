@@ -244,7 +244,11 @@ export async function submitHcsMessage(message: object) {
     .setTopicId(masterTopicId)
     .setMessage(JSON.stringify(message));
 
-  const receipt = await tx.execute(client);
+  // Explicit freezeWith(client) is required in current @hashgraph/sdk for TopicMessageSubmitTransaction
+  // to auto-generate transactionId using the client's operator. Without it, execute throws
+  // "`transactionId` must be set or `client` must be provided with `freezeWith`".
+  const frozenTx = tx.freezeWith(client);
+  const receipt = await frozenTx.execute(client);
   const record = await receipt.getRecord(client);
 
   console.log(`[Resolver] HCS message submitted. TxId: ${record.transactionId}`);
