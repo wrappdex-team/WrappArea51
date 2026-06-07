@@ -44,9 +44,11 @@ function getResolutionPrivateKey(): PrivateKey {
 
 let client: Client | null = null;
 
+const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || 'testnet').toLowerCase();
+
 export function getClient(): Client {
   if (!client) {
-    client = Client.forTestnet();
+    client = HEDERA_NETWORK === 'mainnet' ? Client.forMainnet() : Client.forTestnet();
     client.setOperator(resolutionAccountId, getResolutionPrivateKey());
   }
   return client;
@@ -62,13 +64,13 @@ const MIRROR_LOG_MIN_INTERVAL_MS = 60_000;
 
 /**
  * Gets a reliable mainnet HBAR price for game display + creationPrice/resolution (fairness).
- * Priority order (all mainnet):
- * 1. Mainnet-public Mirror /network/exchangerate (the official network-published rate, user's specified URL).
- * 2. Public CoinGecko + CoinCap (fast, reliable mainnet backups — no keys, always current).
- * The old SDK ExchangeRate paths (Layers 1-2) are left for compatibility but run against the testnet client,
- * so they are effectively bypassed for HBAR price in favor of the mainnet sources above.
- * This ensures the modal "CURRENT HBAR (official rate for this game)", creationPrice, and resolution
- * all use real mainnet market/official data even while the resolver itself operates on testnet for HCS.
+ * Priority order (all mainnet sources for price, independent of HCS network):
+ * 1. Mainnet-public Mirror /network/exchangerate (the official network-published rate).
+ * 2. SaucerSwap mainnet (if SAUCERSWAP_API_KEY present) for last-traded trading price.
+ * 3. Public CoinGecko + CoinCap (fast, reliable mainnet backups).
+ *
+ * The Hedera Client (for HCS posts/payouts) can now be mainnet or testnet via HEDERA_NETWORK=mainnet|testnet.
+ * Price logic always targets real mainnet HBAR data for fairness of the prediction games.
  */
 export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
   price: number;

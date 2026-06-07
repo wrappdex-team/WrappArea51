@@ -26,6 +26,21 @@ import { PredictionHistory } from './PredictionHistory';
 import { ENV } from '../utils/env';
 
 const RESOLVER_BASE = ENV.RESOLVER_BASE;
+
+// Critical for global multiplayer: if a production build (Vercel) is using the localhost
+// fallback, every user's browser will only talk to *their own* machine's resolver (if any).
+// All creates and list fetches become local-only, even though HCS is global.
+// The fix is setting VITE_RESOLVER_URL to the Railway public URL in Vercel env settings.
+if (typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    RESOLVER_BASE.includes('localhost')) {
+  console.error(
+    '[CRITICAL CONFIG] RESOLVER_BASE resolved to localhost in what looks like a production build. ' +
+    'Fast games will only be visible to the person who created them on their own machine. ' +
+    'Set VITE_RESOLVER_URL to your Railway resolver URL (e.g. https://...up.railway.app) in Vercel project settings and redeploy.'
+  );
+}
 const ESCROW_ACCOUNT_ID = '0.0.9006979';
 const TREASURY_ACCOUNT_ID = '0.0.9006841';
 
@@ -636,6 +651,36 @@ export function Predict() {
 
     try {
       const gamesFromHGraph = await fetchFastGames();
+
+      // Global + ghost fix: if the resolver (hopefully the canonical prod one) returned a non-empty list,
+      // aggressively drop any recentlyCreated IDs that are not present in it (after a tiny grace for the
+      // exact game we just created in this browser). This stops "data loading" placeholders from
+      // dominating when the FE is talking to the wrong resolver or the list is partial.
+      if (Array.isArray(gamesFromHGraph) && gamesFromHGraph.length > 0) {
+        const authIds = new Set(gamesFromHGraph.map((g: any) => g.marketId));
+        const GRACE_FOR_JUST_CREATED_MS = 60 * 1000;
+        setRecentlyCreatedMarketIds(currentSet => {
+          const newSet = new Set(currentSet);
+          let changed = false;
+          for (const id of newSet) {
+            if (!authIds.has(id)) {
+              const cTsMs = parseInt((id.split('-')[1] || '0'), 10);
+              if (!cTsMs || (Date.now() - cTsMs) > GRACE_FOR_JUST_CREATED_MS) {
+                newSet.delete(id);
+                changed = true;
+              }
+            }
+          }
+          if (changed) {
+            try {
+              const toSave: Record<string, number> = {};
+              newSet.forEach(id => { toSave[id] = Date.now(); });
+              localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+            } catch {}
+          }
+          return changed ? newSet : currentSet;
+        });
+      }
 
       // Much stronger protection for recently created games.
       // Any game we optimistically added in the last 30 minutes will
@@ -1249,7 +1294,13 @@ export function Predict() {
                   const secs = remaining % 60;
                   const timeStr = remaining > 0 ? `${mins}m ${secs}s` : "EXPIRED";
 
-                  const isBettingOpen = remaining > ((game.durationMinutes || 10) * 60 * 0.5);
+                  // Prefer server-computed isBettingOpen (authoritative, includes correct durationMinutes
+                  // from the CREATE memo or /create body) for reliable 50% cutoff across all durations.
+                  // Fall back to client calc only if the flag is missing (older resolver responses).
+                  let isBettingOpen = remaining > ((game.durationMinutes || 10) * 60 * 0.5);
+                  if (game.isBettingOpen !== undefined) {
+                    isBettingOpen = !!game.isBettingOpen;
+                  }
 
                   return (
                     <div 
@@ -1534,7 +1585,7 @@ export function Predict() {
                       </div>
                     </div>
                     <div className={`text-[10px] px-2 py-0.5 rounded-full ${g._optimistic || g._recentlyCreated ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                      {g._optimistic || g._recentlyCreated ? 'LIVE (optimistic)' : (g.isBettingOpen ? 'OPEN' : 'CLOSED')}
+                      {g._optimistic || g._recentlyCreated ? 'LIVE (optimistic)' : (g.isBettingOpen !== undefined ? (g.isBettingOpen ? 'OPEN' : 'CLOSED') : 'OPEN')}
                     </div>
                     <a href={`https://hashscan.io/testnet/topic/${MASTER_TOPIC_ID}`} target="_blank" className="text-[#00f9ff] text-[10px] hover:underline">HCS</a>
                   </div>

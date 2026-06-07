@@ -269,7 +269,8 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
 
     // Register for automatic resolution when time expires.
     // Creation price will be read from the immutable HCS topic at resolution time.
-    registerFastGameForAutoResolution(marketId, endTime);
+    // Pass durationMinutes so the active list (and client isBettingOpen calc) has the correct 50% cutoff for all durations (10/20/60/240).
+    registerFastGameForAutoResolution(marketId, endTime, durationMinutes);
 
     res.json({ success: true, marketId });
   } catch (err: any) {
@@ -739,7 +740,16 @@ app.get('/api/admin/active-games', async (req, res) => {
  */
 app.get('/api/prediction/active-fast-games', async (req, res) => {
   try {
-    const { getActiveFastGamesState, getMarketVolume } = await import('./resolver');
+    const { getActiveFastGamesState, getMarketVolume, reRegisterOverdueFastGames } = await import('./resolver');
+
+    // Global visibility fix: before serving the list, run a HCS discovery pass.
+    // This ensures that fast games created against *any* resolver instance (local dev or prod)
+    // that successfully posted their CREATE_MARKET to the shared HCS topic 0.0.9017517
+    // will be registered in *this* resolver's active list (so everyone polling the canonical
+    // Railway resolver sees the full multiplayer set, not just what was created against this instance).
+    // reRegisterOverdueFastGames scans recent messages and calls register for any fast-* CREATEs.
+    try { await reRegisterOverdueFastGames(); } catch {}
+
     const state = getActiveFastGamesState();
     const baseGames = state.activeGames || [];
 

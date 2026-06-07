@@ -18,6 +18,17 @@ import { ENV } from "../../env";
 export const MASTER_TOPIC_ID = "0.0.9017517";
 const RESOLVER_BASE = ENV.RESOLVER_BASE; // Authoritative payout oracle (single source of truth). Configured via VITE_RESOLVER_URL (Railway URL in prod).
 
+// Same critical warning as in Predict.tsx
+if (typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    RESOLVER_BASE.includes('localhost')) {
+  console.error(
+    '[CRITICAL CONFIG] RESOLVER_BASE is localhost while not on localhost. ' +
+    'Global fast game visibility (multiplayer across team members) requires VITE_RESOLVER_URL set in Vercel.'
+  );
+}
+
 // === Clean Bank-Grade Wallet Separation (Production Quality) ===
 const TREASURY_ACCOUNT = "0.0.9006841";           // Platform fees only (creation + 1% bet fees)
 const RESOLUTION_ACCOUNT = "0.0.9006979";         // User stakes + payouts (escrow) — canonical (matches Predict + resolver env). Backend always re-verifies.

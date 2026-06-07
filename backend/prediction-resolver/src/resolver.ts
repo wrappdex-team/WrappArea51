@@ -23,7 +23,7 @@ if (!MASTER_TOPIC_ID || !RESOLUTION_ACCOUNT) {
 // (previously was the public mirrornode.hedera.com which can be less stable)
 const MIRROR_NODE = process.env.HEDERA_MIRROR_NODE;
 if (!MIRROR_NODE) {
-  throw new Error('Missing HEDERA_MIRROR_NODE in environment. Set to https://testnet.mirrornode.hedera.com or your dedicated mirror.');
+  throw new Error('Missing HEDERA_MIRROR_NODE in environment. For testnet job: https://testnet.mirrornode.hedera.com ; for mainnet job: https://mainnet-public.mirrornode.hedera.com (or your dedicated mirror for the network).');
 }
 
 // Phase 1: Lightweight persistence for active games (simple JSON file for restart resilience)
@@ -349,6 +349,7 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
 const activeFastGames: Array<{
   marketId: string;
   endTime: number;
+  durationMinutes?: number;
   creationPrice: number;
   resolved?: boolean;
   inTieResolution?: boolean;
@@ -446,7 +447,7 @@ async function saveActiveGamesToDisk() {
   }
 }
 
-export function registerFastGameForAutoResolution(marketId: string, endTime: number) {
+export function registerFastGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number) {
   // Guard against duplicate registration (prevents re-resolve loops when reRegister misses a recent MARKET_RESOLVED due to indexer lag or HGraph flakiness)
   const existingIndex = activeFastGames.findIndex(g => g.marketId === marketId);
   if (existingIndex !== -1) {
@@ -454,6 +455,10 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
       console.log(`[Resolver] ${marketId} already resolved in memory, skipping register`);
       knownResolvedMarkets.add(marketId);
       return;
+    }
+    // If we now have better duration info, update it
+    if (durationMinutes && !activeFastGames[existingIndex].durationMinutes) {
+      activeFastGames[existingIndex].durationMinutes = durationMinutes;
     }
     console.log(`[Resolver] Fast game ${marketId} already registered in active list`);
     return;
@@ -468,6 +473,7 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
   activeFastGames.push({ 
     marketId, 
     endTime, 
+    durationMinutes: durationMinutes || 10,
     creationPrice: 0, // placeholder — will be fetched from chain
     resolved: false,
     inTieResolution: false 
@@ -706,7 +712,7 @@ export async function autoResolveExpiredFastGames() {
 const claimedPayouts = new Set<string>();
 
 const HGRAPH_URL: string = process.env.HGRAPH_URL || (() => {
-  throw new Error('Missing HGRAPH_URL in environment. Provide your HGraph (or compatible GraphQL) endpoint for reliable topic reads (or the public testnet for dev only).');
+  throw new Error('Missing HGRAPH_URL in environment. For testnet job: your testnet HGraph endpoint; for mainnet job: your mainnet HGraph endpoint (or public testnet for dev only).');
 })();
 
 /**
@@ -939,13 +945,7 @@ export async function getCurrentHbarPriceWithAuditTrail(options: { critical?: bo
 
   const resolvedAt = new Date().toISOString();
 
-  // 1. SaucerSwap mainnet API for the current trading price (primary when key is present in Supabase)
-  // TEMP: inject the key you provided for this local session so Saucer primary kicks in immediately.
-  // Remove this block once you have the key in your local .env as SAUCERSWAP_API_KEY=... or the Supabase kv row is loading.
-  if (!process.env.SAUCERSWAP_API_KEY) {
-    process.env.SAUCERSWAP_API_KEY = '44b54dbec3669868deaa4df96bd21';
-    console.log('[Resolver] Injected user-provided SaucerSwap API key for local testing (Saucer primary will now be used). Remove this after setting via .env or Supabase.');
-  }
+  // 1. SaucerSwap mainnet API for the current trading price (primary when key is present via Railway secret or Supabase kv_store)
   if (process.env.SAUCERSWAP_API_KEY) {
     try {
       const base = 'https://api.saucerswap.finance';
@@ -1661,7 +1661,7 @@ export async function reRegisterOverdueFastGames() {
 
           if (!hasResolved && p.endTime && p.endTime < now) {
             console.log(`[Resolver] Re-registering overdue fast game from HCS: ${p.marketId}`);
-            registerFastGameForAutoResolution(p.marketId, p.endTime);
+            registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes);
           }
         }
       } catch {}
@@ -1676,13 +1676,21 @@ export async function reRegisterOverdueFastGames() {
  * This is extremely useful during playtesting to understand what the resolver "sees".
  */
 export function getActiveFastGamesState() {
+  const now = Math.floor(Date.now() / 1000);
   return {
-    activeGames: activeFastGames.map(g => ({
-      marketId: g.marketId,
-      endTime: g.endTime,
-      resolved: !!g.resolved,
-      inTieResolution: !!g.inTieResolution,
-    })),
+    activeGames: activeFastGames.map(g => {
+      const dur = (g.durationMinutes || 10) * 60;
+      const remaining = (g.endTime || 0) - now;
+      const isBettingOpen = remaining > (dur * 0.5);
+      return {
+        marketId: g.marketId,
+        endTime: g.endTime,
+        durationMinutes: g.durationMinutes || 10,
+        resolved: !!g.resolved,
+        inTieResolution: !!g.inTieResolution,
+        isBettingOpen,
+      };
+    }),
     tieResolutionGames: tieResolutionGames.map(t => ({
       marketId: t.marketId,
       hasActiveInterval: !!t.intervalId,
