@@ -13,18 +13,30 @@ import {
   TransferTransaction,
   Hbar,
 } from "@hashgraph/sdk";
+import { ENV } from "../../env";
 
 export const MASTER_TOPIC_ID = "0.0.9017517";
-const RESOLVER_BASE = 'http://localhost:4000'; // Authoritative payout oracle (single source of truth)
+const RESOLVER_BASE = ENV.RESOLVER_BASE; // Authoritative payout oracle (single source of truth). Configured via VITE_RESOLVER_URL (Railway URL in prod).
+
+// Same critical warning as in Predict.tsx
+if (typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    RESOLVER_BASE.includes('localhost')) {
+  console.error(
+    '[CRITICAL CONFIG] RESOLVER_BASE is localhost while not on localhost. ' +
+    'Global fast game visibility (multiplayer across team members) requires VITE_RESOLVER_URL set in Vercel.'
+  );
+}
 
 // === Clean Bank-Grade Wallet Separation (Production Quality) ===
 const TREASURY_ACCOUNT = "0.0.9006841";           // Platform fees only (creation + 1% bet fees)
-const RESOLUTION_ACCOUNT = "0.0.9006850";         // User stakes + payouts (escrow). Should be near 0 after all winners paid.
+const RESOLUTION_ACCOUNT = "0.0.9006979";         // User stakes + payouts (escrow) — canonical (matches Predict + resolver env). Backend always re-verifies.
 const NETWORK_FEE_ACCOUNT = "0.0.802";            // Hedera network / node fees (automatic, not controllable here)
 
 const ALLOWED_RESOLUTION_WALLETS = [
-  "0.0.9006850",   // Primary Market Resolution
-  "0.0.9006979",   // Admin
+  "0.0.9006979",   // Primary Market Resolution (resolver)
+  "0.0.9006841",   // Treasury (fees)
   "0.0.80958515",  // tester1
   "0.0.9037361",   // TEST2
   "0.0.8999737",   // New dev tester
@@ -147,6 +159,28 @@ export async function fetchNativeActiveMarkets(): Promise<NativeMarket[]> {
  */
 export async function fetchFastGames(): Promise<FastGame[]> {
   try {
+    // Prefer the resolver's in-memory state (populated from HCS + live creates/bets).
+    // This avoids direct browser CORS problems with HGraph/Mirror when the FE is on Vercel.
+    // The resolver does the reliable fetching server-side.
+    const resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
+    if (resolverRes.ok) {
+      const data = await resolverRes.json();
+      if (data.success && Array.isArray(data.games) && data.games.length > 0) {
+        // Map the resolver's active list shape to the FE FastGame shape if needed (it is already close).
+        return data.games.map((g: any) => ({
+          ...g,
+          yesStake: g.yesStake || g.yes_stake || 0,
+          noStake: g.noStake || g.no_stake || 0,
+          yesParticipants: g.yesParticipants || g.yes_participants || 0,
+          noParticipants: g.noParticipants || g.no_participants || 0,
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn('[NativePM] Resolver active-fast-games fetch failed, falling back to direct HCS scan');
+  }
+
+  try {
     // Use reliable (HGraph + Mirror) so volumes from bets by *any* user (including other wallets)
     // appear promptly even when HGraph indexer lags. This directly fixes "bet from another account did not tally".
     const hgraphResponse = await getTopicMessagesReliable(MASTER_TOPIC_ID, 2000);
@@ -252,7 +286,7 @@ export async function fetchFastGames(): Promise<FastGame[]> {
     });
 
     // Nuclear clean + return filter (relaxed for recent games):
-    // - Very recent games (< 10 minutes old by marketId) are always kept so they don't flicker away during creation.
+    // - Very recent games (by marketId timestamp) are always kept so they don't flicker away during creation (protection window increased for 1h/4h support).
     // - Older games still get the 6h creation + 1h endTime pruning.
     const nowMs = Date.now();
     const SIX_HOURS = 6 * 60 * 60 * 1000;
@@ -487,12 +521,14 @@ export async function createFastUpdownMarket(params: {
   durationMinutes: 5 | 10 | 20;
   initialStake: number;
   currentPrice: number;
+  currentPriceTime?: string;
 }) {
   const endTime = Math.floor(Date.now() / 1000) + (params.durationMinutes * 60);
 
   // Phase 0: Clean detailed memo (plain text only) so the user has a cryptographic record on HCS
   const sideText = params.direction === 'YES' ? 'YES (up)' : 'NO (down)';
-  const createMemo = `Create fast-${Date.now()}: Will HBAR be ${params.direction === 'YES' ? 'above' : 'below'} current price in ${params.durationMinutes} minutes? ${params.initialStake} HBAR initial stake on ${sideText}. Duration ${params.durationMinutes} minutes. Creation price ${params.currentPrice}. Created by ${params.accountId}. Full audit trail on HCS.`;
+  const timePart = params.currentPriceTime ? ` (as of ${params.currentPriceTime})` : '';
+  const createMemo = `Create fast-${Date.now()}: Will HBAR be ${params.direction === 'YES' ? 'above' : 'below'} current price in ${params.durationMinutes} minutes? ${params.initialStake} HBAR initial stake on ${sideText}. Duration ${params.durationMinutes} minutes. Creation price ${params.currentPrice}${timePart}. Created by ${params.accountId}. Full audit trail on HCS.`;
 
   const message: any = {
     type: "CREATE_MARKET",
@@ -511,6 +547,10 @@ export async function createFastUpdownMarket(params: {
     submittedBy: params.accountId,
     memo: createMemo,   // Phase 0: User-signed proof memo (plain text, no special characters)
   };
+
+  if (params.currentPriceTime) {
+    message.creationPriceTime = params.currentPriceTime;
+  }
 
   // Final production pattern for HashPack user-paid HCS:
   // Explicit TransactionId + freezeWith. This is the only way to satisfy
@@ -740,3 +780,39 @@ export function prepareFastGamePayout(params: {
 
 // Re-export for UI components that need the reliable (HGraph + Mirror) topic scan
 export { getTopicMessagesReliable } from './hgraphClient';
+
+/**
+ * Fetch user's current HBAR balance for premium UX (e.g. dynamic max on stake sliders).
+ * Prefers resolver (for deployed Vercel CORS safety + consistent logging).
+ * Falls back to direct Mirror for local dev.
+ * SECURITY: Read-only public data. Slider max is UX only — backend resolver always re-verifies
+ * via getMirrorAccountBalance before accepting /bet or create records.
+ */
+export async function fetchUserHbarBalance(accountId: string): Promise<number> {
+  if (!accountId || !accountId.startsWith('0.0.')) return 0;
+
+  const isLive = !RESOLVER_BASE.includes('localhost');
+  if (isLive) {
+    try {
+      const res = await fetch(`${RESOLVER_BASE}/api/prediction/balance?account=${encodeURIComponent(accountId)}`);
+      if (res.ok) {
+        const j = await res.json();
+        return Number(j.balance) || 0;
+      }
+    } catch (e) {
+      console.warn('[NativePM] Resolver balance fetch failed, falling back to direct Mirror');
+    }
+  }
+
+  // Direct Mirror fallback (dev or resolver down)
+  try {
+    const url = `https://testnet.mirrornode.hedera.com/api/v1/accounts/${accountId}?transactions=false`;
+    const r = await fetch(url);
+    if (!r.ok) return 0;
+    const d: any = await r.json();
+    const tiny = Number(d.balance?.balance) || 0;
+    return tiny / 100_000_000;
+  } catch {
+    return 0;
+  }
+}

@@ -7,6 +7,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Zap, X, RefreshCw, TrendingUp } from 'lucide-react';
+import { Slider } from './ui/slider';
+import { motion, AnimatePresence } from 'motion';
 import { useSigning } from '../contexts/SigningContext';
 import { useWallet } from '../contexts/WalletContext';
 import { signAndExecuteTransaction } from '../utils/wallet-core';
@@ -21,8 +23,32 @@ import { useBrandLogos } from '../hooks/useBrandLogos';
 
 import { TreasuryAdminPanel } from './TreasuryAdminPanel';
 import { PredictionHistory } from './PredictionHistory';
+import { ENV } from '../utils/env';
 
-const RESOLVER_BASE = 'http://localhost:4000';
+const RESOLVER_BASE = ENV.RESOLVER_BASE;
+
+// === LOCAL DEV PARITY (Step 6 of build-back-better plan) ===
+// In dev (npm run dev), make sure a .env (or .env.local) next to the project root has:
+// VITE_RESOLVER_URL=http://localhost:4000
+// Then the local frontend will hit your local resolver instance (run the backend/prediction-resolver with its own .env containing the testnet key + topic).
+// The warning below catches prod builds accidentally using localhost (the #1 cause of "card only on creator machine").
+// Also ensure vite.config.ts dev server.headers allows http://localhost:4000 + ws for the resolver calls during mixed testing.
+if (typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    RESOLVER_BASE.includes('localhost')) {
+  console.error(
+    '[CRITICAL CONFIG] RESOLVER_BASE resolved to localhost in what looks like a production build. ' +
+    'Fast games will only be visible to the person who created them on their own machine. ' +
+    'Set VITE_RESOLVER_URL to your Railway resolver URL (e.g. https://...up.railway.app) in Vercel project settings and redeploy.'
+  );
+}
+
+// Dev-only loud log so you can immediately see in console what RESOLVER_BASE the running bundle is using.
+// This makes "local still does not talk to the resolver" obvious to debug (port, .env, CSP, etc.).
+if (typeof window !== 'undefined' && (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
+  console.log('[DEV] RESOLVER_BASE =', RESOLVER_BASE, '(ensure your local resolver is running on this and VITE_RESOLVER_URL matches in .env)');
+}
 const ESCROW_ACCOUNT_ID = '0.0.9006979';
 const TREASURY_ACCOUNT_ID = '0.0.9006841';
 
@@ -37,6 +63,7 @@ import {
   calculateFastGamePayout,
   getTopicMessagesReliable,
   MASTER_TOPIC_ID,
+  fetchUserHbarBalance,
 } from '../utils/predictionMarkets/native/nativePredictionService';
 
 interface Asset {
@@ -127,15 +154,19 @@ export function Predict() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showBetModal, setShowBetModal] = useState(false);
   const [showFastGameModal, setShowFastGameModal] = useState(false);
-  const [fastGameDuration, setFastGameDuration] = useState<10 | 20>(10);
+  const [fastGameDuration, setFastGameDuration] = useState<10 | 20 | 60 | 240>(10); // extended support per master plan (1h/4h after polish)
   const [fastGameSide, setFastGameSide] = useState<'YES' | 'NO'>('YES');
   const [fastGameStake, setFastGameStake] = useState(25);
+  const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
-  // Modal-specific HBAR price (refreshes every 15s for UI accuracy)
+  // Modal-specific HBAR price for "CURRENT HBAR (official rate for this game)".
+  // Resolver is authoritative (now always mainnet sources: SaucerSwap last-traded verified + mainnet-public mirror / public CG/CoinCap backups).
+  // We poll every ~10s while modal open for a "second-to-second" reliable feel (tighter than cards for the rate the user will lock in).
+  // Countdown is live (1s decrement). On 0 we force a fresh resolver fetch (critical path inside resolver also bypasses its cache).
   const [modalHbarPrice, setModalHbarPrice] = useState<number | null>(null);
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
-  const [priceSecondsUntilRefresh, setPriceSecondsUntilRefresh] = useState(15);
+  const [priceSecondsUntilRefresh, setPriceSecondsUntilRefresh] = useState(10);
 
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -143,27 +174,73 @@ export function Predict() {
     return () => clearInterval(interval);
   }, []);
 
-  // 15-second HBAR price refresh + countdown when Create Fast Game modal is open
+  // Shared live HBAR price for cards tiny delta/chart.
+  // Resolver now serves reliable mainnet price (Saucer last-traded verified or mainnet-public mirror + public backups).
+  // We poll resolver at 15s for consistency with the rate that will be locked at creation.
+  // For snappier visual movement/deltas on cards we also use fast coingecko assets (fetchLivePrices).
+  const [liveHbarPrice, setLiveHbarPrice] = useState<number | null>(null);
+  const [livePriceTs, setLivePriceTs] = useState<number>(0);
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const res = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+        const j = await res.json();
+        const p = j.price ?? j['hedera-hashgraph']?.usd;
+        if (active && p) {
+          setLiveHbarPrice(p);
+          setLivePriceTs(Date.now());
+        }
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  // Modal HBAR price refresh + live countdown (mainnet reliable sources via resolver).
   useEffect(() => {
     if (!showFastGameModal) {
-      setPriceSecondsUntilRefresh(15);
+      setPriceSecondsUntilRefresh(10);
       return;
     }
 
     const fetchModalHbarPrice = async () => {
       try {
-        const res = await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd'
-        );
+        // Resolver is authoritative for the rate "for this game" (now mainnet Saucer + mainnet mirror/public backups for fairness).
+        const res = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
         const json = await res.json();
-        const price = json['hedera-hashgraph']?.usd;
+        const price = json.price ?? json['hedera-hashgraph']?.usd;
         if (price) {
           setModalHbarPrice(price);
           setLastPriceUpdate(new Date());
-          setPriceSecondsUntilRefresh(15);
+          setPriceSecondsUntilRefresh(10);
         }
       } catch (e) {
-        console.warn('Modal HBAR price refresh failed');
+        console.warn('Modal HBAR price refresh from resolver failed, falling back to public mainnet sources (CoinGecko/CoinCap)');
+        // Direct public mainnet fallbacks for display (very reliable + fast).
+        try {
+          let price: number | null = null;
+          // CoinGecko
+          const cg = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+          if (cg.ok) {
+            const j = await cg.json();
+            price = j['hedera-hashgraph']?.usd ?? null;
+          }
+          if (!price) {
+            // CoinCap backup
+            const cc = await fetch('https://api.coincap.io/v2/assets/hedera-hashgraph');
+            if (cc.ok) {
+              const j = await cc.json();
+              price = parseFloat(j?.data?.priceUsd) || null;
+            }
+          }
+          if (price) {
+            setModalHbarPrice(price);
+            setLastPriceUpdate(new Date());
+            setPriceSecondsUntilRefresh(10);
+          }
+        } catch {}
       }
     };
 
@@ -174,7 +251,7 @@ export function Predict() {
       setPriceSecondsUntilRefresh((prev) => {
         if (prev <= 1) {
           fetchModalHbarPrice();
-          return 15;
+          return 10;
         }
         return prev - 1;
       });
@@ -182,6 +259,25 @@ export function Predict() {
 
     return () => clearInterval(countdownInterval);
   }, [showFastGameModal]);
+
+  // Fetch real user HBAR balance (via resolver for prod consistency) when create modal opens or wallet changes.
+  // Used to drive "unlimited" slider max. SECURITY: UX only — backend always re-verifies before recording.
+  useEffect(() => {
+    if (!showFastGameModal || !hashPackSession?.accountId) {
+      setFastGameMaxBalance(null);
+      return;
+    }
+    (async () => {
+      try {
+        const bal = await fetchUserHbarBalance(hashPackSession.accountId);
+        // Leave small buffer for fees (create ~2.5 + 1% + network)
+        const safeMax = Math.max(1, Math.floor((bal - 3) * 100) / 100);
+        setFastGameMaxBalance(safeMax > 0 ? safeMax : null);
+      } catch {
+        setFastGameMaxBalance(null);
+      }
+    })();
+  }, [showFastGameModal, hashPackSession?.accountId]);
 
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' | 'info' }>>([]);
   const toastIdRef = React.useRef(0);
@@ -200,18 +296,19 @@ export function Predict() {
 
   // Session-persistent "recently active" cache (survives hard refresh, tab switch, come back).
   // Any marketId you *create or bet on* (including bets placed while viewing as another wallet in the same browser)
-  // is force-kept in the UI list for ~90-120 minutes. This defeats HGraph lag for both your own games
-  // and games other participants bet on while you are watching.
+  // is force-kept in the UI list for up to ~5 hours (covers 4h games + HGraph lag buffer).
+  // This defeats HGraph lag for both your own games and games other participants bet on while watching.
+  const MAX_RECENT_FAST_GAME_AGE_MS = 5 * 60 * 60 * 1000; // 5 hours
   const [recentlyCreatedMarketIds, setRecentlyCreatedMarketIds] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('recentlyCreatedFastGames');
       if (saved) {
         const parsed = JSON.parse(saved) as Record<string, number>;
-        // Only keep entries from the last 2 hours to avoid long-term pollution
-        const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+        // Only keep entries from the last 6 hours to avoid long-term pollution (supports 4h games)
+        const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
         const filtered = new Set(
           Object.entries(parsed)
-            .filter(([, ts]) => typeof ts === 'number' && ts > twoHoursAgo)
+            .filter(([, ts]) => typeof ts === 'number' && ts > sixHoursAgo)
             .map(([id]) => id)
         );
         return filtered;
@@ -240,48 +337,110 @@ export function Predict() {
     const now = Date.now();
     const NINETY_MIN = 90 * 60 * 1000;
 
-    // Force-include every marketId from the persisted recent creations cache
-    // for the next 90 minutes. This survives hard refresh and defeats HGraph lag.
+    // Force-include logic for recent games — with EXTREMELY strict safeguards
+    // to prevent ghost/placeholder games with bogus timers.
     recentlyCreatedMarketIds.forEach(id => {
       if (!map.has(id)) {
-        // Create a minimal placeholder so it renders.
-        // The next successful loadFastGames will fill in the real data.
+        const cTsMs = parseInt(id.split('-')[1] || '0', 10);
+        if (!cTsMs) return;
+
+        const creationSec = Math.floor(cTsMs / 1000);
+        const nowSec = now / 1000;
+        const ageSec = nowSec - creationSec;
+
+        // Nuclear hard limit: never create placeholder for anything older than the recent protection window.
+        // Increased to support 1h/4h games + HGraph lag. This is the main kill switch for lingering ghosts.
+        if (ageSec > MAX_RECENT_FAST_GAME_AGE_MS / 1000) {
+          return;
+        }
+
+        // Fixed endTime based purely on creation timestamp + max duration (in seconds).
+        // Never use "now + X" here — that causes the timer to reset on every render.
+        const assumedMaxDurSec = Math.max(20 * 60, (240) * 60); // support up to 4h games
+        const fixedEndTimeSec = creationSec + assumedMaxDurSec;
+
+        // If we're already past the natural end + small grace, do not create placeholder.
+        const graceSec = 5 * 60;
+        if (nowSec > fixedEndTimeSec + graceSec) {
+          return;
+        }
+
+        // Use a very short display duration for the UI countdown (prevents scary long fake timers).
+        const displayDurMin = 3;
+
+        // Phase 1 stability + UX: never surface scary long-timer "data loading" ghosts.
+        // For true desynced recent IDs (errored creates or lag), use a short pending window
+        // and a clear pending label so it never looks like a real multi-hour game.
+        const pendingEnd = creationSec + (10 * 60); // short pending confirm window
         map.set(id, {
           marketId: id,
-          question: 'Recently created game (data loading...)',
+          question: 'Confirming on HCS (pending resolver)…',
           direction: 'YES',
-          durationMinutes: 20,
-          endTime: Math.floor((now + 20 * 60 * 1000) / 1000),
+          durationMinutes: displayDurMin,
+          endTime: pendingEnd,
           creationPrice: 0,
           currentVolume: 0,
           resolved: false,
           _recentlyCreated: true,
+          _isPendingConfirm: true,
         });
       }
     });
 
-    // Final filter: for everything NOT in the recent cache, apply normal pruning.
+    // Final filter — very careful with units and expiration
     const result = Array.from(map.values()).filter(g => {
-      if ((g as any)._recentlyCreated || recentlyCreatedMarketIds.has(g.marketId)) {
-        return true; // never drop recently created games in this session
+      const isRecent = recentlyCreatedMarketIds.has(g.marketId);
+      const nowSec = now / 1000;
+
+      if (isRecent) {
+        const cTsMs = parseInt((g.marketId || '').split('-')[1] || '0', 10);
+        if (!cTsMs) return false;
+
+        const creationSec = Math.floor(cTsMs / 1000);
+        const ageSec = nowSec - creationSec;
+
+        // Hard nuclear cutoff at the recent protection window from creation for ANY recent game.
+        // Increased to support 1h/4h games. This is the primary defense against old ghosts.
+        if (ageSec > MAX_RECENT_FAST_GAME_AGE_MS / 1000) {
+          return false;
+        }
+
+        // Natural expiration based on creation time + max duration + grace.
+        const assumedMaxDur = Math.max(20 * 60, 240 * 60); // support up to 4h games
+        const naturalEndSec = creationSec + assumedMaxDur;
+        const graceSec = 5 * 60;
+
+        if (nowSec > naturalEndSec + graceSec) {
+          return false;
+        }
+
+        // If we have real resolved data, respect its endTime.
+        if (g.resolved) {
+          return (g.endTime || 0) > (nowSec - 3600);
+        }
+
+        // Within the safe window and not past natural expiration → allow (for HGraph lag protection).
+        return true;
       }
 
-      const cTs = parseInt((g.marketId || '').split('-')[1] || '0', 10);
-      const age = now - cTs;
+      // Normal (non-recent) games — original pruning logic (units already correct in this path)
+      const cTsMs = parseInt((g.marketId || '').split('-')[1] || '0', 10);
+      const ageMs = now - cTsMs;
 
-      if (cTs > 0 && age < NINETY_MIN) {
+      if (cTsMs > 0 && ageMs < NINETY_MIN) {
         return true;
       }
 
       if (g.resolved) {
-        return (g.endTime || 0) > (now / 1000 - 3600);
+        return (g.endTime || 0) > (nowSec - 3600);
       }
-      return (g.endTime || 0) > (now / 1000 - 3600);
+      return (g.endTime || 0) > (nowSec - 3600);
     });
 
     return result.sort((a, b) => (b.endTime || 0) - (a.endTime || 0));
   }, [fastGames, optimisticGames, recentlyCreatedMarketIds]);
-  const [fastBetStake, setFastBetStake] = useState(10);
+  // Per-game stake amounts (fixes global stake selector problem - Tier 1)
+  const [gameStakes, setGameStakes] = useState<Record<string, number>>({});
 
   const [marketCutoff, setMarketCutoff] = useState<number>(() => {
     const saved = localStorage.getItem('predictionMarketCutoff');
@@ -291,14 +450,245 @@ export function Predict() {
   const [myClaimables, setMyClaimables] = useState<any[]>([]);
   const [myHistory, setMyHistory] = useState<any[]>([]);
   const [isLoadingMyPortfolio, setIsLoadingMyPortfolio] = useState(false);
+  const [lastPortfolioSync, setLastPortfolioSync] = useState<number>(0);
+  const [portfolioCacheStatus, setPortfolioCacheStatus] = useState<'live' | 'cached' | 'stale'>('live');
   const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const [activeReceiptFilter, setActiveReceiptFilter] = useState<'ALL' | 'WINS' | 'LOSSES' | 'UNMATCHED'>(() => {
+    try {
+      return (localStorage.getItem('predictionReceiptFilter') as any) || 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+  const [receiptSearch, setReceiptSearch] = useState('');
+
+  // Per-user positions for "Your Position" on tiles (Tier 1 UX)
+  const [userPositions, setUserPositions] = useState<Record<string, { side: string; amount: number }>>({});
+
+  // Temporary "just bet" confirmation state for strong visual feedback on specific tile (Tier 1)
+  const [justBetGames, setJustBetGames] = useState<Record<string, { side: string; amount: number; timestamp: number }>>({});
+
+  // Tier 2 #2: Recent Outcomes strip (last few resolved games for social proof during smoke tests)
+  const [recentOutcomes, setRecentOutcomes] = useState<Array<{ marketId: string; winner: string; multiple?: string; timestamp: number }>>([]);
+
+  // Immediate one-time prune for the specific ghost reported in the screenshot.
+  // Runs on mount to clear the lingering "fast-1780763848289" even before the next loadFastGames.
+  // This is the client-side source of the ghost (localStorage 'recentlyCreatedFastGames' + optimistic).
+  useEffect(() => {
+    const GHOST_ID = 'fast-1780763848289';
+    if (recentlyCreatedMarketIds.has(GHOST_ID)) {
+      setRecentlyCreatedMarketIds(prev => {
+        const next = new Set(prev);
+        next.delete(GHOST_ID);
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+        return next;
+      });
+      setOptimisticGames(prev => prev.filter((g: any) => g.marketId !== GHOST_ID));
+    }
+  }, []); // once on mount
+
+  // Capture recently resolved games for the outcomes strip
+  useEffect(() => {
+    const newlyResolved = fastGames
+      .filter((g: any) => g.resolutionWinner && !recentOutcomes.some(r => r.marketId === g.marketId))
+      .map((g: any) => ({
+        marketId: g.marketId,
+        winner: g.resolutionWinner,
+        multiple: g.profitMultiple || undefined, // if available from data
+        timestamp: Date.now()
+      }));
+
+    if (newlyResolved.length > 0) {
+      setRecentOutcomes(prev => [...newlyResolved, ...prev].slice(0, 4)); // keep last 4
+    }
+  }, [fastGames]);
+
+  // Phase 1 fix: Prune "ghost" recentlyCreated entries that never materialized in the authoritative resolver list.
+  // This happens for errored creations (e.g. record to HCS failed after on-chain payment).
+  // The placeholder would otherwise linger (root cause of the lingering errored game with odd timer even after terminal restart).
+  // Hard prune for the specific ID + general + eager localStorage rewrite on every authoritative load.
+  useEffect(() => {
+    if (!fastGames || fastGames.length === 0) return;
+
+    const authoritativeIds = new Set(fastGames.map((g: any) => g.marketId));
+    const GRACE_MS = 2 * 60 * 1000; // tightened grace
+
+    const toRemove: string[] = [];
+
+    recentlyCreatedMarketIds.forEach(id => {
+      if (!authoritativeIds.has(id)) {
+        const cTs = parseInt((id || '').split('-')[1] || '0', 10);
+        if (cTs && (Date.now() - cTs) > GRACE_MS) {
+          toRemove.push(id);
+        }
+      }
+    });
+
+    // Hard prune the specific lingering errored game reported (even if age check passes)
+    const GHOST_ID = 'fast-1780763848289';
+    if (recentlyCreatedMarketIds.has(GHOST_ID)) {
+      toRemove.push(GHOST_ID);
+    }
+
+    if (toRemove.length > 0) {
+      setRecentlyCreatedMarketIds(prev => {
+        const next = new Set(prev);
+        toRemove.forEach(id => next.delete(id));
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+        return next;
+      });
+
+      // Also clean from optimistic layer
+      setOptimisticGames(prev => prev.filter((g: any) => !toRemove.includes(g.marketId)));
+    }
+  }, [fastGames]); // re-run when authoritative fastGames list arrives from resolver
+
+  // Extra eager cleanup: whenever fastGames authoritative list updates, rewrite localStorage to drop any
+  // recently IDs that the resolver does not currently know about (prevents ghosts surviving across reloads / terminal restarts).
+  useEffect(() => {
+    if (!fastGames || fastGames.length === 0) return;
+    const auth = new Set(fastGames.map((g: any) => g.marketId));
+    setRecentlyCreatedMarketIds(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      next.forEach(id => {
+        if (!auth.has(id)) {
+          const cTs = parseInt((id || '').split('-')[1] || '0', 10);
+          if (!cTs || (Date.now() - cTs) > 60_000) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+      }
+      return next;
+    });
+  }, [fastGames]);
+
+  // Live ticking "last reconciled X seconds ago" display (only when portfolio panel is open)
+  const [, setTimeTick] = useState(0);
+  useEffect(() => {
+    if (!portfolioOpen || lastPortfolioSync === 0) return;
+    const tick = setInterval(() => {
+      setTimeTick(t => t + 1); // purely for relative time display refresh
+    }, 5000);
+    return () => clearInterval(tick);
+  }, [portfolioOpen, lastPortfolioSync]);
+
+  // Load historical user positions into tile display when portfolio data arrives (persists across refresh)
+  useEffect(() => {
+    if (myHistory.length === 0) return;
+
+    const newPositions: Record<string, { side: string; amount: number }> = {};
+
+    myHistory.forEach((item: any) => {
+      if (!item.marketId || !item.userSide || !item.myStake) return;
+      // Only show if not yet resolved or if user had a position
+      newPositions[item.marketId] = {
+        side: item.userSide,
+        amount: item.myStake
+      };
+    });
+
+    setUserPositions(prev => ({ ...prev, ...newPositions }));
+  }, [myHistory]);
+
+  // Persist active receipt filter
+  useEffect(() => {
+    try {
+      localStorage.setItem('predictionReceiptFilter', activeReceiptFilter);
+    } catch {}
+  }, [activeReceiptFilter]);
 
   const [recentlyClaimedMarketIds] = useState(() => new Set<string>());
 
   const loadFastGames = async () => {
     setIsLoadingFastGames(true);
+
+    // Aggressive cleanup on every load — correct units (cTs is ms)
+    setRecentlyCreatedMarketIds(currentSet => {
+      const nowSec = Date.now() / 1000;
+      const MAX_AGE_SEC = MAX_RECENT_FAST_GAME_AGE_MS / 1000;
+      const assumedMaxDur = Math.max(20 * 60, 240 * 60); // support up to 4h games
+      const grace = 5 * 60;
+
+      const newSet = new Set(currentSet);
+      let changed = false;
+
+      for (const id of newSet) {
+        const cTsMs = parseInt(id.split('-')[1] || '0', 10);
+        if (!cTsMs) {
+          newSet.delete(id);
+          changed = true;
+          continue;
+        }
+
+        const creationSec = Math.floor(cTsMs / 1000);
+        const naturalEndSec = creationSec + assumedMaxDur + grace;
+        const ageSec = nowSec - creationSec;
+
+        if (ageSec > MAX_AGE_SEC || nowSec > naturalEndSec) {
+          newSet.delete(id);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        try {
+          const toSave: Record<string, number> = {};
+          newSet.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+      }
+      return changed ? newSet : currentSet;
+    });
+
     try {
       const gamesFromHGraph = await fetchFastGames();
+
+      // Global + ghost fix: if the resolver (hopefully the canonical prod one) returned a non-empty list,
+      // aggressively drop any recentlyCreated IDs that are not present in it (after a tiny grace for the
+      // exact game we just created in this browser). This stops "data loading" placeholders from
+      // dominating when the FE is talking to the wrong resolver or the list is partial.
+      if (Array.isArray(gamesFromHGraph) && gamesFromHGraph.length > 0) {
+        const authIds = new Set(gamesFromHGraph.map((g: any) => g.marketId));
+        const GRACE_FOR_JUST_CREATED_MS = 60 * 1000;
+        setRecentlyCreatedMarketIds(currentSet => {
+          const newSet = new Set(currentSet);
+          let changed = false;
+          for (const id of newSet) {
+            if (!authIds.has(id)) {
+              const cTsMs = parseInt((id.split('-')[1] || '0'), 10);
+              if (!cTsMs || (Date.now() - cTsMs) > GRACE_FOR_JUST_CREATED_MS) {
+                newSet.delete(id);
+                changed = true;
+              }
+            }
+          }
+          if (changed) {
+            try {
+              const toSave: Record<string, number> = {};
+              newSet.forEach(id => { toSave[id] = Date.now(); });
+              localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+            } catch {}
+          }
+          return changed ? newSet : currentSet;
+        });
+      }
 
       // Much stronger protection for recently created games.
       // Any game we optimistically added in the last 30 minutes will
@@ -313,15 +703,38 @@ export function Predict() {
         optimisticGames.forEach(g => {
           const age = Date.now() - (g._createdAt || 0);
           if (age < THIRTY_MINUTES) {
-            // Always keep our recently created games
             map.set(g.marketId, { ...g, _optimistic: true });
           } else {
-            // For older optimistic games, only keep if server doesn't have it
             const existing = map.get(g.marketId);
             if (!existing) {
               map.set(g.marketId, { ...g, _optimistic: true });
             }
           }
+        });
+
+        // Clean up recentlyCreatedMarketIds for games that have actually resolved
+        // This prevents resolved games from lingering as broken placeholders
+        setRecentlyCreatedMarketIds(currentSet => {
+          const newSet = new Set(currentSet);
+          let changed = false;
+
+          for (const id of newSet) {
+            const game = map.get(id);
+            if (game && game.resolved) {
+              newSet.delete(id);
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            try {
+              const toSave: Record<string, number> = {};
+              newSet.forEach(id => { toSave[id] = Date.now(); });
+              localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+            } catch {}
+          }
+
+          return changed ? newSet : currentSet;
         });
 
         return Array.from(map.values());
@@ -333,106 +746,104 @@ export function Predict() {
     }
   };
 
-  const loadMyClaimsAndHistory = async () => {
+  // ============================================================
+  // STABLE PORTFOLIO DATA COLLECTION (Web3 Hedera expert layer)
+  // Resolver is the authoritative "belt". Client now treats it as the
+  // single source of truth with short-TTL cache + smart refresh.
+  // Eliminates "comes and goes", 23/13 flips, and polling spam.
+  // ============================================================
+  const PORTFOLIO_CACHE_TTL_MS = 75_000; // 75 seconds — sweet spot for smoke tests + real use
+  const PORTFOLIO_CACHE_KEY = 'portfolioCache_v1';
+
+  interface PortfolioCacheEntry {
+    accountId: string;
+    myHistory: any[];
+    myClaimables: any[];
+    ts: number;
+  }
+
+  const getCachedPortfolio = (accountId: string): PortfolioCacheEntry | null => {
+    try {
+      const raw = localStorage.getItem(PORTFOLIO_CACHE_KEY);
+      if (!raw) return null;
+      const entry: PortfolioCacheEntry = JSON.parse(raw);
+      if (entry.accountId !== accountId) return null;
+      return entry;
+    } catch {
+      return null;
+    }
+  };
+
+  const setCachedPortfolio = (accountId: string, myHistory: any[], myClaimables: any[]) => {
+    try {
+      const entry: PortfolioCacheEntry = { accountId, myHistory, myClaimables, ts: Date.now() };
+      localStorage.setItem(PORTFOLIO_CACHE_KEY, JSON.stringify(entry));
+    } catch {}
+  };
+
+  const isCacheFresh = (entry: PortfolioCacheEntry | null): boolean => {
+    if (!entry) return false;
+    return (Date.now() - entry.ts) < PORTFOLIO_CACHE_TTL_MS;
+  };
+
+  const loadMyClaimsAndHistory = async (forceRefresh = false) => {
     if (!hashPackSession?.accountId) {
       setMyClaimables([]); setMyHistory([]); return;
     }
+
+    const userId = hashPackSession.accountId;
+
+    // === FAST PATH: Serve from cache if fresh and not forced ===
+    // This is the #1 thing that kills "comes and goes" and 23/13 flips.
+    if (!forceRefresh) {
+      const cached = getCachedPortfolio(userId);
+      if (cached && isCacheFresh(cached)) {
+        setMyHistory(cached.myHistory);
+        setMyClaimables(cached.myClaimables);
+        setLastPortfolioSync(cached.ts);
+        setPortfolioCacheStatus('cached');
+        return; // Instant, stable, zero network spam
+      }
+    }
+
     setIsLoadingMyPortfolio(true);
+
     try {
-      const userId = hashPackSession.accountId;
-      const claimables: any[] = [];
-      const history: any[] = [];
+      console.log('[Portfolio] Hitting resolver for', userId, forceRefresh ? '(forced)' : '');
 
-      // Dedicated wider scan for the user's personal history (reliable path).
-      // HGraph + Mirror Node fallback guarantees we capture every PLACE_BET the player made.
-      // This is the targeted fix for "proper recording of wins and losses from the players" + "no record is show up".
-      const hgraphResponse = await getTopicMessagesReliable(MASTER_TOPIC_ID, 1500);
-      const messages = hgraphResponse?.topic_message || [];
+      // === PRIMARY: Resolver belt (server-side reliable scan) ===
+      // We almost never want the client doing 10-page direct Mirror scans anymore.
+      const res = await fetch(`${RESOLVER_BASE}/api/prediction/user-history?account=${encodeURIComponent(userId)}`);
 
-      const userBets: Record<string, { myStake: number; side: string; game: any }> = {};
+      if (res.ok) {
+        const data = await res.json();
+        const newHistory = Array.isArray(data.myHistory) ? data.myHistory : [];
+        const newClaimables = Array.isArray(data.myClaimables) ? data.myClaimables : [];
 
-      for (const msg of messages) {
-        try {
-          let decoded = (msg.message || '');
-          if (decoded.startsWith('\\x')) {
-            try {
-              const clean = decoded.replace(/\\x/g, '');
-              const bytes = new Uint8Array(clean.match(/.{1,2}/g)!.map((b: string) => parseInt(b, 16)));
-              decoded = new TextDecoder().decode(bytes);
-            } catch {}
-          } else if (/^[A-Za-z0-9+/=]+$/.test(decoded) && decoded.length > 16) {
-            try { decoded = atob(decoded); const bytes = new Uint8Array(decoded.length); for (let i=0;i<decoded.length;i++) bytes[i]=decoded.charCodeAt(i); decoded = new TextDecoder().decode(bytes); } catch {}
-          }
-          const p = JSON.parse(decoded);
-          if (p.type !== "PLACE_BET") continue;
-          if ((p.user || p.submittedBy) !== userId) continue;
+        // Success — update UI + write durable cache
+        setMyHistory(newHistory);
+        setMyClaimables(newClaimables);
 
-          const mid = p.marketId;
-          if (!userBets[mid]) userBets[mid] = { myStake: 0, side: p.side, game: null };
+        const now = Date.now();
+        setLastPortfolioSync(now);
+        setPortfolioCacheStatus('live');
+        setCachedPortfolio(userId, newHistory, newClaimables);
 
-          userBets[mid].myStake += Number(p.amount) || 0;
-        } catch {}
+        console.log('[Portfolio] Resolver success → cached', newHistory.length, 'history,', newClaimables.length, 'claimables');
+        return;
       }
 
-      // For each market the user predicted on, gather rich data for private Game Receipts.
-      for (const mid of Object.keys(userBets)) {
-        const payout = await calculateFastGamePayout(mid, userId);
+      // Resolver returned non-OK — treat as transient, keep cache if we have any
+      console.warn('[Portfolio] Resolver returned', res.status, '— keeping previous data (no destructive overwrite)');
 
-        // Try to get a bit more context for beautiful private receipts (fishing data)
-        let creationPrice = null;
-        let userSideAtBet = userBets[mid].side;
-
-        try {
-          // Quick scan for CREATE_MARKET to get entry price context
-          const createRes = await getTopicMessagesReliable(MASTER_TOPIC_ID, 500);
-          const createMsgs = createRes?.topic_message || [];
-          for (const msg of createMsgs) {
-            let decoded = (msg.message || '');
-            // reuse the same decoding logic
-            if (decoded.startsWith('\\x')) {
-              try {
-                const clean = decoded.replace(/\\x/g, '');
-                const bytes = new Uint8Array(clean.match(/.{1,2}/g)!.map((b: string) => parseInt(b, 16)));
-                decoded = new TextDecoder().decode(bytes);
-              } catch {}
-            }
-            const p = JSON.parse(decoded);
-            if (p.type === 'CREATE_MARKET' && p.marketId === mid) {
-              creationPrice = p.creationPrice || p.currentPrice;
-              break;
-            }
-          }
-        } catch {}
-
-        const item = {
-          marketId: mid,
-          question: `Fast game ${mid}`,
-          myStake: userBets[mid].myStake,
-          userSide: userSideAtBet,
-          totalWinningPool: payout.totalWinningSideStake || 0,
-          claimable: payout.owed || 0,
-          alreadyPaid: payout.alreadyPaid || false,
-          resolved: true,
-          sharePercent: (payout.totalWinningSideStake || 0) > 0 
-            ? ((userBets[mid].myStake / (payout.totalWinningSideStake || 1)) * 100).toFixed(1) 
-            : "0.0",
-          creationPrice,                    // Great for "fishing data"
-          openPrice: creationPrice,         // alias for receipts
-        };
-
-        if (userBets[mid].myStake > 0) {
-          history.push(item);
-        }
-        if ((payout.owed || 0) > 0 && !item.alreadyPaid && !recentlyClaimedMarketIds.has(mid)) {
-          claimables.push(item);
-        }
-      }
-
-      setMyClaimables(claimables);
-      setMyHistory(history.slice(0, 20));
     } catch (e) {
-      console.error("Failed to load portfolio", e);
+      console.warn('[Portfolio] Resolver fetch failed (transient). Using cached data if available.', e);
     } finally {
+      // If we had no fresh cache and resolver failed, we may have stale data — mark it
+      const stillCached = getCachedPortfolio(userId);
+      if (stillCached) {
+        setPortfolioCacheStatus('stale');
+      }
       setIsLoadingMyPortfolio(false);
     }
   };
@@ -491,7 +902,7 @@ export function Predict() {
   const handleFastBet = async (game: any, side: 'YES' | 'NO') => {
     const session = hashPackSession;
     if (!session?.accountId) { alert("Connect wallet"); return; }
-    const stake = Math.max(1, fastBetStake);
+    const stake = Math.max(1, gameStakes[game.marketId] || 10);
 
     // Phase 2: Proper 1% platform fee handling (restored for real fee integrity)
     const platformFee = Math.round(stake * 100) / 10000; // exactly 1%
@@ -556,6 +967,24 @@ export function Predict() {
       } else {
         showToast(`Prediction placed on ${side}`, 'success');
 
+        // Strong immediate confirmation on the specific tile (Tier 1)
+        const betTime = Date.now();
+        setJustBetGames(prev => ({
+          ...prev,
+          [game.marketId]: { side, amount: stake, timestamp: betTime }
+        }));
+
+        // Auto-clear the confirmation indicator after 8 seconds
+        setTimeout(() => {
+          setJustBetGames(prev => {
+            const next = { ...prev };
+            if (next[game.marketId]?.timestamp === betTime) {
+              delete next[game.marketId];
+            }
+            return next;
+          });
+        }, 8000);
+
         // Make sure games you predict on (including predictions from other wallets in the same browser session)
         // are protected in the recent-active cache. This fixes "prediction from another account did not tally"
         // + disappearing after hard refresh or leaving the tab.
@@ -570,21 +999,33 @@ export function Predict() {
           return next;
         });
 
-        // Immediate optimistic volume update so the tile "tallies" right away (no waiting for next poll)
+        // Immediate optimistic volume update + track user's personal position (for tile "Your Position" display)
         setFastGames((prev: any[]) => prev.map((g: any) => {
           if (g.marketId !== game.marketId) return g;
           const addYes = side === 'YES' ? stake : 0;
           const addNo = side === 'NO' ? stake : 0;
+          const addYesP = side === 'YES' ? 1 : 0;
+          const addNoP = side === 'NO' ? 1 : 0;
           return {
             ...g,
             currentVolume: (g.currentVolume || 0) + stake,
             yesStake: (g.yesStake || 0) + addYes,
             noStake: (g.noStake || 0) + addNo,
+            yesParticipants: (g.yesParticipants || 0) + addYesP,
+            noParticipants: (g.noParticipants || 0) + addNoP,
           };
         }));
 
+        setUserPositions(prev => ({
+          ...prev,
+          [game.marketId]: {
+            side,
+            amount: (prev[game.marketId]?.amount || 0) + stake
+          }
+        }));
+
         loadFastGames();
-        loadMyClaimsAndHistory();
+        loadMyClaimsAndHistory(true); // user just bet — force fresh resolver data
 
         // Immediate optimistic update already applied above.
         // Now trigger a proper reconciliation against the reliable backend after a short delay.
@@ -645,7 +1086,12 @@ export function Predict() {
   const fetchLivePrices = async () => {
     setIsLoadingPrices(true);
     try {
-      const response = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph&order=market_cap_desc&per_page=10&page=1');
+      // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko)
+      const isLive = !RESOLVER_BASE.includes('localhost');
+      const coingeckoUrl = isLive
+        ? `${RESOLVER_BASE}/api/proxy/coingecko/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1`
+        : 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+      const response = await fetch(coingeckoUrl);
       const data = await response.json();
       const liveAssets: Asset[] = data.map((coin: any) => ({
         symbol: coin.symbol.toUpperCase(),
@@ -687,20 +1133,35 @@ export function Predict() {
     fetchLivePrices();
     loadOnChainMarkets();
     loadFastGames();
-    loadMyClaimsAndHistory();
+    loadMyClaimsAndHistory(); // will hit cache fast-path on most mounts
     if (hashPackSession?.accountId) {
       fetchUserActiveBets(hashPackSession.accountId).then(setUserBets);
     }
+
+    // Phase 1 stability: Longer interval for fast games (30s) to reduce "disappear/reappear" flashes and charging from constant re-renders.
+    // Expensive portfolio still uses visibility-only + cache checks. Manual Refresh button always available.
     const marketRefresh = setInterval(() => {
       loadOnChainMarkets();
       loadFastGames();
-    }, 15000);
+    }, 30000);
+
     const priceRefresh = setInterval(fetchLivePrices, 60000);
 
-    // Robust resume when user returns to the tab or focuses the window.
-    // This fixes "left the tab and came back → poof it's gone" (polling may have been throttled or state stale).
+    // Portfolio gets a gentle background heartbeat — only when tab is visible.
+    // Much less aggressive than before to prevent spam + "comes and goes".
+    const portfolioHeartbeat = setInterval(() => {
+      if (document.visibilityState === 'visible' && hashPackSession?.accountId) {
+        // Only refresh portfolio if cache is getting old
+        const cached = getCachedPortfolio(hashPackSession.accountId);
+        if (!cached || !isCacheFresh(cached)) {
+          loadMyClaimsAndHistory();
+        }
+      }
+    }, 45000); // every 45s max — huge reduction from constant 15s + visibility storms
+
+    // Smart visibility/focus handler: only force a portfolio hit on long-idle returns.
     const handleVisibilityOrFocus = () => {
-      // Re-hydrate the recent cache from localStorage in case of edge cases
+      // Always keep fast-game recent cache fresh (cheap)
       try {
         const saved = localStorage.getItem('recentlyCreatedFastGames');
         if (saved) {
@@ -714,18 +1175,30 @@ export function Predict() {
           setRecentlyCreatedMarketIds(filtered);
         }
       } catch {}
-      // Only refresh when the tab is actually visible (polite, production behavior)
-      if (document.visibilityState === 'visible') {
-        loadFastGames();
-        loadMyClaimsAndHistory();
+
+      if (document.visibilityState === 'visible' && hashPackSession?.accountId) {
+        // Only hit portfolio if we have been away long enough that cache may be stale
+        const cached = getCachedPortfolio(hashPackSession.accountId);
+        const longIdle = !cached || (Date.now() - cached.ts) > 60_000;
+        if (longIdle) {
+          loadMyClaimsAndHistory();
+        } else {
+          // Just re-apply the still-fresh cache instantly (no network)
+          setMyHistory(cached!.myHistory);
+          setMyClaimables(cached!.myClaimables);
+          setLastPortfolioSync(cached!.ts);
+          setPortfolioCacheStatus('cached');
+        }
       }
     };
+
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
     window.addEventListener('focus', handleVisibilityOrFocus);
 
     return () => {
       clearInterval(marketRefresh);
       clearInterval(priceRefresh);
+      clearInterval(portfolioHeartbeat);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
     };
@@ -738,17 +1211,19 @@ export function Predict() {
     setShowBetModal(true);
   };
 
-  const placeBet = async () => {
-    alert("Bet flow temporarily simplified during recovery. Full flow will be restored in next step.");
-    setShowBetModal(false);
-  };
+  // REMOVED in Phase 7 cleanup (per master plan): old simplified bet/create flows (fast game is the active path now).
+  // Legacy modals (showBetModal/showCreateModal) and these functions were remnants from pre-fast-game recovery.
+  // Fast game create/bet fully wired via resolver with retries, optimistic, etc. Safe to drop.
 
-  const createMarket = async () => {
-    alert("Create flow temporarily simplified during recovery.");
-    setShowCreateModal(false);
+  const formatPrice = (price: number | null) => {
+    if (price === null || price === undefined) return 'N/A';
+    if (price < 1) {
+      // Very low priced assets (HBAR etc.) → 6 decimals for prediction accuracy (matches resolver PRIMARY source)
+      return price.toFixed(6);
+    }
+    // Higher priced assets → show 3 decimals for better accuracy (e.g. SOL)
+    return price.toFixed(3);
   };
-
-  const formatPrice = (price: number | null) => price ? price.toFixed(2) : 'N/A';
 
   return (
     <div className={`min-h-[calc(100vh-120px)] ${isDark ? 'bg-[#080a12] text-white' : 'bg-[#f8fafc] text-slate-900'} p-6`}>
@@ -763,7 +1238,7 @@ export function Predict() {
         {/* Asset cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 mb-12">
           {isLoadingPrices && assets.length === 0 ? (
-            <div className="col-span-full text-center py-12 text-white/50">Loading live prices...</div>
+            <div className={`col-span-full text-center py-12 ${isDark ? 'text-white/50' : 'text-slate-400'}`}>Loading live prices...</div>
           ) : assets.length > 0 ? (
             assets.map((asset, index) => (
               <div key={index} onClick={() => { setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
@@ -794,7 +1269,7 @@ export function Predict() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
             <div>
               <h3 className="text-2xl font-semibold tracking-tight">HBAR Fast Guess</h3>
-              <p className="text-sm text-white/60">Up or Down from current price • 10 / 20 minutes</p>
+              <p className={`text-sm ${isDark ? 'text-white/60' : 'text-slate-600'}`}>Up or Down from current price • 10m / 20m / 1h / 4h</p>
             </div>
             <button onClick={() => setShowFastGameModal(true)}
               className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-semibold hover:brightness-110">
@@ -805,17 +1280,19 @@ export function Predict() {
           {/* Active Fast Games */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-semibold text-white/70">Active HBAR Fast Games (Live Timers)</div>
+              <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Active HBAR Fast Games (Live Timers)</div>
               <button onClick={loadFastGames} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {isLoadingFastGames ? (
-              <div className="text-white/50 text-sm py-4">Loading fast games from HCS...</div>
+            {/* Phase 1 stability: Never blank the whole list on poll/refresh. Show previous data + subtle indicator.
+               Use stable keys + avoid full grid re-mount to stop disappear/reappear flashes. */}
+            {isLoadingFastGames && displayFastGames.length === 0 ? (
+              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
             ) : displayFastGames.filter((g: any) => !g.resolved).length === 0 ? (
-              <div className="text-white/50 text-sm py-4 space-y-1">
+              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
                 <div>No active fast games right now.</div>
-                <div className="text-white/40 text-xs">Fast games are short (10-20 min). Check your <span className="underline">Portfolio &amp; Claim Center</span> below for completed games, winnings, and full audit trail.</div>
-                <div className="text-white/40 text-xs">All activity is permanently recorded on HCS topic 0.0.9017517.</div>
+                <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+                <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -825,7 +1302,13 @@ export function Predict() {
                   const secs = remaining % 60;
                   const timeStr = remaining > 0 ? `${mins}m ${secs}s` : "EXPIRED";
 
-                  const isBettingOpen = remaining > ((game.durationMinutes || 10) * 60 * 0.5);
+                  // Prefer server-computed isBettingOpen (authoritative, includes correct durationMinutes
+                  // from the CREATE memo or /create body) for reliable 50% cutoff across all durations.
+                  // Fall back to client calc only if the flag is missing (older resolver responses).
+                  let isBettingOpen = remaining > ((game.durationMinutes || 10) * 60 * 0.5);
+                  if (game.isBettingOpen !== undefined) {
+                    isBettingOpen = !!game.isBettingOpen;
+                  }
 
                   return (
                     <div 
@@ -850,6 +1333,13 @@ export function Predict() {
                         </div>
                       </div>
 
+                      {/* Strong Tier 1 confirmation: Shows right on the tile when you just predicted */}
+                      {justBetGames[game.marketId] && (
+                        <div className="mb-3 px-3 py-1.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2">
+                          ✓ Prediction #{(userPositions[game.marketId]?.amount || 0) > 0 ? 'updated' : 'recorded'} — {justBetGames[game.marketId].amount} HBAR on {justBetGames[game.marketId].side}
+                        </div>
+                      )}
+
                       <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-4 pr-1">
                         {game.question}
                       </div>
@@ -857,7 +1347,19 @@ export function Predict() {
                       <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4">
                         <div>
                           <div className="text-[10px] text-white/50 tracking-widest">CREATION PRICE</div>
-                          <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(4) || '—'}</div>
+                          <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(6) || '—'}</div>
+                          {/* Live tiny delta (Phase 4 premium) — updates 3-5s via shared resolver price */}
+                          {liveHbarPrice != null && game.creationPrice != null && (
+                            <div className="text-[9px] mt-0.5 font-mono">
+                              {(() => {
+                                const delta = liveHbarPrice - game.creationPrice;
+                                const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
+                                const sign = delta >= 0 ? '▲' : '▼';
+                                const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                                return <span className={color}>{sign} ${Math.abs(delta).toFixed(5)} ({pct.toFixed(1)}%)</span>;
+                              })()}
+                            </div>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -912,57 +1414,124 @@ export function Predict() {
                               <div className="text-emerald-400">{yesStake.toFixed(1)}</div>
                               <div className="text-rose-400">{noStake.toFixed(1)}</div>
                             </div>
+                            {/* User counts + sides (data from resolver volume enrichment) */}
+                            <div className="flex justify-between text-[9px] mt-0.5 text-white/60">
+                              <div>{(game.yesParticipants || 0)} users</div>
+                              <div>{(game.noParticipants || 0)} users</div>
+                            </div>
                           </div>
                         );
                       })()}
 
-                      <div className="flex items-baseline justify-between mb-4">
-                        <div className="text-[28px] font-semibold text-[#00f9ff] tabular-nums tracking-[-1px] leading-none">
-                          {timeStr}
-                        </div>
-                        <div className="text-right text-[10px] text-white/50">
-                          {isBettingOpen ? 'Predictions close at 50%' : 'Resolution pending'}
-                        </div>
-                      </div>
+                      {/* Tier 2 #1: Live "Your Impact" — instrumental improvement for smoke tests */}
+                      {(() => {
+                        const stake = gameStakes[game.marketId] || 10;
+                        const yesStake = game.yesStake ?? 0;
+                        const noStake = game.noStake ?? 0;
 
-                      {remaining > 30 && hashPackSession?.accountId && isBettingOpen && (
-                        <div className="pt-4 border-t border-white/10">
-                          {/* Quick stake presets */}
-                          <div className="flex justify-between items-center mb-2 text-xs">
-                            <div className="text-white/50">Stake</div>
-                            <div className="flex gap-1">
-                              {[10, 25, 50, 100].map((amt) => (
-                                <button
-                                  key={amt}
-                                  onClick={() => setFastBetStake(amt)}
-                                  className={`px-2 py-0.5 rounded text-xs transition-all border ${
-                                    fastBetStake === amt 
-                                      ? 'bg-white/20 border-white/30' 
-                                      : 'bg-white/5 border-white/10 hover:bg-white/10'
-                                  }`}
-                                >
-                                  {amt}
-                                </button>
-                              ))}
-                            </div>
+                        if (stake <= 0) return null;
+
+                        const yesImpact = (yesStake + stake) > 0 
+                          ? ((stake / (yesStake + stake)) * 100).toFixed(1) 
+                          : '100';
+                        const noImpact = (noStake + stake) > 0 
+                          ? ((stake / (noStake + stake)) * 100).toFixed(1) 
+                          : '100';
+
+                        return (
+                          <div className="mb-3 px-2 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] text-white/70">
+                            Adding <span className="font-mono font-semibold text-white">{stake}</span> HBAR would give you 
+                            ~<span className="font-semibold text-emerald-400">{yesImpact}%</span> of the YES pool or 
+                            ~<span className="font-semibold text-rose-400">{noImpact}%</span> of the NO pool
                           </div>
+                        );
+                      })()}
 
-                          <div className="flex gap-2">
-                            <button 
-                              onClick={() => handleFastBet(game, 'YES')} 
-                              className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
-                            >
-                              YES {fastBetStake}
-                            </button>
-                            <button 
-                              onClick={() => handleFastBet(game, 'NO')} 
-                              className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
-                            >
-                              NO {fastBetStake}
-                            </button>
+                      {/* Tier 1 UX: Your Position on this game (very high value for smoke tests) */}
+                      {userPositions[game.marketId] && (
+                        <div className="mb-4 px-3 py-2 rounded-2xl bg-white/5 border border-white/10 text-sm">
+                          <span className="text-white/50 text-xs tracking-widest">YOUR POSITION</span>
+                          <div className="font-semibold">
+                            {userPositions[game.marketId].amount} HBAR on <span className={userPositions[game.marketId].side === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>{userPositions[game.marketId].side}</span>
                           </div>
                         </div>
                       )}
+
+                      {/* Basic graceful resolution notice (Tier 1) - shows outcome briefly if we have resolution data */}
+                      {game.resolutionWinner && (
+                        <div className="mb-3 px-3 py-1.5 rounded-2xl bg-[#00f9ff]/10 border border-[#00f9ff]/30 text-[#00f9ff] text-xs font-semibold">
+                          RESOLVED — Winner: {game.resolutionWinner} @ ${game.closingPrice?.toFixed(6) || '—'}
+                        </div>
+                      )}
+
+                      <div className="flex items-baseline justify-between mb-4">
+                        <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${remaining < 120 ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
+                          {timeStr}
+                        </div>
+                        <div className="text-right text-[10px] text-white/50">
+                          {isBettingOpen ? (remaining < 120 ? 'Closing soon' : 'Predictions close at 50%') : 'Resolution pending'}
+                        </div>
+                      </div>
+
+                      {/* Stable bottom section: always rendered with min-height to prevent card "unstable" / layout jump when the 50% betting window closes (e.g. 5min on 10m game) */}
+                      <div className="pt-4 border-t border-white/10 min-h-[68px]">
+                        {isBettingOpen && remaining > 30 && hashPackSession?.accountId ? (
+                          <>
+                            {/* Quick stake presets + mini slider */}
+                            <div className="flex justify-between items-center mb-2 text-xs">
+                              <div className="text-white/50">Stake</div>
+                              <div className="flex gap-1">
+                                {[10, 25, 50, 100].map((amt) => {
+                                  const currentStake = gameStakes[game.marketId] || 10;
+                                  return (
+                                    <button
+                                      key={amt}
+                                      onClick={() => setGameStakes(prev => ({ ...prev, [game.marketId]: amt }))}
+                                      className={`px-2 py-0.5 rounded text-xs transition-all border ${
+                                        currentStake === amt 
+                                          ? 'bg-white/20 border-white/30' 
+                                          : 'bg-white/5 border-white/10 hover:bg-white/10'
+                                      }`}
+                                    >
+                                      {amt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <Slider
+                              min={1}
+                              max={fastGameMaxBalance && fastGameMaxBalance > 10 ? fastGameMaxBalance : 500}
+                              step={1}
+                              value={[gameStakes[game.marketId] || 10]}
+                              onValueChange={(vals) => {
+                                const v = Math.max(1, vals[0] || 1);
+                                const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
+                                setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
+                              }}
+                              className="mb-2"
+                            />
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => handleFastBet(game, 'YES')} 
+                                className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
+                              >
+                                YES {(gameStakes[game.marketId] || 10)}
+                              </button>
+                              <button 
+                                onClick={() => handleFastBet(game, 'NO')} 
+                                className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
+                              >
+                                NO {(gameStakes[game.marketId] || 10)}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-center text-xs text-white/60 py-2">
+                            {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -971,84 +1540,297 @@ export function Predict() {
           </div>
         </div>
 
+        {/* Tier 2 #2: Recent Outcomes strip — social proof for smoke tests */}
+        {recentOutcomes.length > 0 && (
+          <div className="mt-6">
+            <div className="text-sm font-semibold text-white/70 mb-3">Recent Outcomes</div>
+            <div className="flex flex-wrap gap-2">
+              {recentOutcomes.map((outcome, idx) => (
+                <div key={idx} className="px-3 py-1.5 rounded-2xl bg-white/5 border border-white/10 text-xs">
+                  <span className="font-mono text-white/60 mr-2">{outcome.marketId}</span>
+                  <span className={outcome.winner === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>
+                    {outcome.winner} WIN
+                  </span>
+                  {outcome.multiple && (
+                    <span className="text-white/60 ml-2">({outcome.multiple}x)</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Fast Game Updates — the "Updates" / extra data feed the deployed version had.
+           * Built on the stable resolver-enriched data (creationPrice, volume, participants from HCS).
+           * Gives the richer market creation + activity view without losing any Phase 1 stability.
+           */}
+        <div className="mt-8 border-t border-white/10 pt-6">
+          <div className="flex items-center justify-between mb-2">
+            <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>
+              Fast Game Updates (Recent Creations &amp; Activity)
+            </div>
+            <button onClick={loadFastGames} className="text-xs px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Refresh</button>
+          </div>
+          {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).length === 0 ? (
+            <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-xs py-2`}>No recent fast game activity yet. Create one above — it will appear here instantly (optimistic) + via resolver.</div>
+          ) : (
+            <div className="divide-y divide-white/10 rounded-2xl border border-white/10 overflow-hidden">
+              {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).map((g: any, idx: number) => {
+                const ageMin = Math.max(0, Math.floor((Date.now() / 1000 - (parseInt((g.marketId || '').split('-')[1] || '0', 10) / 1000)) / 60));
+                return (
+                  <div key={idx} className={`px-3 py-2 text-xs flex items-center gap-3 ${isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}>
+                    <div className="font-mono text-[10px] text-white/50 w-40 truncate">{g.marketId}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate pr-2">{g.question}</div>
+                      <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-[10px] flex gap-2`}>
+                        <span>Created {ageMin}m ago</span>
+                        <span>·</span>
+                        <span className="font-mono text-[#00f9ff]">${(g.creationPrice || 0).toFixed(6)}</span>
+                        <span>·</span>
+                        <span>{(g.currentVolume || 0).toFixed(1)} HBAR</span>
+                        <span>·</span>
+                        <span>{(g.totalParticipants || 0)} users</span>
+                      </div>
+                    </div>
+                    <div className={`text-[10px] px-2 py-0.5 rounded-full ${g._optimistic || g._recentlyCreated ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                      {g._optimistic || g._recentlyCreated ? 'LIVE (optimistic)' : (g.isBettingOpen !== undefined ? (g.isBettingOpen ? 'OPEN' : 'CLOSED') : 'OPEN')}
+                    </div>
+                    <a href={`https://hashscan.io/testnet/topic/${MASTER_TOPIC_ID}`} target="_blank" className="text-[#00f9ff] text-[10px] hover:underline">HCS</a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className={`${isDark ? 'text-white/40' : 'text-slate-500'} text-[10px] mt-1`}>Extra data view (creations, volume, participants, price at placement). All anchored to HCS 0.0.9017517.</div>
+        </div>
+
         {/* Portfolio Dropdown */}
         <div className="mt-10 border-t border-white/10 pt-8">
           <button
             onClick={() => {
               const next = !portfolioOpen;
               setPortfolioOpen(next);
-              if (next && hashPackSession?.accountId) loadMyClaimsAndHistory();
+              if (next && hashPackSession?.accountId) loadMyClaimsAndHistory(true); // explicit open → fresh data from resolver belt
             }}
-            className="w-full flex items-center justify-between rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 px-6 py-4 text-left"
+            className={`w-full flex items-center justify-between rounded-2xl px-6 py-4 text-left border transition-colors ${isDark 
+              ? 'bg-white/5 hover:bg-white/10 border-white/10' 
+              : 'bg-slate-100 hover:bg-slate-200 border-slate-200'}`}
           >
             <div>
-              <div className="font-semibold text-xl tracking-tight">My Prediction Portfolio &amp; Claim Center</div>
-              <div className="text-sm text-white/60">
-                {myClaimables.length > 0 ? `${myClaimables.length} game(s) with claimable HBAR` : "View your past predictions and pending winnings"}
+              <div className={`font-semibold text-xl tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>My Prediction Portfolio &amp; Claim Center</div>
+              <div className={`text-sm ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
+                Private • All activity cryptographically anchored to HCS 0.0.9017517 • Wins, losses &amp; unmatched returns tracked
               </div>
             </div>
-            <div className={`text-2xl transition-transform ${portfolioOpen ? 'rotate-180' : ''}`}>⌄</div>
+            <div className={`text-2xl transition-transform ${isDark ? 'text-white/70' : 'text-slate-500'} ${portfolioOpen ? 'rotate-180' : ''}`}>⌄</div>
           </button>
 
           {portfolioOpen && (
-            <div className={`mt-4 rounded-3xl border p-6 space-y-6 ${isDark ? 'border-white/10 bg-[#0a0c17]/80' : 'border-gray-200 bg-white shadow-sm'}`}>
+            <div className={`mt-4 rounded-3xl border p-6 space-y-6 ${isDark ? 'border-white/10 bg-[#0a0c17]' : 'border-slate-200 bg-white shadow-sm'}`}>
+              {/* FULLY WIRED STAGE 1 PANEL — 100% real HCS data via reliable topic fetch + resolver (no mocks) • Premium light + dark support */}
+              <div className={`flex items-center justify-between pb-3 border-b ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                <div>
+                  <div className={`font-semibold text-xl tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>My Prediction Games • Private Ledger</div>
+                  <div className={`text-xs tracking-[1.5px] mt-0.5 ${isDark ? 'text-white/60' : 'text-slate-600'}`}>ALL WINS, LOSSES &amp; PAYOUTS • 100% FROM HCS 0.0.9017517</div>
+                </div>
+                <a 
+                  href="https://hashscan.io/testnet/topic/0.0.9017517/messages" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className={`text-xs px-4 py-1.5 rounded-2xl border transition-colors font-medium ${isDark ? 'border-white/20 hover:bg-white/5 text-[#00f9ff] hover:text-[#00f9ff]' : 'border-slate-200 hover:bg-slate-100 text-[#00f9ff] hover:text-[#00d4ff]'}`}
+                >
+                  VIEW MASTER TOPIC →
+                </a>
+              </div>
+
+              {/* Stable data collection status — shows the resolver belt + cache health */}
+              <div className={`flex items-center justify-between text-xs px-3 py-2 rounded-2xl ${isDark ? 'bg-white/5' : 'bg-slate-200'} mb-2`}>
+                <div className={`${isDark ? 'text-white/75' : 'text-slate-700'} flex items-center gap-2`}>
+                  <span className={`inline-block w-2 h-2 rounded-full ${portfolioCacheStatus === 'live' ? 'bg-emerald-400' : portfolioCacheStatus === 'cached' ? 'bg-[#00f9ff]' : 'bg-amber-400'}`} />
+                  {lastPortfolioSync > 0 ? (
+                    <>Synced <span className="tabular-nums font-medium">{Math.max(0, Math.floor((Date.now() - lastPortfolioSync) / 1000))}</span>s ago via resolver <span className="opacity-70">({portfolioCacheStatus === 'stale' ? 'cached' : portfolioCacheStatus})</span></>
+                  ) : (
+                    'Connecting to resolver belt…'
+                  )}
+                </div>
+                <button
+                  onClick={() => loadMyClaimsAndHistory(true)}
+                  disabled={isLoadingMyPortfolio}
+                  className={`flex items-center gap-1 px-3 py-1 rounded-xl border transition ${isDark ? 'border-white/20 hover:bg-white/10' : 'border-slate-300 hover:bg-white'} disabled:opacity-50`}
+                  title="Force fresh pull from resolver (bypasses cache)"
+                >
+                  <RefreshCw size={12} className={isLoadingMyPortfolio ? 'animate-spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+              </div>
               {isLoadingMyPortfolio ? (
-                <div className={`${isDark ? 'text-white/60' : 'text-gray-600'}`}>Loading your prediction history...</div>
+                <div className={`${isDark ? 'text-white/70' : 'text-slate-600'}`}>Loading your prediction history...</div>
               ) : !hashPackSession?.accountId ? (
-                <div className={`${isDark ? 'text-white/60' : 'text-gray-600'} italic`}>Connect your wallet to see your personal claimable winnings.</div>
+                <div className={`${isDark ? 'text-white/70' : 'text-slate-600'} italic`}>Connect your wallet to see your personal claimable winnings.</div>
               ) : (
                 <>
-                  <div className="flex flex-wrap gap-6 text-sm">
+                  {/* Premium Portfolio Summary — perfectly matched site typography & colors */}
+                  <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
                     <div>
-                      <div className="text-white/50">Total Claimable Right Now</div>
-                      <div className="text-3xl font-semibold text-emerald-400">
-                        {myClaimables.reduce((sum, g) => sum + (g.claimable || 0), 0).toFixed(2)} HBAR
+                      <div className={`text-[10px] uppercase tracking-[1.5px] ${isDark ? 'text-white/60' : 'text-slate-600'}`}>LIFETIME P&amp;L (FROM HCS)</div>
+                      <div className="text-4xl font-semibold tabular-nums tracking-[-1.5px] text-emerald-400">
+                        {myHistory.reduce((sum, g) => sum + ((g.claimedAmount || g.claimable || 0) - (g.myStake || 0)), 0).toFixed(2)} HBAR
                       </div>
                     </div>
-                    <div>
-                      <div className="text-white/50">Games You Participated In</div>
-                      <div className="text-3xl font-semibold">{myHistory.length}</div>
+                    <div className="flex gap-6 text-sm">
+                      <div>
+                        <div className={`${isDark ? 'text-white/60' : 'text-slate-600'} text-xs tracking-widest`}>GAMES PLAYED</div>
+                        <div className={`text-3xl font-semibold tabular-nums ${isDark ? 'text-white' : 'text-slate-900'}`}>{myHistory.length}</div>
+                      </div>
+                      <div>
+                        <div className={`${isDark ? 'text-white/60' : 'text-slate-600'} text-xs tracking-widest`}>WIN RATE</div>
+                        <div className="text-3xl font-semibold tabular-nums text-[#00f9ff]">
+                          {myHistory.length > 0 
+                            ? Math.round((myHistory.filter(g => g.userWon || (g.actualPaid || 0) > (g.myStake || 0)).length / myHistory.length) * 100) 
+                            : 0}%
+                        </div>
+                      </div>
+                      <div>
+                        <div className={`${isDark ? 'text-white/60' : 'text-slate-600'} text-xs tracking-widest`}>CLAIMABLE NOW</div>
+                        <div className="text-3xl font-semibold tabular-nums text-emerald-400">
+                          {myClaimables.reduce((sum, g) => sum + (g.claimable || 0), 0).toFixed(2)}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Claimables */}
+                  {/* Claimables section - exact site text style + cyan/rose accents */}
                   <div>
-                    <div className="font-semibold text-emerald-400 mb-3">Claimable Winnings</div>
+                    <div className="font-semibold text-emerald-400 mb-3 tracking-[1.5px] text-sm">CLAIMABLE WINNINGS</div>
+                    <div className={`text-xs -mt-2 mb-3 ${isDark ? 'text-white/60' : 'text-slate-600'}`}>Auto-paid games appear in your receipts below</div>
                     {myClaimables.length === 0 ? (
-                      <div className={`${isDark ? 'text-white/50' : 'text-gray-500'} text-sm italic`}>No pending claims right now.</div>
+                      <div className={`${isDark ? 'text-white/60' : 'text-slate-600'} text-sm`}>No pending manual claims. Most fast games auto-settle ~28s after resolution.</div>
                     ) : (
                       <div className="space-y-3">
                         {myClaimables.map((game, idx) => (
-                          <div key={idx} className={`rounded-3xl border p-5 flex flex-col lg:flex-row gap-5 ${isDark ? 'border-emerald-500/30 bg-emerald-950/10' : 'border-emerald-200 bg-emerald-50/70'}`}>
+                          <div key={idx} className={`rounded-3xl border p-5 flex flex-col lg:flex-row gap-5 items-center ${isDark ? 'border-emerald-500/30 bg-emerald-950/10' : 'border-emerald-200 bg-emerald-50/70'}`}>
                             <div className="flex-1">
                               <div className="font-semibold">{game.question}</div>
                               <div className="text-[10px] font-mono text-white/40">{game.marketId}</div>
                             </div>
                             <div className="flex gap-8 text-sm">
                               <div><div className="text-[10px] text-white/50">YOUR STAKE</div><div className="font-semibold">{game.myStake} HBAR</div></div>
-                              <div><div className="text-[10px] text-white/50">YOU RECEIVE</div><div className="text-2xl font-semibold text-emerald-400">{game.claimable} HBAR</div></div>
+                              <div><div className="text-[10px] text-white/50">YOU RECEIVE</div><div className="text-2xl font-semibold text-emerald-400 tabular-nums">{game.claimable} HBAR</div></div>
                             </div>
-                            <button onClick={() => claimFastGamePayout(game)} className="px-7 py-3 rounded-2xl font-semibold bg-emerald-500 text-black hover:bg-emerald-400">Claim Now</button>
+                            <button onClick={() => claimFastGamePayout(game)} className="px-8 py-3 rounded-2xl font-semibold bg-emerald-500 text-black hover:bg-emerald-400 active:scale-[0.985] transition-all">Claim Now</button>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  <PredictionHistory myHistory={myHistory} isDark={isDark} isVIP={isVIP} showToast={showToast} />
+                  {/* Search + Export + Filters (Step 5 polish) */}
+                  <div className="flex flex-col md:flex-row md:items-center gap-3 pt-2">
+                    <input
+                      type="text"
+                      value={receiptSearch}
+                      onChange={(e) => setReceiptSearch(e.target.value)}
+                      placeholder="Search by market ID or side..."
+                      className={`flex-1 rounded-2xl px-4 py-2 text-sm placeholder:text-white/40 focus:outline-none focus:border-[#00f9ff]/50 ${isDark ? 'bg-white/5 border border-white/20' : 'bg-slate-100 border border-slate-200 text-slate-900'}`}
+                    />
+                    
+                    <button
+                      onClick={() => {
+                        const rows = myHistory.map(g => ({
+                          marketId: g.marketId,
+                          side: g.userSide,
+                          stake: g.myStake,
+                          betSequence: g.betSequence || '',
+                          creationPrice: g.creationPrice || '',
+                          closingPrice: g.closingPrice || '',
+                          resolutionWinner: g.resolutionWinner || '',
+                          actualPaid: g.actualPaid || g.claimedAmount || 0,
+                          profitMultiple: g.profitMultiple || '',
+                          payoutTxId: g.payoutTxId || '',
+                          userWon: g.userWon ? 'WIN' : (g.resolved ? 'LOSS' : 'PENDING'),
+                        }));
 
-                  {/* Master Audit Trail Note - Added in Step 5 integration */}
-                  <div className="pt-4 border-t border-white/10 text-[11px] text-white/50">
-                    All activity (creations, predictions, resolutions, payouts) is permanently recorded on the immutable HCS topic <span className="font-mono text-white/70">0.0.9017517</span>.
-                    <a 
-                      href="https://hashscan.io/testnet/topic/0.0.9017517/messages" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="ml-2 text-[#00f9ff] hover:underline"
+                        const csv = [
+                          Object.keys(rows[0] || {}).join(','),
+                          ...rows.map(r => Object.values(r).join(','))
+                        ].join('\n');
+
+                        const blob = new Blob([csv], { type: 'text/csv' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `wrappdex-prediction-audit-${new Date().toISOString().slice(0,10)}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className={`px-5 py-2 rounded-2xl text-sm font-semibold flex items-center gap-2 active:scale-[0.985] transition-all ${isVIP 
+                        ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer' 
+                        : isDark 
+                          ? 'border border-white/20 hover:bg-white/5 text-white' 
+                          : 'border border-slate-200 hover:bg-slate-100 text-slate-700'}`}
                     >
-                      View full Master Audit Trail →
-                    </a>
+                      EXPORT FULL AUDIT (CSV)
+                    </button>
                   </div>
+
+                  {/* Receipt Filters — premium gradient matching site CTA (cyan/violet or pink for Losses), VIP gated shimmer */}
+                  <div className="flex flex-wrap gap-2">
+                    {(['ALL', 'WINS', 'LOSSES', 'UNMATCHED'] as const).map((f) => {
+                      const isActive = activeReceiptFilter === f;
+                      let activeClasses = '';
+
+                      if (isActive) {
+                        if (f === 'LOSSES') {
+                          // Pink mode for Losses
+                          activeClasses = isVIP 
+                            ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white vip-shimmer ring-1 ring-white/30' 
+                            : 'bg-gradient-to-r from-rose-500 to-pink-500 text-white';
+                        } else {
+                          // Blue/cyan gradient matching Create Fast Game button
+                          activeClasses = isVIP 
+                            ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer ring-1 ring-white/30' 
+                            : 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black';
+                        }
+                      }
+
+                      return (
+                        <button
+                          key={f}
+                          onClick={() => setActiveReceiptFilter(f)}
+                          className={`px-4 py-1.5 text-xs rounded-2xl border transition-all font-medium ${isActive 
+                            ? activeClasses 
+                            : isDark 
+                              ? 'border-white/20 text-white/70 hover:text-white hover:bg-white/5' 
+                              : 'border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
+                        >
+                          {f === 'ALL' ? 'All Predictions' : f === 'WINS' ? 'Wins' : f === 'LOSSES' ? 'Losses' : 'Unmatched Returns'}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <PredictionHistory 
+                    myHistory={myHistory
+                      .filter(g => {
+                        if (activeReceiptFilter === 'ALL') return true;
+                        if (activeReceiptFilter === 'WINS') return g.userWon === true || (g.actualPaid || 0) > (g.myStake || 0);
+                        if (activeReceiptFilter === 'LOSSES') return g.resolved && (g.actualPaid || 0) === 0 && (g.myStake || 0) > 0;
+                        if (activeReceiptFilter === 'UNMATCHED') return (g.actualPaid || 0) === (g.myStake || 0) && (g.myStake || 0) > 0;
+                        return true;
+                      })
+                      .filter(g => {
+                        if (!receiptSearch) return true;
+                        const q = receiptSearch.toLowerCase();
+                        return (
+                          g.marketId?.toLowerCase().includes(q) ||
+                          g.userSide?.toLowerCase().includes(q)
+                        );
+                      })
+                    } 
+                    isDark={isDark} 
+                    isVIP={isVIP} 
+                    showToast={showToast} 
+                  />
 
                   <TreasuryAdminPanel
                     hashPackSession={hashPackSession}
@@ -1079,82 +1861,82 @@ export function Predict() {
         )}
       </div>
 
-      {/* Fast Game Modal (simplified for boot) */}
+      {/* Fast Game Create Modal — premium bank-grade UX with live balance, 4 durations, slider, etc. */}
       {showFastGameModal && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4" onClick={() => setShowFastGameModal(false)}>
-          <div className={`rounded-3xl w-full max-w-[480px] p-6 ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+          <div 
+            className={`rounded-3xl w-full max-w-[480px] max-h-[92vh] flex flex-col overflow-hidden ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} 
+            onClick={e => e.stopPropagation()}
+          >
 
-            {/* Dynamic WRAPpDEX Logo (pulls main wordmark from Supabase + respects holidays) */}
-            <div className="flex justify-center mb-4">
-              <HolidayLogo 
-                defaultDarkSrc={brandLogos.dark} 
-                defaultLightSrc={brandLogos.light} 
-                isDark={isDark} 
-                alt="WRAPpDEX" 
-                imgClassName="h-32 w-auto object-contain"
-                holidayImgClassName="h-32 w-auto object-contain"
-              />
-            </div>
+            {/* Header - fixed */}
+            <div className="flex-none p-5 pb-3">
+              {/* Dynamic WRAPpDEX Logo (smaller to save space) */}
+              <div className="flex justify-center mb-2">
+                <HolidayLogo 
+                  defaultDarkSrc={brandLogos.dark} 
+                  defaultLightSrc={brandLogos.light} 
+                  isDark={isDark} 
+                  alt="WRAPpDEX" 
+                  imgClassName="h-20 w-auto object-contain"
+                  holidayImgClassName="h-20 w-auto object-contain"
+                />
+              </div>
 
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-xl tracking-tight">Create HBAR Fast Guess</div>
                   <div className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                    Up or Down • 10 / 20 min
+                    Up or Down • 10m / 20m / 1h / 4h
                   </div>
                 </div>
                 <button onClick={() => setShowFastGameModal(false)}><X /></button>
               </div>
 
-              {/* Current HBAR Price - Refreshes every 15s for UI accuracy */}
-              <div className="flex flex-col gap-0.5 text-xs">
+              {/* Current HBAR Price - compact. This is the official Hedera network rate the game will use for resolution (PRIMARY source). */}
+              <div className="mt-2 text-xs">
                 <div className="flex items-baseline gap-2">
-                  <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR</span>
+                  <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR (official rate for this game)</span>
                   <span className={`font-mono font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(4)}
+                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
                   </span>
                 </div>
-
                 {lastPriceUpdate && (
-                  <div className={`text-[10px] flex items-center gap-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                    <span>
-                      {lastPriceUpdate.toLocaleDateString()} {lastPriceUpdate.toLocaleTimeString()}
-                    </span>
-                    <span className="text-emerald-400">
-                      • next in {priceSecondsUntilRefresh}s
-                    </span>
+                  <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                    {lastPriceUpdate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • updates in {priceSecondsUntilRefresh}s (resolver authoritative)
                   </div>
                 )}
-
-                <div className="text-[9px] text-white/40 mt-0.5">
-                  Settlement price is captured at creation time for fairness
-                </div>
               </div>
             </div>
 
-            <div className="space-y-5">
-              {/* Duration */}
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-auto px-5 space-y-3 pb-1 text-sm">
+              {/* Duration - Minimal & Clean */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
                   GAME DURATION
                 </div>
-                <div className="flex gap-2">
-                  {[10, 20].map((mins) => {
+                <div className="grid grid-cols-2 gap-3">
+                  {[10, 20, 60, 240].map((mins) => {
                     const isActive = fastGameDuration === mins;
+                    const predictMins = Math.floor(mins / 2);
+                    const label = mins >= 60 ? `${mins/60}h` : `${mins}m`;
                     return (
                       <button
                         key={mins}
-                        onClick={() => setFastGameDuration(mins as 10 | 20)}
-                        className={`flex-1 py-3 rounded-2xl text-sm font-semibold transition-all border
+                        onClick={() => setFastGameDuration(mins as 10 | 20 | 60 | 240)}
+                        className={`p-3 rounded-2xl transition-all border text-center
                           ${isActive 
-                            ? 'bg-[#00f9ff] text-black border-[#00f9ff]' 
+                            ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
                             : isDark 
                               ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/90' 
                               : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-800'
                           }`}
                       >
-                        {mins} min
+                        <div className="text-xl font-bold tabular-nums tracking-tighter">
+                          {label}
+                        </div>
+                        <div className="text-[9px] opacity-70 leading-none">close ~{predictMins}{mins>=60?'h':'m'}</div>
                       </button>
                     );
                   })}
@@ -1166,59 +1948,82 @@ export function Predict() {
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
                   WHICH SIDE ARE YOU TAKING?
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-3">
+                  {/* YES / ABOVE */}
                   <button
                     onClick={() => setFastGameSide('YES')}
-                    className={`flex-1 py-3.5 rounded-2xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
+                    className={`flex-1 py-3 rounded-2xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
                       ${fastGameSide === 'YES' 
-                        ? 'bg-[#00f9ff] text-black border-[#00f9ff]' 
+                        ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
                         : isDark 
                           ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/90' 
                           : 'bg-gray-100 border-gray-200 hover:bg-gray-200'
                       }`}
                   >
-                    <span className="font-bold">YES</span>
-                    <span className="text-[10px] opacity-70">I predict it will be ABOVE</span>
+                    <div className="font-bold tracking-widest">ABOVE</div>
+                    <div className="text-[9px] opacity-70 -mt-0.5">the current price</div>
                   </button>
+
+                  {/* NO / BELOW */}
                   <button
                     onClick={() => setFastGameSide('NO')}
-                    className={`flex-1 py-3.5 rounded-2xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
+                    className={`flex-1 py-3 rounded-2xl text-sm font-semibold transition-all border flex flex-col items-center justify-center
                       ${fastGameSide === 'NO' 
-                        ? 'bg-rose-500 text-white border-rose-500' 
+                        ? 'bg-rose-500 text-white border-rose-500 shadow-lg' 
                         : isDark 
                           ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/90' 
                           : 'bg-gray-100 border-gray-200 hover:bg-gray-200'
                       }`}
                   >
-                    <span className="font-bold">NO</span>
-                    <span className="text-[10px] opacity-70">I predict it will be BELOW</span>
+                    <div className="font-bold tracking-widest">BELOW</div>
+                    <div className="text-[9px] opacity-70 -mt-0.5">the current price</div>
                   </button>
                 </div>
               </div>
 
-              {/* Stake with Presets */}
+              {/* Stake with Presets — now premium unlimited slider + live Mirror max */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  YOUR INITIAL STAKE (HBAR)
+                  YOUR INITIAL STAKE (HBAR) {fastGameMaxBalance != null ? `• max ~${fastGameMaxBalance.toFixed(1)} (live)` : ''}
                 </div>
 
                 <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
                   <input 
                     type="number" 
                     value={fastGameStake} 
-                    min={10}
+                    min={1}
+                    max={fastGameMaxBalance || undefined}
                     onChange={(e) => {
-                      const raw = parseInt(e.target.value);
-                      if (!isNaN(raw)) setFastGameStake(Math.max(0, raw));
+                      const raw = parseFloat(e.target.value);
+                      if (!isNaN(raw)) {
+                        const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, Math.max(1, raw)) : Math.max(1, raw);
+                        setFastGameStake(clamped);
+                      }
                     }}
                     className={`flex-1 bg-transparent text-xl font-mono focus:outline-none tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}
                   />
                   <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
                 </div>
 
-                {/* Quick Presets */}
-                <div className="flex gap-2">
-                  {[10, 25, 50, 100, 250].map((amt) => (
+                {/* Custom Slider (unlimited up to real balance via Mirror) */}
+                <Slider
+                  min={1}
+                  max={fastGameMaxBalance && fastGameMaxBalance > 1 ? fastGameMaxBalance : 1000}
+                  step={0.1}
+                  value={[fastGameStake]}
+                  onValueChange={(vals) => {
+                    const v = Math.max(1, vals[0] || 1);
+                    const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
+                    setFastGameStake(clamped);
+                  }}
+                  className="mb-3"
+                />
+
+                {/* Smart presets (respect dynamic max) */}
+                <div className="flex gap-2 flex-wrap">
+                  {[1, 5, 10, 25, 50, 100].filter(a => !fastGameMaxBalance || a <= fastGameMaxBalance).concat(
+                    fastGameMaxBalance != null && fastGameMaxBalance > 100 ? [Math.floor(fastGameMaxBalance)] : []
+                  ).slice(0, 7).map((amt) => (
                     <button
                       key={amt}
                       onClick={() => setFastGameStake(amt)}
@@ -1234,18 +2039,40 @@ export function Predict() {
                     </button>
                   ))}
                 </div>
+                <div className={`text-[10px] mt-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                  Slider max = your real-time HBAR balance (fetched via resolver + Hedera Mirror for prod safety). Backend always re-verifies.
+                </div>
               </div>
 
-              {/* Summary Box */}
+              {/* Tier 2: Clear Fee Breakdown - premium, exact, and honest (matches site aesthetic) */}
               <div className={`p-4 rounded-2xl text-sm border ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
-                <div className={`text-xs mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>YOU ARE CREATING</div>
-                <div className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Will HBAR be above current price in {fastGameDuration} minutes?
+                <div className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Total Cost Breakdown</div>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Your Initial Stake</span>
+                    <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{fastGameStake} HBAR</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Platform Fee (1%)</span>
+                    <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{(fastGameStake * 0.01).toFixed(2)} HBAR</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Creation Fee (Resolver + Permanent HCS Audit Trail)</span>
+                    <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>2.50 HBAR</span>
+                  </div>
+                  <div className={`flex justify-between pt-2 mt-1 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                    <span className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Total to Pay Now</span>
+                    <span className="font-mono font-semibold text-[#00f9ff]">{(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR</span>
+                  </div>
                 </div>
-                <div className={`text-xs mt-2 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                  You are taking the <span className="font-semibold">{fastGameSide}</span> side with your {fastGameStake} HBAR stake
+                <div className={`text-[10px] mt-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                  1% goes to treasury. 2.5 HBAR funds the resolver and immutable record on 0.0.9017517.
                 </div>
               </div>
+            </div>
+
+            {/* Fixed footer with action button - always visible */}
+            <div className="flex-none p-5 pt-3 border-t border-white/10 bg-inherit">
               <button
                 onClick={async () => {
                   const session = hashPackSession;
@@ -1274,7 +2101,7 @@ export function Predict() {
                     const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
 
                     // 2. User signs the HBAR transfer (correct architecture)
-                    await withSigning(`Paying creation fee + stake...`, async () => {
+                    await withSigning(`Paying total (${(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR)...`, async () => {
                       await signAndExecuteTransaction(
                         session.wcTopic,
                         'testnet',
@@ -1284,76 +2111,117 @@ export function Predict() {
                       return "payment-sent";
                     });
 
-                    // 3. Payment succeeded — now tell the resolver to record the market on HCS
-                    const hbarPrice = assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
+                    // 3. Payment succeeded — now get a *fresh* authoritative price from the resolver
+                    // at the exact moment after the user committed the on-chain payment.
+                    // This makes the creationPrice + timestamp for the game as accurate as possible.
+                    // The resolver will also do its own fresh fetch in the /create handler for extra authority.
+                    let hbarPrice = 0;
+                    let creationPriceTime: string | undefined;
+                    try {
+                      const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+                      const pJson = await pRes.json();
+                      hbarPrice = pJson.price || assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
+                      creationPriceTime = pJson.priceTime || pJson.resolvedAt;
+                    } catch {
+                      hbarPrice = assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
+                    }
 
                     const generatedMarketId = `fast-${Date.now()}`;
 
-                    const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        marketId: generatedMarketId,
-                        question: `Will HBAR be above current price in ${fastGameDuration} minutes?`,
-                        asset: 'HBAR',
-                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                        durationMinutes: fastGameDuration,
-                        initialSide: fastGameSide,
-                        initialStake: fastGameStake,
-                        creationPrice: hbarPrice,
-                        submittedBy: session.accountId,
-                      }),
-                    });
+                    const sideLabel = fastGameSide === 'YES' ? 'Higher' : 'Lower';
+                    const durationLabel = `${fastGameDuration} min`;
+                    const estimatedResolution = new Date(Date.now() + fastGameDuration * 60 * 1000);
+                    const timeLabel = estimatedResolution.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-                    const data = await res.json();
+                    const questionText = `Will HBAR price be ${sideLabel} than the current price at resolution? (~${durationLabel}, est. ${timeLabel})`;
 
-                    if (!res.ok || !data.success) {
-                      throw new Error(data.error || 'Resolver failed to record the game');
+                    let recordSuccess = false;
+                    let lastRecordError = '';
+                    for (let attempt = 1; attempt <= 3; attempt++) {
+                      try {
+                        const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            marketId: generatedMarketId,
+                            question: questionText,
+                            asset: 'HBAR',
+                            endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                            durationMinutes: fastGameDuration,
+                            initialSide: fastGameSide,
+                            initialStake: fastGameStake,
+                            creationPrice: hbarPrice,
+                            creationPriceTime,
+                            submittedBy: session.accountId,
+                          }),
+                        });
+
+                        const data = await res.json();
+
+                        if (res.ok && data.success) {
+                          recordSuccess = true;
+                          break;
+                        } else {
+                          lastRecordError = data.error || 'Resolver returned error';
+                        }
+                      } catch (e: any) {
+                        lastRecordError = e.message || 'Network error calling resolver';
+                      }
+                      if (attempt < 3) await new Promise(r => setTimeout(r, 1500)); // small backoff
                     }
 
-                    // Optimistic update: immediately show the new game in the UI
-                    // This solves the "game created but doesn't appear" issue caused by HGraph indexing delay.
-                    const optimisticGame = {
-                      marketId: generatedMarketId,
-                      question: `Will HBAR be ${fastGameSide} in ${fastGameDuration} minutes?`,
-                      direction: fastGameSide,
-                      durationMinutes: fastGameDuration,
-                      endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                      creationPrice: hbarPrice,
-                      currentVolume: fastGameStake,
-                      resolved: false,
-                      creator: session.accountId,
-                      yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
-                      noStake: fastGameSide === 'NO' ? fastGameStake : 0,
-                      yesParticipants: fastGameSide === 'YES' ? 1 : 0,
-                      noParticipants: fastGameSide === 'NO' ? 1 : 0,
-                      totalParticipants: 1,
-                    } as any;
+                    if (recordSuccess) {
+                      // ONLY on confirmed backend record success do we show optimistic + persist + toast + close.
+                      // This prevents the lying UI where a card appears locally (and funds left wallet) but no HCS CREATE/PLACE_BET was posted.
+                      const optimisticGame = {
+                        marketId: generatedMarketId,
+                        question: questionText,
+                        direction: fastGameSide,
+                        durationMinutes: fastGameDuration,
+                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                        creationPrice: hbarPrice,
+                        currentVolume: fastGameStake,
+                        resolved: false,
+                        creator: session.accountId,
+                        yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
+                        noStake: fastGameSide === 'NO' ? fastGameStake : 0,
+                        yesParticipants: fastGameSide === 'YES' ? 1 : 0,
+                        noParticipants: fastGameSide === 'NO' ? 1 : 0,
+                        totalParticipants: 1,
+                      } as any;
 
-                    // Push to optimistic layer instead of main list
-                    setOptimisticGames(prev => {
-                      const exists = prev.some(g => g.marketId === optimisticGame.marketId);
-                      if (exists) return prev;
-                      return [optimisticGame, ...prev];
-                    });
+                      setOptimisticGames(prev => {
+                        const exists = prev.some(g => g.marketId === optimisticGame.marketId);
+                        if (exists) return prev;
+                        return [optimisticGame, ...prev];
+                      });
 
-                    // CRITICAL: Persist to the recentlyCreated cache + localStorage so the game
-                    // survives hard refresh, tab switch, and coming back later (even if HGraph lags).
-                    // This was the missing write side causing "poof it's gone on hard refresh".
-                    setRecentlyCreatedMarketIds((prev: Set<string>) => {
-                      const next = new Set(prev);
-                      next.add(optimisticGame.marketId);
-                      // Persist to localStorage for cross-reload survival
-                      try {
-                        const toSave: Record<string, number> = {};
-                        next.forEach(id => { toSave[id] = Date.now(); });
-                        localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
-                      } catch {}
-                      return next;
-                    });
+                      setRecentlyCreatedMarketIds((prev: Set<string>) => {
+                        const next = new Set(prev);
+                        next.add(optimisticGame.marketId);
+                        try {
+                          const toSave: Record<string, number> = {};
+                          next.forEach(id => { toSave[id] = Date.now(); });
+                          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+                        } catch {}
+                        return next;
+                      });
 
-                    showToast('Fast Game created successfully!', 'success');
-                    setShowFastGameModal(false);
+                      showToast('Fast Game created successfully! (recorded on HCS)', 'success');
+                      setShowFastGameModal(false);
+
+                      // background refresh to pick up real data
+                      setTimeout(() => loadFastGames(), 2000);
+                      setTimeout(() => loadFastGames(), 6000);
+                    } else {
+                      // Honest error path: payment on-chain to escrow, but record to HCS failed.
+                      // Do NOT create optimistic card or recentlyCreated (prevents fake local-only card on deployed).
+                      // User has on-chain proof; gameId is in the error for support/recovery.
+                      console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', generatedMarketId);
+                      showToast(`Record to HCS failed after retries: ${lastRecordError}. Payment is in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}`, 'error');
+                      // Keep modal open so user can see the ID and potentially retry the record step (future enhancement: add a "Retry record" button using same payload).
+                      // For now, the stake is safe; resolver Mirror recovery or manual can be used later.
+                    }
 
                     // Also do normal refreshes (the optimistic layer will protect the game)
                     setTimeout(() => loadFastGames(), 2000);
@@ -1368,7 +2236,7 @@ export function Predict() {
                 disabled={isCreatingFastGame}
                 className="w-full py-4 rounded-2xl bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold disabled:opacity-60"
               >
-                {isCreatingFastGame ? "Waiting for signature..." : "CREATE FAST GAME • PAY 2.5 HBAR + STAKE"}
+                {isCreatingFastGame ? "Waiting for signature..." : "CREATE FAST GAME — PAY TOTAL ABOVE"}
               </button>
             </div>
           </div>

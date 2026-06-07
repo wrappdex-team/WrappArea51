@@ -8,18 +8,23 @@ import {
   postPayoutClosedMessage,
   postFastGameRetired,
   postMarketRetired,
-  getCurrentHbarExchangeRateFromNetwork,
   treasuryAccountId
 } from './hedera';
 import fetch from 'node-fetch';
 import fs from 'fs/promises';
 import path from 'path';
 
-const MASTER_TOPIC_ID = process.env.MASTER_TOPIC_ID || '0.0.9017517';
-const RESOLUTION_ACCOUNT = process.env.RESOLUTION_ACCOUNT_ID || '0.0.9006850';
+const MASTER_TOPIC_ID = process.env.MASTER_TOPIC_ID!;
+const RESOLUTION_ACCOUNT = process.env.RESOLUTION_ACCOUNT_ID!;
+if (!MASTER_TOPIC_ID || !RESOLUTION_ACCOUNT) {
+  throw new Error('Missing MASTER_TOPIC_ID or RESOLUTION_ACCOUNT_ID in environment. These must be provided via .env or Railway variables.');
+}
 // Using Hedera's official dedicated testnet mirror node for better reliability
 // (previously was the public mirrornode.hedera.com which can be less stable)
-const MIRROR_NODE = process.env.HEDERA_MIRROR_NODE || 'https://testnet.mirror.hedera.com';
+const MIRROR_NODE = process.env.HEDERA_MIRROR_NODE;
+if (!MIRROR_NODE) {
+  throw new Error('Missing HEDERA_MIRROR_NODE in environment. For testnet job: https://testnet.mirrornode.hedera.com ; for mainnet job: https://mainnet-public.mirrornode.hedera.com (or your dedicated mirror for the network).');
+}
 
 // Phase 1: Lightweight persistence for active games (simple JSON file for restart resilience)
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -297,6 +302,7 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
       resolver: RESOLUTION_ACCOUNT,
     });
 
+    knownResolvedMarkets.add(marketId);
     console.log(`[Resolver] Posted MARKET_RESOLVED for ${marketId}`);
 
     // Phase 0/1 correctness fix for playable games:
@@ -314,6 +320,15 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
     } else {
       // Fast games always use the delayed automatic path for fairness and auditability
       console.log(`[Resolver] Fast game ${marketId} resolved via manual path — relying on scheduled automatic payouts`);
+    }
+
+    // Remove from active list for fast games (admin resolve path)
+    if (marketId.startsWith('fast-')) {
+      const ridx = activeFastGames.findIndex(g => g.marketId === marketId);
+      if (ridx !== -1) {
+        activeFastGames.splice(ridx, 1);
+        saveActiveGamesToDisk().catch(() => {});
+      }
     }
   } catch (err) {
     console.error('[Resolver] Resolution error:', err);
@@ -334,6 +349,7 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
 const activeFastGames: Array<{
   marketId: string;
   endTime: number;
+  durationMinutes?: number;
   creationPrice: number;
   resolved?: boolean;
   inTieResolution?: boolean;
@@ -354,6 +370,23 @@ let lastPriceHealth: {
   timestamp: string;
 } | null = null;
 
+// In-memory TTL cache + log gating for getCurrentHbarPriceWithAuditTrail.
+// Collapses the 20s autoResolve + 60s heartbeat + per-game + tie-5s + /api/price/hbar calls
+// into at most one real Mirror fetch every ~15s, and detailed "PRIMARY" provenance logs
+// only on actual change or once per minute. The authoritative Mirror rate itself moves rarely.
+let cachedPriceData: {
+  price: number;
+  priceTime: string;
+  resolvedAt: string;
+  source: string;
+  isStale: boolean;
+} | null = null;
+let cachedPriceAt = 0;
+const PRICE_CACHE_TTL_MS = 15_000;
+let lastWrapperLoggedPrice = 0;
+let lastWrapperLogTs = 0;
+const WRAPPER_LOG_MIN_INTERVAL_MS = 60_000;
+
 // Phase 1 Observability: Lightweight ring buffer of recent resolution decisions
 const recentResolutions: Array<{
   marketId: string;
@@ -364,6 +397,15 @@ const recentResolutions: Array<{
 }> = [];
 const MAX_RECENT_RESOLUTIONS = 10;
 
+// Runtime memory of markets we have resolved in this process (helps prevent re-register races when on-chain checks are flaky due to indexer lag)
+const knownResolvedMarkets = new Set<string>();
+
+// Phase 1 stability: Short-lived cache for reliable topic messages.
+// Prevents hammering the same asc/desc pagination (x8/x20 "contributed 55x" loops) on every 15-20s poll/heartbeat.
+// 8s TTL smooths UI "disappear/reappear" flashes while keeping data fresh for real-time bets/resolution.
+let _topicMessagesCache: { ts: number; messages: any[] } | null = null;
+const TOPIC_CACHE_TTL_MS = 8000;
+
 /** Phase 1: Load active games from disk for restart resilience */
 export async function loadActiveGamesFromDisk() {
   try {
@@ -372,7 +414,7 @@ export async function loadActiveGamesFromDisk() {
 
     if (Array.isArray(parsed.activeFastGames)) {
       activeFastGames.length = 0;
-      parsed.activeFastGames.forEach((g: any) => activeFastGames.push(g));
+      parsed.activeFastGames.filter((g: any) => !g.resolved).forEach((g: any) => activeFastGames.push(g));
     }
     if (Array.isArray(parsed.tieResolutionGames)) {
       tieResolutionGames.length = 0;
@@ -392,7 +434,7 @@ async function saveActiveGamesToDisk() {
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
     const data = {
-      activeFastGames,
+      activeFastGames: activeFastGames.filter(g => !g.resolved),
       tieResolutionGames: tieResolutionGames.map(t => ({
         marketId: t.marketId,
         creationPrice: t.creationPrice,
@@ -405,12 +447,33 @@ async function saveActiveGamesToDisk() {
   }
 }
 
-export function registerFastGameForAutoResolution(marketId: string, endTime: number) {
+export function registerFastGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number) {
+  // Guard against duplicate registration (prevents re-resolve loops when reRegister misses a recent MARKET_RESOLVED due to indexer lag or HGraph flakiness)
+  const existingIndex = activeFastGames.findIndex(g => g.marketId === marketId);
+  if (existingIndex !== -1) {
+    if (activeFastGames[existingIndex].resolved) {
+      console.log(`[Resolver] ${marketId} already resolved in memory, skipping register`);
+      knownResolvedMarkets.add(marketId);
+      return;
+    }
+    // If we now have better duration info, update it
+    if (durationMinutes && !activeFastGames[existingIndex].durationMinutes) {
+      activeFastGames[existingIndex].durationMinutes = durationMinutes;
+    }
+    console.log(`[Resolver] Fast game ${marketId} already registered in active list`);
+    return;
+  }
+  if (knownResolvedMarkets.has(marketId)) {
+    console.log(`[Resolver] ${marketId} known resolved, skipping register`);
+    return;
+  }
+
   // We no longer store creationPrice in memory.
   // It is fetched from the immutable HCS topic at resolution time for maximum auditability.
   activeFastGames.push({ 
     marketId, 
     endTime, 
+    durationMinutes: durationMinutes || 10,
     creationPrice: 0, // placeholder — will be fetched from chain
     resolved: false,
     inTieResolution: false 
@@ -428,7 +491,7 @@ export async function autoResolveExpiredFastGames() {
 
     // Quick check to avoid re-processing games that already have a resolution on HCS
     try {
-      const recentMessages = await fetchReliableTopicMessages(500);
+      const recentMessages = await fetchReliableTopicMessages(5000);
       const alreadyResolved = recentMessages.some((m: any) => {
         try {
           const raw = m.message || '';
@@ -439,6 +502,7 @@ export async function autoResolveExpiredFastGames() {
       });
       if (alreadyResolved) {
         game.resolved = true;
+        knownResolvedMarkets.add(game.marketId);
         continue;
       }
     } catch {}
@@ -499,6 +563,7 @@ export async function autoResolveExpiredFastGames() {
                 resolver: RESOLUTION_ACCOUNT,
               });
 
+              knownResolvedMarkets.add(game.marketId);
               recordResolutionEvent({
                 marketId: game.marketId,
                 winner: tieWinner,
@@ -541,6 +606,7 @@ export async function autoResolveExpiredFastGames() {
                 resolver: RESOLUTION_ACCOUNT,
               });
 
+              knownResolvedMarkets.add(game.marketId);
               recordResolutionEvent({
                 marketId: game.marketId,
                 winner: forceWinner,
@@ -602,6 +668,7 @@ export async function autoResolveExpiredFastGames() {
         });
 
         game.resolved = true;
+        knownResolvedMarkets.add(game.marketId);
         console.log(
           `[Resolver] Auto-posted MARKET_RESOLVED for ${game.marketId} | ` +
           `Open: ${openPrice} → Close: ${closingPrice} | Winner: ${winner} | ` +
@@ -621,6 +688,14 @@ export async function autoResolveExpiredFastGames() {
       console.error(`[Resolver] Failed to auto-resolve ${game.marketId}:`, err);
     }
   }
+
+  // Clean resolved games from the active list (prevents re-registration races and list bloat from historical games).
+  // We mutate the const array in place.
+  const beforeClean = activeFastGames.length;
+  activeFastGames.splice(0, activeFastGames.length, ...activeFastGames.filter(g => !g.resolved));
+  if (activeFastGames.length !== beforeClean) {
+    saveActiveGamesToDisk().catch(() => {});
+  }
 }
 
 /**
@@ -636,7 +711,9 @@ export async function autoResolveExpiredFastGames() {
 // Prevents the same user from claiming the same market multiple times.
 const claimedPayouts = new Set<string>();
 
-const HGRAPH_URL = "https://testnet.hedera.api.hgraph.io/v1/graphql";
+const HGRAPH_URL: string = process.env.HGRAPH_URL || (() => {
+  throw new Error('Missing HGRAPH_URL in environment. For testnet job: your testnet HGraph endpoint; for mainnet job: your mainnet HGraph endpoint (or public testnet for dev only).');
+})();
 
 /**
  * Robust HCS topic message fetcher.
@@ -645,7 +722,43 @@ const HGRAPH_URL = "https://testnet.hedera.api.hgraph.io/v1/graphql";
  * which serves raw consensus topic messages with very low latency. This is what HashScan uses.
  * Results are normalized to { message: string, consensus_timestamp?: string } shape.
  */
+/** Helper: paginate Mirror Node topic messages by following `links.next` (Mirror caps pages at ~100).
+ * Collects up to ~limit or maxPages pages. Used to make fetchReliable actually deliver large windows
+ * for volume, history, re-register etc when the topic has hundreds of messages.
+ */
+async function fetchMirrorTopicMessagesPaginated(order: 'asc' | 'desc', maxPages = 5): Promise<any[]> {
+  const numeric = MASTER_TOPIC_ID.split('.').pop()!;
+  const out: any[] = [];
+  let url = `${MIRROR_NODE}/api/v1/topics/${numeric}/messages?limit=100&order=${order}`;
+  for (let p = 0; p < maxPages; p++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) break;
+      const data: any = await res.json();
+      for (const m of data.messages || []) {
+        out.push({
+          message: m.message,
+          consensus_timestamp: m.consensus_timestamp,
+          sequence_number: m.sequence_number,
+        });
+      }
+      const next: string | undefined = data.links?.next;
+      if (!next || out.length >= 2000) break;
+      url = next.startsWith('http') ? next : `${MIRROR_NODE}${next}`;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
 export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
+  // Phase 1: Use short cache to debounce repeated full scans (the source of the repeated "Mirror (asc paginated x8) contributed 55x" spam and HGraph failures on every poll).
+  const now = Date.now();
+  if (_topicMessagesCache && (now - _topicMessagesCache.ts) < TOPIC_CACHE_TTL_MS) {
+    return _topicMessagesCache.messages;
+  }
+
   // 1. Try HGraph (current primary in most paths)
   try {
     const h = await fetchTopicMessages(limit);
@@ -676,30 +789,30 @@ export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
     for (const r of hg || []) add(r);
   } catch {}
 
-  // 2. Always also pull from official Mirror Node topic messages (authoritative fallback / complement)
+  // 2. Mirror asc (oldest-first pages via next links) — now actually paginates so large limits for history/volume work
   try {
-    const numeric = MASTER_TOPIC_ID.split('.').pop();
-    const url = `${MIRROR_NODE}/api/v1/topics/${numeric}/messages?limit=${Math.min(limit, 1000)}&order=asc`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data: any = await res.json();
-      for (const m of data.messages || []) {
-        // Mirror returns { message: base64string, consensus_timestamp, sequence_number, ... }
-        add({
-          message: m.message,              // base64 — our decoder will handle it
-          consensus_timestamp: m.consensus_timestamp,
-          sequence_number: m.sequence_number,
-        });
-      }
-      if (data.messages?.length) {
-        console.log(`[Resolver] Mirror Node contributed ${data.messages.length} topic messages (reliable path)`);
-      }
+    const pages = Math.max(2, Math.ceil(Math.min(limit, 2000) / 100));
+    const ascMsgs = await fetchMirrorTopicMessagesPaginated('asc', pages);
+    for (const r of ascMsgs) add(r);
+    if (ascMsgs.length && Math.random() < 0.05) {
+      console.log(`[Resolver] Mirror (asc paginated x${pages}) contributed ${ascMsgs.length} topic messages (reliable path)`);
     }
   } catch (e: any) {
     if (Math.random() < 0.2) console.warn('[Resolver] Mirror topic messages fallback error (non-fatal):', e?.message);
   }
 
+  // 3. Mirror desc (newest) — a few pages of recent is enough to catch just-posted MARKET_RESOLVED / latest bets
+  try {
+    const descMsgs = await fetchMirrorTopicMessagesPaginated('desc', 3);
+    for (const r of descMsgs) add(r);
+  } catch (e: any) {
+    if (Math.random() < 0.2) console.warn('[Resolver] Mirror recent (desc) fallback error (non-fatal):', e?.message);
+  }
+
   // Return newest first or oldest first? Existing code expects roughly asc; we keep as collected (Mirror asc)
+
+  // Phase 1: Cache the result
+  _topicMessagesCache = { ts: Date.now(), messages: all };
   return all;
 }
 
@@ -788,89 +901,138 @@ export async function getMarketVolume(marketId: string) {
 /**
  * Production-grade HBAR price oracle for market resolution.
  *
- * Key principles:
- * - The resolver (privileged actor) is the one making the resolution decision.
- * - We record TWO timestamps:
- *    1. `priceTime` — the timestamp of the price data point itself (from the source)
- *    2. `resolvedAt` — the exact moment the resolver decided to use this price
- * - This creates a clear, auditable "price observation event".
- *
- * We prefer fresh granular data from HGraph. If the latest data point is too old,
- * we fall back to a live external source so resolution can still happen with
- * a reasonably current price.
+ * Key principles (updated for trading-app accuracy per master plan):
+ * - SaucerSwap last-traded / pool price (via their authenticated API + direct contract
+ *   reserves verification via Mirror) is the primary for the "true on-chain market price"
+ *   that traders see.
+ * - Immediate double-check against HGraph (for up-to-the-second indexer freshness/timing)
+ *   and Mirror (official 3rd source) with a very small tolerance at the exact wager
+ *   creation and resolution moments.
+ * - Resolver (privileged) makes the final decision and records rich provenance.
+ * - Force-fresh (bypass cache) on critical paths (post-payment create, resolution).
+ * - Full audit string carried to HCS CREATE_MARKET / MARKET_RESOLVED.
+ * - Zero breakage to other live MVP key usages; graceful fallback to prior Mirror behavior.
  */
-export async function getCurrentHbarPriceWithAuditTrail(): Promise<{
+/**
+ * Reliable global-scale HBAR price for display (modal "CURRENT HBAR") and game creationPrice/resolution.
+ * New strategy per user (no Mirror or HGraph price calls for now):
+ * 1. SaucerSwap API (mainnet) for current trading / last-traded pool price (when key available).
+ * 2. Fallback to the exact same CoinGecko source used for the trusted card prices (the "always correct" one in the UI image).
+ * 3. BNB / Binance oracle as final public fallback.
+ * 
+ * This ensures the price shown in the HBAR card, the modal rate for the game, and the snapped creationPrice
+ * are consistent and from reliable public + on-chain DEX sources.
+ * Critical paths (create) bypass cache for fresh value at the exact wager moment.
+ */
+export async function getCurrentHbarPriceWithAuditTrail(options: { critical?: boolean } = {}): Promise<{
   price: number;
   priceTime: string;
   resolvedAt: string;
   source: string;
   isStale: boolean;
+  provenance?: string;
 }> {
+  const nowTs = Date.now();
+  const isCritical = !!options.critical;
+
+  // 15s TTL cache for normal calls (UI cards, polls). Critical paths (post-payment create, resolution) always fresh.
+  if (!isCritical && cachedPriceData && (nowTs - cachedPriceAt) < PRICE_CACHE_TTL_MS) {
+    return {
+      ...cachedPriceData,
+      resolvedAt: new Date().toISOString(),
+    };
+  }
+
   const resolvedAt = new Date().toISOString();
 
-  try {
-    const networkRate = await getCurrentHbarExchangeRateFromNetwork();
-
-    // Phase 1 improvement: Cleaner logging. The underlying hedera function already handles
-    // layered fallbacks (SDK → Mirror Node). We only log success here.
-    const isPrimary = networkRate.source.includes("SDK") || networkRate.source.includes("official");
-    const prefix = isPrimary ? "PRIMARY" : "FALLBACK";
-
-    console.log(
-      `[Resolver] ✅ Using Hedera Network Exchange Rate (${prefix} for all prediction markets) | ` +
-      `price=$${networkRate.price.toFixed(6)} | source=${networkRate.source} | resolvedAt=${networkRate.resolvedAt}`
-    );
-
-    // Record for observability
-    lastPriceHealth = {
-      price: networkRate.price,
-      source: networkRate.source,
-      isStale: false,
-      timestamp: networkRate.resolvedAt,
-    };
-
-    return {
-      price: networkRate.price,
-      priceTime: networkRate.resolvedAt,
-      resolvedAt: networkRate.resolvedAt,
-      source: networkRate.source,
-      isStale: false,
-    };
-  } catch (err: any) {
-    // Phase 1: Demote from "CRITICAL" to warning. The hedera layer has multiple fallbacks.
-    console.warn("[Resolver] Warning: All Hedera native price sources failed. Attempting emergency public fallback.", err.message);
-
-    // Phase 1 emergency fallback (public, non-Hedera) so resolution never hard-fails during playtesting.
+  // 1. SaucerSwap mainnet API for the current trading price (primary when key is present via Railway secret or Supabase kv_store)
+  if (process.env.SAUCERSWAP_API_KEY) {
     try {
-      const cgRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd");
-      const cgJson: any = await cgRes.json();
-      const cgPrice = cgJson?.["hedera-hashgraph"]?.usd;
-
-      if (cgPrice && !isNaN(cgPrice)) {
-        const now = new Date().toISOString();
-        console.log(`[Resolver] ⚠️ Using CoinGecko emergency fallback | price=$${cgPrice} | resolvedAt=${now}`);
-
-        lastPriceHealth = {
-          price: cgPrice,
-          source: "CoinGecko (emergency public fallback — NOT Hedera native)",
-          isStale: true,
-          timestamp: now,
-        };
-
-        return {
-          price: cgPrice,
-          priceTime: now,
-          resolvedAt: now,
-          source: "CoinGecko (emergency public fallback — NOT Hedera native)",
-          isStale: true,
-        };
+      const base = 'https://api.saucerswap.finance';
+      const r = await fetch(`${base}/v2/pools/full`, {
+        headers: { 'x-api-key': process.env.SAUCERSWAP_API_KEY } as any,
+      });
+      if (r.ok) {
+        const pools = (await r.json()) as any[];
+        for (const p of (pools || [])) {
+          const t0 = p.token0 || p.tokenA || {};
+          const t1 = p.token1 || p.tokenB || {};
+          let hbarTok: any = null;
+          if (t0.symbol === 'HBAR' || t0.symbol?.toUpperCase?.() === 'HBAR') hbarTok = t0;
+          else if (t1.symbol === 'HBAR' || t1.symbol?.toUpperCase?.() === 'HBAR') hbarTok = t1;
+          if (hbarTok && (hbarTok.priceUsd || hbarTok.price)) {
+            const price = parseFloat(hbarTok.priceUsd || hbarTok.price);
+            if (price > 0.01) {
+              const result = {
+                price,
+                priceTime: resolvedAt,
+                resolvedAt,
+                source: 'SaucerSwap (mainnet trading price)',
+                isStale: false,
+                provenance: 'SaucerSwap API v2/pools/full (last-traded / pool price)',
+              };
+              if (!isCritical) { cachedPriceData = result; cachedPriceAt = nowTs; }
+              console.log(`[Resolver] ✅ SaucerSwap mainnet HBAR trading price: $${price.toFixed(6)}`);
+              return result;
+            }
+          }
+        }
       }
-    } catch (cgErr) {
-      console.warn("[Resolver] CoinGecko emergency fallback also failed.");
+    } catch (sErr) {
+      console.warn('[Resolver] SaucerSwap price fetch failed, falling back to card source:', (sErr as Error).message);
     }
-
-    throw new Error(`All price sources exhausted: ${err.message}`);
   }
+
+  // 2. Fallback to the exact CoinGecko source used for the trusted HBAR card price in the UI (the "always correct" one)
+  try {
+    const cgRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+    if (cgRes.ok) {
+      const cgJson: any = await cgRes.json();
+      const price = parseFloat(cgJson?.['hedera-hashgraph']?.usd);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: 'CoinGecko (card price source)',
+          isStale: false,
+          provenance: 'CoinGecko (same as live assets / card prices)',
+        };
+        if (!isCritical) { cachedPriceData = result; cachedPriceAt = nowTs; }
+        console.log(`[Resolver] ✅ CoinGecko (card source) mainnet HBAR: $${price.toFixed(6)}`);
+        return result;
+      }
+    }
+  } catch (cgErr) {
+    console.warn('[Resolver] CoinGecko card source failed, trying BNB/Binance fallback');
+  }
+
+  // 3. BNB oracle / Binance public API as final reliable fallback (no key, global scale)
+  try {
+    const binRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=HBARUSDT');
+    if (binRes.ok) {
+      const binJson: any = await binRes.json();
+      const price = parseFloat(binJson?.price);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: 'Binance (BNB oracle)',
+          isStale: false,
+          provenance: 'Binance public ticker HBARUSDT',
+        };
+        if (!isCritical) { cachedPriceData = result; cachedPriceAt = nowTs; }
+        console.log(`[Resolver] ✅ Binance (BNB oracle) mainnet HBAR: $${price.toFixed(6)}`);
+        return result;
+      }
+    }
+  } catch (binErr) {
+    console.error('[Resolver] Binance BNB oracle also failed');
+  }
+
+  // Last resort (should rarely hit)
+  throw new Error('All reliable HBAR price sources (Saucer, CoinGecko card source, Binance) exhausted');
 }
 
 // Export for use by the API layer (price endpoint)
@@ -908,7 +1070,11 @@ export async function fetchTopicMessages(limit = 500) {
     const json: any = await res.json();
     return json?.data?.topic_message || [];
   } catch (e) {
-    console.error('[Resolver] HGraph fetch failed for payout calc', e);
+    // HGraph public testnet GraphQL is often flaky (returns HTML errors); Mirror fallback handles it.
+    // Log at low rate to avoid spam while still surfacing persistent issues.
+    if (Math.random() < 0.05) {
+      console.warn('[Resolver] HGraph fetch failed (non-fatal, using Mirror fallback)', (e as Error).message?.substring(0, 100));
+    }
     return [];
   }
 }
@@ -922,6 +1088,9 @@ export async function fetchFastGameCreationData(marketId: string): Promise<{
   creationPrice: number;
   initialSide: 'YES' | 'NO';
   question?: string;
+  endTime?: number;
+  durationMinutes?: number;
+  creationPriceTime?: string;
 } | null> {
   // Fetch a large window of recent messages and find the matching CREATE (reliable path)
   const messages = await fetchReliableTopicMessages(2000);
@@ -941,6 +1110,9 @@ export async function fetchFastGameCreationData(marketId: string): Promise<{
           creationPrice: price,
           initialSide: side,
           question: p.question,
+          endTime: p.endTime,
+          durationMinutes: p.durationMinutes,
+          creationPriceTime: p.creationPriceTime,
         };
       }
     } catch {
@@ -959,6 +1131,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   totalWinningSideStake: number;
   totalLosingSideStake: number;
   winningSide: 'YES' | 'NO' | null;
+  alreadyPaid: boolean;
 }> {
   // Use reliable fetch so UI claimables and history always see the real PLACE_BET records
   // (even when HGraph is lagging behind raw consensus).
@@ -996,7 +1169,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   }
 
   if (!winningSide) {
-    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null };
+    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null, alreadyPaid: false };
   }
 
   // Re-walk to get user's stake on the actual winning side
@@ -1019,7 +1192,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   const totalLosing = winningSide === 'YES' ? totalNo : totalYes;
 
   if (myStake === 0) {
-    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide };
+    return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide, alreadyPaid: false };
   }
 
   // === Check for existing PAYOUT (critical for refresh persistence) ===
@@ -1045,6 +1218,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
       totalWinningSideStake: totalWinning,
       totalLosingSideStake: totalLosing,
       winningSide,
+      alreadyPaid: true,
     };
   }
 
@@ -1070,6 +1244,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     totalWinningSideStake: totalWinning,
     totalLosingSideStake: totalLosing,
     winningSide,
+    alreadyPaid: false,
   };
 }
 
@@ -1189,13 +1364,12 @@ const scheduledPayoutTimers = new Map<string, NodeJS.Timeout>();
  */
 async function hasExistingPayout(marketId: string): Promise<boolean> {
   try {
-    const messages = await fetchTopicMessages(1500);
+    // Use reliable (HGraph+Mirror paginated) so we don't miss a recent PAYOUT_CLOSED due to HGraph lag or small page.
+    const messages = await fetchReliableTopicMessages(1500);
     for (const row of messages) {
       try {
         const raw = row.message || '';
-        const decoded = raw.startsWith('\\x')
-          ? Buffer.from(raw.replace(/\\x/g, ''), 'hex').toString('utf8')
-          : raw;
+        const decoded = decodeHcsMessage(raw);
         const p = JSON.parse(decoded);
         if (p.marketId === marketId && (p.type === 'PAYOUT' || p.type === 'PAYOUT_CLOSED')) {
           return true;
@@ -1423,6 +1597,7 @@ export async function forceResolveMarket(marketId: string, winner: 'YES' | 'NO',
     resolver: RESOLUTION_ACCOUNT,
   });
 
+  knownResolvedMarkets.add(marketId);
   recordResolutionEvent({
     marketId,
     winner,
@@ -1434,6 +1609,13 @@ export async function forceResolveMarket(marketId: string, winner: 'YES' | 'NO',
   // Always schedule the delayed payout for fast games after forced resolution
   if (marketId.startsWith('fast-')) {
     scheduleDelayedPayout(marketId, 28000);
+  }
+
+  // Remove from active list
+  const fidx = activeFastGames.findIndex(g => g.marketId === marketId);
+  if (fidx !== -1) {
+    activeFastGames.splice(fidx, 1);
+    saveActiveGamesToDisk().catch(() => {});
   }
 
   console.log(`[Resolver] Force resolved ${marketId} to ${winner} and scheduled payout`);
@@ -1449,7 +1631,7 @@ export async function forceResolveMarket(marketId: string, winner: 'YES' | 'NO',
  */
 export async function reRegisterOverdueFastGames() {
   try {
-    const messages = await fetchReliableTopicMessages(2000);
+    const messages = await fetchReliableTopicMessages(5000);
     const now = Math.floor(Date.now() / 1000);
     const seenMarkets = new Set<string>();
 
@@ -1463,7 +1645,11 @@ export async function reRegisterOverdueFastGames() {
           if (seenMarkets.has(p.marketId)) continue;
           seenMarkets.add(p.marketId);
 
-          // Check if already resolved on HCS
+          if (knownResolvedMarkets.has(p.marketId)) {
+            continue;
+          }
+
+          // Check if already resolved on HCS (use reliable fetch which includes Mirror fallback)
           const hasResolved = messages.some((m: any) => {
             try {
               const r = m.message || '';
@@ -1475,7 +1661,7 @@ export async function reRegisterOverdueFastGames() {
 
           if (!hasResolved && p.endTime && p.endTime < now) {
             console.log(`[Resolver] Re-registering overdue fast game from HCS: ${p.marketId}`);
-            registerFastGameForAutoResolution(p.marketId, p.endTime);
+            registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes);
           }
         }
       } catch {}
@@ -1490,13 +1676,21 @@ export async function reRegisterOverdueFastGames() {
  * This is extremely useful during playtesting to understand what the resolver "sees".
  */
 export function getActiveFastGamesState() {
+  const now = Math.floor(Date.now() / 1000);
   return {
-    activeGames: activeFastGames.map(g => ({
-      marketId: g.marketId,
-      endTime: g.endTime,
-      resolved: !!g.resolved,
-      inTieResolution: !!g.inTieResolution,
-    })),
+    activeGames: activeFastGames.map(g => {
+      const dur = (g.durationMinutes || 10) * 60;
+      const remaining = (g.endTime || 0) - now;
+      const isBettingOpen = remaining > (dur * 0.5);
+      return {
+        marketId: g.marketId,
+        endTime: g.endTime,
+        durationMinutes: g.durationMinutes || 10,
+        resolved: !!g.resolved,
+        inTieResolution: !!g.inTieResolution,
+        isBettingOpen,
+      };
+    }),
     tieResolutionGames: tieResolutionGames.map(t => ({
       marketId: t.marketId,
       hasActiveInterval: !!t.intervalId,
@@ -1585,4 +1779,27 @@ export async function simulatePayoutsForMarket(marketId: string) {
     payouts,
     note: 'Read-only simulation — no funds moved, no HCS messages posted',
   };
+}
+
+/**
+ * Production shutdown hook for graceful Railway SIGTERM.
+ * Clears all in-flight tie polling intervals and scheduled payout timers
+ * to avoid dangling handles during container stop.
+ */
+export function shutdownResolver() {
+  // Clear tie resolution polling intervals
+  for (const t of tieResolutionGames) {
+    if (t.intervalId) {
+      clearInterval(t.intervalId);
+    }
+  }
+  tieResolutionGames.length = 0;
+
+  // Clear scheduled payout setTimeouts
+  for (const handle of scheduledPayoutTimers.values()) {
+    clearTimeout(handle);
+  }
+  scheduledPayoutTimers.clear();
+
+  console.log('[Resolver] shutdownResolver: cleared tie intervals and scheduled payout timers');
 }

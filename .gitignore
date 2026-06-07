@@ -19,6 +19,7 @@ dist-ssr/
 .env.production.local
 backend/prediction-resolver/.env
 backend/prediction-resolver/.env.*
+!backend/prediction-resolver/.env.example
 
 # Logs
 logs
@@ -52,6 +53,7 @@ typechain-types/
 backend/prediction-resolver/node_modules/
 backend/prediction-resolver/dist/
 backend/prediction-resolver/.env
+!backend/prediction-resolver/.env.example
 backend/prediction-resolver/data/*.json
 
 # Misc
@@ -59,6 +61,13 @@ backend/prediction-resolver/data/*.json
 *.bak
 nul~
 *.BROKEN-*
+
+# Windows 'nul' / '.null' ghost files (very common when doing `echo > nul` or similar in Git Bash / CMD mix on Windows; they create a real file named "nul")
+nul
+.null
+**/nul
+**/.null
+recovery-snapshots/
 
 # OS
 Thumbs.db

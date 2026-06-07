@@ -1,41 +1,76 @@
 import { Client, AccountId, PrivateKey, TopicMessageSubmitTransaction, TransferTransaction, Hbar, ScheduleCreateTransaction, Timestamp, ExchangeRate } from '@hashgraph/sdk';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ override: false });
 
 const {
   RESOLUTION_ACCOUNT_ID,
-  RESOLUTION_PRIVATE_KEY,
   MASTER_TOPIC_ID,
   TREASURY_ACCOUNT_ID,
 } = process.env;
 
-if (!RESOLUTION_ACCOUNT_ID || !RESOLUTION_PRIVATE_KEY) {
-  throw new Error('Missing RESOLUTION_ACCOUNT_ID or RESOLUTION_PRIVATE_KEY in .env');
+if (!RESOLUTION_ACCOUNT_ID) {
+  throw new Error('Missing RESOLUTION_ACCOUNT_ID in .env (or Railway env vars). This is the privileged resolution/escrow account ID.');
+}
+if (!MASTER_TOPIC_ID) {
+  throw new Error('Missing MASTER_TOPIC_ID in environment. This must be provided via .env or Railway variables (e.g. 0.0.9017517).');
 }
 
 export const resolutionAccountId = AccountId.fromString(RESOLUTION_ACCOUNT_ID);
-// Support both DER-encoded (starts with 302e...) and raw 64-char hex ED25519 keys
-export const resolutionPrivateKey = RESOLUTION_PRIVATE_KEY!.startsWith('302e')
-  ? PrivateKey.fromString(RESOLUTION_PRIVATE_KEY!)
-  : PrivateKey.fromStringED25519(RESOLUTION_PRIVATE_KEY!);
-export const masterTopicId = MASTER_TOPIC_ID!;
-export const treasuryAccountId = TREASURY_ACCOUNT_ID || '0.0.9006841';
+export const masterTopicId = MASTER_TOPIC_ID;
+if (!TREASURY_ACCOUNT_ID) {
+  throw new Error('Missing TREASURY_ACCOUNT_ID in environment. This must be provided via .env or Railway variables.');
+}
+export const treasuryAccountId = TREASURY_ACCOUNT_ID;
+
+// Lazy private key loading. On Railway we do NOT set RESOLUTION_PRIVATE_KEY in env vars.
+// Instead loadSecretsFromSupabase() (called early in index.ts listen) will populate process.env.RESOLUTION_PRIVATE_KEY
+// from the Supabase kv_store before any payout or HCS post happens.
+// This prevents top-level throw at import time.
+let _resolutionPrivateKey: PrivateKey | null = null;
+function getResolutionPrivateKey(): PrivateKey {
+  if (!_resolutionPrivateKey) {
+    const keyStr = process.env.RESOLUTION_PRIVATE_KEY;
+    if (!keyStr) {
+      throw new Error('Missing RESOLUTION_PRIVATE_KEY in environment. For Railway: ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set (as secrets) so loadSecretsFromSupabase can fetch it from kv_store at startup.');
+    }
+    // Support both DER-encoded (starts with 302e...) and raw 64-char hex ED25519 keys
+    _resolutionPrivateKey = keyStr.startsWith('302e')
+      ? PrivateKey.fromString(keyStr)
+      : PrivateKey.fromStringED25519(keyStr);
+  }
+  return _resolutionPrivateKey;
+}
 
 let client: Client | null = null;
 
+const HEDERA_NETWORK = (process.env.HEDERA_NETWORK || 'testnet').toLowerCase();
+
 export function getClient(): Client {
   if (!client) {
-    client = Client.forTestnet();
-    client.setOperator(resolutionAccountId, resolutionPrivateKey);
+    client = HEDERA_NETWORK === 'mainnet' ? Client.forMainnet() : Client.forTestnet();
+    client.setOperator(resolutionAccountId, getResolutionPrivateKey());
   }
   return client;
 }
 
+// --- Price log gating (prevents 5s identical spam from 20s/60s loops + tie 5s polling + /price hits) ---
+// The official Mirror rate (cent/hbar_equiv) changes infrequently; we still fetch on TTL in wrapper
+// but only emit the noisy detailed calc + SDK warning at most once per minute or on actual change.
+let lastSdkWarnTs = 0;
+let lastMirrorLogPrice = 0;
+let lastMirrorLogTs = 0;
+const MIRROR_LOG_MIN_INTERVAL_MS = 60_000;
+
 /**
- * Gets the official Hedera network exchange rate for HBAR.
- * This is the most authoritative "on-network" source for HBAR price.
- * The network publishes this rate as part of consensus.
+ * Gets a reliable mainnet HBAR price for game display + creationPrice/resolution (fairness).
+ * Priority order (all mainnet sources for price, independent of HCS network):
+ * 1. Mainnet-public Mirror /network/exchangerate (the official network-published rate).
+ * 2. SaucerSwap mainnet (if SAUCERSWAP_API_KEY present) for last-traded trading price.
+ * 3. Public CoinGecko + CoinCap (fast, reliable mainnet backups).
+ *
+ * The Hedera Client (for HCS posts/payouts) can now be mainnet or testnet via HEDERA_NETWORK=mainnet|testnet.
+ * Price logic always targets real mainnet HBAR data for fairness of the prediction games.
  */
 export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
   price: number;
@@ -59,7 +94,11 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     }
     throw new Error("SDK returned invalid or unparsable rate");
   } catch (e1) {
-    console.warn("[Resolver] ExchangeRate.getCurrentRate unavailable on this SDK build (expected on some versions):", (e1 as Error).message);
+    const now = Date.now();
+    if (now - lastSdkWarnTs > MIRROR_LOG_MIN_INTERVAL_MS) {
+      console.warn("[Resolver] ExchangeRate.getCurrentRate unavailable on this SDK build (expected on some versions):", (e1 as Error).message);
+      lastSdkWarnTs = now;
+    }
   }
 
   // Layer 2: Fallback cast (some SDK builds attach it directly on the Client)
@@ -76,14 +115,19 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     console.warn("[Resolver] Client.getExchangeRate() cast failed");
   }
 
-  // Layer 3: Strong Hedera-native fallback — Mirror Node exchange rate (official network rate)
-  // This is the most reliable "on-chain" source for HBAR/USD used by Hedera itself for fees.
+  // Layer 3: Mainnet Mirror Node exchange rate (official network rate published by Hedera)
+  // We target mainnet prices for the game (even if resolver client is testnet for HCS).
+  // Primary reliable source here is the public mainnet mirror the user specified:
+  // https://mainnet-public.mirrornode.hedera.com/api/v1/network/exchangerate
+  // This is the network's own published rate (used for fees etc.), independent of testnet.
+  // Falls back to public CoinGecko / CoinCap for reliability if mirror is slow/unavailable.
   try {
-    // Using Hedera's official dedicated testnet mirror node for better reliability
-    const mirrorBase = process.env.HEDERA_MIRROR_NODE || 'https://testnet.mirror.hedera.com';
+    // Always use mainnet-public for HBAR price "official rate" and cross-checks.
+    // (HEDERA_MIRROR_NODE may be testnet for other resolver duties like account polling.)
+    const mirrorBase = 'https://mainnet-public.mirrornode.hedera.com';
     const mirrorUrl = `${mirrorBase}/api/v1/network/exchangerate`;
     const res = await fetch(mirrorUrl);
-    if (!res.ok) throw new Error(`Mirror Node HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`Mainnet Mirror Node HTTP ${res.status}`);
 
     const data: any = await res.json();
     const current = data.current_rate || data.next_rate || data;
@@ -96,8 +140,8 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     const hbar = current.hbar_equivalent ?? current.hbarEquivalent ?? 30000;
 
     if (!cent || !hbar) {
-      console.error("[Resolver] Mirror Node unexpected shape:", current);
-      throw new Error("Mirror Node response missing cent/hbar equivalents");
+      console.error("[Resolver] Mainnet Mirror Node unexpected shape:", current);
+      throw new Error("Mainnet Mirror Node response missing cent/hbar equivalents");
     }
 
     const rawPrice = cent / (hbar * 100);
@@ -105,22 +149,65 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
 
     // Sanity check — HBAR should be in a realistic range
     if (isNaN(price) || price < 0.01 || price > 2.0) {
-      console.error("[Resolver] Mirror Node produced out-of-range price:", price, "raw:", current);
-      throw new Error(`Mirror Node produced invalid price: ${price}`);
+      console.error("[Resolver] Mainnet Mirror Node produced out-of-range price:", price, "raw:", current);
+      throw new Error(`Mainnet Mirror Node produced invalid price: ${price}`);
     }
 
-    console.log(
-      `[Resolver] ✅ Mirror Node Exchange Rate (PRIMARY - official Hedera network rate): $${price} | ` +
-      `calculation: ${cent} cent_equiv / (${hbar} hbar_equiv * 100) | resolvedAt=${resolvedAt}`
-    );
+    // Gate the detailed calc log: ONLY on actual price change or the very first fetch after startup.
+    // Periodic health pings (heartbeat, auto-resolve) will no longer spam the long "calculation" line
+    // when the official network rate is stable (which it is for long periods).
+    // The fetch still happens (via cache TTL) so /api/price/hbar and decisions get accurate recent values.
+    const priceChanged = Math.abs(price - lastMirrorLogPrice) > 1e-8;
+    if (priceChanged || lastMirrorLogPrice === 0) {
+      console.log(
+        `[Resolver] ✅ Mainnet Mirror Exchange Rate (official Hedera network rate): $${price} | ` +
+        `calculation: ${cent} cent_equiv / (${hbar} hbar_equiv * 100) | resolvedAt=${resolvedAt}`
+      );
+      lastMirrorLogPrice = price;
+      lastMirrorLogTs = Date.now();
+    }
 
     return {
       price,
       resolvedAt,
-      source: "Hedera Mirror Node Exchange Rate (official network)",
+      source: "Hedera Mainnet Mirror Node Exchange Rate (official network)",
     };
   } catch (e3) {
-    console.error("[Resolver] Mirror Node exchange rate failed:", (e3 as Error).message);
+    console.error("[Resolver] Mainnet Mirror exchange rate failed, trying public backups:", (e3 as Error).message);
+  }
+
+  // Public mainnet backups for reliability (CoinGecko + CoinCap) as requested.
+  // These are fast, no keys, always mainnet HBAR/USD. Good for display + fallback.
+  try {
+    // CoinGecko first (widely used, reliable)
+    const cgRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+    if (cgRes.ok) {
+      const cgJson: any = await cgRes.json();
+      const price = parseFloat(cgJson['hedera-hashgraph']?.usd);
+      if (!isNaN(price) && price > 0) {
+        const nowIso = new Date().toISOString();
+        console.log(`[Resolver] ✅ CoinGecko mainnet HBAR (public reliable backup): $${price.toFixed(6)}`);
+        return { price, resolvedAt: nowIso, source: "CoinGecko (mainnet public - reliable backup)" };
+      }
+    }
+  } catch (cgErr) {
+    console.warn("[Resolver] CoinGecko backup failed, trying CoinCap");
+  }
+
+  try {
+    // CoinCap as additional reliable public mainnet source (often very current)
+    const ccRes = await fetch('https://api.coincap.io/v2/assets/hedera-hashgraph');
+    if (ccRes.ok) {
+      const ccJson: any = await ccRes.json();
+      const price = parseFloat(ccJson?.data?.priceUsd);
+      if (!isNaN(price) && price > 0) {
+        const nowIso = new Date().toISOString();
+        console.log(`[Resolver] ✅ CoinCap mainnet HBAR (public reliable backup): $${price.toFixed(6)}`);
+        return { price, resolvedAt: nowIso, source: "CoinCap (mainnet public - reliable backup)" };
+      }
+    }
+  } catch (ccErr) {
+    console.error("[Resolver] CoinCap backup also failed");
   }
 
   // Layer 4: Last-resort public API (CoinGecko). Logged loudly as NON-authoritative.
@@ -175,6 +262,7 @@ export async function postCreateMarket(params: {
   initialSide?: 'YES' | 'NO';
   initialStake?: number;
   creationPrice?: number;
+  creationPriceTime?: string;
   submittedBy: string;
 }) {
   // Phase 0: Detailed clean text memo for market creation (cryptographic proof + human audit)
@@ -196,6 +284,10 @@ export async function postCreateMarket(params: {
     gameType: 'fast_updown',   // Phase 0: Consistent organization across the entire topic for reliable queries
     memo,   // Phase 0: Clean detailed memo (plain text only, no special characters)
   };
+
+  if (params.creationPriceTime) {
+    message.creationPriceTime = params.creationPriceTime;
+  }
 
   return submitHcsMessage(message);
 }
@@ -250,7 +342,7 @@ export async function postPlaceBet(params: {
 
   // The perfect human + machine memo (uses "predict" language for all forward-facing / legal / HashScan visibility).
   const memo =
-    `PREDICTION | Master Topic: 0.0.9017517 | Market: ${params.marketId} | ` +
+    `PREDICTION | Master Topic: ${masterTopicId} | Market: ${params.marketId} | ` +
     `Side: ${sideText} | Amount: ${params.amount} HBAR | ${sequenceLabel} | ` +
     `User: ${params.user} | ${feeText} ` +
     `Recorded on HCS for cryptographic audit and user proof.`;
@@ -267,7 +359,7 @@ export async function postPlaceBet(params: {
     submittedBy: params.user,
     gameType: 'fast_updown',
     betSequence,                    // Machine-readable sequence number (internal)
-    masterTopicId: '0.0.9017517',   // Explicit reference for easy filtering across all tools
+    masterTopicId: masterTopicId,   // Explicit reference for easy filtering across all tools
     memo,                           // The gold-standard human-readable receipt (uses "predict" language for all forward-facing / legal visibility)
   };
 

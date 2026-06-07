@@ -34,7 +34,7 @@ export const HEDERA_EVM_DECIMALS = 18; // Uniform across all contracts, viem cli
 // Testnet accounts provided for roles (EVM addresses derived from these Hedera account IDs):
 // tester1 (test user): 0.0.8095815
 // TN Treasury (fee recipient): 0.0.9006841
-// Market resolution (RESOLVER_ROLE): 0.0.9006850
+// Market resolution (RESOLVER_ROLE): 0.0.9006979 (backend/prediction-resolver on Railway; old 0.0.9006850 removed)
 // Admin (owner / deployer of Factory): 0.0.9006979
 
 // HGraph MCP integration for real-time data / oracle feeds / resolution monitoring
