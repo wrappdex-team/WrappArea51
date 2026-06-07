@@ -985,6 +985,14 @@ export function Predict() {
           });
         }, 8000);
 
+        // Loading fix (cross-user visibility): rapid follow-up polls after a successful record.
+        // The optimistic + justBet + recentlyCreated already make *this* browser feel instant.
+        // These extra fetches pull the resolver's authoritative view (which includes the just-recorded PLACE_BET
+        // volume/participants) and make it visible to any other team member polling at the same time.
+        // 650ms + 2100ms covers Mirror/HCS short propagation + the 8s global poll cadence.
+        setTimeout(() => { loadFastGames(); }, 650);
+        setTimeout(() => { loadFastGames(); }, 2100);
+
         // Make sure games you predict on (including predictions from other wallets in the same browser session)
         // are protected in the recent-active cache. This fixes "prediction from another account did not tally"
         // + disappearing after hard refresh or leaving the tab.
@@ -1138,12 +1146,16 @@ export function Predict() {
       fetchUserActiveBets(hashPackSession.accountId).then(setUserBets);
     }
 
-    // Phase 1 stability: Longer interval for fast games (30s) to reduce "disappear/reappear" flashes and charging from constant re-renders.
-    // Expensive portfolio still uses visibility-only + cache checks. Manual Refresh button always available.
+    // Aggressive poll for fast games (8s) — the key part of the "loading fix" for cross-user bet visibility.
+    // Local actor gets optimistic + rapid follow-ups below. Remote team members (different machines/tabs)
+    // now see new PLACE_BET volume/participants/positions within ~8s without hard refresh.
+    // Focus/visibility (below) also forces an immediate load so returning to the tab snaps latest state.
+    // Resolver is the source of truth; this just asks it more often + on natural user signals.
+    const FAST_POLL_MS = 8000;
     const marketRefresh = setInterval(() => {
       loadOnChainMarkets();
       loadFastGames();
-    }, 30000);
+    }, FAST_POLL_MS);
 
     const priceRefresh = setInterval(fetchLivePrices, 60000);
 
@@ -1159,7 +1171,9 @@ export function Predict() {
       }
     }, 45000); // every 45s max — huge reduction from constant 15s + visibility storms
 
-    // Smart visibility/focus handler: only force a portfolio hit on long-idle returns.
+    // Smart visibility/focus handler (loading fix): force fast-game list refresh on tab return / focus.
+    // This is the "come back and see teammate's new bet without hard refresh" path.
+    // Portfolio stays gentle (only on long idle). Fast games are cheap + user-visible so we always refresh them.
     const handleVisibilityOrFocus = () => {
       // Always keep fast-game recent cache fresh (cheap)
       try {
@@ -1175,6 +1189,12 @@ export function Predict() {
           setRecentlyCreatedMarketIds(filtered);
         }
       } catch {}
+
+      // Force a fast-game poll on visibility/focus so remote observers instantly see the latest volumes
+      // from the resolver (new bets from other users, resolutions, etc.) without waiting for the next 8s tick.
+      // Safe and idempotent; loadFastGames already does heavy pruning + authoritative merge.
+      // Runs for everyone (even non-wallet observers) so the public active list snaps fresh on tab return.
+      loadFastGames();
 
       if (document.visibilityState === 'visible' && hashPackSession?.accountId) {
         // Only hit portfolio if we have been away long enough that cache may be stale
@@ -2210,9 +2230,12 @@ export function Predict() {
                       showToast('Fast Game created successfully! (recorded on HCS)', 'success');
                       setShowFastGameModal(false);
 
-                      // background refresh to pick up real data
-                      setTimeout(() => loadFastGames(), 2000);
-                      setTimeout(() => loadFastGames(), 6000);
+                      // Loading fix (symmetric to bet path): rapid follow-ups after confirmed HCS create + initial bet.
+                      // Creator feels instant via the optimistic card we just set.
+                      // These pull the resolver list (with any concurrent activity) so remote observers see the new game fast.
+                      setTimeout(() => loadFastGames(), 650);
+                      setTimeout(() => loadFastGames(), 2100);
+                      setTimeout(() => loadFastGames(), 5500);
                     } else {
                       // Honest error path: payment on-chain to escrow, but record to HCS failed.
                       // Do NOT create optimistic card or recentlyCreated (prevents fake local-only card on deployed).
