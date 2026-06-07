@@ -1905,27 +1905,12 @@ export function Predict() {
 
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-semibold text-xl tracking-tight">Create HBAR Fast Guess</div>
-                  <div className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                    Up or Down • 10m / 20m / 1h / 4h
+                  <div className="font-bold text-2xl tracking-tight">UP or DOWN</div>
+                  <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
+                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
                   </div>
                 </div>
                 <button onClick={() => setShowFastGameModal(false)}><X /></button>
-              </div>
-
-              {/* Current HBAR Price - compact. This is the official Hedera network rate the game will use for resolution (PRIMARY source). */}
-              <div className="mt-2 text-xs">
-                <div className="flex items-baseline gap-2">
-                  <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR (official rate for this game)</span>
-                  <span className={`font-mono font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
-                  </span>
-                </div>
-                {lastPriceUpdate && (
-                  <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                    {lastPriceUpdate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • updates in {priceSecondsUntilRefresh}s (resolver authoritative)
-                  </div>
-                )}
               </div>
             </div>
 
