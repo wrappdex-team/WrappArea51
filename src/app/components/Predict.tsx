@@ -2162,58 +2162,58 @@ export function Predict() {
                       if (attempt < 3) await new Promise(r => setTimeout(r, 1500)); // small backoff
                     }
 
-                    if (!recordSuccess) {
-                      // Payment is on-chain, but record failed. Don't throw hard — user has proof of payment.
-                      // The resolver's Mirror poll will see the funding and we can add auto-recovery later.
-                      // For now, surface a friendly message and still try to show optimistic.
-                      console.error('Fast game record failed after retries:', lastRecordError);
-                      alert(`Payment sent successfully on-chain.\nRecording the market on HCS failed after retries: ${lastRecordError}\n\nThe game may appear shortly via Mirror recovery scan. Check Portfolio or refresh in 30-60s. Your stake is safe in the resolver escrow.`);
-                      // Still proceed with optimistic UI so it doesn't look stuck
+                    if (recordSuccess) {
+                      // ONLY on confirmed backend record success do we show optimistic + persist + toast + close.
+                      // This prevents the lying UI where a card appears locally (and funds left wallet) but no HCS CREATE/PLACE_BET was posted.
+                      const optimisticGame = {
+                        marketId: generatedMarketId,
+                        question: questionText,
+                        direction: fastGameSide,
+                        durationMinutes: fastGameDuration,
+                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                        creationPrice: hbarPrice,
+                        currentVolume: fastGameStake,
+                        resolved: false,
+                        creator: session.accountId,
+                        yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
+                        noStake: fastGameSide === 'NO' ? fastGameStake : 0,
+                        yesParticipants: fastGameSide === 'YES' ? 1 : 0,
+                        noParticipants: fastGameSide === 'NO' ? 1 : 0,
+                        totalParticipants: 1,
+                      } as any;
+
+                      setOptimisticGames(prev => {
+                        const exists = prev.some(g => g.marketId === optimisticGame.marketId);
+                        if (exists) return prev;
+                        return [optimisticGame, ...prev];
+                      });
+
+                      setRecentlyCreatedMarketIds((prev: Set<string>) => {
+                        const next = new Set(prev);
+                        next.add(optimisticGame.marketId);
+                        try {
+                          const toSave: Record<string, number> = {};
+                          next.forEach(id => { toSave[id] = Date.now(); });
+                          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+                        } catch {}
+                        return next;
+                      });
+
+                      showToast('Fast Game created successfully! (recorded on HCS)', 'success');
+                      setShowFastGameModal(false);
+
+                      // background refresh to pick up real data
+                      setTimeout(() => loadFastGames(), 2000);
+                      setTimeout(() => loadFastGames(), 6000);
+                    } else {
+                      // Honest error path: payment on-chain to escrow, but record to HCS failed.
+                      // Do NOT create optimistic card or recentlyCreated (prevents fake local-only card on deployed).
+                      // User has on-chain proof; gameId is in the error for support/recovery.
+                      console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', generatedMarketId);
+                      showToast(`Record to HCS failed after retries: ${lastRecordError}. Payment is in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}`, 'error');
+                      // Keep modal open so user can see the ID and potentially retry the record step (future enhancement: add a "Retry record" button using same payload).
+                      // For now, the stake is safe; resolver Mirror recovery or manual can be used later.
                     }
-
-                    // Optimistic update: immediately show the new game in the UI
-                    // This solves the "game created but doesn't appear" issue caused by HGraph indexing delay.
-                    const optimisticGame = {
-                      marketId: generatedMarketId,
-                      question: questionText,
-                      direction: fastGameSide,
-                      durationMinutes: fastGameDuration,
-                      endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                      creationPrice: hbarPrice,
-                      currentVolume: fastGameStake,
-                      resolved: false,
-                      creator: session.accountId,
-                      yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
-                      noStake: fastGameSide === 'NO' ? fastGameStake : 0,
-                      yesParticipants: fastGameSide === 'YES' ? 1 : 0,
-                      noParticipants: fastGameSide === 'NO' ? 1 : 0,
-                      totalParticipants: 1,
-                    } as any;
-
-                    // Push to optimistic layer instead of main list
-                    setOptimisticGames(prev => {
-                      const exists = prev.some(g => g.marketId === optimisticGame.marketId);
-                      if (exists) return prev;
-                      return [optimisticGame, ...prev];
-                    });
-
-                    // CRITICAL: Persist to the recentlyCreated cache + localStorage so the game
-                    // survives hard refresh, tab switch, and coming back later (even if HGraph lags).
-                    // This was the missing write side causing "poof it's gone on hard refresh".
-                    setRecentlyCreatedMarketIds((prev: Set<string>) => {
-                      const next = new Set(prev);
-                      next.add(optimisticGame.marketId);
-                      // Persist to localStorage for cross-reload survival
-                      try {
-                        const toSave: Record<string, number> = {};
-                        next.forEach(id => { toSave[id] = Date.now(); });
-                        localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
-                      } catch {}
-                      return next;
-                    });
-
-                    showToast('Fast Game created successfully!', 'success');
-                    setShowFastGameModal(false);
 
                     // Also do normal refreshes (the optimistic layer will protect the game)
                     setTimeout(() => loadFastGames(), 2000);

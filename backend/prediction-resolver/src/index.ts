@@ -239,43 +239,54 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
     const creationPrice = priceData?.price ?? clientCreationPrice ?? 0;
     const creationPriceTime = priceData?.priceTime ?? priceData?.resolvedAt ?? clientCreationPriceTime ?? new Date().toISOString();
 
-    await postCreateMarket({
-      marketId,
-      question,
-      asset,
-      endTime,
-      gameType: 'fast_updown',
-      durationMinutes,
-      initialSide,
-      initialStake,
-      creationPrice,
-      creationPriceTime,
-      submittedBy,
-    });
+    // Phase: HCS CREATE_MARKET (with full provenance for audit/fairness)
+    let createTxId: string | undefined;
+    try {
+      createTxId = await postCreateMarket({
+        marketId,
+        question,
+        asset,
+        endTime,
+        gameType: 'fast_updown',
+        durationMinutes,
+        initialSide,
+        initialStake,
+        creationPrice,
+        creationPriceTime,
+        submittedBy,
+      });
+      console.log(`[Resolver] Successfully posted CREATE_MARKET for ${marketId} tx=${createTxId}`);
+    } catch (hcsCreateErr: any) {
+      console.error(`[Resolver] HCS CREATE_MARKET failed for ${marketId}:`, hcsCreateErr);
+      throw new Error(`hcs_create_failed: ${hcsCreateErr.message || hcsCreateErr}`);
+    }
 
-    console.log(`[Resolver] Successfully posted CREATE_MARKET for ${marketId}`);
-
-    // CRITICAL: Also post a PLACE_BET for the market maker's initial stake.
-    // This ensures the creator's stake is included in the volume pools and they get
-    // their fair share of winnings (or unmatched return) during payout calculation.
-    // Without this, the market maker was being excluded from the parimutuel math.
-    await postPlaceBet({
-      marketId,
-      side: initialSide,
-      amount: initialStake,
-      user: submittedBy,
-    });
-    console.log(`[Resolver] Posted Initial Market Maker Bet #1 (creator stake) for ${marketId}`);
+    // Phase: initial PLACE_BET for creator stake (so MM is in the parimutuel pools)
+    let betTxId: string | undefined;
+    try {
+      betTxId = await postPlaceBet({
+        marketId,
+        side: initialSide,
+        amount: initialStake,
+        user: submittedBy,
+      });
+      console.log(`[Resolver] Posted Initial Market Maker Bet #1 (creator stake) for ${marketId} tx=${betTxId}`);
+    } catch (hcsBetErr: any) {
+      console.error(`[Resolver] HCS initial PLACE_BET failed for ${marketId}:`, hcsBetErr);
+      // We already posted CREATE; don't leave orphan. But for now surface the stage.
+      throw new Error(`hcs_initial_bet_failed: ${hcsBetErr.message || hcsBetErr} (CREATE tx may exist: ${createTxId})`);
+    }
 
     // Register for automatic resolution when time expires.
     // Creation price will be read from the immutable HCS topic at resolution time.
     // Pass durationMinutes so the active list (and client isBettingOpen calc) has the correct 50% cutoff for all durations (10/20/60/240).
     registerFastGameForAutoResolution(marketId, endTime, durationMinutes);
 
-    res.json({ success: true, marketId });
+    res.json({ success: true, marketId, createTxId, betTxId });
   } catch (err: any) {
     console.error('[Resolver] Create market error:', err);
-    res.status(500).json({ error: err.message || 'Internal error' });
+    // Return stage so frontend can show precise "record failed at X" for recovery/support.
+    res.status(500).json({ error: err.message || 'Internal error', stage: err.message?.startsWith('hcs_') ? err.message.split(':')[0] : 'unknown' });
   }
 });
 
