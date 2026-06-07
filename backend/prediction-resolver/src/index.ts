@@ -219,6 +219,17 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    // Phase 1 stability: Server-side 50% betting close enforcement.
+    // Compute from endTime + durationMinutes to prevent refresh races allowing bets after cutoff.
+    const now = Math.floor(Date.now() / 1000);
+    const durationSec = (durationMinutes || 10) * 60;
+    const remaining = endTime - now;
+    const isBettingOpen = remaining > (durationSec * 0.5);
+    if (!isBettingOpen) {
+      console.warn(`[Resolver] Create rejected for ${marketId}: betting window closed (remaining=${remaining}s)`);
+      return res.status(400).json({ error: 'Betting window has closed for this game' });
+    }
+
     // Resolver-authoritative fresh price at the moment the funded create record arrives.
     // CRITICAL: we pass { critical: true } so the new multi-source SaucerSwap last-traded +
     // direct contract verify + HGraph/Mirror tolerance cross happens with NO cache and full
@@ -278,6 +289,22 @@ app.post('/api/prediction/bet', async (req, res) => {
     if (!marketId || !side || !amount || !user) {
       return res.status(400).json({ error: 'Missing fields' });
     }
+
+    // Phase 1 stability: Server-side 50% close enforcement for fast games (prevents refresh races).
+    // Look up the CREATE to get endTime + duration and reject if betting window closed.
+    try {
+      const { fetchFastGameCreationData } = await import('./resolver');
+      const creation = await fetchFastGameCreationData(marketId).catch(() => null);
+      if (creation && creation.endTime) {
+        const now = Math.floor(Date.now() / 1000);
+        const dur = (creation.durationMinutes || 10) * 60;
+        const remaining = creation.endTime - now;
+        if (remaining <= (dur * 0.5)) {
+          console.warn(`[Resolver] Bet rejected for ${marketId}: betting window closed`);
+          return res.status(400).json({ error: 'Betting window has closed for this game' });
+        }
+      }
+    } catch {}
 
     const fee = typeof platformFeeCollected === 'number' ? platformFeeCollected : 0;
     const totalNeeded = amount + fee;
@@ -727,6 +754,18 @@ app.get('/api/prediction/active-fast-games', async (req, res) => {
     const enriched = await Promise.all(baseGames.map(async (g: any) => {
       try {
         const vol = await getMarketVolume(g.marketId);
+        // Phase 1: Always re-enrich creationPrice + creationPriceTime from immutable HCS.
+        // Prevents "lost HBAR price at time of market placement" after refresh or list updates.
+        let creationPrice = g.creationPrice;
+        let creationPriceTime = g.creationPriceTime;
+        try {
+          const { fetchFastGameCreationData } = await import('./resolver');
+          const cdata = await fetchFastGameCreationData(g.marketId).catch(() => null);
+          if (cdata) {
+            creationPrice = cdata.creationPrice ?? creationPrice;
+            creationPriceTime = cdata.creationPriceTime ?? creationPriceTime;
+          }
+        } catch {}
         return {
           ...g,
           yesStake: vol.yesStake ?? 0,
@@ -736,6 +775,8 @@ app.get('/api/prediction/active-fast-games', async (req, res) => {
           yesParticipants: vol.yesParticipants ?? 0,
           noParticipants: vol.noParticipants ?? 0,
           totalParticipants: (vol.yesParticipants ?? 0) + (vol.noParticipants ?? 0),
+          creationPrice,
+          creationPriceTime,
         };
       } catch {
         return { ...g, yesStake: 0, noStake: 0, currentVolume: 0, totalVolume: 0 };

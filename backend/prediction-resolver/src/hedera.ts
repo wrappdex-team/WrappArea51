@@ -61,9 +61,14 @@ let lastMirrorLogTs = 0;
 const MIRROR_LOG_MIN_INTERVAL_MS = 60_000;
 
 /**
- * Gets the official Hedera network exchange rate for HBAR.
- * This is the most authoritative "on-network" source for HBAR price.
- * The network publishes this rate as part of consensus.
+ * Gets a reliable mainnet HBAR price for game display + creationPrice/resolution (fairness).
+ * Priority order (all mainnet):
+ * 1. Mainnet-public Mirror /network/exchangerate (the official network-published rate, user's specified URL).
+ * 2. Public CoinGecko + CoinCap (fast, reliable mainnet backups — no keys, always current).
+ * The old SDK ExchangeRate paths (Layers 1-2) are left for compatibility but run against the testnet client,
+ * so they are effectively bypassed for HBAR price in favor of the mainnet sources above.
+ * This ensures the modal "CURRENT HBAR (official rate for this game)", creationPrice, and resolution
+ * all use real mainnet market/official data even while the resolver itself operates on testnet for HCS.
  */
 export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
   price: number;
@@ -108,17 +113,19 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     console.warn("[Resolver] Client.getExchangeRate() cast failed");
   }
 
-  // Layer 3: Strong Hedera-native fallback — Mirror Node exchange rate (official network rate)
-  // This is the most reliable "on-chain" source for HBAR/USD used by Hedera itself for fees.
+  // Layer 3: Mainnet Mirror Node exchange rate (official network rate published by Hedera)
+  // We target mainnet prices for the game (even if resolver client is testnet for HCS).
+  // Primary reliable source here is the public mainnet mirror the user specified:
+  // https://mainnet-public.mirrornode.hedera.com/api/v1/network/exchangerate
+  // This is the network's own published rate (used for fees etc.), independent of testnet.
+  // Falls back to public CoinGecko / CoinCap for reliability if mirror is slow/unavailable.
   try {
-    // Using Hedera's official dedicated testnet mirror node for better reliability
-    const mirrorBase = process.env.HEDERA_MIRROR_NODE;
-    if (!mirrorBase) {
-      throw new Error('Missing HEDERA_MIRROR_NODE in environment for price source.');
-    }
+    // Always use mainnet-public for HBAR price "official rate" and cross-checks.
+    // (HEDERA_MIRROR_NODE may be testnet for other resolver duties like account polling.)
+    const mirrorBase = 'https://mainnet-public.mirrornode.hedera.com';
     const mirrorUrl = `${mirrorBase}/api/v1/network/exchangerate`;
     const res = await fetch(mirrorUrl);
-    if (!res.ok) throw new Error(`Mirror Node HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`Mainnet Mirror Node HTTP ${res.status}`);
 
     const data: any = await res.json();
     const current = data.current_rate || data.next_rate || data;
@@ -131,8 +138,8 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     const hbar = current.hbar_equivalent ?? current.hbarEquivalent ?? 30000;
 
     if (!cent || !hbar) {
-      console.error("[Resolver] Mirror Node unexpected shape:", current);
-      throw new Error("Mirror Node response missing cent/hbar equivalents");
+      console.error("[Resolver] Mainnet Mirror Node unexpected shape:", current);
+      throw new Error("Mainnet Mirror Node response missing cent/hbar equivalents");
     }
 
     const rawPrice = cent / (hbar * 100);
@@ -140,8 +147,8 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
 
     // Sanity check — HBAR should be in a realistic range
     if (isNaN(price) || price < 0.01 || price > 2.0) {
-      console.error("[Resolver] Mirror Node produced out-of-range price:", price, "raw:", current);
-      throw new Error(`Mirror Node produced invalid price: ${price}`);
+      console.error("[Resolver] Mainnet Mirror Node produced out-of-range price:", price, "raw:", current);
+      throw new Error(`Mainnet Mirror Node produced invalid price: ${price}`);
     }
 
     // Gate the detailed calc log: ONLY on actual price change or the very first fetch after startup.
@@ -151,7 +158,7 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     const priceChanged = Math.abs(price - lastMirrorLogPrice) > 1e-8;
     if (priceChanged || lastMirrorLogPrice === 0) {
       console.log(
-        `[Resolver] ✅ Mirror Node Exchange Rate (PRIMARY - official Hedera network rate): $${price} | ` +
+        `[Resolver] ✅ Mainnet Mirror Exchange Rate (official Hedera network rate): $${price} | ` +
         `calculation: ${cent} cent_equiv / (${hbar} hbar_equiv * 100) | resolvedAt=${resolvedAt}`
       );
       lastMirrorLogPrice = price;
@@ -161,10 +168,44 @@ export async function getCurrentHbarExchangeRateFromNetwork(): Promise<{
     return {
       price,
       resolvedAt,
-      source: "Hedera Mirror Node Exchange Rate (official network)",
+      source: "Hedera Mainnet Mirror Node Exchange Rate (official network)",
     };
   } catch (e3) {
-    console.error("[Resolver] Mirror Node exchange rate failed:", (e3 as Error).message);
+    console.error("[Resolver] Mainnet Mirror exchange rate failed, trying public backups:", (e3 as Error).message);
+  }
+
+  // Public mainnet backups for reliability (CoinGecko + CoinCap) as requested.
+  // These are fast, no keys, always mainnet HBAR/USD. Good for display + fallback.
+  try {
+    // CoinGecko first (widely used, reliable)
+    const cgRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+    if (cgRes.ok) {
+      const cgJson: any = await cgRes.json();
+      const price = parseFloat(cgJson['hedera-hashgraph']?.usd);
+      if (!isNaN(price) && price > 0) {
+        const nowIso = new Date().toISOString();
+        console.log(`[Resolver] ✅ CoinGecko mainnet HBAR (public reliable backup): $${price.toFixed(6)}`);
+        return { price, resolvedAt: nowIso, source: "CoinGecko (mainnet public - reliable backup)" };
+      }
+    }
+  } catch (cgErr) {
+    console.warn("[Resolver] CoinGecko backup failed, trying CoinCap");
+  }
+
+  try {
+    // CoinCap as additional reliable public mainnet source (often very current)
+    const ccRes = await fetch('https://api.coincap.io/v2/assets/hedera-hashgraph');
+    if (ccRes.ok) {
+      const ccJson: any = await ccRes.json();
+      const price = parseFloat(ccJson?.data?.priceUsd);
+      if (!isNaN(price) && price > 0) {
+        const nowIso = new Date().toISOString();
+        console.log(`[Resolver] ✅ CoinCap mainnet HBAR (public reliable backup): $${price.toFixed(6)}`);
+        return { price, resolvedAt: nowIso, source: "CoinCap (mainnet public - reliable backup)" };
+      }
+    }
+  } catch (ccErr) {
+    console.error("[Resolver] CoinCap backup also failed");
   }
 
   // Layer 4: Last-resort public API (CoinGecko). Logged loudly as NON-authoritative.

@@ -8,7 +8,6 @@ import {
   postPayoutClosedMessage,
   postFastGameRetired,
   postMarketRetired,
-  getCurrentHbarExchangeRateFromNetwork,
   treasuryAccountId
 } from './hedera';
 import fetch from 'node-fetch';
@@ -400,6 +399,12 @@ const MAX_RECENT_RESOLUTIONS = 10;
 // Runtime memory of markets we have resolved in this process (helps prevent re-register races when on-chain checks are flaky due to indexer lag)
 const knownResolvedMarkets = new Set<string>();
 
+// Phase 1 stability: Short-lived cache for reliable topic messages.
+// Prevents hammering the same asc/desc pagination (x8/x20 "contributed 55x" loops) on every 15-20s poll/heartbeat.
+// 8s TTL smooths UI "disappear/reappear" flashes while keeping data fresh for real-time bets/resolution.
+let _topicMessagesCache: { ts: number; messages: any[] } | null = null;
+const TOPIC_CACHE_TTL_MS = 8000;
+
 /** Phase 1: Load active games from disk for restart resilience */
 export async function loadActiveGamesFromDisk() {
   try {
@@ -742,6 +747,12 @@ async function fetchMirrorTopicMessagesPaginated(order: 'asc' | 'desc', maxPages
 }
 
 export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
+  // Phase 1: Use short cache to debounce repeated full scans (the source of the repeated "Mirror (asc paginated x8) contributed 55x" spam and HGraph failures on every poll).
+  const now = Date.now();
+  if (_topicMessagesCache && (now - _topicMessagesCache.ts) < TOPIC_CACHE_TTL_MS) {
+    return _topicMessagesCache.messages;
+  }
+
   // 1. Try HGraph (current primary in most paths)
   try {
     const h = await fetchTopicMessages(limit);
@@ -793,6 +804,9 @@ export async function fetchReliableTopicMessages(limit = 1000): Promise<any[]> {
   }
 
   // Return newest first or oldest first? Existing code expects roughly asc; we keep as collected (Mirror asc)
+
+  // Phase 1: Cache the result
+  _topicMessagesCache = { ts: Date.now(), messages: all };
   return all;
 }
 
@@ -893,6 +907,17 @@ export async function getMarketVolume(marketId: string) {
  * - Full audit string carried to HCS CREATE_MARKET / MARKET_RESOLVED.
  * - Zero breakage to other live MVP key usages; graceful fallback to prior Mirror behavior.
  */
+/**
+ * Reliable global-scale HBAR price for display (modal "CURRENT HBAR") and game creationPrice/resolution.
+ * New strategy per user (no Mirror or HGraph price calls for now):
+ * 1. SaucerSwap API (mainnet) for current trading / last-traded pool price (when key available).
+ * 2. Fallback to the exact same CoinGecko source used for the trusted card prices (the "always correct" one in the UI image).
+ * 3. BNB / Binance oracle as final public fallback.
+ * 
+ * This ensures the price shown in the HBAR card, the modal rate for the game, and the snapped creationPrice
+ * are consistent and from reliable public + on-chain DEX sources.
+ * Critical paths (create) bypass cache for fresh value at the exact wager moment.
+ */
 export async function getCurrentHbarPriceWithAuditTrail(options: { critical?: boolean } = {}): Promise<{
   price: number;
   priceTime: string;
@@ -900,213 +925,114 @@ export async function getCurrentHbarPriceWithAuditTrail(options: { critical?: bo
   source: string;
   isStale: boolean;
   provenance?: string;
-  saucerVerified?: boolean;
-  deltas?: string;
 }> {
-  const now = Date.now();
+  const nowTs = Date.now();
   const isCritical = !!options.critical;
 
-  // Serve from TTL cache if fresh. On CRITICAL paths (wager creation right after payment,
-  // or resolution) we bypass the cache to force a fresh multi-source verified decision
-  // with direct contract check + tolerance cross at the exact moment.
-  if (!isCritical && cachedPriceData && (now - cachedPriceAt) < PRICE_CACHE_TTL_MS) {
+  // 15s TTL cache for normal calls (UI cards, polls). Critical paths (post-payment create, resolution) always fresh.
+  if (!isCritical && cachedPriceData && (nowTs - cachedPriceAt) < PRICE_CACHE_TTL_MS) {
     return {
       ...cachedPriceData,
       resolvedAt: new Date().toISOString(),
     };
   }
 
-  const PRICE_TOL = 0.0015; // 0.15% — very small tolerable difference as specified
-  const mirrorBase = process.env.HEDERA_MIRROR_NODE || '';
+  const resolvedAt = new Date().toISOString();
 
-  try {
-    // === SaucerSwap last-traded primary (the trader-reliable on-chain DEX price) ===
-    let saucer: any = null;
-    if (process.env.SAUCERSWAP_API_KEY) {
-      try {
-        const base = 'https://api.saucerswap.finance';
-        const r = await fetch(`${base}/v2/pools/full`, {
-          headers: { 'x-api-key': process.env.SAUCERSWAP_API_KEY } as any,
-        });
-        if (r.ok) {
-          const pools = (await r.json()) as any[];
-          // One-time discovery log so we can see exact shape (token0 vs tokenA, priceUsd location, contractId field)
-          // and tune the extractor in one follow-up edit if the first real run with the stored key shows something different.
-          if (pools?.length && !(globalThis as any).__saucerShapeLogged) {
-            const hbarSample = pools.find((p: any) => (p.token0?.symbol === 'HBAR' || p.token1?.symbol === 'HBAR') || (p.tokenA?.symbol === 'HBAR' || p.tokenB?.symbol === 'HBAR'));
-            console.log('[Saucer] discovery shape (first HBAR pool or first pool keys):', Object.keys(hbarSample || pools[0] || {}));
-            (globalThis as any).__saucerShapeLogged = true;
-          }
-
-          for (const p of (pools || [])) {
-            const t0 = p.token0 || p.tokenA || {};
-            const t1 = p.token1 || p.tokenB || {};
-            let hbarTok: any = null;
-            let otherTok: any = null;
-            if (t0.symbol === 'HBAR' || t0.symbol?.toUpperCase?.() === 'HBAR') { hbarTok = t0; otherTok = t1; }
-            else if (t1.symbol === 'HBAR' || t1.symbol?.toUpperCase?.() === 'HBAR') { hbarTok = t1; otherTok = t0; }
-            if (hbarTok && (hbarTok.priceUsd || hbarTok.price)) {
-              const price = parseFloat(hbarTok.priceUsd || hbarTok.price);
-              if (price > 0.01) {
-                saucer = {
-                  price,
-                  contractId: p.contractId || p.poolContractId || p.contract_id,
-                  hbarTokenId: hbarTok.id,
-                  otherTokenId: otherTok?.id,
-                  asOf: new Date().toISOString(),
-                };
-                break;
-              }
+  // 1. SaucerSwap mainnet API for the current trading price (primary when key is present in Supabase)
+  // TEMP: inject the key you provided for this local session so Saucer primary kicks in immediately.
+  // Remove this block once you have the key in your local .env as SAUCERSWAP_API_KEY=... or the Supabase kv row is loading.
+  if (!process.env.SAUCERSWAP_API_KEY) {
+    process.env.SAUCERSWAP_API_KEY = '44b54dbec3669868deaa4df96bd21';
+    console.log('[Resolver] Injected user-provided SaucerSwap API key for local testing (Saucer primary will now be used). Remove this after setting via .env or Supabase.');
+  }
+  if (process.env.SAUCERSWAP_API_KEY) {
+    try {
+      const base = 'https://api.saucerswap.finance';
+      const r = await fetch(`${base}/v2/pools/full`, {
+        headers: { 'x-api-key': process.env.SAUCERSWAP_API_KEY } as any,
+      });
+      if (r.ok) {
+        const pools = (await r.json()) as any[];
+        for (const p of (pools || [])) {
+          const t0 = p.token0 || p.tokenA || {};
+          const t1 = p.token1 || p.tokenB || {};
+          let hbarTok: any = null;
+          if (t0.symbol === 'HBAR' || t0.symbol?.toUpperCase?.() === 'HBAR') hbarTok = t0;
+          else if (t1.symbol === 'HBAR' || t1.symbol?.toUpperCase?.() === 'HBAR') hbarTok = t1;
+          if (hbarTok && (hbarTok.priceUsd || hbarTok.price)) {
+            const price = parseFloat(hbarTok.priceUsd || hbarTok.price);
+            if (price > 0.01) {
+              const result = {
+                price,
+                priceTime: resolvedAt,
+                resolvedAt,
+                source: 'SaucerSwap (mainnet trading price)',
+                isStale: false,
+                provenance: 'SaucerSwap API v2/pools/full (last-traded / pool price)',
+              };
+              if (!isCritical) { cachedPriceData = result; cachedPriceAt = nowTs; }
+              console.log(`[Resolver] ✅ SaucerSwap mainnet HBAR trading price: $${price.toFixed(6)}`);
+              return result;
             }
           }
         }
-      } catch (sErr) {
-        console.warn('[Saucer] API fetch error (will fall back):', (sErr as Error).message);
       }
-    }
-
-    // Direct contract verification of the Saucer number using Mirror (the pool contract's actual token balances = reserves)
-    let directVerified = false;
-    let directDelta = 0;
-    if (saucer && saucer.contractId && saucer.hbarTokenId && mirrorBase) {
-      try {
-        const tokUrl = `${mirrorBase}/api/v1/accounts/${saucer.contractId}/tokens?limit=10`;
-        const tr = await fetch(tokUrl);
-        if (tr.ok) {
-          const td: any = await tr.json();
-          const hbarBal = td.tokens?.find((t: any) => t.token_id === saucer.hbarTokenId)?.balance || 0;
-          const otherBal = td.tokens?.find((t: any) => t.token_id === saucer.otherTokenId)?.balance || 0;
-          if (hbarBal && otherBal) {
-            // Common decimals (HBAR=8, stables=6). If wrong the delta will be large and we won't trust.
-            const implied = (otherBal / 1e6) / (hbarBal / 1e8);
-            directDelta = Math.abs(implied - saucer.price) / saucer.price;
-            directVerified = directDelta < 0.01; // 1% tolerance for "the API number matches the on-chain reserves we just queried directly"
-          }
-        }
-      } catch {}
-    }
-
-    // HGraph cross-check for "up to the second" freshness (we already trust HGraph for HCS volume/timing; use a cheap latest ts)
-    let hgraphAsOf: string | null = null;
-    try {
-      if (typeof HGRAPH_URL !== 'undefined' && HGRAPH_URL) {
-        const numericId = (MASTER_TOPIC_ID || '').split('.').pop();
-        if (numericId) {
-          const q = `query { topic_message(where: {topic_id: {_eq: ${numericId}}}, order_by: {consensus_timestamp: desc}, limit: 1) { consensus_timestamp } }`;
-          const hr = await fetch(HGRAPH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
-          const hj: any = await hr.json();
-          const rawTs = hj?.data?.topic_message?.[0]?.consensus_timestamp;
-          if (rawTs) hgraphAsOf = new Date(Number(rawTs) * 1000).toISOString(); // adjust if ns
-        }
-      }
-    } catch {}
-
-    // Always get the official Mirror as the 3rd / trusted cross
-    const networkRate = await getCurrentHbarExchangeRateFromNetwork();
-
-    let chosenPrice = networkRate.price;
-    let chosenSource = networkRate.source;
-    let provenance = `Mirror (official) ${networkRate.price.toFixed(6)}`;
-    let saucerUsed = false;
-
-    if (saucer) {
-      const saucerPrice = saucer.price;
-      const mirrorDelta = Math.abs(saucerPrice - networkRate.price) / saucerPrice;
-      const deltas = [
-        `Mirror ${(mirrorDelta * 100).toFixed(3)}%`,
-        directVerified ? `direct-reserves OK (${(directDelta * 100).toFixed(2)}%)` : `direct-reserves FAIL (${(directDelta * 100).toFixed(2)}%)`,
-      ];
-      if (hgraphAsOf) deltas.push('HGraph fresh ts');
-
-      const withinTol = mirrorDelta <= PRICE_TOL;
-      if (withinTol && (directVerified || directDelta < 0.02)) {
-        // Saucer last-traded is within very small tol of Mirror AND the direct contract reserves check passed (or very close)
-        chosenPrice = saucerPrice;
-        chosenSource = 'SaucerSwap last-traded (API + direct contract verified)';
-        saucerUsed = true;
-        provenance = `SaucerSwap last-traded ${saucerPrice.toFixed(6)} | ${deltas.join(' | ')} | HGraph ${hgraphAsOf || 'n/a'} | tol=${(PRICE_TOL * 100)}%`;
-      } else {
-        provenance = `Saucer attempted ${saucerPrice.toFixed(6)} but delta ${(mirrorDelta * 100).toFixed(3)}% > tol or direct verify failed — using Mirror | ${deltas.join(' | ')}`;
-      }
-
-      if (isCritical) {
-        console.log(
-          `[PRICE DECISION FOR WAGER CREATION] chosen=$${chosenPrice.toFixed(6)} source=${chosenSource} ` +
-          `| ${provenance} | resolvedAt=${new Date().toISOString()}`
-        );
-      }
-    }
-
-    const isPrimary = chosenSource.includes('Saucer') || chosenSource.includes('SDK') || chosenSource.includes('official');
-    const prefix = isPrimary ? 'PRIMARY' : 'FALLBACK';
-
-    const priceChanged = Math.abs(chosenPrice - lastWrapperLoggedPrice) > 1e-8;
-    if (priceChanged || lastWrapperLoggedPrice === 0 || isCritical) {
-      console.log(
-        `[Resolver] ✅ Using ${chosenSource} (${prefix} for this game) | price=$${chosenPrice.toFixed(6)} | ${provenance}`
-      );
-      lastWrapperLoggedPrice = chosenPrice;
-      lastWrapperLogTs = now;
-    }
-
-    lastPriceHealth = {
-      price: chosenPrice,
-      source: chosenSource,
-      isStale: false,
-      timestamp: networkRate.resolvedAt,
-    };
-
-    const result: any = {
-      price: chosenPrice,
-      priceTime: hgraphAsOf || saucer?.asOf || networkRate.resolvedAt,
-      resolvedAt: new Date().toISOString(),
-      source: chosenSource,
-      isStale: false,
-      provenance,
-      saucerVerified: saucerUsed && directVerified,
-      deltas: saucer ? `Mirror ${(Math.abs(saucer.price - networkRate.price) / saucer.price * 100).toFixed(3)}%` : undefined,
-    };
-
-    if (!isCritical) {
-      cachedPriceData = result;
-      cachedPriceAt = now;
-    }
-    return result;
-  } catch (err: any) {
-    console.warn('[Resolver] Warning in multi-source price (falling back to legacy path):', err.message);
-
-    // Legacy Mirror + CoinGecko path (unchanged behavior when Saucer key or new path has issues)
-    try {
-      const networkRate = await getCurrentHbarExchangeRateFromNetwork();
-      // ... (rest of the original gated Mirror logging + health + cache is preserved below via the catch block structure)
-      const result = {
-        price: networkRate.price,
-        priceTime: networkRate.resolvedAt,
-        resolvedAt: networkRate.resolvedAt,
-        source: networkRate.source,
-        isStale: false,
-      };
-      if (!isCritical) {
-        cachedPriceData = result;
-        cachedPriceAt = now;
-      }
-      return result;
-    } catch (e2) {
-      // final emergency CoinGecko (same as before)
-      try {
-        const cgRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd");
-        const cgJson: any = await cgRes.json();
-        const cgPrice = cgJson?.["hedera-hashgraph"]?.usd;
-        if (cgPrice && !isNaN(cgPrice)) {
-          const nowIso = new Date().toISOString();
-          const fb = { price: cgPrice, priceTime: nowIso, resolvedAt: nowIso, source: 'CoinGecko (emergency)', isStale: true };
-          if (!isCritical) { cachedPriceData = fb; cachedPriceAt = Date.now(); }
-          return fb;
-        }
-      } catch {}
-      throw new Error(`All price sources exhausted: ${err.message}`);
+    } catch (sErr) {
+      console.warn('[Resolver] SaucerSwap price fetch failed, falling back to card source:', (sErr as Error).message);
     }
   }
+
+  // 2. Fallback to the exact CoinGecko source used for the trusted HBAR card price in the UI (the "always correct" one)
+  try {
+    const cgRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+    if (cgRes.ok) {
+      const cgJson: any = await cgRes.json();
+      const price = parseFloat(cgJson?.['hedera-hashgraph']?.usd);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: 'CoinGecko (card price source)',
+          isStale: false,
+          provenance: 'CoinGecko (same as live assets / card prices)',
+        };
+        if (!isCritical) { cachedPriceData = result; cachedPriceAt = nowTs; }
+        console.log(`[Resolver] ✅ CoinGecko (card source) mainnet HBAR: $${price.toFixed(6)}`);
+        return result;
+      }
+    }
+  } catch (cgErr) {
+    console.warn('[Resolver] CoinGecko card source failed, trying BNB/Binance fallback');
+  }
+
+  // 3. BNB oracle / Binance public API as final reliable fallback (no key, global scale)
+  try {
+    const binRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=HBARUSDT');
+    if (binRes.ok) {
+      const binJson: any = await binRes.json();
+      const price = parseFloat(binJson?.price);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: 'Binance (BNB oracle)',
+          isStale: false,
+          provenance: 'Binance public ticker HBARUSDT',
+        };
+        if (!isCritical) { cachedPriceData = result; cachedPriceAt = nowTs; }
+        console.log(`[Resolver] ✅ Binance (BNB oracle) mainnet HBAR: $${price.toFixed(6)}`);
+        return result;
+      }
+    }
+  } catch (binErr) {
+    console.error('[Resolver] Binance BNB oracle also failed');
+  }
+
+  // Last resort (should rarely hit)
+  throw new Error('All reliable HBAR price sources (Saucer, CoinGecko card source, Binance) exhausted');
 }
 
 // Export for use by the API layer (price endpoint)
@@ -1162,6 +1088,9 @@ export async function fetchFastGameCreationData(marketId: string): Promise<{
   creationPrice: number;
   initialSide: 'YES' | 'NO';
   question?: string;
+  endTime?: number;
+  durationMinutes?: number;
+  creationPriceTime?: string;
 } | null> {
   // Fetch a large window of recent messages and find the matching CREATE (reliable path)
   const messages = await fetchReliableTopicMessages(2000);
@@ -1181,6 +1110,9 @@ export async function fetchFastGameCreationData(marketId: string): Promise<{
           creationPrice: price,
           initialSide: side,
           question: p.question,
+          endTime: p.endTime,
+          durationMinutes: p.durationMinutes,
+          creationPriceTime: p.creationPriceTime,
         };
       }
     } catch {

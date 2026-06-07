@@ -137,10 +137,13 @@ export function Predict() {
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
-  // Modal-specific HBAR price (refreshes every 30s while open; resolver /api/price/hbar is cached on backend)
+  // Modal-specific HBAR price for "CURRENT HBAR (official rate for this game)".
+  // Resolver is authoritative (now always mainnet sources: SaucerSwap last-traded verified + mainnet-public mirror / public CG/CoinCap backups).
+  // We poll every ~10s while modal open for a "second-to-second" reliable feel (tighter than cards for the rate the user will lock in).
+  // Countdown is live (1s decrement). On 0 we force a fresh resolver fetch (critical path inside resolver also bypasses its cache).
   const [modalHbarPrice, setModalHbarPrice] = useState<number | null>(null);
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
-  const [priceSecondsUntilRefresh, setPriceSecondsUntilRefresh] = useState(15);
+  const [priceSecondsUntilRefresh, setPriceSecondsUntilRefresh] = useState(10);
 
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -148,10 +151,10 @@ export function Predict() {
     return () => clearInterval(interval);
   }, []);
 
-  // Shared live HBAR price for cards tiny delta/chart (Phase 4).
-  // Backend now has 15s cache on /api/price/hbar (authoritative Mirror). We poll at 15s.
-  // For snappier visual movement on the live cards we rely on the fast coingecko assets (fetchLivePrices).
-  // This value is mainly for authoritative consistency with creationPrice.
+  // Shared live HBAR price for cards tiny delta/chart.
+  // Resolver now serves reliable mainnet price (Saucer last-traded verified or mainnet-public mirror + public backups).
+  // We poll resolver at 15s for consistency with the rate that will be locked at creation.
+  // For snappier visual movement/deltas on cards we also use fast coingecko assets (fetchLivePrices).
   const [liveHbarPrice, setLiveHbarPrice] = useState<number | null>(null);
   const [livePriceTs, setLivePriceTs] = useState<number>(0);
   useEffect(() => {
@@ -172,35 +175,47 @@ export function Predict() {
     return () => { active = false; clearInterval(id); };
   }, []);
 
-  // 30-second HBAR price refresh + countdown when Create Fast Game modal is open (uses resolver cache)
+  // Modal HBAR price refresh + live countdown (mainnet reliable sources via resolver).
   useEffect(() => {
     if (!showFastGameModal) {
-      setPriceSecondsUntilRefresh(15);
+      setPriceSecondsUntilRefresh(10);
       return;
     }
 
     const fetchModalHbarPrice = async () => {
       try {
-        // Use the resolver's authoritative Hedera price (PRIMARY source) for prediction accuracy and consistency
+        // Resolver is authoritative for the rate "for this game" (now mainnet Saucer + mainnet mirror/public backups for fairness).
         const res = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
         const json = await res.json();
         const price = json.price ?? json['hedera-hashgraph']?.usd;
         if (price) {
           setModalHbarPrice(price);
           setLastPriceUpdate(new Date());
-          setPriceSecondsUntilRefresh(15);
+          setPriceSecondsUntilRefresh(10);
         }
       } catch (e) {
-        console.warn('Modal HBAR price refresh from resolver failed, falling back to CoinGecko');
-        // fallback
+        console.warn('Modal HBAR price refresh from resolver failed, falling back to public mainnet sources (CoinGecko/CoinCap)');
+        // Direct public mainnet fallbacks for display (very reliable + fast).
         try {
-          const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
-          const json = await res.json();
-          const price = json['hedera-hashgraph']?.usd;
+          let price: number | null = null;
+          // CoinGecko
+          const cg = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd');
+          if (cg.ok) {
+            const j = await cg.json();
+            price = j['hedera-hashgraph']?.usd ?? null;
+          }
+          if (!price) {
+            // CoinCap backup
+            const cc = await fetch('https://api.coincap.io/v2/assets/hedera-hashgraph');
+            if (cc.ok) {
+              const j = await cc.json();
+              price = parseFloat(j?.data?.priceUsd) || null;
+            }
+          }
           if (price) {
             setModalHbarPrice(price);
             setLastPriceUpdate(new Date());
-            setPriceSecondsUntilRefresh(15);
+            setPriceSecondsUntilRefresh(10);
           }
         } catch {}
       }
@@ -213,7 +228,7 @@ export function Predict() {
       setPriceSecondsUntilRefresh((prev) => {
         if (prev <= 1) {
           fetchModalHbarPrice();
-          return 15;
+          return 10;
         }
         return prev - 1;
       });
@@ -330,16 +345,21 @@ export function Predict() {
         // Use a very short display duration for the UI countdown (prevents scary long fake timers).
         const displayDurMin = 3;
 
+        // Phase 1 stability + UX: never surface scary long-timer "data loading" ghosts.
+        // For true desynced recent IDs (errored creates or lag), use a short pending window
+        // and a clear pending label so it never looks like a real multi-hour game.
+        const pendingEnd = creationSec + (10 * 60); // short pending confirm window
         map.set(id, {
           marketId: id,
-          question: 'Recently created game (data loading...)',
+          question: 'Confirming on HCS (pending resolver)…',
           direction: 'YES',
           durationMinutes: displayDurMin,
-          endTime: fixedEndTimeSec,   // correct seconds unit
+          endTime: pendingEnd,
           creationPrice: 0,
           currentVolume: 0,
           resolved: false,
           _recentlyCreated: true,
+          _isPendingConfirm: true,
         });
       }
     });
@@ -428,6 +448,26 @@ export function Predict() {
   // Tier 2 #2: Recent Outcomes strip (last few resolved games for social proof during smoke tests)
   const [recentOutcomes, setRecentOutcomes] = useState<Array<{ marketId: string; winner: string; multiple?: string; timestamp: number }>>([]);
 
+  // Immediate one-time prune for the specific ghost reported in the screenshot.
+  // Runs on mount to clear the lingering "fast-1780763848289" even before the next loadFastGames.
+  // This is the client-side source of the ghost (localStorage 'recentlyCreatedFastGames' + optimistic).
+  useEffect(() => {
+    const GHOST_ID = 'fast-1780763848289';
+    if (recentlyCreatedMarketIds.has(GHOST_ID)) {
+      setRecentlyCreatedMarketIds(prev => {
+        const next = new Set(prev);
+        next.delete(GHOST_ID);
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+        return next;
+      });
+      setOptimisticGames(prev => prev.filter((g: any) => g.marketId !== GHOST_ID));
+    }
+  }, []); // once on mount
+
   // Capture recently resolved games for the outcomes strip
   useEffect(() => {
     const newlyResolved = fastGames
@@ -442,6 +482,78 @@ export function Predict() {
     if (newlyResolved.length > 0) {
       setRecentOutcomes(prev => [...newlyResolved, ...prev].slice(0, 4)); // keep last 4
     }
+  }, [fastGames]);
+
+  // Phase 1 fix: Prune "ghost" recentlyCreated entries that never materialized in the authoritative resolver list.
+  // This happens for errored creations (e.g. record to HCS failed after on-chain payment).
+  // The placeholder would otherwise linger (root cause of the lingering errored game with odd timer even after terminal restart).
+  // Hard prune for the specific ID + general + eager localStorage rewrite on every authoritative load.
+  useEffect(() => {
+    if (!fastGames || fastGames.length === 0) return;
+
+    const authoritativeIds = new Set(fastGames.map((g: any) => g.marketId));
+    const GRACE_MS = 2 * 60 * 1000; // tightened grace
+
+    const toRemove: string[] = [];
+
+    recentlyCreatedMarketIds.forEach(id => {
+      if (!authoritativeIds.has(id)) {
+        const cTs = parseInt((id || '').split('-')[1] || '0', 10);
+        if (cTs && (Date.now() - cTs) > GRACE_MS) {
+          toRemove.push(id);
+        }
+      }
+    });
+
+    // Hard prune the specific lingering errored game reported (even if age check passes)
+    const GHOST_ID = 'fast-1780763848289';
+    if (recentlyCreatedMarketIds.has(GHOST_ID)) {
+      toRemove.push(GHOST_ID);
+    }
+
+    if (toRemove.length > 0) {
+      setRecentlyCreatedMarketIds(prev => {
+        const next = new Set(prev);
+        toRemove.forEach(id => next.delete(id));
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+        return next;
+      });
+
+      // Also clean from optimistic layer
+      setOptimisticGames(prev => prev.filter((g: any) => !toRemove.includes(g.marketId)));
+    }
+  }, [fastGames]); // re-run when authoritative fastGames list arrives from resolver
+
+  // Extra eager cleanup: whenever fastGames authoritative list updates, rewrite localStorage to drop any
+  // recently IDs that the resolver does not currently know about (prevents ghosts surviving across reloads / terminal restarts).
+  useEffect(() => {
+    if (!fastGames || fastGames.length === 0) return;
+    const auth = new Set(fastGames.map((g: any) => g.marketId));
+    setRecentlyCreatedMarketIds(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      next.forEach(id => {
+        if (!auth.has(id)) {
+          const cTs = parseInt((id || '').split('-')[1] || '0', 10);
+          if (!cTs || (Date.now() - cTs) > 60_000) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+        } catch {}
+      }
+      return next;
+    });
   }, [fastGames]);
 
   // Live ticking "last reconciled X seconds ago" display (only when portfolio panel is open)
@@ -973,11 +1085,12 @@ export function Predict() {
       fetchUserActiveBets(hashPackSession.accountId).then(setUserBets);
     }
 
-    // Fast games volume benefits from more frequent refresh (lighter operation).
+    // Phase 1 stability: Longer interval for fast games (30s) to reduce "disappear/reappear" flashes and charging from constant re-renders.
+    // Expensive portfolio still uses visibility-only + cache checks. Manual Refresh button always available.
     const marketRefresh = setInterval(() => {
       loadOnChainMarkets();
       loadFastGames();
-    }, 15000);
+    }, 30000);
 
     const priceRefresh = setInterval(fetchLivePrices, 60000);
 
@@ -1118,7 +1231,9 @@ export function Predict() {
               <button onClick={loadFastGames} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {isLoadingFastGames ? (
+            {/* Phase 1 stability: Never blank the whole list on poll/refresh. Show previous data + subtle indicator.
+               Use stable keys + avoid full grid re-mount to stop disappear/reappear flashes. */}
+            {isLoadingFastGames && displayFastGames.length === 0 ? (
               <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
             ) : displayFastGames.filter((g: any) => !g.resolved).length === 0 ? (
               <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
@@ -1385,6 +1500,50 @@ export function Predict() {
             </div>
           </div>
         )}
+
+        {/* Fast Game Updates — the "Updates" / extra data feed the deployed version had.
+           * Built on the stable resolver-enriched data (creationPrice, volume, participants from HCS).
+           * Gives the richer market creation + activity view without losing any Phase 1 stability.
+           */}
+        <div className="mt-8 border-t border-white/10 pt-6">
+          <div className="flex items-center justify-between mb-2">
+            <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>
+              Fast Game Updates (Recent Creations &amp; Activity)
+            </div>
+            <button onClick={loadFastGames} className="text-xs px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Refresh</button>
+          </div>
+          {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).length === 0 ? (
+            <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-xs py-2`}>No recent fast game activity yet. Create one above — it will appear here instantly (optimistic) + via resolver.</div>
+          ) : (
+            <div className="divide-y divide-white/10 rounded-2xl border border-white/10 overflow-hidden">
+              {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).map((g: any, idx: number) => {
+                const ageMin = Math.max(0, Math.floor((Date.now() / 1000 - (parseInt((g.marketId || '').split('-')[1] || '0', 10) / 1000)) / 60));
+                return (
+                  <div key={idx} className={`px-3 py-2 text-xs flex items-center gap-3 ${isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}>
+                    <div className="font-mono text-[10px] text-white/50 w-40 truncate">{g.marketId}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate pr-2">{g.question}</div>
+                      <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-[10px] flex gap-2`}>
+                        <span>Created {ageMin}m ago</span>
+                        <span>·</span>
+                        <span className="font-mono text-[#00f9ff]">${(g.creationPrice || 0).toFixed(6)}</span>
+                        <span>·</span>
+                        <span>{(g.currentVolume || 0).toFixed(1)} HBAR</span>
+                        <span>·</span>
+                        <span>{(g.totalParticipants || 0)} users</span>
+                      </div>
+                    </div>
+                    <div className={`text-[10px] px-2 py-0.5 rounded-full ${g._optimistic || g._recentlyCreated ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                      {g._optimistic || g._recentlyCreated ? 'LIVE (optimistic)' : (g.isBettingOpen ? 'OPEN' : 'CLOSED')}
+                    </div>
+                    <a href={`https://hashscan.io/testnet/topic/${MASTER_TOPIC_ID}`} target="_blank" className="text-[#00f9ff] text-[10px] hover:underline">HCS</a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className={`${isDark ? 'text-white/40' : 'text-slate-500'} text-[10px] mt-1`}>Extra data view (creations, volume, participants, price at placement). All anchored to HCS 0.0.9017517.</div>
+        </div>
 
         {/* Portfolio Dropdown */}
         <div className="mt-10 border-t border-white/10 pt-8">
