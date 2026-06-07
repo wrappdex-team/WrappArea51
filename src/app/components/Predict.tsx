@@ -27,10 +27,12 @@ import { ENV } from '../utils/env';
 
 const RESOLVER_BASE = ENV.RESOLVER_BASE;
 
-// Critical for global multiplayer: if a production build (Vercel) is using the localhost
-// fallback, every user's browser will only talk to *their own* machine's resolver (if any).
-// All creates and list fetches become local-only, even though HCS is global.
-// The fix is setting VITE_RESOLVER_URL to the Railway public URL in Vercel env settings.
+// === LOCAL DEV PARITY (Step 6 of build-back-better plan) ===
+// In dev (npm run dev), make sure a .env (or .env.local) next to the project root has:
+// VITE_RESOLVER_URL=http://localhost:4000
+// Then the local frontend will hit your local resolver instance (run the backend/prediction-resolver with its own .env containing the testnet key + topic).
+// The warning below catches prod builds accidentally using localhost (the #1 cause of "card only on creator machine").
+// Also ensure vite.config.ts dev server.headers allows http://localhost:4000 + ws for the resolver calls during mixed testing.
 if (typeof window !== 'undefined' &&
     !window.location.hostname.includes('localhost') &&
     !window.location.hostname.includes('127.0.0.1') &&
@@ -40,6 +42,12 @@ if (typeof window !== 'undefined' &&
     'Fast games will only be visible to the person who created them on their own machine. ' +
     'Set VITE_RESOLVER_URL to your Railway resolver URL (e.g. https://...up.railway.app) in Vercel project settings and redeploy.'
   );
+}
+
+// Dev-only loud log so you can immediately see in console what RESOLVER_BASE the running bundle is using.
+// This makes "local still does not talk to the resolver" obvious to debug (port, .env, CSP, etc.).
+if (typeof window !== 'undefined' && (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
+  console.log('[DEV] RESOLVER_BASE =', RESOLVER_BASE, '(ensure your local resolver is running on this and VITE_RESOLVER_URL matches in .env)');
 }
 const ESCROW_ACCOUNT_ID = '0.0.9006979';
 const TREASURY_ACCOUNT_ID = '0.0.9006841';
