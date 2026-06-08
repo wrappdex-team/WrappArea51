@@ -1439,12 +1439,12 @@ export function Predict() {
                           + open time + creation price + current % under it.
                           Then volume + game details row below. */}
                       <div className="mb-3">
-                        <div className="font-semibold text-[15px] leading-snug tracking-[-0.3px]">
+                        <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>
                           Will HBAR be <span className="text-emerald-400 font-semibold">UP</span> or <span className="text-rose-400 font-semibold">DOWN</span> at {closeTime}?
                         </div>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-white/65">
+                        <div className={`mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] ${isDark ? 'text-white/65' : 'text-slate-600'}`}>
                           <span>
-                            Opened <span className="text-white/85">{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${(game.creationPrice || 0).toFixed(6)}</span>
+                            Opened <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${(game.creationPrice || 0).toFixed(6)}</span>
                           </span>
                           {liveHbarPrice != null && game.creationPrice != null && (
                             <span className="font-mono">
@@ -1457,15 +1457,15 @@ export function Predict() {
                               })()}
                             </span>
                           )}
-                          <span>Closes <span className="text-white/85">{closeTime}</span></span>
+                          <span>Closes <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{closeTime}</span></span>
                         </div>
                       </div>
 
                       {/* Volume + game details row (clean, under the beautiful header) */}
                       <div className="flex items-center justify-between mb-4">
                         <div>
-                          <div className="text-[10px] uppercase tracking-[1px] text-white/50">Volume</div>
-                          <div className="flex items-center gap-2 font-semibold tabular-nums">
+                          <div className={`text-[10px] uppercase tracking-[1px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>Volume</div>
+                          <div className={`flex items-center gap-2 font-semibold tabular-nums ${isDark ? 'text-white' : 'text-slate-900'}`}>
                             <span>{(game.currentVolume || 0).toFixed(1)} HBAR</span>
                             {game._lastReconciled && Date.now() - game._lastReconciled < 30000 && (
                               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">LIVE</span>
@@ -1475,7 +1475,7 @@ export function Predict() {
                         {recentlyCreatedMarketIds.has(game.marketId) && (
                           <button
                             onClick={() => reconcileMarketVolume(game.marketId)}
-                            className="text-[10px] px-2 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors"
+                            className={`text-[10px] px-2 py-1 rounded-xl transition-colors ${isDark ? 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-600 hover:text-slate-900'}`}
                             title="Reconcile live volume from HCS"
                           >
                             Reconcile
@@ -1496,11 +1496,11 @@ export function Predict() {
 
                         return (
                           <div className="mb-4">
-                            <div className="flex justify-between text-[10px] text-white/50 tracking-widest mb-1.5">
+                            <div className={`flex justify-between text-[10px] tracking-widest mb-1.5 ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
                               <div className="text-emerald-400">YES {yesPercent}%</div>
                               <div className="text-rose-400">NO {noPercent}%</div>
                             </div>
-                            <div className="h-2.5 bg-white/10 rounded-full overflow-hidden flex">
+                            <div className={`h-2.5 rounded-full overflow-hidden flex ${isDark ? 'bg-white/10' : 'bg-slate-200'}`}>
                               <div 
                                 className="bg-emerald-500 transition-all duration-300" 
                                 style={{ width: `${yesPercent}%` }}
@@ -1515,7 +1515,7 @@ export function Predict() {
                               <div className="text-rose-400">{noStake.toFixed(1)}</div>
                             </div>
                             {/* User counts + sides (data from resolver volume enrichment) */}
-                            <div className="flex justify-between text-[9px] mt-0.5 text-white/60">
+                            <div className={`flex justify-between text-[9px] mt-0.5 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>
                               <div>{(game.yesParticipants || 0)} users</div>
                               <div>{(game.noParticipants || 0)} users</div>
                             </div>
@@ -1539,8 +1539,8 @@ export function Predict() {
                           : '100';
 
                         return (
-                          <div className="mb-3 px-2 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] text-white/70">
-                            Adding <span className="font-mono font-semibold text-white">{stake}</span> HBAR would give you 
+                          <div className={`mb-3 px-2 py-1.5 rounded-xl border text-[10px] ${isDark ? 'bg-white/5 border-white/10 text-white/70' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
+                            Adding <span className={`font-mono font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>{stake}</span> HBAR would give you 
                             ~<span className="font-semibold text-emerald-400">{yesImpact}%</span> of the YES pool or 
                             ~<span className="font-semibold text-rose-400">{noImpact}%</span> of the NO pool
                           </div>
@@ -1549,9 +1549,9 @@ export function Predict() {
 
                       {/* Tier 1 UX: Your Position on this game (very high value for smoke tests) */}
                       {userPositions[game.marketId] && (
-                        <div className="mb-4 px-3 py-2 rounded-2xl bg-white/5 border border-white/10 text-sm">
-                          <span className="text-white/50 text-xs tracking-widest">YOUR POSITION</span>
-                          <div className="font-semibold">
+                        <div className={`mb-4 px-3 py-2 rounded-2xl border text-sm ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
+                          <span className={`text-xs tracking-widest ${isDark ? 'text-white/50' : 'text-slate-500'}`}>YOUR POSITION</span>
+                          <div className={`font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>
                             {userPositions[game.marketId].amount} HBAR on <span className={userPositions[game.marketId].side === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>{userPositions[game.marketId].side}</span>
                           </div>
                         </div>
@@ -1568,7 +1568,7 @@ export function Predict() {
                         <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${remaining < 120 ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
                           {timeStr}
                         </div>
-                        <div className="text-right text-[10px] text-white/50">
+                        <div className={`text-right text-[10px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
                           {isBettingOpen ? (remaining < 120 ? 'Closing soon' : 'Predictions close at 50%') : 'Resolution pending'}
                         </div>
                       </div>
@@ -1580,7 +1580,7 @@ export function Predict() {
                             {/* Stake input field (replaces quick picks) + slider (betting bar stays) */}
                             {/* User can type any amount up to (wallet balance - ~3 HBAR for fees/gas) */}
                             <div className="mb-2">
-                              <div className="text-white/50 text-xs mb-1">Stake</div>
+                              <div className={`text-xs mb-1 ${isDark ? 'text-white/50' : 'text-slate-500'}`}>Stake</div>
                               <input
                                 type="number"
                                 min={1}
@@ -1597,7 +1597,7 @@ export function Predict() {
                                   setGameStakes(prev => ({ ...prev, [game.marketId]: final }));
                                 }}
                                 placeholder="enter amount"
-                                className="w-full px-3 py-1.5 text-sm rounded-xl bg-white/5 border border-white/10 focus:border-[#00f9ff]/50 outline-none font-mono placeholder:text-white/40 text-white"
+                                className={`w-full px-3 py-1.5 text-sm rounded-xl focus:border-[#00f9ff]/50 outline-none font-mono ${isDark ? 'bg-white/5 border-white/10 text-white placeholder:text-white/40' : 'bg-slate-100 border-slate-300 text-slate-900 placeholder:text-slate-400'}`}
                               />
                             </div>
                             <Slider
@@ -1612,7 +1612,7 @@ export function Predict() {
                               }}
                               className="mb-2"
                             />
-                            <div className="text-center text-xs text-white/70 mb-1.5">
+                            <div className={`text-center text-xs mb-1.5 ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
                               Bet closes in {betCloseStr}
                             </div>
                             <div className="flex gap-2">
@@ -1631,7 +1631,7 @@ export function Predict() {
                             </div>
                           </>
                         ) : (
-                          <div className="text-center text-xs text-white/60 py-2">
+                          <div className={`text-center text-xs py-2 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>
                             {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
                           </div>
                         )}
