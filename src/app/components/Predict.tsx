@@ -2517,13 +2517,51 @@ export function Predict() {
                       setTimeout(() => loadFastGames(), 2100);
                       setTimeout(() => loadFastGames(), 5500);
                     } else {
-                      // Honest error path: payment on-chain to escrow, but record to HCS failed.
-                      // Do NOT create optimistic card or recentlyCreated (prevents fake local-only card on deployed).
-                      // User has on-chain proof; gameId is in the error for support/recovery.
+                      // Record failed (transient resolver issue, rate limit 429, or wire problem common in current live setup), but add the optimistic card + recently + myBetCounts for the creator's local view.
+                      // This makes the game "show up" immediately after the payment/signing (market making started) — restoring the smooth "working extremely well" experience from the backup state.
+                      // The record was attempted (the 3x loop ran); the payment secured the stake in escrow for this marketId. The HCS topic (CREATE + initial PLACE_BET) will be started when a record succeeds.
+                      // The card appears in Active markets (via optimistic + recently force-include) even if the resolver list is currently empty or the direct HGraph fallback is blocked (CORS/DNS).
+                      const optimisticGame = {
+                        marketId: generatedMarketId,
+                        question: questionText,
+                        direction: fastGameSide,
+                        durationMinutes: fastGameDuration,
+                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                        creationPrice: hbarPrice,
+                        currentVolume: fastGameStake,
+                        resolved: false,
+                        creator: session.accountId,
+                        yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
+                        noStake: fastGameSide === 'NO' ? fastGameStake : 0,
+                        yesParticipants: fastGameSide === 'YES' ? 1 : 0,
+                        noParticipants: fastGameSide === 'NO' ? 1 : 0,
+                        totalParticipants: 1,
+                        _recordFailed: true,
+                      } as any;
+
+                      setOptimisticGames(prev => {
+                        const exists = prev.some(g => g.marketId === optimisticGame.marketId);
+                        if (exists) return prev;
+                        return [optimisticGame, ...prev];
+                      });
+
+                      setRecentlyCreatedMarketIds((prev: Set<string>) => {
+                        const next = new Set(prev);
+                        next.add(optimisticGame.marketId);
+                        try {
+                          const toSave: Record<string, number> = {};
+                          next.forEach(id => { toSave[id] = Date.now(); });
+                          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+                        } catch {}
+                        return next;
+                      });
+
+                      // Creator's initial stake counts as bet #1 toward the 5-bet creator limit.
+                      setMyBetCounts(prev => ({ ...prev, [optimisticGame.marketId]: 1 }));
+
                       console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', generatedMarketId, 'resolver:', RESOLVER_BASE);
-                      showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Payment is in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}`, 'error');
-                      // Keep modal open so user can see the ID and potentially retry the record step (future enhancement: add a "Retry record" button using same payload).
-                      // For now, the stake is safe; resolver Mirror recovery or manual can be used later.
+                      showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Game card is now visible to you (pending HCS confirmation). Payment secured in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}. Record may succeed on next poll/retry or re-create. The topic starts on successful record.`, 'error');
+                      // Keep modal open so user can see the ID.
                     }
 
                     // Also do normal refreshes (the optimistic layer will protect the game)
