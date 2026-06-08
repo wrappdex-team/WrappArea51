@@ -1922,8 +1922,11 @@ export function Predict() {
                   if (typeof ch !== 'number') return null;
                   const pos = ch >= 0;
                   return (
-                    <div className={`text-xs mt-1 font-medium ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {pos ? '+' : ''}{ch.toFixed(1)}% <span className="text-white/50">24h (CoinGecko)</span>
+                    <div className="mt-2 text-center">
+                      <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {pos ? '+' : ''}{ch.toFixed(1)}%
+                      </div>
+                      <div className="text-[10px] text-white/50">24h (CoinGecko)</div>
                     </div>
                   );
                 })()}
