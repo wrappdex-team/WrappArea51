@@ -18,14 +18,14 @@ import { ENV } from "../../env";
 export const MASTER_TOPIC_ID = "0.0.9017517";
 const RESOLVER_BASE = ENV.RESOLVER_BASE; // Authoritative payout oracle (single source of truth). Configured via VITE_RESOLVER_URL (Railway URL in prod).
 
-// Same critical warning as in Predict.tsx
+// Same critical warning as in Predict.tsx (updated for current Railway + create wire)
 if (typeof window !== 'undefined' &&
     !window.location.hostname.includes('localhost') &&
     !window.location.hostname.includes('127.0.0.1') &&
-    RESOLVER_BASE.includes('localhost')) {
+    (RESOLVER_BASE.includes('localhost') || !RESOLVER_BASE.includes('wrapparea51'))) {
   console.error(
-    '[CRITICAL CONFIG] RESOLVER_BASE is localhost while not on localhost. ' +
-    'Global fast game visibility (multiplayer across team members) requires VITE_RESOLVER_URL set in Vercel.'
+    '[CRITICAL CONFIG] RESOLVER_BASE =', RESOLVER_BASE,
+    'Fast game list + creates depend on this. If wrong/stale, new markets will not wire to HCS/resolver. Set VITE_RESOLVER_URL to current Railway (https://wrapparea51-production.up.railway.app) in Vercel and redeploy.'
   );
 }
 

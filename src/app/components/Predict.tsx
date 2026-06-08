@@ -27,27 +27,26 @@ import { ENV } from '../utils/env';
 
 const RESOLVER_BASE = ENV.RESOLVER_BASE;
 
-// === LOCAL DEV PARITY (Step 6 of build-back-better plan) ===
+// === LOCAL DEV PARITY + PROD URL GUARD (critical for create-to-HCS wire) ===
 // In dev (npm run dev), make sure a .env (or .env.local) next to the project root has:
 // VITE_RESOLVER_URL=http://localhost:4000
 // Then the local frontend will hit your local resolver instance (run the backend/prediction-resolver with its own .env containing the testnet key + topic).
-// The warning below catches prod builds accidentally using localhost (the #1 cause of "card only on creator machine").
-// Also ensure vite.config.ts dev server.headers allows http://localhost:4000 + ws for the resolver calls during mixed testing.
-if (typeof window !== 'undefined' &&
-    !window.location.hostname.includes('localhost') &&
-    !window.location.hostname.includes('127.0.0.1') &&
-    RESOLVER_BASE.includes('localhost')) {
-  console.error(
-    '[CRITICAL CONFIG] RESOLVER_BASE resolved to localhost in what looks like a production build. ' +
-    'Fast games will only be visible to the person who created them on their own machine. ' +
-    'Set VITE_RESOLVER_URL to your Railway resolver URL (e.g. https://...up.railway.app) in Vercel project settings and redeploy.'
-  );
-}
-
-// Dev-only loud log so you can immediately see in console what RESOLVER_BASE the running bundle is using.
-// This makes "local still does not talk to the resolver" obvious to debug (port, .env, CSP, etc.).
-if (typeof window !== 'undefined' && (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
-  console.log('[DEV] RESOLVER_BASE =', RESOLVER_BASE, '(ensure your local resolver is running on this and VITE_RESOLVER_URL matches in .env)');
+// The checks below catch the #1 cause of "payment succeeds but no game / no HCS train": the built bundle talking to localhost or a stale Railway URL.
+// Whenever Railway resolver redeploys (new hostname), you MUST also set VITE_RESOLVER_URL in Vercel envs and redeploy FE.
+if (typeof window !== 'undefined') {
+  const isProdLike = !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1');
+  const looksLikeLiveResolver = RESOLVER_BASE.includes('wrapparea51') || RESOLVER_BASE.includes('railway.app');
+  if (isProdLike && (RESOLVER_BASE.includes('localhost') || !looksLikeLiveResolver)) {
+    console.error(
+      '[CRITICAL CONFIG] RESOLVER_BASE =', RESOLVER_BASE,
+      'This is the exact URL the Predict create flow will POST to after payment. ' +
+      'Fast game creates will take your HBAR (to the hardcoded escrow/treasury) but the record step will fail (no HCS CREATE/PLACE_BET, no register). ' +
+      'Fix: set VITE_RESOLVER_URL=https://wrapparea51-production.up.railway.app (or current Railway) in Vercel project settings and redeploy frontend.'
+    );
+  }
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
+    console.log('[DEV] RESOLVER_BASE =', RESOLVER_BASE, '(ensure your local resolver is running on this and VITE_RESOLVER_URL matches in .env)');
+  }
 }
 const ESCROW_ACCOUNT_ID = '0.0.9006979';
 const TREASURY_ACCOUNT_ID = '0.0.9006841';
@@ -2341,6 +2340,19 @@ export function Predict() {
                   setIsCreatingFastGame(true);
 
                   try {
+                    // Pre-payment reachability probe: fail fast with exact URL so user never pays into escrow
+                    // when the create-to-HCS wire (RESOLVER_BASE) is broken (stale Railway hostname, missing VITE_RESOLVER_URL, etc.).
+                    try {
+                      const probe = await fetch(`${RESOLVER_BASE}/api/price/hbar`, { method: 'HEAD' });
+                      if (!probe.ok) throw new Error(`status ${probe.status}`);
+                    } catch (probeErr: any) {
+                      const msg = `Resolver not reachable at ${RESOLVER_BASE}. Payment would succeed but record (HCS CREATE + register) would fail. Set VITE_RESOLVER_URL to the current Railway URL (e.g. https://wrapparea51-production.up.railway.app) in Vercel and redeploy frontend.`;
+                      showToast(msg, 'error');
+                      console.error('[Predict] Resolver probe failed before create payment:', RESOLVER_BASE, probeErr?.message || probeErr);
+                      setIsCreatingFastGame(false);
+                      return;
+                    }
+
                     // 1. Prepare the payment (2.5 HBAR creation fee + user's initial stake)
                     const paymentPrepare = await prepareBetPaymentTransfer({
                       userAccountId: session.accountId,
@@ -2482,8 +2494,8 @@ export function Predict() {
                       // Honest error path: payment on-chain to escrow, but record to HCS failed.
                       // Do NOT create optimistic card or recentlyCreated (prevents fake local-only card on deployed).
                       // User has on-chain proof; gameId is in the error for support/recovery.
-                      console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', generatedMarketId);
-                      showToast(`Record to HCS failed after retries: ${lastRecordError}. Payment is in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}`, 'error');
+                      console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', generatedMarketId, 'resolver:', RESOLVER_BASE);
+                      showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Payment is in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}`, 'error');
                       // Keep modal open so user can see the ID and potentially retry the record step (future enhancement: add a "Retry record" button using same payload).
                       // For now, the stake is safe; resolver Mirror recovery or manual can be used later.
                     }
