@@ -260,24 +260,25 @@ export function Predict() {
     return () => clearInterval(countdownInterval);
   }, [showFastGameModal]);
 
-  // Fetch real user HBAR balance (via resolver for prod consistency) when create modal opens or wallet changes.
-  // Used to drive "unlimited" slider max. SECURITY: UX only — backend always re-verifies before recording.
+  // Fetch real user HBAR balance (via resolver for prod consistency) when wallet connects/changes.
+  // Used to drive max for BOTH create modal AND per-card betting stakes (wallet - ~3 HBAR buffer for fees/gas).
+  // SECURITY: UX only — backend always re-verifies before recording.
   useEffect(() => {
-    if (!showFastGameModal || !hashPackSession?.accountId) {
+    if (!hashPackSession?.accountId) {
       setFastGameMaxBalance(null);
       return;
     }
     (async () => {
       try {
         const bal = await fetchUserHbarBalance(hashPackSession.accountId);
-        // Leave small buffer for fees (create ~2.5 + 1% + network)
+        // Leave small buffer for fees (create ~2.5 + 1% + network, same for bets)
         const safeMax = Math.max(1, Math.floor((bal - 3) * 100) / 100);
         setFastGameMaxBalance(safeMax > 0 ? safeMax : null);
       } catch {
         setFastGameMaxBalance(null);
       }
     })();
-  }, [showFastGameModal, hashPackSession?.accountId]);
+  }, [hashPackSession?.accountId]);
 
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' | 'info' }>>([]);
   const toastIdRef = React.useRef(0);
@@ -1391,6 +1392,11 @@ export function Predict() {
                     isBettingOpen = !!game.isBettingOpen;
                   }
 
+                  // Informative times for the new beautiful card header (creation ts from marketId, close from endTime)
+                  const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+                  const createdTime = creationTs ? new Date(creationTs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+                  const closeTime = game.endTime ? new Date(game.endTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+
                   return (
                     <div 
                       key={game.marketId} 
@@ -1421,47 +1427,53 @@ export function Predict() {
                         </div>
                       )}
 
-                      <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-4 pr-1">
-                        {game.question}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4">
-                        <div>
-                          <div className="text-[10px] text-white/50 tracking-widest">CREATION PRICE</div>
-                          <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(6) || '—'}</div>
-                          {/* Live tiny delta (Phase 4 premium) — updates 3-5s via shared resolver price */}
+                      {/* Beautiful super-informative header per spec:
+                          "Will HBAR be UP or DOWN at [time of close]?"
+                          + open time + creation price + current % under it.
+                          Then volume + game details row below. */}
+                      <div className="mb-3">
+                        <div className="font-semibold text-[15px] leading-snug tracking-[-0.3px]">
+                          Will HBAR be <span className="text-emerald-400 font-semibold">UP</span> or <span className="text-rose-400 font-semibold">DOWN</span> at {closeTime}?
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-white/65">
+                          <span>
+                            Opened <span className="text-white/85">{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${(game.creationPrice || 0).toFixed(6)}</span>
+                          </span>
                           {liveHbarPrice != null && game.creationPrice != null && (
-                            <div className="text-[9px] mt-0.5 font-mono">
+                            <span className="font-mono">
                               {(() => {
                                 const delta = liveHbarPrice - game.creationPrice;
                                 const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
                                 const sign = delta >= 0 ? '▲' : '▼';
                                 const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
-                                return <span className={color}>{sign} ${Math.abs(delta).toFixed(5)} ({pct.toFixed(1)}%)</span>;
+                                return <span className={color}>{sign} {pct.toFixed(1)}%</span>;
                               })()}
-                            </div>
+                            </span>
                           )}
+                          <span>Closes <span className="text-white/85">{closeTime}</span></span>
                         </div>
-                        <div className="text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <div className="text-[10px] text-white/50 tracking-widest">VOLUME</div>
-                            {recentlyCreatedMarketIds.has(game.marketId) && (
-                              <button
-                                onClick={() => reconcileMarketVolume(game.marketId)}
-                                className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white/60 hover:text-white/90 transition-colors"
-                                title="Reconcile live volume from HCS"
-                              >
-                                Reconcile
-                              </button>
-                            )}
-                          </div>
-                          <div className="font-semibold tabular-nums flex items-center gap-1.5">
-                            {(game.currentVolume || 0).toFixed(1)} HBAR
+                      </div>
+
+                      {/* Volume + game details row (clean, under the beautiful header) */}
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-[1px] text-white/50">Volume</div>
+                          <div className="flex items-center gap-2 font-semibold tabular-nums">
+                            <span>{(game.currentVolume || 0).toFixed(1)} HBAR</span>
                             {game._lastReconciled && Date.now() - game._lastReconciled < 30000 && (
-                              <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">LIVE</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">LIVE</span>
                             )}
                           </div>
                         </div>
+                        {recentlyCreatedMarketIds.has(game.marketId) && (
+                          <button
+                            onClick={() => reconcileMarketVolume(game.marketId)}
+                            className="text-[10px] px-2 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors"
+                            title="Reconcile live volume from HCS"
+                          >
+                            Reconcile
+                          </button>
+                        )}
                       </div>
 
                       {/* YES / NO Volume Ratio (first small visual improvement) */}
@@ -1558,27 +1570,28 @@ export function Predict() {
                       <div className="pt-4 border-t border-white/10 min-h-[68px]">
                         {isBettingOpen && remaining > 30 && hashPackSession?.accountId ? (
                           <>
-                            {/* Quick stake presets + mini slider */}
-                            <div className="flex justify-between items-center mb-2 text-xs">
-                              <div className="text-white/50">Stake</div>
-                              <div className="flex gap-1">
-                                {[10, 25, 50, 100].map((amt) => {
-                                  const currentStake = gameStakes[game.marketId] || 10;
-                                  return (
-                                    <button
-                                      key={amt}
-                                      onClick={() => setGameStakes(prev => ({ ...prev, [game.marketId]: amt }))}
-                                      className={`px-2 py-0.5 rounded text-xs transition-all border ${
-                                        currentStake === amt 
-                                          ? 'bg-white/20 border-white/30' 
-                                          : 'bg-white/5 border-white/10 hover:bg-white/10'
-                                      }`}
-                                    >
-                                      {amt}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                            {/* Stake input field (replaces quick picks) + slider (betting bar stays) */}
+                            {/* User can type any amount up to (wallet balance - ~3 HBAR for fees/gas) */}
+                            <div className="mb-2">
+                              <div className="text-white/50 text-xs mb-1">Stake</div>
+                              <input
+                                type="number"
+                                min={1}
+                                max={fastGameMaxBalance || 500}
+                                step={1}
+                                value={gameStakes[game.marketId] || 10}
+                                onChange={(e) => {
+                                  const raw = parseFloat(e.target.value);
+                                  let v = isNaN(raw) ? 1 : raw;
+                                  v = Math.max(1, v);
+                                  const max = fastGameMaxBalance != null ? fastGameMaxBalance : 500;
+                                  const clamped = Math.min(max, v);
+                                  const final = Math.round(clamped * 100) / 100;
+                                  setGameStakes(prev => ({ ...prev, [game.marketId]: final }));
+                                }}
+                                placeholder="enter amount"
+                                className="w-full px-3 py-1.5 text-sm rounded-xl bg-white/5 border border-white/10 focus:border-[#00f9ff]/50 outline-none font-mono placeholder:text-white/40 text-white"
+                              />
                             </div>
                             <Slider
                               min={1}
