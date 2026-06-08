@@ -8,7 +8,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Zap, X, RefreshCw, TrendingUp, Feather } from 'lucide-react';
 import { Slider } from './ui/slider';
-import { motion, AnimatePresence } from 'motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useSigning } from '../contexts/SigningContext';
 import { useWallet } from '../contexts/WalletContext';
 import { signAndExecuteTransaction } from '../utils/wallet-core';
@@ -1366,11 +1366,11 @@ export function Predict() {
               <button onClick={() => { loadFastGames(); loadOnChainMarkets(); }} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {/* Fast games content - only for fast or both. Using pre-sorted for recent first. Clean && to avoid parser nesting issues. */}
+            {/* Fast games content - only for fast or both. Using pre-sorted for recent first. 
+                Loading is fully background now (no visible "Loading..." message to avoid UI instability).
+                New/updated games animate in with a smooth pop + slide for a polished feel. */}
             {(activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
-              isLoadingFastGames && displayFastGames.length === 0 ? (
-                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
-              ) : activeFastSorted.length === 0 ? (
+              activeFastSorted.length === 0 ? (
                 <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
                   <div>No active fast games right now.</div>
                   <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
@@ -1378,7 +1378,8 @@ export function Predict() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {activeFastSorted.slice(0, 6).map((game: any) => {
+                  <AnimatePresence>
+                    {activeFastSorted.slice(0, 6).map((game: any) => {
                   const remaining = Math.max(0, (game.endTime || 0) - now);
                   const mins = Math.floor(remaining / 60);
                   const secs = remaining % 60;
@@ -1405,8 +1406,13 @@ export function Predict() {
                   const betCloseStr = timeToBetClose > 0 ? `${betMins}m ${betSecs}s` : "CLOSED";
 
                   return (
-                    <div 
+                    <motion.div 
                       key={game.marketId} 
+                      initial={{ opacity: 0, y: 15, scale: 0.985 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                      layout
                       className={`group rounded-3xl border p-5 transition-all ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -1636,9 +1642,10 @@ export function Predict() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </motion.div>
                   );
                 } ) }
+                  </AnimatePresence>
               </div>
             ))}
 
