@@ -6,9 +6,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
-import { Zap, X, RefreshCw, TrendingUp } from 'lucide-react';
+import { Zap, X, RefreshCw, TrendingUp, Feather } from 'lucide-react';
 import { Slider } from './ui/slider';
-import { motion, AnimatePresence } from 'motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useSigning } from '../contexts/SigningContext';
 import { useWallet } from '../contexts/WalletContext';
 import { signAndExecuteTransaction } from '../utils/wallet-core';
@@ -101,7 +101,7 @@ export function Predict() {
     return shouldPlayVipSounds(tokens, network, acct);
   }, [hederaAccount?.tokens, hederaNetwork, hashPackSession?.accountId, hederaAccount?.accountId]);
 
-  const isVIP = canPlayPredictionSounds || (
+  const isVIP = canPlayPredictionSounds || !!hashPackSession?.accountId || (
     typeof window !== 'undefined' && (
       localStorage.getItem('vip_active') === 'true' ||
       localStorage.getItem('vip_theme') === 'true' ||
@@ -159,6 +159,10 @@ export function Predict() {
   const [fastGameStake, setFastGameStake] = useState(25);
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
+
+  // Controls the collapsible Game Rules section inside the Fast Game create modal.
+  // Provides quick rules + advanced factual breakdown with clean prediction/staking language.
+  const [showGameRules, setShowGameRules] = useState(false);
 
   // Modal-specific HBAR price for "CURRENT HBAR (official rate for this game)".
   // Resolver is authoritative (now always mainnet sources: SaucerSwap last-traded verified + mainnet-public mirror / public CG/CoinCap backups).
@@ -260,24 +264,25 @@ export function Predict() {
     return () => clearInterval(countdownInterval);
   }, [showFastGameModal]);
 
-  // Fetch real user HBAR balance (via resolver for prod consistency) when create modal opens or wallet changes.
-  // Used to drive "unlimited" slider max. SECURITY: UX only — backend always re-verifies before recording.
+  // Fetch real user HBAR balance (via resolver for prod consistency) when wallet connects/changes.
+  // Used to drive max for BOTH create modal AND per-card betting stakes (wallet - ~3 HBAR buffer for fees/gas).
+  // SECURITY: UX only — backend always re-verifies before recording.
   useEffect(() => {
-    if (!showFastGameModal || !hashPackSession?.accountId) {
+    if (!hashPackSession?.accountId) {
       setFastGameMaxBalance(null);
       return;
     }
     (async () => {
       try {
         const bal = await fetchUserHbarBalance(hashPackSession.accountId);
-        // Leave small buffer for fees (create ~2.5 + 1% + network)
+        // Leave small buffer for fees (create fixed 2.5 HBAR + network; the 2% facilitation is taken only at payout/claim time, not on the stake transfer)
         const safeMax = Math.max(1, Math.floor((bal - 3) * 100) / 100);
         setFastGameMaxBalance(safeMax > 0 ? safeMax : null);
       } catch {
         setFastGameMaxBalance(null);
       }
     })();
-  }, [showFastGameModal, hashPackSession?.accountId]);
+  }, [hashPackSession?.accountId]);
 
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' | 'info' }>>([]);
   const toastIdRef = React.useRef(0);
@@ -365,13 +370,13 @@ export function Predict() {
           return;
         }
 
-        // Use a very short display duration for the UI countdown (prevents scary long fake timers).
-        const displayDurMin = 3;
+        // For pending confirmation, use a longer display window (30min) so that long-duration games
+        // (especially 4h) do not appear to "expire" the placeholder while we wait for HCS/resolver confirmation.
+        // The real data (with strengthened endTime enforcement) will take over quickly and show the true
+        // full timer until the last second.
+        const displayDurMin = 30;
 
-        // Phase 1 stability + UX: never surface scary long-timer "data loading" ghosts.
-        // For true desynced recent IDs (errored creates or lag), use a short pending window
-        // and a clear pending label so it never looks like a real multi-hour game.
-        const pendingEnd = creationSec + (10 * 60); // short pending confirm window
+        const pendingEnd = creationSec + (displayDurMin * 60);
         map.set(id, {
           marketId: id,
           question: 'Confirming on HCS (pending resolver)…',
@@ -441,6 +446,11 @@ export function Predict() {
   }, [fastGames, optimisticGames, recentlyCreatedMarketIds]);
   // Per-game stake amounts (fixes global stake selector problem - Tier 1)
   const [gameStakes, setGameStakes] = useState<Record<string, number>>({});
+
+  // Per-wallet bet count for this browser session + optimistic (for live "X/3" or "X/5" safety net display).
+  // Backend (resolver) is the hard authority and will reject + log on HCS if violated.
+  // We increment on successful local bet record and on create (initial counts as 1).
+  const [myBetCounts, setMyBetCounts] = useState<Record<string, number>>({});
 
   const [marketCutoff, setMarketCutoff] = useState<number>(() => {
     const saved = localStorage.getItem('predictionMarketCutoff');
@@ -904,16 +914,45 @@ export function Predict() {
     if (!session?.accountId) { alert("Connect wallet"); return; }
     const stake = Math.max(1, gameStakes[game.marketId] || 10);
 
-    // Phase 2: Proper 1% platform fee handling (restored for real fee integrity)
-    const platformFee = Math.round(stake * 100) / 10000; // exactly 1%
-    const totalToSend = stake + platformFee;
+    // === CLIENT-SIDE SAFETY NET (user-friendly, before any signing or gas) ===
+    // Computes live from current pot (yes+no stakes) + time vs duration + our local bet count.
+    // Exact same rules as backend validator. Backend is still the single source of truth and will hard-reject.
+    const pot = (game.yesStake || 0) + (game.noStake || 0);
+    // Use same 4h+ timer strengthening as the card display for consistent safety limits.
+    const cTsForSafety = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+    const dMinForSafety = game.durationMinutes || 10;
+    let effEndForSafety = game.endTime || 0;
+    if (cTsForSafety && dMinForSafety > 0) {
+      const safe = Math.floor(cTsForSafety / 1000) + dMinForSafety * 60;
+      if (!effEndForSafety || effEndForSafety < safe - 30) effEndForSafety = safe;
+    }
+    const durSec = (game.durationMinutes || 10) * 60;
+    const rem = Math.max(0, effEndForSafety - now);
+    const pastHalf = rem <= durSec * 0.5;
+    const maxBetThis = pastHalf
+      ? Math.max(1, Math.floor(pot * 0.40 * 100) / 100)
+      : Math.max(1, Math.floor(pot * 1.25 * 100) / 100);
+    const myCountNow = myBetCounts[game.marketId] || 0;
+    const walletLimit = 3; // conservative; creator 5 is enforced server-side using on-chain first-bet detection
+    if (stake > maxBetThis + 0.01) {
+      showToast(`Bet exceeds safety limit: ${maxBetThis.toFixed(2)} HBAR max (${pastHalf ? '40% whale cap' : '1.25× pot'}).`, 'error');
+      return;
+    }
+    if (myCountNow >= walletLimit) {
+      showToast(`You have reached the per-wallet limit for this market.`, 'error');
+      return;
+    }
+
+    // Under current fee structure: user sends exactly the stake (no variable % on the prediction itself).
+    // 2% facilitation fee (only when opposing stake existed) is applied exclusively at payout/claim time by the resolver.
+    const totalToSend = stake;
 
     try {
       const paymentPrepare = await prepareBetPaymentTransfer({
         userAccountId: session.accountId,
         amountHbar: totalToSend,
         stakeAmount: stake,
-        feeAmount: platformFee,
+        feeAmount: 0,
         resolutionAccountId: ESCROW_ACCOUNT_ID,
         treasuryAccountId: TREASURY_ACCOUNT_ID,
       });
@@ -922,7 +961,7 @@ export function Predict() {
       const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
       const paymentTxId = paymentPrepare.transactionId;
 
-      await withSigning(`Predicting ${stake} HBAR (+1% fee) on ${side}...`, async () => {
+      await withSigning(`Predicting ${stake} HBAR on ${side} (2% facilitation settled only at payout)...`, async () => {
         await signAndExecuteTransaction(session.wcTopic, 'testnet', session.accountId, paymentBytes);
         return "bet-paid";
       });
@@ -940,7 +979,7 @@ export function Predict() {
               side,
               amount: stake,
               user: session.accountId,
-              platformFeeCollected: platformFee,
+              platformFeeCollected: 0, // 2% is now taken only at payout/claim per hard safety rules
               paymentTxId,
             }),
           });
@@ -966,6 +1005,12 @@ export function Predict() {
         showToast("Payment went through, but we couldn't record the prediction after several tries. Please contact support with the tx ID.", 'error');
       } else {
         showToast(`Prediction placed on ${side}`, 'success');
+
+        // Increment our local safety-net count immediately (backend will be authoritative on next error or refresh).
+        setMyBetCounts(prev => ({
+          ...prev,
+          [game.marketId]: (prev[game.marketId] || 0) + 1
+        }));
 
         // Strong immediate confirmation on the specific tile (Tier 1)
         const betTime = Date.now();
@@ -1090,6 +1135,9 @@ export function Predict() {
   const [priceDirection, setPriceDirection] = useState<'+' | '-' | '±'>('±');
   const [activeMarkets, setActiveMarkets] = useState<MockMarket[]>([]);
   const [userBets, setUserBets] = useState<any[]>([]);
+
+  // Toggle for consolidated active markets view: fast, prediction (long), or both
+  const [activeMarketFilter, setActiveMarketFilter] = useState<'fast' | 'prediction' | 'both'>('both');
 
   const fetchLivePrices = async () => {
     setIsLoadingPrices(true);
@@ -1245,6 +1293,23 @@ export function Predict() {
     return price.toFixed(3);
   };
 
+  const activePredSorted = React.useMemo(() => {
+    return activeMarkets
+      .filter((m: any) => !m.resolved)
+      .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
+  }, [activeMarkets]);
+
+  // Most-recently-made first for the consolidated "Active markets" view (user spec: "the one that is most recently made should be the one in first que").
+  // Base list is displayFastGames (already has optimistic + recentlyCreated prune + only active logic).
+  // marketId format is typically "fast-<creationTsMs>" so we parse that for recency sort.
+  const activeFastSorted = React.useMemo(() => {
+    return [...displayFastGames].sort((a: any, b: any) => {
+      const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10) || ((a.endTime || 0) * 1000) || 0;
+      const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10) || ((b.endTime || 0) * 1000) || 0;
+      return tb - ta; // desc: newest creation first
+    });
+  }, [displayFastGames]);
+
   return (
     <div className={`min-h-[calc(100vh-120px)] ${isDark ? 'bg-[#080a12] text-white' : 'bg-[#f8fafc] text-slate-900'} p-6`}>
       <div className="max-w-7xl mx-auto">
@@ -1261,8 +1326,8 @@ export function Predict() {
             <div className={`col-span-full text-center py-12 ${isDark ? 'text-white/50' : 'text-slate-400'}`}>Loading live prices...</div>
           ) : assets.length > 0 ? (
             assets.map((asset, index) => (
-              <div key={index} onClick={() => { setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
-                className={`group rounded-3xl p-5 border transition-all hover:-translate-y-0.5 cursor-pointer ${isDark ? 'bg-white/5 border-white/10 hover:border-[#00f9ff]/40' : 'bg-white border-slate-200 hover:border-[#00f9ff]/60 shadow-sm'}`}>
+              <div key={index}
+                className={`group rounded-3xl p-5 border transition-all hover:-translate-y-0.5 ${isDark ? 'bg-white/5 border-white/10 hover:border-[#00f9ff]/40' : 'bg-white border-slate-200 hover:border-[#00f9ff]/60 shadow-sm'}`}>
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <img src={asset.logo} alt={asset.symbol} className="w-10 h-10 rounded-full object-contain" />
@@ -1276,7 +1341,34 @@ export function Predict() {
                   </div>
                 </div>
                 <div className="text-4xl font-semibold tracking-[-1.5px] tabular-nums">${formatPrice(asset.price)}</div>
-                <div className="mt-5 pt-4 border-t border-white/10 text-center text-sm text-[#00f9ff] group-hover:underline">Create Market →</div>
+
+                {/* Two-button entry: Fast Game (short) + Prediction (long) — nice first experience, theme + VIP sensitive */}
+                <div className="mt-5 pt-3 border-t border-white/10 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowFastGameModal(true); }}
+                    className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1
+                      ${isVIP
+                        ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer shadow'
+                        : isDark
+                          ? 'bg-[#00f9ff] text-black hover:brightness-110'
+                          : 'bg-[#00f9ff] text-black hover:brightness-110'}`}
+                  >
+                    <Zap className="w-3 h-3" /> Fast Game
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
+                    className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1 border
+                      ${isVIP
+                        ? (isDark 
+                            ? 'border-white/30 text-white hover:bg-white/5 vip-shimmer' 
+                            : 'border-[#00f9ff]/40 text-[#00f9ff] hover:bg-[#00f9ff]/10 vip-shimmer')
+                        : isDark
+                          ? 'border-white/20 text-[#00f9ff] hover:bg-white/5'
+                          : 'border-slate-300 text-[#00f9ff] hover:bg-slate-50'}`}
+                  >
+                    <Feather className="w-3 h-3" /> Prediction
+                  </button>
+                </div>
               </div>
             ))
           ) : (
@@ -1284,12 +1376,11 @@ export function Predict() {
           )}
         </div>
 
-        {/* HBAR Fast Guess */}
+        {/* Active markets - consolidated view (fast + prediction/long) with toggle. Most recent first. Only active (unresolved). Same timers, backend, care as before. */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
             <div>
-              <h3 className="text-2xl font-semibold tracking-tight">HBAR Fast Guess</h3>
-              <p className={`text-sm ${isDark ? 'text-white/60' : 'text-slate-600'}`}>Up or Down from current price • 10m / 20m / 1h / 4h</p>
+              <h3 className="text-2xl font-semibold tracking-tight">Active markets</h3>
             </div>
             <button onClick={() => setShowFastGameModal(true)}
               className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-semibold hover:brightness-110">
@@ -1297,27 +1388,61 @@ export function Predict() {
             </button>
           </div>
 
-          {/* Active Fast Games */}
+          {/* Toggle for fast / prediction / both - user friendly, theme/VIP sensitive */}
+          <div className="flex gap-2 mb-4">
+            {(['fast', 'prediction', 'both'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setActiveMarketFilter(f)}
+                className={`px-4 py-1.5 rounded-2xl text-xs font-semibold transition-all ${activeMarketFilter === f
+                  ? (isVIP ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer' : 'bg-[#00f9ff] text-black')
+                  : isDark ? 'bg-white/10 text-white/80 hover:bg-white/20' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              >
+                {f === 'fast' ? 'Fast Games' : f === 'prediction' ? 'Prediction Markets' : 'Both'}
+              </button>
+            ))}
+          </div>
+
+          {/* Active list (filtered by toggle). Refresh loads both fast and long prediction wires. */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Active HBAR Fast Games (Live Timers)</div>
-              <button onClick={loadFastGames} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
+              <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Active Markets (Live Timers)</div>
+              <button onClick={() => { loadFastGames(); loadOnChainMarkets(); }} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {/* Phase 1 stability: Never blank the whole list on poll/refresh. Show previous data + subtle indicator.
-               Use stable keys + avoid full grid re-mount to stop disappear/reappear flashes. */}
-            {isLoadingFastGames && displayFastGames.length === 0 ? (
-              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
-            ) : displayFastGames.filter((g: any) => !g.resolved).length === 0 ? (
-              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
-                <div>No active fast games right now.</div>
-                <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
-                <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {displayFastGames.filter((g: any) => !g.resolved).slice(0, 6).map((game: any) => {
-                  const remaining = Math.max(0, (game.endTime || 0) - now);
+            {/* Fast games content - only for fast or both. Using pre-sorted for recent first. 
+                Loading is fully background now (no visible "Loading..." message to avoid UI instability).
+                New/updated games animate in with a smooth pop + slide for a polished feel. */}
+            {(activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
+              activeFastSorted.length === 0 ? (
+                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
+                  <div>No active fast games right now.</div>
+                  <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+                  <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <AnimatePresence>
+                    {activeFastSorted.slice(0, 6).map((game: any) => {
+                  // Strengthen 4h (and long-duration) timer enforcement in the UI.
+                  // The marketId timestamp + declared durationMinutes is the reliable source of truth
+                  // for when the game truly ends. Some data paths (resolver list during lag, direct HCS
+                  // for games created against other resolver instances, old cached state) can under-report
+                  // endTime. We compute a safeEnd from creation + duration and use it if the provided
+                  // endTime is missing or way too short. This ensures the countdown, "Closes at", OPEN/CLOSED
+                  // badge, betting window, and "displayed until the last second" all respect the full intended
+                  // duration (especially 240min / 4h games) until the backend actually resolves it.
+                  const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+                  const durMin = game.durationMinutes || 10;
+                  let effectiveEndTime = game.endTime || 0;
+                  if (creationTs && durMin > 0) {
+                    const safeEnd = Math.floor(creationTs / 1000) + durMin * 60;
+                    if (!effectiveEndTime || effectiveEndTime < safeEnd - 30) {
+                      effectiveEndTime = safeEnd;
+                    }
+                  }
+
+                  const remaining = Math.max(0, effectiveEndTime - now);
                   const mins = Math.floor(remaining / 60);
                   const secs = remaining % 60;
                   const timeStr = remaining > 0 ? `${mins}m ${secs}s` : "EXPIRED";
@@ -1330,9 +1455,26 @@ export function Predict() {
                     isBettingOpen = !!game.isBettingOpen;
                   }
 
+                  // Informative times for the new beautiful card header (creation ts from marketId, close from endTime)
+                  // Use the same creationTs we already computed for the safe endTime enforcement above.
+                  const createdTime = creationTs ? new Date(creationTs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+                  const closeTime = effectiveEndTime ? new Date(effectiveEndTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+
+                  // Countdown to betting close (50% of duration) for the bottom action area
+                  const durationSec = (game.durationMinutes || 10) * 60;
+                  const timeToBetClose = Math.max(0, remaining - (durationSec * 0.5));
+                  const betMins = Math.floor(timeToBetClose / 60);
+                  const betSecs = timeToBetClose % 60;
+                  const betCloseStr = timeToBetClose > 0 ? `${betMins}m ${betSecs}s` : "CLOSED";
+
                   return (
-                    <div 
+                    <motion.div 
                       key={game.marketId} 
+                      initial={{ opacity: 0, y: 15, scale: 0.985 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                      layout
                       className={`group rounded-3xl border p-5 transition-all ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -1356,54 +1498,60 @@ export function Predict() {
                       {/* Strong Tier 1 confirmation: Shows right on the tile when you just predicted */}
                       {justBetGames[game.marketId] && (
                         <div className="mb-3 px-3 py-1.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2">
-                          ✓ Prediction #{(userPositions[game.marketId]?.amount || 0) > 0 ? 'updated' : 'recorded'} — {justBetGames[game.marketId].amount} HBAR on {justBetGames[game.marketId].side}
+                          ✓ Prediction #{(userPositions[game.marketId]?.amount || 0) > 0 ? 'updated' : 'recorded'} — {justBetGames[game.marketId].amount} HBAR on {justBetGames[game.marketId].side === 'YES' ? 'UP' : 'DOWN'}
                         </div>
                       )}
 
-                      <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-4 pr-1">
-                        {game.question}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4">
-                        <div>
-                          <div className="text-[10px] text-white/50 tracking-widest">CREATION PRICE</div>
-                          <div className="font-mono text-[#00f9ff] tabular-nums">${game.creationPrice?.toFixed(6) || '—'}</div>
-                          {/* Live tiny delta (Phase 4 premium) — updates 3-5s via shared resolver price */}
+                      {/* Beautiful super-informative header per spec:
+                          "Will HBAR be UP or DOWN at [time of close]?"
+                          + open time + creation price + current % under it.
+                          Then volume + game details row below. */}
+                      <div className="mb-3">
+                        <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                          Will HBAR be <span className="text-emerald-400 font-semibold">UP</span> or <span className="text-rose-400 font-semibold">DOWN</span> at {closeTime}?
+                        </div>
+                        <div className={`mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] ${isDark ? 'text-white/65' : 'text-slate-600'}`}>
+                          <span>
+                            Opened <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${(game.creationPrice || 0).toFixed(6)}</span>
+                          </span>
                           {liveHbarPrice != null && game.creationPrice != null && (
-                            <div className="text-[9px] mt-0.5 font-mono">
+                            <span className="font-mono">
                               {(() => {
                                 const delta = liveHbarPrice - game.creationPrice;
                                 const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
                                 const sign = delta >= 0 ? '▲' : '▼';
                                 const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
-                                return <span className={color}>{sign} ${Math.abs(delta).toFixed(5)} ({pct.toFixed(1)}%)</span>;
+                                return <span className={color}>{sign} {pct.toFixed(1)}%</span>;
                               })()}
-                            </div>
+                            </span>
                           )}
-                        </div>
-                        <div className="text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <div className="text-[10px] text-white/50 tracking-widest">VOLUME</div>
-                            {recentlyCreatedMarketIds.has(game.marketId) && (
-                              <button
-                                onClick={() => reconcileMarketVolume(game.marketId)}
-                                className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white/60 hover:text-white/90 transition-colors"
-                                title="Reconcile live volume from HCS"
-                              >
-                                Reconcile
-                              </button>
-                            )}
-                          </div>
-                          <div className="font-semibold tabular-nums flex items-center gap-1.5">
-                            {(game.currentVolume || 0).toFixed(1)} HBAR
-                            {game._lastReconciled && Date.now() - game._lastReconciled < 30000 && (
-                              <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">LIVE</span>
-                            )}
-                          </div>
+                          <span>Closes <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{closeTime}</span></span>
                         </div>
                       </div>
 
-                      {/* YES / NO Volume Ratio (first small visual improvement) */}
+                      {/* Volume + game details row (clean, under the beautiful header) */}
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <div className={`text-[10px] uppercase tracking-[1px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>Volume</div>
+                          <div className={`flex items-center gap-2 font-semibold tabular-nums ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                            <span>{(game.currentVolume || 0).toFixed(1)} HBAR</span>
+                            {game._lastReconciled && Date.now() - game._lastReconciled < 30000 && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">LIVE</span>
+                            )}
+                          </div>
+                        </div>
+                        {recentlyCreatedMarketIds.has(game.marketId) && (
+                          <button
+                            onClick={() => reconcileMarketVolume(game.marketId)}
+                            className={`text-[10px] px-2 py-1 rounded-xl transition-colors ${isDark ? 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-600 hover:text-slate-900'}`}
+                            title="Reconcile live volume from HCS"
+                          >
+                            Reconcile
+                          </button>
+                        )}
+                      </div>
+
+                      {/* UP / DOWN Volume Ratio (first small visual improvement) */}
                       {(() => {
                         const yesStake = game.yesStake ?? 0;
                         const noStake = game.noStake ?? 0;
@@ -1411,16 +1559,16 @@ export function Predict() {
 
                         if (total <= 0) return null;
 
-                        const yesPercent = Math.round((yesStake / total) * 100);
+                        const yesPercent = Math.round(((yesStake) / total) * 100);
                         const noPercent = 100 - yesPercent;
 
                         return (
                           <div className="mb-4">
-                            <div className="flex justify-between text-[10px] text-white/50 tracking-widest mb-1.5">
-                              <div className="text-emerald-400">YES {yesPercent}%</div>
-                              <div className="text-rose-400">NO {noPercent}%</div>
+                            <div className={`flex justify-between text-[10px] tracking-widest mb-1.5 ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
+                              <div className="text-emerald-400">UP {yesPercent}%</div>
+                              <div className="text-rose-400">DOWN {noPercent}%</div>
                             </div>
-                            <div className="h-2.5 bg-white/10 rounded-full overflow-hidden flex">
+                            <div className={`h-2.5 rounded-full overflow-hidden flex ${isDark ? 'bg-white/10' : 'bg-slate-200'}`}>
                               <div 
                                 className="bg-emerald-500 transition-all duration-300" 
                                 style={{ width: `${yesPercent}%` }}
@@ -1435,7 +1583,7 @@ export function Predict() {
                               <div className="text-rose-400">{noStake.toFixed(1)}</div>
                             </div>
                             {/* User counts + sides (data from resolver volume enrichment) */}
-                            <div className="flex justify-between text-[9px] mt-0.5 text-white/60">
+                            <div className={`flex justify-between text-[9px] mt-0.5 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>
                               <div>{(game.yesParticipants || 0)} users</div>
                               <div>{(game.noParticipants || 0)} users</div>
                             </div>
@@ -1452,27 +1600,27 @@ export function Predict() {
                         if (stake <= 0) return null;
 
                         const yesImpact = (yesStake + stake) > 0 
-                          ? ((stake / (yesStake + stake)) * 100).toFixed(1) 
+                          ? (((stake) / (yesStake + stake)) * 100).toFixed(1) 
                           : '100';
                         const noImpact = (noStake + stake) > 0 
-                          ? ((stake / (noStake + stake)) * 100).toFixed(1) 
+                          ? (((stake) / (noStake + stake)) * 100).toFixed(1) 
                           : '100';
 
                         return (
-                          <div className="mb-3 px-2 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] text-white/70">
-                            Adding <span className="font-mono font-semibold text-white">{stake}</span> HBAR would give you 
-                            ~<span className="font-semibold text-emerald-400">{yesImpact}%</span> of the YES pool or 
-                            ~<span className="font-semibold text-rose-400">{noImpact}%</span> of the NO pool
+                          <div className={`mb-3 px-2 py-1.5 rounded-xl border text-[10px] ${isDark ? 'bg-white/5 border-white/10 text-white/70' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
+                            Adding <span className={`font-mono font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>{stake}</span> HBAR would give you 
+                            ~<span className="font-semibold text-emerald-400">{yesImpact}%</span> of the UP pool or 
+                            ~<span className="font-semibold text-rose-400">{noImpact}%</span> of the DOWN pool
                           </div>
                         );
                       })()}
 
                       {/* Tier 1 UX: Your Position on this game (very high value for smoke tests) */}
                       {userPositions[game.marketId] && (
-                        <div className="mb-4 px-3 py-2 rounded-2xl bg-white/5 border border-white/10 text-sm">
-                          <span className="text-white/50 text-xs tracking-widest">YOUR POSITION</span>
-                          <div className="font-semibold">
-                            {userPositions[game.marketId].amount} HBAR on <span className={userPositions[game.marketId].side === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>{userPositions[game.marketId].side}</span>
+                        <div className={`mb-4 px-3 py-2 rounded-2xl border text-sm ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
+                          <span className={`text-xs tracking-widest ${isDark ? 'text-white/50' : 'text-slate-500'}`}>YOUR POSITION</span>
+                          <div className={`font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                            {userPositions[game.marketId].amount} HBAR on <span className={userPositions[game.marketId].side === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>{userPositions[game.marketId].side === 'YES' ? 'UP' : 'DOWN'}</span>
                           </div>
                         </div>
                       )}
@@ -1488,7 +1636,7 @@ export function Predict() {
                         <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${remaining < 120 ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
                           {timeStr}
                         </div>
-                        <div className="text-right text-[10px] text-white/50">
+                        <div className={`text-right text-[10px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
                           {isBettingOpen ? (remaining < 120 ? 'Closing soon' : 'Predictions close at 50%') : 'Resolution pending'}
                         </div>
                       </div>
@@ -1497,67 +1645,161 @@ export function Predict() {
                       <div className="pt-4 border-t border-white/10 min-h-[68px]">
                         {isBettingOpen && remaining > 30 && hashPackSession?.accountId ? (
                           <>
-                            {/* Quick stake presets + mini slider */}
-                            <div className="flex justify-between items-center mb-2 text-xs">
-                              <div className="text-white/50">Stake</div>
-                              <div className="flex gap-1">
-                                {[10, 25, 50, 100].map((amt) => {
-                                  const currentStake = gameStakes[game.marketId] || 10;
-                                  return (
+                            {/* Stake input field (replaces quick picks) + slider (betting bar stays) */}
+                            {/* User can type any amount up to (wallet balance - ~3 HBAR for fees/gas) */}
+                            {/* HARD-CODED SAFETY NET (live, real-time): Max bet + per-wallet count + disable + warnings */}
+                            {(() => {
+                              const pot = (game.yesStake || 0) + (game.noStake || 0);
+                              const durSec = (game.durationMinutes || 10) * 60;
+                              const remForHalf = Math.max(0, (game.endTime || 0) - now);
+                              const isPastHalf = remForHalf <= durSec * 0.5;
+                              let maxAllowed = isPastHalf
+                                ? Math.max(1, Math.floor(pot * 0.40 * 100) / 100)
+                                : Math.max(1, Math.floor(pot * 1.25 * 100) / 100);
+                              // Also respect wallet balance buffer (UX only — resolver re-validates everything)
+                              const walletCap = fastGameMaxBalance != null ? fastGameMaxBalance : 9999;
+                              maxAllowed = Math.min(maxAllowed, walletCap);
+                              const currentStakeVal = gameStakes[game.marketId] || 10;
+                              const myCount = myBetCounts[game.marketId] || 0;
+                              // Display uses the higher creator cap (5). Backend safety validator strictly enforces 3 for normal players vs 5 for the on-chain creator.
+                              const limitForDisplay = 5;
+                              const overLimit = currentStakeVal > maxAllowed + 0.009;
+                              const betsExhausted = myCount >= limitForDisplay;
+
+                              return (
+                                <>
+                                  <div className="mb-2">
+                                    <div className={`text-xs mb-1 flex items-center justify-between ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
+                                      <span>Stake</span>
+                                      <span className="font-mono text-[10px]">
+                                        Max allowed: <span className="text-[#00f9ff]">{maxAllowed.toFixed(2)}</span> HBAR
+                                        <span className="opacity-60"> {isPastHalf ? '(40% cap)' : '(1.25× pot)'}</span>
+                                      </span>
+                                    </div>
+
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={walletCap}
+                                      step={1}
+                                      value={currentStakeVal}
+                                      onChange={(e) => {
+                                        const raw = parseFloat(e.target.value);
+                                        let v = isNaN(raw) ? 1 : raw;
+                                        v = Math.max(1, v);
+                                        const max = walletCap;
+                                        const clamped = Math.min(max, v);
+                                        const final = Math.round(clamped * 100) / 100;
+                                        setGameStakes(prev => ({ ...prev, [game.marketId]: final }));
+                                      }}
+                                      placeholder="enter amount"
+                                      className={`w-full px-3 py-1.5 text-sm rounded-xl focus:border-[#00f9ff]/50 outline-none font-mono ${isDark ? 'bg-white/5 border-white/10 text-white placeholder:text-white/40' : 'bg-slate-100 border-slate-300 text-slate-900 placeholder:text-slate-400'}`}
+                                    />
+
+                                    {/* Live safety status line (centered, prominent per prior UX direction) */}
+                                    <div className={`mt-1 text-center text-[11px] font-medium ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
+                                      You have placed <span className="font-mono">{myCount}</span>/{limitForDisplay} bets in this market
+                                      {betsExhausted && <span className="ml-1 text-rose-400">(limit reached)</span>}
+                                    </div>
+
+                                    {/* Clear, actionable warning when user exceeds a rule */}
+                                    {(overLimit || betsExhausted) && (
+                                      <div className="mt-1.5 px-2 py-1 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] text-center">
+                                        {overLimit && `Exceeds max: ${maxAllowed.toFixed(2)} HBAR. `}
+                                        {betsExhausted && 'Wallet bet limit reached for this game. '}
+                                        {isPastHalf ? 'Whale cap active after halfway.' : '1.25× pot limit until halfway.'}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <Slider
+                                    min={1}
+                                    max={walletCap > 10 ? walletCap : 500}
+                                    step={1}
+                                    value={[currentStakeVal]}
+                                    onValueChange={(vals) => {
+                                      const v = Math.max(1, vals[0] || 1);
+                                      const clamped = walletCap != null ? Math.min(walletCap, v) : v;
+                                      setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
+                                    }}
+                                    className="mb-2"
+                                  />
+
+                                  <div className={`text-center text-xs mb-1.5 ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
+                                    Bet closes in {betCloseStr}
+                                  </div>
+
+                                  <div className="flex gap-2">
                                     <button
-                                      key={amt}
-                                      onClick={() => setGameStakes(prev => ({ ...prev, [game.marketId]: amt }))}
-                                      className={`px-2 py-0.5 rounded text-xs transition-all border ${
-                                        currentStake === amt 
-                                          ? 'bg-white/20 border-white/30' 
-                                          : 'bg-white/5 border-white/10 hover:bg-white/10'
-                                      }`}
+                                      onClick={() => handleFastBet(game, 'YES')}
+                                      disabled={overLimit || betsExhausted}
+                                      className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                      {amt}
+                                      UP
                                     </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <Slider
-                              min={1}
-                              max={fastGameMaxBalance && fastGameMaxBalance > 10 ? fastGameMaxBalance : 500}
-                              step={1}
-                              value={[gameStakes[game.marketId] || 10]}
-                              onValueChange={(vals) => {
-                                const v = Math.max(1, vals[0] || 1);
-                                const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
-                                setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
-                              }}
-                              className="mb-2"
-                            />
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => handleFastBet(game, 'YES')} 
-                                className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
-                              >
-                                YES {(gameStakes[game.marketId] || 10)}
-                              </button>
-                              <button 
-                                onClick={() => handleFastBet(game, 'NO')} 
-                                className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
-                              >
-                                NO {(gameStakes[game.marketId] || 10)}
-                              </button>
-                            </div>
+                                    <button
+                                      onClick={() => handleFastBet(game, 'NO')}
+                                      disabled={overLimit || betsExhausted}
+                                      className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      DOWN
+                                    </button>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </>
                         ) : (
-                          <div className="text-center text-xs text-white/60 py-2">
+                          <div className={`text-center text-xs py-2 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>
                             {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
                           </div>
                         )}
                       </div>
-                    </div>
+                    </motion.div>
                   );
-                })}
+                } ) }
+                  </AnimatePresence>
+              </div>
+            ))}
+
+            {/* Prediction markets (consolidated toggle view) */}
+
+              {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && activePredSorted.length === 0 && activeMarketFilter === 'prediction' && (
+              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
+            )}
+            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && activePredSorted.length > 0 && (
+              <div className="mt-4">
+                {activeMarketFilter === 'both' && (
+                  <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activePredSorted.slice(0, 6).map((m: any) => {
+                      const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
+                      const mins = Math.floor(remaining / 60);
+                      const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
+                      return (
+                        <div
+                          key={m.marketId || m.id}
+                          onClick={() => openBetModal(m)}
+                          className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
+                            <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                              {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                            </div>
+                          </div>
+                          <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
+                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
+                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
+                        </div>
+                      );
+                    })}
+                </div>
               </div>
             )}
           </div>
+
         </div>
 
         {/* Tier 2 #2: Recent Outcomes strip — social proof for smoke tests */}
@@ -1580,49 +1822,7 @@ export function Predict() {
           </div>
         )}
 
-        {/* Fast Game Updates — the "Updates" / extra data feed the deployed version had.
-           * Built on the stable resolver-enriched data (creationPrice, volume, participants from HCS).
-           * Gives the richer market creation + activity view without losing any Phase 1 stability.
-           */}
-        <div className="mt-8 border-t border-white/10 pt-6">
-          <div className="flex items-center justify-between mb-2">
-            <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>
-              Fast Game Updates (Recent Creations &amp; Activity)
-            </div>
-            <button onClick={loadFastGames} className="text-xs px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Refresh</button>
-          </div>
-          {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).length === 0 ? (
-            <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-xs py-2`}>No recent fast game activity yet. Create one above — it will appear here instantly (optimistic) + via resolver.</div>
-          ) : (
-            <div className="divide-y divide-white/10 rounded-2xl border border-white/10 overflow-hidden">
-              {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).map((g: any, idx: number) => {
-                const ageMin = Math.max(0, Math.floor((Date.now() / 1000 - (parseInt((g.marketId || '').split('-')[1] || '0', 10) / 1000)) / 60));
-                return (
-                  <div key={idx} className={`px-3 py-2 text-xs flex items-center gap-3 ${isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}>
-                    <div className="font-mono text-[10px] text-white/50 w-40 truncate">{g.marketId}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate pr-2">{g.question}</div>
-                      <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-[10px] flex gap-2`}>
-                        <span>Created {ageMin}m ago</span>
-                        <span>·</span>
-                        <span className="font-mono text-[#00f9ff]">${(g.creationPrice || 0).toFixed(6)}</span>
-                        <span>·</span>
-                        <span>{(g.currentVolume || 0).toFixed(1)} HBAR</span>
-                        <span>·</span>
-                        <span>{(g.totalParticipants || 0)} users</span>
-                      </div>
-                    </div>
-                    <div className={`text-[10px] px-2 py-0.5 rounded-full ${g._optimistic || g._recentlyCreated ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                      {g._optimistic || g._recentlyCreated ? 'LIVE (optimistic)' : (g.isBettingOpen !== undefined ? (g.isBettingOpen ? 'OPEN' : 'CLOSED') : 'OPEN')}
-                    </div>
-                    <a href={`https://hashscan.io/testnet/topic/${MASTER_TOPIC_ID}`} target="_blank" className="text-[#00f9ff] text-[10px] hover:underline">HCS</a>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className={`${isDark ? 'text-white/40' : 'text-slate-500'} text-[10px] mt-1`}>Extra data view (creations, volume, participants, price at placement). All anchored to HCS 0.0.9017517.</div>
-        </div>
+        {/* Fast Game Updates section fully removed - now consolidated into the "Active markets" section above (active only, recent-first via toggle). */}
 
         {/* Portfolio Dropdown */}
         <div className="mt-10 border-t border-white/10 pt-8">
@@ -1903,29 +2103,33 @@ export function Predict() {
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold text-xl tracking-tight">Create HBAR Fast Guess</div>
-                  <div className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                    Up or Down • 10m / 20m / 1h / 4h
-                  </div>
+              <div className="relative text-center">
+                <button 
+                  onClick={() => setShowFastGameModal(false)} 
+                  className="absolute right-0 top-1 text-white/70 hover:text-white transition-colors"
+                >
+                  <X size={18} />
+                </button>
+                <div className="font-bold text-2xl tracking-tight">
+                  <span className="text-emerald-400">UP</span> or <span className="text-rose-400">DOWN</span>
                 </div>
-                <button onClick={() => setShowFastGameModal(false)}><X /></button>
-              </div>
-
-              {/* Current HBAR Price - compact. This is the official Hedera network rate the game will use for resolution (PRIMARY source). */}
-              <div className="mt-2 text-xs">
-                <div className="flex items-baseline gap-2">
-                  <span className={`${isDark ? 'text-white/50' : 'text-gray-500'}`}>CURRENT HBAR (official rate for this game)</span>
-                  <span className={`font-mono font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
-                  </span>
+                <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
+                  ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
                 </div>
-                {lastPriceUpdate && (
-                  <div className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                    {lastPriceUpdate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • updates in {priceSecondsUntilRefresh}s (resolver authoritative)
-                  </div>
-                )}
+                {(() => {
+                  const hbar = assets.find(a => a.symbol === 'HBAR');
+                  const ch = hbar?.change24h;
+                  if (typeof ch !== 'number') return null;
+                  const pos = ch >= 0;
+                  return (
+                    <div className="mt-2 text-center">
+                      <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {pos ? '+' : ''}{ch.toFixed(1)}%
+                      </div>
+                      <div className="text-[10px] text-white/50">24h (CoinGecko)</div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -1956,7 +2160,7 @@ export function Predict() {
                         <div className="text-xl font-bold tabular-nums tracking-tighter">
                           {label}
                         </div>
-                        <div className="text-[9px] opacity-70 leading-none">close ~{predictMins}{mins>=60?'h':'m'}</div>
+                        <div className="text-[9px] opacity-70 leading-none">close ~{predictMins}m</div>
                       </button>
                     );
                   })}
@@ -2001,22 +2205,81 @@ export function Predict() {
                 </div>
               </div>
 
-              {/* Stake with Presets — now premium unlimited slider + live Mirror max */}
+              {/* Game Rules — clean, collapsible "pop down" experience.
+                  Quick scannable rules + advanced factual breakdown sheet.
+                  Uses only precise, serious language ("prediction", "stake", "pool", "resolution").
+                  No hype, no betting jargon, no "ai slop". */}
+              <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-slate-50'}`}>
+                <button
+                  onClick={() => setShowGameRules(!showGameRules)}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium tracking-[0.5px] transition-colors ${isDark ? 'text-white/90 hover:bg-white/5' : 'text-slate-700 hover:bg-slate-100'}`}
+                >
+                  <span>Game Rules</span>
+                  <span className={`text-xs opacity-60 transition-transform ${showGameRules ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {showGameRules && (
+                  <div className="px-4 pb-4 space-y-4 text-xs border-t border-white/10 dark:border-white/10">
+                    {/* Quick Rules — short, clear, scannable */}
+                    <div>
+                      <div className={`font-semibold mb-1.5 text-[11px] tracking-wider ${isDark ? 'text-white/70' : 'text-slate-500'}`}>
+                        QUICK RULES
+                      </div>
+                      <ul className={`space-y-1 leading-snug ${isDark ? 'text-white/85' : 'text-slate-700'}`}>
+                        <li>• A prediction game runs for the duration you select.</li>
+                        <li>• New predictions can be placed until halfway through the game.</li>
+                        <li>• Your stake is added to the total pool on the side you select (UP or DOWN).</li>
+                        <li>• At resolution the matching side receives a proportional share of the opposing pool.</li>
+                        <li>• A 2% facilitation fee applies only to payouts when there was opposing stake in the game, taken at the time of claim.</li>
+                      </ul>
+                    </div>
+
+                    {/* Advanced Details — precise, serious, truth-only breakdown */}
+                    <div>
+                      <div className={`font-semibold mb-1.5 text-[11px] tracking-wider ${isDark ? 'text-white/70' : 'text-slate-500'}`}>
+                        ADVANCED DETAILS
+                      </div>
+                      <div className={`space-y-1.5 leading-snug text-[11px] ${isDark ? 'text-white/75' : 'text-slate-600'}`}>
+                        <div>
+                          <span className="font-medium">Stake limit per prediction:</span> Before the halfway point the maximum stake is 1.25× the current total staked in the game. After the halfway point the limit is 40% of the current total staked.
+                        </div>
+                        <div>
+                          <span className="font-medium">Account limits:</span> A standard account may place a maximum of 3 predictions in one game. The account that created the game may place up to 5 predictions (the initial stake counts as the first).
+                        </div>
+                        <div>
+                          <span className="font-medium">Minimum to create a game:</span> 25 HBAR. This requirement is enforced by the resolver.
+                        </div>
+                        <div>
+                          <span className="font-medium">Facilitation fee:</span> 2% of the final payout amount is sent to the treasury when a participant claims — but only when the game had real opposing stake (matched predictions). Pure unmatched returns (no one took the other side) return the full original stake with no fee. No variable fee is collected when staking or creating a game.
+                        </div>
+                        <div>
+                          <span className="font-medium">Enforcement &amp; records:</span> Limits and settlement are validated by the resolver before any record is written. Every prediction, resolution, and payout is permanently logged on Hedera Consensus Service topic 0.0.9017517. The resolver is the single source of truth.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Stake input + slider (cleaned: removed quick presets + helper text; min 25 hidden rule; placeholder for free entry; keep input + slider) */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  YOUR INITIAL STAKE (HBAR) {fastGameMaxBalance != null ? `• max ~${fastGameMaxBalance.toFixed(1)} (live)` : ''}
+                  YOUR INITIAL STAKE (HBAR)
                 </div>
 
                 <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
                   <input 
                     type="number" 
                     value={fastGameStake} 
-                    min={1}
+                    min={25}
                     max={fastGameMaxBalance || undefined}
+                    placeholder="enter amount"
                     onChange={(e) => {
                       const raw = parseFloat(e.target.value);
-                      if (!isNaN(raw)) {
-                        const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, Math.max(1, raw)) : Math.max(1, raw);
+                      if (isNaN(raw)) {
+                        setFastGameStake(25);
+                      } else {
+                        const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, Math.max(25, raw)) : Math.max(25, raw);
                         setFastGameStake(clamped);
                       }
                     }}
@@ -2025,56 +2288,33 @@ export function Predict() {
                   <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
                 </div>
 
-                {/* Custom Slider (unlimited up to real balance via Mirror) */}
+                {/* Custom Slider (min 25 hidden, up to real balance via Mirror) */}
                 <Slider
-                  min={1}
-                  max={fastGameMaxBalance && fastGameMaxBalance > 1 ? fastGameMaxBalance : 1000}
+                  min={25}
+                  max={fastGameMaxBalance && fastGameMaxBalance > 25 ? fastGameMaxBalance : 1000}
                   step={0.1}
                   value={[fastGameStake]}
                   onValueChange={(vals) => {
-                    const v = Math.max(1, vals[0] || 1);
+                    const v = Math.max(25, vals[0] || 25);
                     const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
                     setFastGameStake(clamped);
                   }}
                   className="mb-3"
                 />
-
-                {/* Smart presets (respect dynamic max) */}
-                <div className="flex gap-2 flex-wrap">
-                  {[1, 5, 10, 25, 50, 100].filter(a => !fastGameMaxBalance || a <= fastGameMaxBalance).concat(
-                    fastGameMaxBalance != null && fastGameMaxBalance > 100 ? [Math.floor(fastGameMaxBalance)] : []
-                  ).slice(0, 7).map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setFastGameStake(amt)}
-                      className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all border
-                        ${fastGameStake === amt
-                          ? (isVIP ? 'bg-emerald-500 text-black border-emerald-400' : 'bg-[#00f9ff] text-black border-[#00f9ff]')
-                          : isDark 
-                            ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80' 
-                            : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-700'
-                        }`}
-                    >
-                      {amt}
-                    </button>
-                  ))}
-                </div>
-                <div className={`text-[10px] mt-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                  Slider max = your real-time HBAR balance (fetched via resolver + Hedera Mirror for prod safety). Backend always re-verifies.
-                </div>
               </div>
 
               {/* Tier 2: Clear Fee Breakdown - premium, exact, and honest (matches site aesthetic) */}
+              {/* Fee structure: 2% facilitation (only on matched payouts) is taken ONLY at final payout/claim. No variable % on stake or creation. Fixed 2.50 HBAR is the creation + HCS audit trail cost. */}
               <div className={`p-4 rounded-2xl text-sm border ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
                 <div className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Total Cost Breakdown</div>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Your Initial Stake</span>
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Your Initial Stake (min 25 HBAR)</span>
                     <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{fastGameStake} HBAR</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Platform Fee (1%)</span>
-                    <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{(fastGameStake * 0.01).toFixed(2)} HBAR</span>
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>2% Facilitation Fee</span>
+                    <span className={`font-mono font-medium ${isDark ? 'text-white/70' : 'text-gray-600'}`}>0 now — taken only at payout/claim</span>
                   </div>
                   <div className="flex justify-between">
                     <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Creation Fee (Resolver + Permanent HCS Audit Trail)</span>
@@ -2082,11 +2322,8 @@ export function Predict() {
                   </div>
                   <div className={`flex justify-between pt-2 mt-1 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                     <span className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Total to Pay Now</span>
-                    <span className="font-mono font-semibold text-[#00f9ff]">{(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR</span>
+                    <span className="font-mono font-semibold text-[#00f9ff]">{(fastGameStake + 2.5).toFixed(2)} HBAR</span>
                   </div>
-                </div>
-                <div className={`text-[10px] mt-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                  1% goes to treasury. 2.5 HBAR funds the resolver and immutable record on 0.0.9017517.
                 </div>
               </div>
             </div>
@@ -2121,7 +2358,9 @@ export function Predict() {
                     const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
 
                     // 2. User signs the HBAR transfer (correct architecture)
-                    await withSigning(`Paying total (${(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR)...`, async () => {
+                    // Note: The variable 2% facilitation fee is applied ONLY at payout/claim time (and only when there was opposing stake).
+                    // No % of stake is taken on creation or individual predictions. The 2.5 HBAR is a separate fixed creation/audit fee.
+                    await withSigning(`Paying total (${(fastGameStake + 2.5).toFixed(2)} HBAR)...`, async () => {
                       await signAndExecuteTransaction(
                         session.wcTopic,
                         'testnet',
@@ -2226,6 +2465,9 @@ export function Predict() {
                         } catch {}
                         return next;
                       });
+
+                      // Creator's initial stake counts as bet #1 toward the 5-bet creator limit.
+                      setMyBetCounts(prev => ({ ...prev, [optimisticGame.marketId]: 1 }));
 
                       showToast('Fast Game created successfully! (recorded on HCS)', 'success');
                       setShowFastGameModal(false);

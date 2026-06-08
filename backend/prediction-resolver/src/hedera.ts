@@ -296,15 +296,17 @@ export async function postCreateMarket(params: {
   return submitHcsMessage(message);
 }
 
-// Single source of truth for platform fee on every bet
-export const PLATFORM_FEE_BPS = 100; // 1% — charged on every single PLACE_BET with zero exceptions
+// Single source of truth for platform facilitation fee (P4P fair market — taken ONLY at final payout/claim per safety rules v1).
+// 2% (200 bps) of winnings/profit portion or payout amount is facilitated to treasury at settlement.
+// Never charged upfront on bet creation or individual PLACE_BET transfers.
+export const PLATFORM_FEE_BPS = 200; // 2% — settled on payout/claim only. Recorded for audit.
 
 export async function postPlaceBet(params: {
   marketId: string;
   side: 'YES' | 'NO';
   amount: number;
   user: string;
-  platformFeeCollected?: number; // actual on-chain 1% tax that left the bettor's wallet
+  platformFeeCollected?: number; // legacy/optional field. Under current rules the 2% facilitation is NOT collected on the bet transfer — it is applied only at payout/claim time.
 }) {
   // === Step 1: World-Class Audit Memo + Sequencing (Hashgraph Architect Standard) ===
   // Every PLACE_BET (technical type) must produce a human-readable memo using "predict" language
@@ -336,8 +338,8 @@ export async function postPlaceBet(params: {
 
   const sideText = params.side === 'YES' ? 'YES (up)' : 'NO (down)';
   const feeText = (typeof params.platformFeeCollected === 'number' && params.platformFeeCollected > 0)
-    ? `${params.platformFeeCollected} HBAR 1% platform fee collected.`
-    : '1% platform fee declared.';
+    ? `${params.platformFeeCollected} HBAR 2% facilitation fee (settled at payout).`
+    : '2% facilitation fee declared (applied only on final payout/claim — no upfront on bet).';
 
   const isInitial = betSequence === 1;
   const sequenceLabel = isInitial
@@ -374,7 +376,7 @@ export async function postPlaceBet(params: {
   console.log(
     `[Resolver] PREDICTION recorded (Hashgraph-grade): market=${params.marketId} | ` +
     `predictionSequence=#${betSequence} | side=${params.side} | amount=${params.amount} HBAR | ` +
-    `fee=${params.platformFeeCollected ?? 0} HBAR → Treasury`
+    `feeBps=200 (2% facilitation settled at payout only) | collectedThisBet=${params.platformFeeCollected ?? 0}`
   );
 
   return submitHcsMessage(message);

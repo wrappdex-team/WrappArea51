@@ -167,13 +167,27 @@ export async function fetchFastGames(): Promise<FastGame[]> {
       const data = await resolverRes.json();
       if (data.success && Array.isArray(data.games) && data.games.length > 0) {
         // Map the resolver's active list shape to the FE FastGame shape if needed (it is already close).
-        return data.games.map((g: any) => ({
+        const normalized = data.games.map((g: any) => ({
           ...g,
           yesStake: g.yesStake || g.yes_stake || 0,
           noStake: g.noStake || g.no_stake || 0,
           yesParticipants: g.yesParticipants || g.yes_participants || 0,
           noParticipants: g.noParticipants || g.no_participants || 0,
         }));
+
+        // Strengthen long-duration (4h+) timer using the same reliable creationTs + durationMinutes rule
+        // even for the preferred resolver path (in case the in-memory active list had a stale/short endTime).
+        return normalized.map((g: any) => {
+          const cTs = parseInt((g.marketId || '').split('-')[1] || '0', 10);
+          const dMin = g.durationMinutes || 10;
+          if (cTs && dMin > 0) {
+            const safe = Math.floor(cTs / 1000) + dMin * 60;
+            if (!g.endTime || g.endTime < safe - 30) {
+              g.endTime = safe;
+            }
+          }
+          return g;
+        });
       }
     }
   } catch (e) {
@@ -214,9 +228,21 @@ export async function fetchFastGames(): Promise<FastGame[]> {
         // Prefer explicit endTime from the HCS message. For very old legacy records that
         // lacked it, compute from the *original creation time* + duration (not "now").
         // This stops old dead 0h test games from appearing fresh on every poll.
-        const computedEnd = parsed.endTime
+        let computedEnd = parsed.endTime
           ? parsed.endTime
           : Math.floor(creationTs / 1000) + durMin * 60;
+
+        // Strengthen 4h (and other long duration) timer enforcement:
+        // Always ensure endTime is at least creation + full declared duration.
+        // This protects against any data path that under-reported endTime for long games
+        // (resolver list lag, partial HCS messages, old disk state, etc.).
+        // The marketId timestamp + durationMinutes from the CREATE is the reliable source of truth.
+        if (durMin > 0) {
+          const safeEnd = Math.floor(creationTs / 1000) + durMin * 60;
+          if (!computedEnd || computedEnd < safeEnd) {
+            computedEnd = safeEnd;
+          }
+        }
 
         fastGames[mid] = {
           marketId: mid,

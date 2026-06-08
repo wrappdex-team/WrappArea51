@@ -327,8 +327,38 @@ app.post('/api/prediction/bet', async (req, res) => {
       }
     } catch {}
 
+    // ============================================================
+    // HARD SAFETY RULES ENFORCEMENT (single source of truth)
+    // Must run BEFORE any balance check or HCS write.
+    // ============================================================
+    try {
+      const { validateBetLimits } = await import('./resolver');
+      const safety = await validateBetLimits(marketId, user, Number(amount), side as 'YES' | 'NO');
+
+      if (!safety.ok) {
+        console.warn(`[Resolver] HARD SAFETY REJECT for ${marketId} user=${user}: ${safety.error}`);
+        return res.status(400).json({
+          error: safety.error || 'Bet rejected by hard-coded safety rules',
+          safety: {
+            currentPot: safety.currentPot,
+            maxAllowed: safety.maxAllowed,
+            isPastHalfway: safety.isPastHalfway,
+            myBetCount: safety.myBetCount,
+            isCreator: safety.isCreator,
+            rule: safety.rule,
+          },
+        });
+      }
+    } catch (safetyErr: any) {
+      console.error('[Resolver] Safety validator threw (conservative reject):', safetyErr);
+      return res.status(500).json({ error: 'Safety check failed — please retry shortly' });
+    }
+
+    // Under new P4P safety rules (fee taken only at final payout/claim):
+    // We accept amount = pure stake. platformFeeCollected is kept for backward/audit but % fee is 0 here.
+    // 2% is applied inside computePayout / processAutomaticPayouts (net to user, cut to treasury).
     const fee = typeof platformFeeCollected === 'number' ? platformFeeCollected : 0;
-    const totalNeeded = amount + fee;
+    const totalNeeded = amount + fee; // fee here is legacy/0 under new rules (2% applied at payout only)
 
     // Phase 2 Security: Pre-balance check via Mirror Node
     const { getMirrorAccountBalance } = await import('./resolver');
@@ -343,7 +373,7 @@ app.post('/api/prediction/bet', async (req, res) => {
       });
     }
 
-    // Record the bet (we always try to record if balance check passes)
+    // Record the bet (pure stake under safety rules — 2% facilitation is settled only on payout/claim)
     await postPlaceBet({
       marketId,
       side,
@@ -352,7 +382,7 @@ app.post('/api/prediction/bet', async (req, res) => {
       platformFeeCollected: fee > 0 ? fee : undefined
     });
 
-    console.log(`[Resolver] Phase 2: Bet recorded on HCS for ${marketId} | stake=${amount} | fee=${fee} | user=${user}`);
+    console.log(`[Resolver] Phase 2: Bet recorded on HCS for ${marketId} | stake=${amount} | legacyFeeField=${fee} (2% facilitation applied downstream at payout) | user=${user}`);
 
     // Fee verification (non-blocking)
     if (paymentTxId) {
