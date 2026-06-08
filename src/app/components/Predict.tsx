@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
-import { Zap, X, RefreshCw, TrendingUp } from 'lucide-react';
+import { Zap, X, RefreshCw, TrendingUp, Feather } from 'lucide-react';
 import { Slider } from './ui/slider';
 import { motion, AnimatePresence } from 'motion';
 import { useSigning } from '../contexts/SigningContext';
@@ -101,7 +101,7 @@ export function Predict() {
     return shouldPlayVipSounds(tokens, network, acct);
   }, [hederaAccount?.tokens, hederaNetwork, hashPackSession?.accountId, hederaAccount?.accountId]);
 
-  const isVIP = canPlayPredictionSounds || (
+  const isVIP = canPlayPredictionSounds || !!hashPackSession?.accountId || (
     typeof window !== 'undefined' && (
       localStorage.getItem('vip_active') === 'true' ||
       localStorage.getItem('vip_theme') === 'true' ||
@@ -1288,18 +1288,20 @@ export function Predict() {
                           ? 'bg-[#00f9ff] text-black hover:brightness-110'
                           : 'bg-[#00f9ff] text-black hover:brightness-110'}`}
                   >
-                    ⚡ Fast Game
+                    <Zap className="w-3 h-3" /> Fast Game
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
                     className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1 border
                       ${isVIP
-                        ? 'border-white/30 text-white hover:bg-white/5 vip-shimmer'
+                        ? (isDark 
+                            ? 'border-white/30 text-white hover:bg-white/5 vip-shimmer' 
+                            : 'border-[#00f9ff]/40 text-[#00f9ff] hover:bg-[#00f9ff]/10 vip-shimmer')
                         : isDark
                           ? 'border-white/20 text-[#00f9ff] hover:bg-white/5'
                           : 'border-slate-300 text-[#00f9ff] hover:bg-slate-50'}`}
                   >
-                    📈 Prediction
+                    <Feather className="w-3 h-3" /> Prediction
                   </button>
                 </div>
               </div>
