@@ -1957,7 +1957,7 @@ export function Predict() {
                         <div className="text-xl font-bold tabular-nums tracking-tighter">
                           {label}
                         </div>
-                        <div className="text-[9px] opacity-70 leading-none">close ~{predictMins}{mins>=60?'h':'m'}</div>
+                        <div className="text-[9px] opacity-70 leading-none">close ~{predictMins}m</div>
                       </button>
                     );
                   })}
