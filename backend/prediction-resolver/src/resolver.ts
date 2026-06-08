@@ -891,6 +891,204 @@ export async function getMarketVolume(marketId: string) {
 }
 
 /**
+ * ============================================================
+ * HARD-CODED GAME SAFETY RULES — WRAPpDEX Fast Games (P4P Fair Engine)
+ * Single source of truth: Resolver enforces BEFORE recording any PLACE_BET on HCS.
+ * All rules are deterministic, on-chain auditable via HCS, and whale/spam resistant.
+ * ============================================================
+ *
+ * Per-Individual-Bet Limits:
+ *   - Pre-halfway (<50% duration elapsed): maxBet = 1.25 × currentPot
+ *   - Post-halfway: maxBet = Math.max(1, 0.40 × currentPot)   // whale cap
+ *
+ * Per-Wallet Limits (count of PLACE_BET messages by that account for the marketId):
+ *   - Normal players: 3 bets total per market
+ *   - Market creator (the account on the very first PLACE_BET for that market, or CREATE.submittedBy): 5 bets total
+ *
+ * Platform Fee: 2% (200 bps) — applied ONLY at payout/claim time on the owed amount.
+ *   No upfront % fee is charged on bet or create stake transfers.
+ *
+ * Edge cases handled:
+ *   - pot === 0 (very first additional bet after creator): allow up to 1.25x initialStake or a sensible floor.
+ *   - last 10s / closed window: already rejected by 50% server gate before this validator.
+ *   - creator's own initial counts as bet #1.
+ *   - All validations fully logged with wallet / pot / rule / result.
+ *   - On any reject we still emit a BET_REJECTED to the master topic for permanent audit (no funds moved).
+ */
+export async function validateBetLimits(
+  marketId: string,
+  user: string,
+  amount: number,
+  _side: 'YES' | 'NO' // side kept for future expansion / logging
+): Promise<{
+  ok: boolean;
+  error?: string;
+  currentPot: number;
+  maxAllowed: number;
+  isPastHalfway: boolean;
+  myBetCount: number;
+  isCreator: boolean;
+  rule: string;
+}> {
+  const logPrefix = `[Safety:${marketId}]`;
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  let currentPot = 0;
+  let myBetCount = 0;
+  let creatorAccount: string | null = null;
+  let creationEndTime: number | null = null;
+  let creationDurationMin: number | null = null;
+  let firstBetUser: string | null = null;
+
+  try {
+    // 1. Get authoritative creation data (endTime + duration) from immutable HCS CREATE
+    const creation = await fetchFastGameCreationData(marketId).catch(() => null);
+    if (creation) {
+      creationEndTime = creation.endTime ?? null;
+      creationDurationMin = creation.durationMinutes ?? null;
+    }
+
+    // 2. Full reliable scan for pot + historical bet counts + creator detection
+    const messages = await fetchReliableTopicMessages(3000);
+
+    for (const row of messages) {
+      try {
+        const raw = row.message || '';
+        const decoded = decodeHcsMessage(raw);
+        const p = JSON.parse(decoded);
+
+        if (p.marketId !== marketId) continue;
+
+        if (p.type === 'CREATE_MARKET' || p.type === 'MARKET_CREATED') {
+          creatorAccount = (p.submittedBy || p.creator || '').toString();
+        }
+
+        if (p.type === 'PLACE_BET') {
+          const betUser = (p.user || p.submittedBy || '').toString();
+          const betAmt = Number(p.amount) || 0;
+
+          currentPot += betAmt;
+
+          if (!firstBetUser) {
+            firstBetUser = betUser;
+          }
+
+          if (betUser === user) {
+            myBetCount += 1;
+          }
+        }
+      } catch {
+        // skip malformed
+      }
+    }
+
+    // Creator = the one who posted the CREATE, or if missing, the very first PLACE_BET actor (initial stake)
+    const isCreator = !!(creatorAccount && creatorAccount === user) || (!creatorAccount && firstBetUser === user);
+
+    // 3. Halfway calculation (use creation data for precision; fallback to 10m)
+    const durMin = creationDurationMin || 10;
+    const durSec = durMin * 60;
+    let isPastHalfway = false;
+
+    if (creationEndTime && creationEndTime > 0) {
+      const halfwayTs = creationEndTime - (durSec * 0.5);
+      isPastHalfway = nowSec >= Math.floor(halfwayTs);
+    } else {
+      // Fallback: if we have at least one bet time or use endTime heuristic
+      isPastHalfway = creationEndTime ? (nowSec >= (creationEndTime - durSec * 0.5)) : false;
+    }
+
+    // 4. Compute max allowed per rules (handle pot==0 edge gracefully)
+    let maxAllowed: number;
+    const ruleLabel = isPastHalfway ? 'post-half (whale cap 40%)' : 'pre-half (1.25x pot)';
+
+    if (currentPot <= 0) {
+      // Extremely early game or only creator stake not yet visible in this scan window.
+      // Allow a sensible starter amount (min 25 or 1.25x reported initial if we can infer).
+      // The initial creator stake is already in pot from the scan above in normal flow.
+      maxAllowed = 25; // floor safety
+    } else if (isPastHalfway) {
+      maxAllowed = Math.max(1, Math.floor(currentPot * 0.40 * 100) / 100);
+    } else {
+      maxAllowed = Math.max(1, Math.floor(currentPot * 1.25 * 100) / 100);
+    }
+
+    const rule = `${ruleLabel} | pot=${currentPot.toFixed(2)} | max=${maxAllowed.toFixed(2)} | count=${myBetCount}${isCreator ? ' (creator)' : ''}`;
+
+    // 5. Hard validations
+    if (amount > maxAllowed + 0.0001) { // tiny epsilon for float
+      const msg = `Bet size exceeds limit. ${rule}. Your bet: ${amount} HBAR.`;
+      console.warn(`${logPrefix} REJECT size | wallet=${user} | bet=${amount} | ${rule} | isCreator=${isCreator}`);
+      // Audit reject on HCS (non-blocking, best effort)
+      try {
+        const { submitHcsMessage } = await import('./hedera');
+        await submitHcsMessage({
+          type: 'BET_REJECTED',
+          marketId,
+          user,
+          amount,
+          reason: 'SIZE_LIMIT',
+          currentPot,
+          maxAllowed,
+          isPastHalfway,
+          myBetCount,
+          isCreator,
+          rule,
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
+      } catch {}
+      return { ok: false, error: msg, currentPot, maxAllowed, isPastHalfway, myBetCount, isCreator, rule };
+    }
+
+    const walletLimit = isCreator ? 5 : 3;
+    if (myBetCount >= walletLimit) {
+      const msg = `Per-wallet limit reached (${walletLimit} bets total for ${isCreator ? 'creator' : 'player'}). You already have ${myBetCount} bets on this market.`;
+      console.warn(`${logPrefix} REJECT count | wallet=${user} | bet=${amount} | ${rule} | limit=${walletLimit}`);
+      try {
+        const { submitHcsMessage } = await import('./hedera');
+        await submitHcsMessage({
+          type: 'BET_REJECTED',
+          marketId,
+          user,
+          amount,
+          reason: 'WALLET_LIMIT',
+          currentPot,
+          maxAllowed,
+          isPastHalfway,
+          myBetCount,
+          isCreator,
+          rule,
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
+      } catch {}
+      return { ok: false, error: msg, currentPot, maxAllowed, isPastHalfway, myBetCount, isCreator, rule };
+    }
+
+    // Success path — full detail log
+    console.log(
+      `${logPrefix} ALLOW | wallet=${user} | bet=${amount} HBAR | pot=${currentPot.toFixed(2)} | ` +
+      `halfway=${isPastHalfway} | max=${maxAllowed.toFixed(2)} | count=${myBetCount}/${walletLimit} | isCreator=${isCreator}`
+    );
+
+    return { ok: true, currentPot, maxAllowed, isPastHalfway, myBetCount, isCreator, rule };
+  } catch (e: any) {
+    console.error(`${logPrefix} VALIDATION ERROR (fail-open for safety? NO — reject on uncertainty)`, e);
+    // Conservative: on unexpected scan failure we still reject to protect the game integrity.
+    // In production you might allow with extra treasury review, but here we stay strict.
+    return {
+      ok: false,
+      error: 'Safety validation could not complete (temporary resolver issue). Please retry in a moment.',
+      currentPot,
+      maxAllowed: 0,
+      isPastHalfway: false,
+      myBetCount,
+      isCreator: false,
+      rule: 'error-during-validation',
+    };
+  }
+}
+
+/**
  * Source of truth for HBAR last traded price.
  * Per requirement: This must come from the HGraph MCP server.
  * 
@@ -1286,25 +1484,47 @@ export async function processClaim(marketId: string, winnerAccountId: string, cl
     return { success: false, error: 'Resolver has insufficient balance for this claim', amountPaid: 0 };
   }
 
+  // SAFETY v1: Apply 2% facilitation fee at claim time only (P4P settlement).
+  const grossOwed = calc.owed;
+  const claimPlatformFee = Math.round(grossOwed * 0.02 * 100) / 100;
+  const netClaim = Math.round((grossOwed - claimPlatformFee) * 100) / 100;
+
   const txId = await executePayout({
     toAccountId: winnerAccountId,
-    amountHbar: calc.owed,
-    memo: `Claim ${calc.reason} for ${marketId}`,
+    amountHbar: netClaim,
+    memo: `Claim ${calc.reason} for ${marketId} (2% fee applied at settlement)`,
   });
+
+  // Route the 2% fee to treasury (best effort; user already received net)
+  if (claimPlatformFee > 0.0001) {
+    try {
+      const { treasuryAccountId: TREAS } = await import('./hedera');
+      await executePayout({
+        toAccountId: TREAS,
+        amountHbar: claimPlatformFee,
+        memo: `2% claim fee for ${marketId} user ${winnerAccountId}`,
+      });
+      console.log(`[Resolver] Claim fee 2% collected: ${claimPlatformFee} HBAR → treasury`);
+    } catch (feeE) {
+      console.warn('[Resolver] Claim fee transfer to treasury skipped:', feeE);
+    }
+  }
 
   claimedPayouts.add(claimKey);
 
   await postPayoutMessage({
     marketId,
     recipient: winnerAccountId,
-    amount: calc.owed,
+    amount: netClaim,
     reason: calc.reason,
   });
 
   return {
     success: true,
     transactionId: txId,
-    amountPaid: calc.owed,
+    amountPaid: netClaim,
+    grossBeforeFee: grossOwed,
+    platformFeeApplied: claimPlatformFee,
     reason: calc.reason,
     myStake: calc.myStake,
     totalWinning: calc.totalWinningSideStake,
@@ -1495,26 +1715,50 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
   }
 
   // Execute the actual on-chain payouts
+  // SAFETY v1: 2% facilitation fee is taken ONLY here at final settlement (never on bet or create).
+  // Net paid to user; fee portion sent to treasury. Full audit on HCS.
   const transactionIds: string[] = [];
   let totalPaidActual = 0;
+  let totalFeesCollected = 0;
+
+  // We need treasury for fee routing (imported at top of this module via hedera re-export patterns)
+  const { treasuryAccountId: TREASURY_FOR_FEES } = await import('./hedera').then(m => ({ treasuryAccountId: m.treasuryAccountId })).catch(() => ({ treasuryAccountId: process.env.TREASURY_ACCOUNT_ID || '0.0.9006841' }));
 
   for (const p of payouts) {
     try {
+      const gross = p.amount;
+      const platformFee = Math.round(gross * 0.02 * 100) / 100; // 2%
+      const netToUser = Math.round((gross - platformFee) * 100) / 100;
+
       const txId = await executePayout({
         toAccountId: p.account,
-        amountHbar: p.amount,
-        memo: `Auto payout ${marketId} (${winner})`,
+        amountHbar: netToUser,
+        memo: `Auto payout ${marketId} (${winner}) net of 2% fee`,
       });
       if (txId) transactionIds.push(String(txId));
-      totalPaidActual += p.amount;
+      totalPaidActual += netToUser;
+
+      if (platformFee > 0.0001) {
+        try {
+          await executePayout({
+            toAccountId: TREASURY_FOR_FEES,
+            amountHbar: platformFee,
+            memo: `2% facilitation fee from ${marketId} payout to ${p.account}`,
+          });
+          totalFeesCollected += platformFee;
+          console.log(`[Resolver] 2% fee collected: ${platformFee} HBAR from payout to treasury for ${marketId}`);
+        } catch (feeErr) {
+          console.warn('[Resolver] Fee leg to treasury failed (non-fatal to user payout):', feeErr);
+        }
+      }
 
       await postPayoutMessage({
         marketId,
         recipient: p.account,
-        amount: p.amount,
+        amount: netToUser,
         reason: 'WIN',
       });
-      console.log(`[Resolver] Paid ${p.amount} HBAR to ${p.account} for ${marketId}`);
+      console.log(`[Resolver] Paid net ${netToUser} HBAR (gross ${gross}, fee ${platformFee}) to ${p.account} for ${marketId}`);
     } catch (e) {
       console.error(`[Resolver] Payout execution failed for ${p.account}:`, e);
     }

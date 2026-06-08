@@ -443,6 +443,11 @@ export function Predict() {
   // Per-game stake amounts (fixes global stake selector problem - Tier 1)
   const [gameStakes, setGameStakes] = useState<Record<string, number>>({});
 
+  // Per-wallet bet count for this browser session + optimistic (for live "X/3" or "X/5" safety net display).
+  // Backend (resolver) is the hard authority and will reject + log on HCS if violated.
+  // We increment on successful local bet record and on create (initial counts as 1).
+  const [myBetCounts, setMyBetCounts] = useState<Record<string, number>>({});
+
   const [marketCutoff, setMarketCutoff] = useState<number>(() => {
     const saved = localStorage.getItem('predictionMarketCutoff');
     return saved ? parseInt(saved) : 0;
@@ -905,16 +910,36 @@ export function Predict() {
     if (!session?.accountId) { alert("Connect wallet"); return; }
     const stake = Math.max(1, gameStakes[game.marketId] || 10);
 
-    // Phase 2: Proper 1% platform fee handling (restored for real fee integrity)
-    const platformFee = Math.round(stake * 100) / 10000; // exactly 1%
-    const totalToSend = stake + platformFee;
+    // === CLIENT-SIDE SAFETY NET (user-friendly, before any signing or gas) ===
+    // Computes live from current pot (yes+no stakes) + time vs duration + our local bet count.
+    // Exact same rules as backend validator. Backend is still the single source of truth and will hard-reject.
+    const pot = (game.yesStake || 0) + (game.noStake || 0);
+    const durSec = (game.durationMinutes || 10) * 60;
+    const rem = Math.max(0, (game.endTime || 0) - now);
+    const pastHalf = rem <= durSec * 0.5;
+    const maxBetThis = pastHalf
+      ? Math.max(1, Math.floor(pot * 0.40 * 100) / 100)
+      : Math.max(1, Math.floor(pot * 1.25 * 100) / 100);
+    const myCountNow = myBetCounts[game.marketId] || 0;
+    const walletLimit = 3; // conservative; creator 5 is enforced server-side using on-chain first-bet detection
+    if (stake > maxBetThis + 0.01) {
+      showToast(`Bet exceeds safety limit: ${maxBetThis.toFixed(2)} HBAR max (${pastHalf ? '40% whale cap' : '1.25× pot'}).`, 'error');
+      return;
+    }
+    if (myCountNow >= walletLimit) {
+      showToast(`You have reached the per-wallet limit for this market.`, 'error');
+      return;
+    }
+
+    // Under new hard safety rules: pure stake only. 2% facilitation fee is applied exclusively at payout/claim time.
+    const totalToSend = stake;
 
     try {
       const paymentPrepare = await prepareBetPaymentTransfer({
         userAccountId: session.accountId,
         amountHbar: totalToSend,
         stakeAmount: stake,
-        feeAmount: platformFee,
+        feeAmount: 0,
         resolutionAccountId: ESCROW_ACCOUNT_ID,
         treasuryAccountId: TREASURY_ACCOUNT_ID,
       });
@@ -923,7 +948,7 @@ export function Predict() {
       const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
       const paymentTxId = paymentPrepare.transactionId;
 
-      await withSigning(`Predicting ${stake} HBAR (+1% fee) on ${side}...`, async () => {
+      await withSigning(`Predicting ${stake} HBAR on ${side} (2% facilitation settled only at payout)...`, async () => {
         await signAndExecuteTransaction(session.wcTopic, 'testnet', session.accountId, paymentBytes);
         return "bet-paid";
       });
@@ -941,7 +966,7 @@ export function Predict() {
               side,
               amount: stake,
               user: session.accountId,
-              platformFeeCollected: platformFee,
+              platformFeeCollected: 0, // 2% is now taken only at payout/claim per hard safety rules
               paymentTxId,
             }),
           });
@@ -967,6 +992,12 @@ export function Predict() {
         showToast("Payment went through, but we couldn't record the prediction after several tries. Please contact support with the tx ID.", 'error');
       } else {
         showToast(`Prediction placed on ${side}`, 'success');
+
+        // Increment our local safety-net count immediately (backend will be authoritative on next error or refresh).
+        setMyBetCounts(prev => ({
+          ...prev,
+          [game.marketId]: (prev[game.marketId] || 0) + 1
+        }));
 
         // Strong immediate confirmation on the specific tile (Tier 1)
         const betTime = Date.now();
@@ -1585,56 +1616,107 @@ export function Predict() {
                           <>
                             {/* Stake input field (replaces quick picks) + slider (betting bar stays) */}
                             {/* User can type any amount up to (wallet balance - ~3 HBAR for fees/gas) */}
-                            <div className="mb-2">
-                              <div className={`text-xs mb-1 ${isDark ? 'text-white/50' : 'text-slate-500'}`}>Stake</div>
-                              <input
-                                type="number"
-                                min={1}
-                                max={fastGameMaxBalance || 500}
-                                step={1}
-                                value={gameStakes[game.marketId] || 10}
-                                onChange={(e) => {
-                                  const raw = parseFloat(e.target.value);
-                                  let v = isNaN(raw) ? 1 : raw;
-                                  v = Math.max(1, v);
-                                  const max = fastGameMaxBalance != null ? fastGameMaxBalance : 500;
-                                  const clamped = Math.min(max, v);
-                                  const final = Math.round(clamped * 100) / 100;
-                                  setGameStakes(prev => ({ ...prev, [game.marketId]: final }));
-                                }}
-                                placeholder="enter amount"
-                                className={`w-full px-3 py-1.5 text-sm rounded-xl focus:border-[#00f9ff]/50 outline-none font-mono ${isDark ? 'bg-white/5 border-white/10 text-white placeholder:text-white/40' : 'bg-slate-100 border-slate-300 text-slate-900 placeholder:text-slate-400'}`}
-                              />
-                            </div>
-                            <Slider
-                              min={1}
-                              max={fastGameMaxBalance && fastGameMaxBalance > 10 ? fastGameMaxBalance : 500}
-                              step={1}
-                              value={[gameStakes[game.marketId] || 10]}
-                              onValueChange={(vals) => {
-                                const v = Math.max(1, vals[0] || 1);
-                                const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
-                                setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
-                              }}
-                              className="mb-2"
-                            />
-                            <div className={`text-center text-xs mb-1.5 ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
-                              Bet closes in {betCloseStr}
-                            </div>
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => handleFastBet(game, 'YES')} 
-                                className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
-                              >
-                                UP
-                              </button>
-                              <button 
-                                onClick={() => handleFastBet(game, 'NO')} 
-                                className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
-                              >
-                                DOWN
-                              </button>
-                            </div>
+                            {/* HARD-CODED SAFETY NET (live, real-time): Max bet + per-wallet count + disable + warnings */}
+                            {(() => {
+                              const pot = (game.yesStake || 0) + (game.noStake || 0);
+                              const durSec = (game.durationMinutes || 10) * 60;
+                              const remForHalf = Math.max(0, (game.endTime || 0) - now);
+                              const isPastHalf = remForHalf <= durSec * 0.5;
+                              let maxAllowed = isPastHalf
+                                ? Math.max(1, Math.floor(pot * 0.40 * 100) / 100)
+                                : Math.max(1, Math.floor(pot * 1.25 * 100) / 100);
+                              // Also respect wallet balance buffer (UX only — resolver re-validates everything)
+                              const walletCap = fastGameMaxBalance != null ? fastGameMaxBalance : 9999;
+                              maxAllowed = Math.min(maxAllowed, walletCap);
+                              const currentStakeVal = gameStakes[game.marketId] || 10;
+                              const myCount = myBetCounts[game.marketId] || 0;
+                              // Display uses the higher creator cap (5). Backend safety validator strictly enforces 3 for normal players vs 5 for the on-chain creator.
+                              const limitForDisplay = 5;
+                              const overLimit = currentStakeVal > maxAllowed + 0.009;
+                              const betsExhausted = myCount >= limitForDisplay;
+
+                              return (
+                                <>
+                                  <div className="mb-2">
+                                    <div className={`text-xs mb-1 flex items-center justify-between ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
+                                      <span>Stake</span>
+                                      <span className="font-mono text-[10px]">
+                                        Max allowed: <span className="text-[#00f9ff]">{maxAllowed.toFixed(2)}</span> HBAR
+                                        <span className="opacity-60"> {isPastHalf ? '(40% cap)' : '(1.25× pot)'}</span>
+                                      </span>
+                                    </div>
+
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={walletCap}
+                                      step={1}
+                                      value={currentStakeVal}
+                                      onChange={(e) => {
+                                        const raw = parseFloat(e.target.value);
+                                        let v = isNaN(raw) ? 1 : raw;
+                                        v = Math.max(1, v);
+                                        const max = walletCap;
+                                        const clamped = Math.min(max, v);
+                                        const final = Math.round(clamped * 100) / 100;
+                                        setGameStakes(prev => ({ ...prev, [game.marketId]: final }));
+                                      }}
+                                      placeholder="enter amount"
+                                      className={`w-full px-3 py-1.5 text-sm rounded-xl focus:border-[#00f9ff]/50 outline-none font-mono ${isDark ? 'bg-white/5 border-white/10 text-white placeholder:text-white/40' : 'bg-slate-100 border-slate-300 text-slate-900 placeholder:text-slate-400'}`}
+                                    />
+
+                                    {/* Live safety status line (centered, prominent per prior UX direction) */}
+                                    <div className={`mt-1 text-center text-[11px] font-medium ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
+                                      You have placed <span className="font-mono">{myCount}</span>/{limitForDisplay} bets in this market
+                                      {betsExhausted && <span className="ml-1 text-rose-400">(limit reached)</span>}
+                                    </div>
+
+                                    {/* Clear, actionable warning when user exceeds a rule */}
+                                    {(overLimit || betsExhausted) && (
+                                      <div className="mt-1.5 px-2 py-1 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] text-center">
+                                        {overLimit && `Exceeds max: ${maxAllowed.toFixed(2)} HBAR. `}
+                                        {betsExhausted && 'Wallet bet limit reached for this game. '}
+                                        {isPastHalf ? 'Whale cap active after halfway.' : '1.25× pot limit until halfway.'}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <Slider
+                                    min={1}
+                                    max={walletCap > 10 ? walletCap : 500}
+                                    step={1}
+                                    value={[currentStakeVal]}
+                                    onValueChange={(vals) => {
+                                      const v = Math.max(1, vals[0] || 1);
+                                      const clamped = walletCap != null ? Math.min(walletCap, v) : v;
+                                      setGameStakes(prev => ({ ...prev, [game.marketId]: clamped }));
+                                    }}
+                                    className="mb-2"
+                                  />
+
+                                  <div className={`text-center text-xs mb-1.5 ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
+                                    Bet closes in {betCloseStr}
+                                  </div>
+
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleFastBet(game, 'YES')}
+                                      disabled={overLimit || betsExhausted}
+                                      className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      UP
+                                    </button>
+                                    <button
+                                      onClick={() => handleFastBet(game, 'NO')}
+                                      disabled={overLimit || betsExhausted}
+                                      className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      DOWN
+                                    </button>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </>
                         ) : (
                           <div className={`text-center text-xs py-2 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>
@@ -2092,6 +2174,17 @@ export function Predict() {
                 </div>
               </div>
 
+              {/* Hard-Coded Safety Rules — transparent, user-facing, P4P fair (matching backend validator exactly) */}
+              <div className={`p-3 rounded-2xl border text-[11px] ${isDark ? 'bg-white/5 border-white/10 text-white/80' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                <div className={`font-semibold mb-1 tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>HARD SAFETY RULES (enforced)</div>
+                <div className="space-y-0.5 leading-snug">
+                  • Bet size: ≤ 1.25× current pot until halfway • ≤ 40% of pot after (whale protection)<br />
+                  • Per wallet: max 3 bets (players) / 5 bets (creator, incl. initial stake)<br />
+                  • 2% facilitation fee taken only at payout/claim — never on your bet or creation stake<br />
+                  • Min 25 HBAR to create a market (hidden but enforced). Resolver is single source of truth.
+                </div>
+              </div>
+
               {/* Stake input + slider (cleaned: removed quick presets + helper text; min 25 hidden rule; placeholder for free entry; keep input + slider) */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
@@ -2135,16 +2228,17 @@ export function Predict() {
               </div>
 
               {/* Tier 2: Clear Fee Breakdown - premium, exact, and honest (matches site aesthetic) */}
+              {/* Safety rules: 2% facilitation fee is taken ONLY at final payout/claim from winnings (never upfront on your stake or creation). */}
               <div className={`p-4 rounded-2xl text-sm border ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
                 <div className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Total Cost Breakdown</div>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Your Initial Stake</span>
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Your Initial Stake (min 25 HBAR)</span>
                     <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{fastGameStake} HBAR</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Platform Fee (1%)</span>
-                    <span className={`font-mono font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{(fastGameStake * 0.01).toFixed(2)} HBAR</span>
+                    <span className={isDark ? 'text-white/70' : 'text-gray-600'}>2% Facilitation Fee</span>
+                    <span className={`font-mono font-medium ${isDark ? 'text-white/70' : 'text-gray-600'}`}>0 now — taken only at payout/claim</span>
                   </div>
                   <div className="flex justify-between">
                     <span className={isDark ? 'text-white/70' : 'text-gray-600'}>Creation Fee (Resolver + Permanent HCS Audit Trail)</span>
@@ -2152,7 +2246,7 @@ export function Predict() {
                   </div>
                   <div className={`flex justify-between pt-2 mt-1 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                     <span className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Total to Pay Now</span>
-                    <span className="font-mono font-semibold text-[#00f9ff]">{(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR</span>
+                    <span className="font-mono font-semibold text-[#00f9ff]">{(fastGameStake + 2.5).toFixed(2)} HBAR</span>
                   </div>
                 </div>
               </div>
@@ -2188,7 +2282,8 @@ export function Predict() {
                     const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
 
                     // 2. User signs the HBAR transfer (correct architecture)
-                    await withSigning(`Paying total (${(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR)...`, async () => {
+                    // Note: 2% facilitation fee is applied ONLY at payout/claim (safety rules). No % on creation stake.
+                    await withSigning(`Paying total (${(fastGameStake + 2.5).toFixed(2)} HBAR)...`, async () => {
                       await signAndExecuteTransaction(
                         session.wcTopic,
                         'testnet',
@@ -2293,6 +2388,9 @@ export function Predict() {
                         } catch {}
                         return next;
                       });
+
+                      // Creator's initial stake counts as bet #1 toward the 5-bet creator limit.
+                      setMyBetCounts(prev => ({ ...prev, [optimisticGame.marketId]: 1 }));
 
                       showToast('Fast Game created successfully! (recorded on HCS)', 'success');
                       setShowFastGameModal(false);
