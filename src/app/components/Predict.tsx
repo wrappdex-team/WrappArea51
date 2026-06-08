@@ -1436,7 +1436,7 @@ export function Predict() {
                       {/* Strong Tier 1 confirmation: Shows right on the tile when you just predicted */}
                       {justBetGames[game.marketId] && (
                         <div className="mb-3 px-3 py-1.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2">
-                          ✓ Prediction #{(userPositions[game.marketId]?.amount || 0) > 0 ? 'updated' : 'recorded'} — {justBetGames[game.marketId].amount} HBAR on {justBetGames[game.marketId].side}
+                          ✓ Prediction #{(userPositions[game.marketId]?.amount || 0) > 0 ? 'updated' : 'recorded'} — {justBetGames[game.marketId].amount} HBAR on {justBetGames[game.marketId].side === 'YES' ? 'UP' : 'DOWN'}
                         </div>
                       )}
 
@@ -1489,7 +1489,7 @@ export function Predict() {
                         )}
                       </div>
 
-                      {/* YES / NO Volume Ratio (first small visual improvement) */}
+                      {/* UP / DOWN Volume Ratio (first small visual improvement) */}
                       {(() => {
                         const yesStake = game.yesStake ?? 0;
                         const noStake = game.noStake ?? 0;
@@ -1503,8 +1503,8 @@ export function Predict() {
                         return (
                           <div className="mb-4">
                             <div className={`flex justify-between text-[10px] tracking-widest mb-1.5 ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
-                              <div className="text-emerald-400">YES {yesPercent}%</div>
-                              <div className="text-rose-400">NO {noPercent}%</div>
+                              <div className="text-emerald-400">UP {yesPercent}%</div>
+                              <div className="text-rose-400">DOWN {noPercent}%</div>
                             </div>
                             <div className={`h-2.5 rounded-full overflow-hidden flex ${isDark ? 'bg-white/10' : 'bg-slate-200'}`}>
                               <div 
@@ -1547,8 +1547,8 @@ export function Predict() {
                         return (
                           <div className={`mb-3 px-2 py-1.5 rounded-xl border text-[10px] ${isDark ? 'bg-white/5 border-white/10 text-white/70' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
                             Adding <span className={`font-mono font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>{stake}</span> HBAR would give you 
-                            ~<span className="font-semibold text-emerald-400">{yesImpact}%</span> of the YES pool or 
-                            ~<span className="font-semibold text-rose-400">{noImpact}%</span> of the NO pool
+                            ~<span className="font-semibold text-emerald-400">{yesImpact}%</span> of the UP pool or 
+                            ~<span className="font-semibold text-rose-400">{noImpact}%</span> of the DOWN pool
                           </div>
                         );
                       })()}
@@ -1558,7 +1558,7 @@ export function Predict() {
                         <div className={`mb-4 px-3 py-2 rounded-2xl border text-sm ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
                           <span className={`text-xs tracking-widest ${isDark ? 'text-white/50' : 'text-slate-500'}`}>YOUR POSITION</span>
                           <div className={`font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                            {userPositions[game.marketId].amount} HBAR on <span className={userPositions[game.marketId].side === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>{userPositions[game.marketId].side}</span>
+                            {userPositions[game.marketId].amount} HBAR on <span className={userPositions[game.marketId].side === 'YES' ? 'text-emerald-400' : 'text-rose-400'}>{userPositions[game.marketId].side === 'YES' ? 'UP' : 'DOWN'}</span>
                           </div>
                         </div>
                       )}
