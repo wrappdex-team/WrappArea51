@@ -2065,9 +2065,6 @@ export function Predict() {
                     <span className="font-mono font-semibold text-[#00f9ff]">{(fastGameStake + fastGameStake * 0.01 + 2.5).toFixed(2)} HBAR</span>
                   </div>
                 </div>
-                <div className={`text-[10px] mt-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                  1% goes to treasury. 2.5 HBAR funds the resolver and immutable record on 0.0.9017517.
-                </div>
               </div>
             </div>
 
