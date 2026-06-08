@@ -370,13 +370,13 @@ export function Predict() {
           return;
         }
 
-        // Use a very short display duration for the UI countdown (prevents scary long fake timers).
-        const displayDurMin = 3;
+        // For pending confirmation, use a longer display window (30min) so that long-duration games
+        // (especially 4h) do not appear to "expire" the placeholder while we wait for HCS/resolver confirmation.
+        // The real data (with strengthened endTime enforcement) will take over quickly and show the true
+        // full timer until the last second.
+        const displayDurMin = 30;
 
-        // Phase 1 stability + UX: never surface scary long-timer "data loading" ghosts.
-        // For true desynced recent IDs (errored creates or lag), use a short pending window
-        // and a clear pending label so it never looks like a real multi-hour game.
-        const pendingEnd = creationSec + (10 * 60); // short pending confirm window
+        const pendingEnd = creationSec + (displayDurMin * 60);
         map.set(id, {
           marketId: id,
           question: 'Confirming on HCS (pending resolver)…',
@@ -918,8 +918,16 @@ export function Predict() {
     // Computes live from current pot (yes+no stakes) + time vs duration + our local bet count.
     // Exact same rules as backend validator. Backend is still the single source of truth and will hard-reject.
     const pot = (game.yesStake || 0) + (game.noStake || 0);
+    // Use same 4h+ timer strengthening as the card display for consistent safety limits.
+    const cTsForSafety = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+    const dMinForSafety = game.durationMinutes || 10;
+    let effEndForSafety = game.endTime || 0;
+    if (cTsForSafety && dMinForSafety > 0) {
+      const safe = Math.floor(cTsForSafety / 1000) + dMinForSafety * 60;
+      if (!effEndForSafety || effEndForSafety < safe - 30) effEndForSafety = safe;
+    }
     const durSec = (game.durationMinutes || 10) * 60;
-    const rem = Math.max(0, (game.endTime || 0) - now);
+    const rem = Math.max(0, effEndForSafety - now);
     const pastHalf = rem <= durSec * 0.5;
     const maxBetThis = pastHalf
       ? Math.max(1, Math.floor(pot * 0.40 * 100) / 100)
@@ -1416,7 +1424,25 @@ export function Predict() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <AnimatePresence>
                     {activeFastSorted.slice(0, 6).map((game: any) => {
-                  const remaining = Math.max(0, (game.endTime || 0) - now);
+                  // Strengthen 4h (and long-duration) timer enforcement in the UI.
+                  // The marketId timestamp + declared durationMinutes is the reliable source of truth
+                  // for when the game truly ends. Some data paths (resolver list during lag, direct HCS
+                  // for games created against other resolver instances, old cached state) can under-report
+                  // endTime. We compute a safeEnd from creation + duration and use it if the provided
+                  // endTime is missing or way too short. This ensures the countdown, "Closes at", OPEN/CLOSED
+                  // badge, betting window, and "displayed until the last second" all respect the full intended
+                  // duration (especially 240min / 4h games) until the backend actually resolves it.
+                  const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+                  const durMin = game.durationMinutes || 10;
+                  let effectiveEndTime = game.endTime || 0;
+                  if (creationTs && durMin > 0) {
+                    const safeEnd = Math.floor(creationTs / 1000) + durMin * 60;
+                    if (!effectiveEndTime || effectiveEndTime < safeEnd - 30) {
+                      effectiveEndTime = safeEnd;
+                    }
+                  }
+
+                  const remaining = Math.max(0, effectiveEndTime - now);
                   const mins = Math.floor(remaining / 60);
                   const secs = remaining % 60;
                   const timeStr = remaining > 0 ? `${mins}m ${secs}s` : "EXPIRED";
@@ -1430,9 +1456,9 @@ export function Predict() {
                   }
 
                   // Informative times for the new beautiful card header (creation ts from marketId, close from endTime)
-                  const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+                  // Use the same creationTs we already computed for the safe endTime enforcement above.
                   const createdTime = creationTs ? new Date(creationTs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
-                  const closeTime = game.endTime ? new Date(game.endTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+                  const closeTime = effectiveEndTime ? new Date(effectiveEndTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
 
                   // Countdown to betting close (50% of duration) for the bottom action area
                   const durationSec = (game.durationMinutes || 10) * 60;
