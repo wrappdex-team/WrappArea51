@@ -92,8 +92,11 @@ export async function pollMirrorNodeForTransfers() {
 }
 
 /**
- * Phase 2 – Real Fee Integrity (improved)
- * Verifies via Mirror Node that the 1% platform fee was actually transferred.
+ * Phase 2 – Real Fee Integrity (legacy path)
+ * Historically used to verify the upfront % platform fee on individual bets.
+ * Under the current safety rules (2% facilitation taken only at payout/claim):
+ * - On bet/create transfers the variable % is 0.
+ * - This function is now mostly a no-op for bets (fee=0) or used for the fixed creation fee.
  * If paymentTxId is provided, it does a precise lookup on that specific transaction.
  */
 /**
@@ -905,8 +908,10 @@ export async function getMarketVolume(marketId: string) {
  *   - Normal players: 3 bets total per market
  *   - Market creator (the account on the very first PLACE_BET for that market, or CREATE.submittedBy): 5 bets total
  *
- * Platform Fee: 2% (200 bps) — applied ONLY at payout/claim time on the owed amount.
+ * Platform Fee: 2% (200 bps) — applied ONLY at payout/claim time on the final owed amount
+ *   (and only when the game had opposing stake / real matched predictions).
  *   No upfront % fee is charged on bet or create stake transfers.
+ *   Pure unmatched returns (no opposing stake) return the full original stake with zero facilitation fee.
  *
  * Edge cases handled:
  *   - pot === 0 (very first additional bet after creator): allow up to 1.25x initialStake or a sensible floor.
@@ -1485,14 +1490,19 @@ export async function processClaim(marketId: string, winnerAccountId: string, cl
   }
 
   // SAFETY v1: Apply 2% facilitation fee at claim time only (P4P settlement).
+  // Fee is only taken when there was opposing stake (real matched predictions).
+  // Unmatched returns (no one on the other side) return the full original stake with no facilitation fee.
   const grossOwed = calc.owed;
-  const claimPlatformFee = Math.round(grossOwed * 0.02 * 100) / 100;
+  const isUnmatched = calc.reason === 'UNMATCHED_RETURN' || (calc.totalLosingSideStake || 0) === 0;
+  const claimPlatformFee = isUnmatched ? 0 : Math.round(grossOwed * 0.02 * 100) / 100;
   const netClaim = Math.round((grossOwed - claimPlatformFee) * 100) / 100;
 
   const txId = await executePayout({
     toAccountId: winnerAccountId,
     amountHbar: netClaim,
-    memo: `Claim ${calc.reason} for ${marketId} (2% fee applied at settlement)`,
+    memo: isUnmatched 
+      ? `Claim ${calc.reason} for ${marketId} (full unmatched return, no fee)` 
+      : `Claim ${calc.reason} for ${marketId} (2% fee applied at settlement)`,
   });
 
   // Route the 2% fee to treasury (best effort; user already received net)
@@ -1727,13 +1737,24 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
   for (const p of payouts) {
     try {
       const gross = p.amount;
-      const platformFee = Math.round(gross * 0.02 * 100) / 100; // 2%
-      const netToUser = Math.round((gross - platformFee) * 100) / 100;
+
+      // Fee policy (post-safety-rules model):
+      // - 2% facilitation only when there was real opposing stake (the market actually matched predictions).
+      // - If the entire game had no opposing side (unmatched return), user gets full stake back with no facilitation fee.
+      // This is applied at payout/claim time only — never on the original stake or create transfers.
+      let platformFee = 0;
+      let netToUser = gross;
+      if (totalLosingStake > 0) {
+        platformFee = Math.round(gross * 0.02 * 100) / 100; // 2%
+        netToUser = Math.round((gross - platformFee) * 100) / 100;
+      }
 
       const txId = await executePayout({
         toAccountId: p.account,
         amountHbar: netToUser,
-        memo: `Auto payout ${marketId} (${winner}) net of 2% fee`,
+        memo: totalLosingStake > 0 
+          ? `Auto payout ${marketId} (${winner}) net of 2% fee` 
+          : `Auto payout ${marketId} (${winner}) - full unmatched return`,
       });
       if (txId) transactionIds.push(String(txId));
       totalPaidActual += netToUser;

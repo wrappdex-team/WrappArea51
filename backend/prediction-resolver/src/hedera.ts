@@ -306,7 +306,7 @@ export async function postPlaceBet(params: {
   side: 'YES' | 'NO';
   amount: number;
   user: string;
-  platformFeeCollected?: number; // actual on-chain 1% tax that left the bettor's wallet
+  platformFeeCollected?: number; // legacy/optional field. Under current rules the 2% facilitation is NOT collected on the bet transfer — it is applied only at payout/claim time.
 }) {
   // === Step 1: World-Class Audit Memo + Sequencing (Hashgraph Architect Standard) ===
   // Every PLACE_BET (technical type) must produce a human-readable memo using "predict" language

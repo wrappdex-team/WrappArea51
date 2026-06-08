@@ -160,6 +160,10 @@ export function Predict() {
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
+  // Controls the collapsible Game Rules section inside the Fast Game create modal.
+  // Provides quick rules + advanced factual breakdown with clean prediction/staking language.
+  const [showGameRules, setShowGameRules] = useState(false);
+
   // Modal-specific HBAR price for "CURRENT HBAR (official rate for this game)".
   // Resolver is authoritative (now always mainnet sources: SaucerSwap last-traded verified + mainnet-public mirror / public CG/CoinCap backups).
   // We poll every ~10s while modal open for a "second-to-second" reliable feel (tighter than cards for the rate the user will lock in).
@@ -271,7 +275,7 @@ export function Predict() {
     (async () => {
       try {
         const bal = await fetchUserHbarBalance(hashPackSession.accountId);
-        // Leave small buffer for fees (create ~2.5 + 1% + network, same for bets)
+        // Leave small buffer for fees (create fixed 2.5 HBAR + network; the 2% facilitation is taken only at payout/claim time, not on the stake transfer)
         const safeMax = Math.max(1, Math.floor((bal - 3) * 100) / 100);
         setFastGameMaxBalance(safeMax > 0 ? safeMax : null);
       } catch {
@@ -931,7 +935,8 @@ export function Predict() {
       return;
     }
 
-    // Under new hard safety rules: pure stake only. 2% facilitation fee is applied exclusively at payout/claim time.
+    // Under current fee structure: user sends exactly the stake (no variable % on the prediction itself).
+    // 2% facilitation fee (only when opposing stake existed) is applied exclusively at payout/claim time by the resolver.
     const totalToSend = stake;
 
     try {
@@ -2174,15 +2179,60 @@ export function Predict() {
                 </div>
               </div>
 
-              {/* Hard-Coded Safety Rules — transparent, user-facing, P4P fair (matching backend validator exactly) */}
-              <div className={`p-3 rounded-2xl border text-[11px] ${isDark ? 'bg-white/5 border-white/10 text-white/80' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                <div className={`font-semibold mb-1 tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>HARD SAFETY RULES (enforced)</div>
-                <div className="space-y-0.5 leading-snug">
-                  • Bet size: ≤ 1.25× current pot until halfway • ≤ 40% of pot after (whale protection)<br />
-                  • Per wallet: max 3 bets (players) / 5 bets (creator, incl. initial stake)<br />
-                  • 2% facilitation fee taken only at payout/claim — never on your bet or creation stake<br />
-                  • Min 25 HBAR to create a market (hidden but enforced). Resolver is single source of truth.
-                </div>
+              {/* Game Rules — clean, collapsible "pop down" experience.
+                  Quick scannable rules + advanced factual breakdown sheet.
+                  Uses only precise, serious language ("prediction", "stake", "pool", "resolution").
+                  No hype, no betting jargon, no "ai slop". */}
+              <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-slate-50'}`}>
+                <button
+                  onClick={() => setShowGameRules(!showGameRules)}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium tracking-[0.5px] transition-colors ${isDark ? 'text-white/90 hover:bg-white/5' : 'text-slate-700 hover:bg-slate-100'}`}
+                >
+                  <span>Game Rules</span>
+                  <span className={`text-xs opacity-60 transition-transform ${showGameRules ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {showGameRules && (
+                  <div className="px-4 pb-4 space-y-4 text-xs border-t border-white/10 dark:border-white/10">
+                    {/* Quick Rules — short, clear, scannable */}
+                    <div>
+                      <div className={`font-semibold mb-1.5 text-[11px] tracking-wider ${isDark ? 'text-white/70' : 'text-slate-500'}`}>
+                        QUICK RULES
+                      </div>
+                      <ul className={`space-y-1 leading-snug ${isDark ? 'text-white/85' : 'text-slate-700'}`}>
+                        <li>• A prediction game runs for the duration you select.</li>
+                        <li>• New predictions can be placed until halfway through the game.</li>
+                        <li>• Your stake is added to the total pool on the side you select (UP or DOWN).</li>
+                        <li>• At resolution the matching side receives a proportional share of the opposing pool.</li>
+                        <li>• A 2% facilitation fee applies only to payouts when there was opposing stake in the game, taken at the time of claim.</li>
+                      </ul>
+                    </div>
+
+                    {/* Advanced Details — precise, serious, truth-only breakdown */}
+                    <div>
+                      <div className={`font-semibold mb-1.5 text-[11px] tracking-wider ${isDark ? 'text-white/70' : 'text-slate-500'}`}>
+                        ADVANCED DETAILS
+                      </div>
+                      <div className={`space-y-1.5 leading-snug text-[11px] ${isDark ? 'text-white/75' : 'text-slate-600'}`}>
+                        <div>
+                          <span className="font-medium">Stake limit per prediction:</span> Before the halfway point the maximum stake is 1.25× the current total staked in the game. After the halfway point the limit is 40% of the current total staked.
+                        </div>
+                        <div>
+                          <span className="font-medium">Account limits:</span> A standard account may place a maximum of 3 predictions in one game. The account that created the game may place up to 5 predictions (the initial stake counts as the first).
+                        </div>
+                        <div>
+                          <span className="font-medium">Minimum to create a game:</span> 25 HBAR. This requirement is enforced by the resolver.
+                        </div>
+                        <div>
+                          <span className="font-medium">Facilitation fee:</span> 2% of the final payout amount is sent to the treasury when a participant claims — but only when the game had real opposing stake (matched predictions). Pure unmatched returns (no one took the other side) return the full original stake with no fee. No variable fee is collected when staking or creating a game.
+                        </div>
+                        <div>
+                          <span className="font-medium">Enforcement &amp; records:</span> Limits and settlement are validated by the resolver before any record is written. Every prediction, resolution, and payout is permanently logged on Hedera Consensus Service topic 0.0.9017517. The resolver is the single source of truth.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Stake input + slider (cleaned: removed quick presets + helper text; min 25 hidden rule; placeholder for free entry; keep input + slider) */}
@@ -2228,7 +2278,7 @@ export function Predict() {
               </div>
 
               {/* Tier 2: Clear Fee Breakdown - premium, exact, and honest (matches site aesthetic) */}
-              {/* Safety rules: 2% facilitation fee is taken ONLY at final payout/claim from winnings (never upfront on your stake or creation). */}
+              {/* Fee structure: 2% facilitation (only on matched payouts) is taken ONLY at final payout/claim. No variable % on stake or creation. Fixed 2.50 HBAR is the creation + HCS audit trail cost. */}
               <div className={`p-4 rounded-2xl text-sm border ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
                 <div className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Total Cost Breakdown</div>
                 <div className="space-y-1 text-xs">
@@ -2282,7 +2332,8 @@ export function Predict() {
                     const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
 
                     // 2. User signs the HBAR transfer (correct architecture)
-                    // Note: 2% facilitation fee is applied ONLY at payout/claim (safety rules). No % on creation stake.
+                    // Note: The variable 2% facilitation fee is applied ONLY at payout/claim time (and only when there was opposing stake).
+                    // No % of stake is taken on creation or individual predictions. The 2.5 HBAR is a separate fixed creation/audit fee.
                     await withSigning(`Paying total (${(fastGameStake + 2.5).toFixed(2)} HBAR)...`, async () => {
                       await signAndExecuteTransaction(
                         session.wcTopic,
