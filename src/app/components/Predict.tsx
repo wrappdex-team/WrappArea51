@@ -2005,7 +2005,7 @@ export function Predict() {
               {/* Stake input + slider (cleaned: removed quick presets + helper text; min 25 hidden rule; placeholder for free entry; keep input + slider) */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  YOUR INITIAL STAKE (HBAR) {fastGameMaxBalance != null ? `• max ~${fastGameMaxBalance.toFixed(1)} (live)` : ''}
+                  YOUR INITIAL STAKE (HBAR)
                 </div>
 
                 <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
