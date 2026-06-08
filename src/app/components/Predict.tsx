@@ -1265,6 +1265,66 @@ export function Predict() {
       .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
   }, [activeMarkets]);
 
+  // Pre-computed content for the toggle to avoid complex nested expressions in JSX (fixes parser errors)
+  const fastGamesContent = (activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
+    isLoadingFastGames && displayFastGames.length === 0 ? (
+      <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
+    ) : activeFastSorted.length === 0 ? (
+      <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
+        <div>No active fast games right now.</div>
+        <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+        <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {activeFastSorted.slice(0, 6).map((game: any) => {
+          // ... (the entire original fast game card JSX will be placed here in the next replace if needed, but we keep the map in place for now and just move the wrapper)
+          // To keep the card logic intact, we'll render the grid here using the same map body as before.
+          // For this fix, we compute the content cleanly.
+          return null; // placeholder - actual map moved below in clean structure
+        })}
+      </div>
+    )
+  );
+
+  const predictionContent = (activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
+    activePredSorted.length === 0 ? (
+      activeMarketFilter === 'prediction' ? (
+        <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
+      ) : null
+    ) : (
+      <div className="mt-4">
+        {activeMarketFilter === 'both' && (
+          <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {activePredSorted.slice(0, 6).map((m: any) => {
+            const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
+            const mins = Math.floor(remaining / 60);
+            const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
+            return (
+              <div
+                key={m.marketId || m.id}
+                onClick={() => openBetModal(m)}
+                className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
+                  <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                    {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                  </div>
+                </div>
+                <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
+                <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
+                <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )
+  );
+
   return (
     <div className={`min-h-[calc(100vh-120px)] ${isDark ? 'bg-[#080a12] text-white' : 'bg-[#f8fafc] text-slate-900'} p-6`}>
       <div className="max-w-7xl mx-auto">
@@ -1618,46 +1678,45 @@ export function Predict() {
                 })}
               </div>
             )}
-          </div>
-
-          {/* Prediction / long markets - shown when prediction or both. Simple cards with timers from endTime. Same care for resolution etc. Sorted recent (by id). */}
-          {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
-            activePredSorted.length === 0 ? (
-              activeMarketFilter === 'prediction' ? (
-                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
-              ) : null
-            ) : (
-              <div className="mt-4">
-                {activeMarketFilter === 'both' && (
-                  <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {activePredSorted.slice(0, 6).map((m: any) => {
-                      const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
-                      const mins = Math.floor(remaining / 60);
-                      const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
-                      return (
-                        <div
-                          key={m.marketId || m.id}
-                          onClick={() => openBetModal(m)}
-                          className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
-                            <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                              {remaining > 0 ? 'OPEN' : 'CLOSED'}
+            {/* Prediction / long markets moved inside the mb-6 list container for correct structure and to fix parser "Expected ) but found <" error. */}
+            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
+              activePredSorted.length === 0 ? (
+                activeMarketFilter === 'prediction' ? (
+                  <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
+                ) : null
+              ) : (
+                <div className="mt-4">
+                  {activeMarketFilter === 'both' && (
+                    <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {activePredSorted.slice(0, 6).map((m: any) => {
+                        const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
+                        const mins = Math.floor(remaining / 60);
+                        const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
+                        return (
+                          <div
+                            key={m.marketId || m.id}
+                            onClick={() => openBetModal(m)}
+                            className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
+                              <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                              </div>
                             </div>
+                            <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
+                            <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
+                            <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
                           </div>
-                          <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
-                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
-                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                  </div>
                 </div>
-              </div>
-            )
-          )}
+              )
+            )}
+          </div>
 
         </div>
 
