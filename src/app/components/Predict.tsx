@@ -1248,82 +1248,22 @@ export function Predict() {
     return price.toFixed(3);
   };
 
-  // Computed sorted active lists for the consolidated view (most recent first)
-  const activeFastSorted = React.useMemo(() => {
-    return displayFastGames
-      .filter((g: any) => !g.resolved)
-      .sort((a: any, b: any) => {
-        const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10);
-        const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10);
-        return tb - ta; // most recent first
-      });
-  }, [displayFastGames]);
-
   const activePredSorted = React.useMemo(() => {
     return activeMarkets
       .filter((m: any) => !m.resolved)
       .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
   }, [activeMarkets]);
 
-  // Pre-computed content for the toggle to avoid complex nested expressions in JSX (fixes parser errors)
-  const fastGamesContent = (activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
-    isLoadingFastGames && displayFastGames.length === 0 ? (
-      <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
-    ) : activeFastSorted.length === 0 ? (
-      <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
-        <div>No active fast games right now.</div>
-        <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
-        <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
-      </div>
-    ) : (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {activeFastSorted.slice(0, 6).map((game: any) => {
-          // ... (the entire original fast game card JSX will be placed here in the next replace if needed, but we keep the map in place for now and just move the wrapper)
-          // To keep the card logic intact, we'll render the grid here using the same map body as before.
-          // For this fix, we compute the content cleanly.
-          return null; // placeholder - actual map moved below in clean structure
-        })}
-      </div>
-    )
-  );
-
-  const predictionContent = (activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
-    activePredSorted.length === 0 ? (
-      activeMarketFilter === 'prediction' ? (
-        <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
-      ) : null
-    ) : (
-      <div className="mt-4">
-        {activeMarketFilter === 'both' && (
-          <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {activePredSorted.slice(0, 6).map((m: any) => {
-            const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
-            const mins = Math.floor(remaining / 60);
-            const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
-            return (
-              <div
-                key={m.marketId || m.id}
-                onClick={() => openBetModal(m)}
-                className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
-                  <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                    {remaining > 0 ? 'OPEN' : 'CLOSED'}
-                  </div>
-                </div>
-                <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
-                <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
-                <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    )
-  );
+  // Most-recently-made first for the consolidated "Active markets" view (user spec: "the one that is most recently made should be the one in first que").
+  // Base list is displayFastGames (already has optimistic + recentlyCreated prune + only active logic).
+  // marketId format is typically "fast-<creationTsMs>" so we parse that for recency sort.
+  const activeFastSorted = React.useMemo(() => {
+    return [...displayFastGames].sort((a: any, b: any) => {
+      const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10) || ((a.endTime || 0) * 1000) || 0;
+      const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10) || ((b.endTime || 0) * 1000) || 0;
+      return tb - ta; // desc: newest creation first
+    });
+  }, [displayFastGames]);
 
   return (
     <div className={`min-h-[calc(100vh-120px)] ${isDark ? 'bg-[#080a12] text-white' : 'bg-[#f8fafc] text-slate-900'} p-6`}>
@@ -1425,7 +1365,7 @@ export function Predict() {
               <button onClick={() => { loadFastGames(); loadOnChainMarkets(); }} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {/* Phase 1 stability... same as before. Only show if fast or both. Sorted most recent first (by marketId ts). */}
+            {/* Fast games content - only for fast or both. Using pre-sorted for recent first. Clean && to avoid parser nesting issues. */}
             {(activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
               isLoadingFastGames && displayFastGames.length === 0 ? (
                 <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
@@ -1532,7 +1472,7 @@ export function Predict() {
 
                         if (total <= 0) return null;
 
-                        const yesPercent = Math.round((yesStake / total) * 100);
+                        const yesPercent = Math.round(((yesStake) / total) * 100);
                         const noPercent = 100 - yesPercent;
 
                         return (
@@ -1573,10 +1513,10 @@ export function Predict() {
                         if (stake <= 0) return null;
 
                         const yesImpact = (yesStake + stake) > 0 
-                          ? ((stake / (yesStake + stake)) * 100).toFixed(1) 
+                          ? (((stake) / (yesStake + stake)) * 100).toFixed(1) 
                           : '100';
                         const noImpact = (noStake + stake) > 0 
-                          ? ((stake / (noStake + stake)) * 100).toFixed(1) 
+                          ? (((stake) / (noStake + stake)) * 100).toFixed(1) 
                           : '100';
 
                         return (
@@ -1675,46 +1615,45 @@ export function Predict() {
                       </div>
                     </div>
                   );
-                })}
+                } ) }
               </div>
+            ))}
+
+            {/* Prediction markets (consolidated toggle view) */}
+
+              {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && activePredSorted.length === 0 && activeMarketFilter === 'prediction' && (
+              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
             )}
-            {/* Prediction / long markets moved inside the mb-6 list container for correct structure and to fix parser "Expected ) but found <" error. */}
-            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
-              activePredSorted.length === 0 ? (
-                activeMarketFilter === 'prediction' ? (
-                  <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
-                ) : null
-              ) : (
-                <div className="mt-4">
-                  {activeMarketFilter === 'both' && (
-                    <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {activePredSorted.slice(0, 6).map((m: any) => {
-                        const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
-                        const mins = Math.floor(remaining / 60);
-                        const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
-                        return (
-                          <div
-                            key={m.marketId || m.id}
-                            onClick={() => openBetModal(m)}
-                            className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
-                          >
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
-                              <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                                {remaining > 0 ? 'OPEN' : 'CLOSED'}
-                              </div>
+            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && activePredSorted.length > 0 && (
+              <div className="mt-4">
+                {activeMarketFilter === 'both' && (
+                  <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activePredSorted.slice(0, 6).map((m: any) => {
+                      const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
+                      const mins = Math.floor(remaining / 60);
+                      const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
+                      return (
+                        <div
+                          key={m.marketId || m.id}
+                          onClick={() => openBetModal(m)}
+                          className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
+                            <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                              {remaining > 0 ? 'OPEN' : 'CLOSED'}
                             </div>
-                            <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
-                            <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
-                            <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
                           </div>
-                        );
-                      })}
-                  </div>
+                          <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
+                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
+                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
+                        </div>
+                      );
+                    })}
                 </div>
-              )
+              </div>
             )}
           </div>
 
