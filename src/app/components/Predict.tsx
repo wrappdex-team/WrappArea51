@@ -1903,14 +1903,30 @@ export function Predict() {
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-bold text-2xl tracking-tight">UP or DOWN</div>
-                  <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                    ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
-                  </div>
+              <div className="relative text-center">
+                <button 
+                  onClick={() => setShowFastGameModal(false)} 
+                  className="absolute right-0 top-1 text-white/70 hover:text-white transition-colors"
+                >
+                  <X size={18} />
+                </button>
+                <div className="font-bold text-2xl tracking-tight">
+                  <span className="text-emerald-400">UP</span> or <span className="text-rose-400">DOWN</span>
                 </div>
-                <button onClick={() => setShowFastGameModal(false)}><X /></button>
+                <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
+                  ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
+                </div>
+                {(() => {
+                  const hbar = assets.find(a => a.symbol === 'HBAR');
+                  const ch = hbar?.change24h;
+                  if (typeof ch !== 'number') return null;
+                  const pos = ch >= 0;
+                  return (
+                    <div className={`text-xs mt-1 font-medium ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {pos ? '+' : ''}{ch.toFixed(1)}% <span className="text-white/50">24h (CoinGecko)</span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
