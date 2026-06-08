@@ -165,8 +165,12 @@ export async function fetchFastGames(): Promise<FastGame[]> {
     const resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
     if (resolverRes.ok) {
       const data = await resolverRes.json();
-      if (data.success && Array.isArray(data.games) && data.games.length > 0) {
-        // Map the resolver's active list shape to the FE FastGame shape if needed (it is already close).
+      if (data.success && Array.isArray(data.games)) {
+        // Always trust the resolver for the list of active fast games (even if the array is empty).
+        // This is the design: resolver is the single source of truth (in-memory registered games + re-register from HCS).
+        // Avoid falling back to direct browser HCS/HGraph/Mirror which are frequently broken by CORS
+        // (HGraph blocks the vercel.app origin) and DNS (mirror nodes).
+        // Map and strengthen endTime for long-duration games as before.
         const normalized = data.games.map((g: any) => ({
           ...g,
           yesStake: g.yesStake || g.yes_stake || 0,
@@ -174,9 +178,6 @@ export async function fetchFastGames(): Promise<FastGame[]> {
           yesParticipants: g.yesParticipants || g.yes_participants || 0,
           noParticipants: g.noParticipants || g.no_participants || 0,
         }));
-
-        // Strengthen long-duration (4h+) timer using the same reliable creationTs + durationMinutes rule
-        // even for the preferred resolver path (in case the in-memory active list had a stale/short endTime).
         return normalized.map((g: any) => {
           const cTs = parseInt((g.marketId || '').split('-')[1] || '0', 10);
           const dMin = g.durationMinutes || 10;
