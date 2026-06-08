@@ -1248,6 +1248,23 @@ export function Predict() {
     return price.toFixed(3);
   };
 
+  // Computed sorted active lists for the consolidated view (most recent first)
+  const activeFastSorted = React.useMemo(() => {
+    return displayFastGames
+      .filter((g: any) => !g.resolved)
+      .sort((a: any, b: any) => {
+        const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10);
+        const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10);
+        return tb - ta; // most recent first
+      });
+  }, [displayFastGames]);
+
+  const activePredSorted = React.useMemo(() => {
+    return activeMarkets
+      .filter((m: any) => !m.resolved)
+      .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
+  }, [activeMarkets]);
+
   return (
     <div className={`min-h-[calc(100vh-120px)] ${isDark ? 'bg-[#080a12] text-white' : 'bg-[#f8fafc] text-slate-900'} p-6`}>
       <div className="max-w-7xl mx-auto">
@@ -1352,26 +1369,15 @@ export function Predict() {
             {(activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
               isLoadingFastGames && displayFastGames.length === 0 ? (
                 <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
-              ) : (() => {
-                const activeFast = displayFastGames
-                  .filter((g: any) => !g.resolved)
-                  .sort((a: any, b: any) => {
-                    const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10);
-                    const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10);
-                    return tb - ta; // most recent first
-                  });
-                if (activeFast.length === 0) {
-                  return (
-                    <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
-                      <div>No active fast games right now.</div>
-                      <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
-                      <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
-                    </div>
-                  );
-                }
-                return (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {activeFast.slice(0, 6).map((game: any) => {
+              ) : activeFastSorted.length === 0 ? (
+                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
+                  <div>No active fast games right now.</div>
+                  <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+                  <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activeFastSorted.slice(0, 6).map((game: any) => {
                   const remaining = Math.max(0, (game.endTime || 0) - now);
                   const mins = Math.floor(remaining / 60);
                   const secs = remaining % 60;
@@ -1615,48 +1621,43 @@ export function Predict() {
           </div>
 
           {/* Prediction / long markets - shown when prediction or both. Simple cards with timers from endTime. Same care for resolution etc. Sorted recent (by id). */}
-          {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (() => {
-            const activePred = activeMarkets
-              .filter((m: any) => !m.resolved)
-              .sort((a: any, b: any) => (b.id || 0) - (a.id || 0))
-              .slice(0, 6);
-            if (activePred.length === 0) {
-              return activeMarketFilter === 'prediction' ? (
+          {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
+            activePredSorted.length === 0 ? (
+              activeMarketFilter === 'prediction' ? (
                 <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
-              ) : null;
-            }
-            return (
+              ) : null
+            ) : (
               <div className="mt-4">
                 {activeMarketFilter === 'both' && (
                   <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {activePred.map((m: any) => {
-                    const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
-                    const mins = Math.floor(remaining / 60);
-                    const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
-                    return (
-                      <div
-                        key={m.marketId || m.id}
-                        onClick={() => openBetModal(m)}
-                        className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
-                          <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                            {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                  {activePredSorted.slice(0, 6).map((m: any) => {
+                      const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
+                      const mins = Math.floor(remaining / 60);
+                      const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
+                      return (
+                        <div
+                          key={m.marketId || m.id}
+                          onClick={() => openBetModal(m)}
+                          className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
+                            <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                              {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                            </div>
                           </div>
+                          <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
+                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
+                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
                         </div>
-                        <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
-                        <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
-                        <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               </div>
-            );
-          })()}
+            )
+          )}
 
         </div>
 
