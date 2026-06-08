@@ -1141,14 +1141,22 @@ export function Predict() {
   const fetchLivePrices = async () => {
     setIsLoadingPrices(true);
     try {
-      // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko)
+      // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko).
+      // But fall back to direct if the resolver wire is bad (HTML error, unreachable, or proxy not returning JSON) so the 4 tokens (BTC/ETH/HBAR/SOL) + 24h % always show.
       const isLive = !RESOLVER_BASE.includes('localhost');
-      const coingeckoUrl = isLive
+      let coingeckoUrl = isLive
         ? `${RESOLVER_BASE}/api/proxy/coingecko/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1`
         : 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
-      const response = await fetch(coingeckoUrl);
-      const data = await response.json();
-      const liveAssets: Asset[] = data.map((coin: any) => ({
+      let response = await fetch(coingeckoUrl);
+      if (!response.ok) throw new Error('proxy bad status');
+      let data = await response.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        // fallback direct
+        coingeckoUrl = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+        response = await fetch(coingeckoUrl);
+        data = await response.json();
+      }
+      const liveAssets: Asset[] = (Array.isArray(data) ? data : []).map((coin: any) => ({
         symbol: coin.symbol.toUpperCase(),
         name: coin.name,
         price: coin.current_price ?? null,
@@ -1158,8 +1166,26 @@ export function Predict() {
       setAssets(liveAssets);
       const selected = liveAssets.find(a => a.symbol === selectedAsset);
       if (selected && selected.price !== null) setCurrentPrice(selected.price);
+      setErrorMessage('');
     } catch (e) {
-      setErrorMessage('Price fetch failed');
+      // last resort direct
+      try {
+        const direct = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+        const r = await fetch(direct);
+        const d = await r.json();
+        const liveAssets: Asset[] = (Array.isArray(d) ? d : []).map((coin: any) => ({
+          symbol: coin.symbol.toUpperCase(),
+          name: coin.name,
+          price: coin.current_price ?? null,
+          change24h: coin.price_change_percentage_24h ?? 0,
+          logo: coin.image || '',
+        }));
+        setAssets(liveAssets);
+        const selected = liveAssets.find(a => a.symbol === selectedAsset);
+        if (selected && selected.price !== null) setCurrentPrice(selected.price);
+      } catch {
+        setErrorMessage('Price fetch failed');
+      }
     } finally {
       setIsLoadingPrices(false);
     }
