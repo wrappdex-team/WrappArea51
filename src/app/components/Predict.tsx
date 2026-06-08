@@ -2002,7 +2002,7 @@ export function Predict() {
                 </div>
               </div>
 
-              {/* Stake with Presets — now premium unlimited slider + live Mirror max */}
+              {/* Stake input + slider (cleaned: removed quick presets + helper text; min 25 hidden rule; placeholder for free entry; keep input + slider) */}
               <div>
                 <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
                   YOUR INITIAL STAKE (HBAR) {fastGameMaxBalance != null ? `• max ~${fastGameMaxBalance.toFixed(1)} (live)` : ''}
@@ -2012,12 +2012,15 @@ export function Predict() {
                   <input 
                     type="number" 
                     value={fastGameStake} 
-                    min={1}
+                    min={25}
                     max={fastGameMaxBalance || undefined}
+                    placeholder="enter amount"
                     onChange={(e) => {
                       const raw = parseFloat(e.target.value);
-                      if (!isNaN(raw)) {
-                        const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, Math.max(1, raw)) : Math.max(1, raw);
+                      if (isNaN(raw)) {
+                        setFastGameStake(25);
+                      } else {
+                        const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, Math.max(25, raw)) : Math.max(25, raw);
                         setFastGameStake(clamped);
                       }
                     }}
@@ -2026,43 +2029,19 @@ export function Predict() {
                   <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
                 </div>
 
-                {/* Custom Slider (unlimited up to real balance via Mirror) */}
+                {/* Custom Slider (min 25 hidden, up to real balance via Mirror) */}
                 <Slider
-                  min={1}
-                  max={fastGameMaxBalance && fastGameMaxBalance > 1 ? fastGameMaxBalance : 1000}
+                  min={25}
+                  max={fastGameMaxBalance && fastGameMaxBalance > 25 ? fastGameMaxBalance : 1000}
                   step={0.1}
                   value={[fastGameStake]}
                   onValueChange={(vals) => {
-                    const v = Math.max(1, vals[0] || 1);
+                    const v = Math.max(25, vals[0] || 25);
                     const clamped = fastGameMaxBalance != null ? Math.min(fastGameMaxBalance, v) : v;
                     setFastGameStake(clamped);
                   }}
                   className="mb-3"
                 />
-
-                {/* Smart presets (respect dynamic max) */}
-                <div className="flex gap-2 flex-wrap">
-                  {[1, 5, 10, 25, 50, 100].filter(a => !fastGameMaxBalance || a <= fastGameMaxBalance).concat(
-                    fastGameMaxBalance != null && fastGameMaxBalance > 100 ? [Math.floor(fastGameMaxBalance)] : []
-                  ).slice(0, 7).map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setFastGameStake(amt)}
-                      className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all border
-                        ${fastGameStake === amt
-                          ? (isVIP ? 'bg-emerald-500 text-black border-emerald-400' : 'bg-[#00f9ff] text-black border-[#00f9ff]')
-                          : isDark 
-                            ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80' 
-                            : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-700'
-                        }`}
-                    >
-                      {amt}
-                    </button>
-                  ))}
-                </div>
-                <div className={`text-[10px] mt-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                  Slider max = your real-time HBAR balance (fetched via resolver + Hedera Mirror for prod safety). Backend always re-verifies.
-                </div>
               </div>
 
               {/* Tier 2: Clear Fee Breakdown - premium, exact, and honest (matches site aesthetic) */}
