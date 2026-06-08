@@ -1091,6 +1091,9 @@ export function Predict() {
   const [activeMarkets, setActiveMarkets] = useState<MockMarket[]>([]);
   const [userBets, setUserBets] = useState<any[]>([]);
 
+  // Toggle for consolidated active markets view: fast, prediction (long), or both
+  const [activeMarketFilter, setActiveMarketFilter] = useState<'fast' | 'prediction' | 'both'>('both');
+
   const fetchLivePrices = async () => {
     setIsLoadingPrices(true);
     try {
@@ -1311,12 +1314,11 @@ export function Predict() {
           )}
         </div>
 
-        {/* HBAR Fast Guess */}
+        {/* Active markets - consolidated view (fast + prediction/long) with toggle. Most recent first. Only active (unresolved). Same timers, backend, care as before. */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
             <div>
-              <h3 className="text-2xl font-semibold tracking-tight">HBAR Fast Guess</h3>
-              <p className={`text-sm ${isDark ? 'text-white/60' : 'text-slate-600'}`}>Up or Down from current price • 10m / 20m / 1h / 4h</p>
+              <h3 className="text-2xl font-semibold tracking-tight">Active markets</h3>
             </div>
             <button onClick={() => setShowFastGameModal(true)}
               className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-semibold hover:brightness-110">
@@ -1324,26 +1326,52 @@ export function Predict() {
             </button>
           </div>
 
-          {/* Active Fast Games */}
+          {/* Toggle for fast / prediction / both - user friendly, theme/VIP sensitive */}
+          <div className="flex gap-2 mb-4">
+            {(['fast', 'prediction', 'both'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setActiveMarketFilter(f)}
+                className={`px-4 py-1.5 rounded-2xl text-xs font-semibold transition-all ${activeMarketFilter === f
+                  ? (isVIP ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer' : 'bg-[#00f9ff] text-black')
+                  : isDark ? 'bg-white/10 text-white/80 hover:bg-white/20' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              >
+                {f === 'fast' ? 'Fast Games' : f === 'prediction' ? 'Prediction Markets' : 'Both'}
+              </button>
+            ))}
+          </div>
+
+          {/* Active list (filtered by toggle). Refresh loads both fast and long prediction wires. */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Active HBAR Fast Games (Live Timers)</div>
-              <button onClick={loadFastGames} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
+              <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Active Markets (Live Timers)</div>
+              <button onClick={() => { loadFastGames(); loadOnChainMarkets(); }} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {/* Phase 1 stability: Never blank the whole list on poll/refresh. Show previous data + subtle indicator.
-               Use stable keys + avoid full grid re-mount to stop disappear/reappear flashes. */}
-            {isLoadingFastGames && displayFastGames.length === 0 ? (
-              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
-            ) : displayFastGames.filter((g: any) => !g.resolved).length === 0 ? (
-              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
-                <div>No active fast games right now.</div>
-                <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
-                <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {displayFastGames.filter((g: any) => !g.resolved).slice(0, 6).map((game: any) => {
+            {/* Phase 1 stability... same as before. Only show if fast or both. Sorted most recent first (by marketId ts). */}
+            {(activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
+              isLoadingFastGames && displayFastGames.length === 0 ? (
+                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>Loading fast games from HCS...</div>
+              ) : (() => {
+                const activeFast = displayFastGames
+                  .filter((g: any) => !g.resolved)
+                  .sort((a: any, b: any) => {
+                    const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10);
+                    const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10);
+                    return tb - ta; // most recent first
+                  });
+                if (activeFast.length === 0) {
+                  return (
+                    <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
+                      <div>No active fast games right now.</div>
+                      <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+                      <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {activeFast.slice(0, 6).map((game: any) => {
                   const remaining = Math.max(0, (game.endTime || 0) - now);
                   const mins = Math.floor(remaining / 60);
                   const secs = remaining % 60;
@@ -1585,6 +1613,51 @@ export function Predict() {
               </div>
             )}
           </div>
+
+          {/* Prediction / long markets - shown when prediction or both. Simple cards with timers from endTime. Same care for resolution etc. Sorted recent (by id). */}
+          {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (() => {
+            const activePred = activeMarkets
+              .filter((m: any) => !m.resolved)
+              .sort((a: any, b: any) => (b.id || 0) - (a.id || 0))
+              .slice(0, 6);
+            if (activePred.length === 0) {
+              return activeMarketFilter === 'prediction' ? (
+                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
+              ) : null;
+            }
+            return (
+              <div className="mt-4">
+                {activeMarketFilter === 'both' && (
+                  <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activePred.map((m: any) => {
+                    const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
+                    const mins = Math.floor(remaining / 60);
+                    const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
+                    return (
+                      <div
+                        key={m.marketId || m.id}
+                        onClick={() => openBetModal(m)}
+                        className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
+                          <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                            {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                          </div>
+                        </div>
+                        <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
+                        <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
+                        <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
 
         {/* Tier 2 #2: Recent Outcomes strip — social proof for smoke tests */}
@@ -1607,49 +1680,7 @@ export function Predict() {
           </div>
         )}
 
-        {/* Fast Game Updates — the "Updates" / extra data feed the deployed version had.
-           * Built on the stable resolver-enriched data (creationPrice, volume, participants from HCS).
-           * Gives the richer market creation + activity view without losing any Phase 1 stability.
-           */}
-        <div className="mt-8 border-t border-white/10 pt-6">
-          <div className="flex items-center justify-between mb-2">
-            <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>
-              Fast Game Updates (Recent Creations &amp; Activity)
-            </div>
-            <button onClick={loadFastGames} className="text-xs px-2 py-0.5 rounded bg-white/10 hover:bg-white/20">Refresh</button>
-          </div>
-          {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).length === 0 ? (
-            <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-xs py-2`}>No recent fast game activity yet. Create one above — it will appear here instantly (optimistic) + via resolver.</div>
-          ) : (
-            <div className="divide-y divide-white/10 rounded-2xl border border-white/10 overflow-hidden">
-              {displayFastGames.filter((g: any) => !g.resolved).slice(0, 5).map((g: any, idx: number) => {
-                const ageMin = Math.max(0, Math.floor((Date.now() / 1000 - (parseInt((g.marketId || '').split('-')[1] || '0', 10) / 1000)) / 60));
-                return (
-                  <div key={idx} className={`px-3 py-2 text-xs flex items-center gap-3 ${isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}>
-                    <div className="font-mono text-[10px] text-white/50 w-40 truncate">{g.marketId}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate pr-2">{g.question}</div>
-                      <div className={`${isDark ? 'text-white/50' : 'text-slate-500'} text-[10px] flex gap-2`}>
-                        <span>Created {ageMin}m ago</span>
-                        <span>·</span>
-                        <span className="font-mono text-[#00f9ff]">${(g.creationPrice || 0).toFixed(6)}</span>
-                        <span>·</span>
-                        <span>{(g.currentVolume || 0).toFixed(1)} HBAR</span>
-                        <span>·</span>
-                        <span>{(g.totalParticipants || 0)} users</span>
-                      </div>
-                    </div>
-                    <div className={`text-[10px] px-2 py-0.5 rounded-full ${g._optimistic || g._recentlyCreated ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                      {g._optimistic || g._recentlyCreated ? 'LIVE (optimistic)' : (g.isBettingOpen !== undefined ? (g.isBettingOpen ? 'OPEN' : 'CLOSED') : 'OPEN')}
-                    </div>
-                    <a href={`https://hashscan.io/testnet/topic/${MASTER_TOPIC_ID}`} target="_blank" className="text-[#00f9ff] text-[10px] hover:underline">HCS</a>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className={`${isDark ? 'text-white/40' : 'text-slate-500'} text-[10px] mt-1`}>Extra data view (creations, volume, participants, price at placement). All anchored to HCS 0.0.9017517.</div>
-        </div>
+        {/* Fast Game Updates section fully removed - now consolidated into the "Active markets" section above (active only, recent-first via toggle). */}
 
         {/* Portfolio Dropdown */}
         <div className="mt-10 border-t border-white/10 pt-8">
