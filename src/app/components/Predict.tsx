@@ -1261,8 +1261,8 @@ export function Predict() {
             <div className={`col-span-full text-center py-12 ${isDark ? 'text-white/50' : 'text-slate-400'}`}>Loading live prices...</div>
           ) : assets.length > 0 ? (
             assets.map((asset, index) => (
-              <div key={index} onClick={() => { setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
-                className={`group rounded-3xl p-5 border transition-all hover:-translate-y-0.5 cursor-pointer ${isDark ? 'bg-white/5 border-white/10 hover:border-[#00f9ff]/40' : 'bg-white border-slate-200 hover:border-[#00f9ff]/60 shadow-sm'}`}>
+              <div key={index}
+                className={`group rounded-3xl p-5 border transition-all hover:-translate-y-0.5 ${isDark ? 'bg-white/5 border-white/10 hover:border-[#00f9ff]/40' : 'bg-white border-slate-200 hover:border-[#00f9ff]/60 shadow-sm'}`}>
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <img src={asset.logo} alt={asset.symbol} className="w-10 h-10 rounded-full object-contain" />
@@ -1276,7 +1276,32 @@ export function Predict() {
                   </div>
                 </div>
                 <div className="text-4xl font-semibold tracking-[-1.5px] tabular-nums">${formatPrice(asset.price)}</div>
-                <div className="mt-5 pt-4 border-t border-white/10 text-center text-sm text-[#00f9ff] group-hover:underline">Create Market →</div>
+
+                {/* Two-button entry: Fast Game (short) + Prediction (long) — nice first experience, theme + VIP sensitive */}
+                <div className="mt-5 pt-3 border-t border-white/10 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowFastGameModal(true); }}
+                    className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1
+                      ${isVIP
+                        ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer shadow'
+                        : isDark
+                          ? 'bg-[#00f9ff] text-black hover:brightness-110'
+                          : 'bg-[#00f9ff] text-black hover:brightness-110'}`}
+                  >
+                    ⚡ Fast Game
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
+                    className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1 border
+                      ${isVIP
+                        ? 'border-white/30 text-white hover:bg-white/5 vip-shimmer'
+                        : isDark
+                          ? 'border-white/20 text-[#00f9ff] hover:bg-white/5'
+                          : 'border-slate-300 text-[#00f9ff] hover:bg-slate-50'}`}
+                  >
+                    📈 Prediction
+                  </button>
+                </div>
               </div>
             ))
           ) : (
