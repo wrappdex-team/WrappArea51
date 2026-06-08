@@ -1397,6 +1397,13 @@ export function Predict() {
                   const createdTime = creationTs ? new Date(creationTs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
                   const closeTime = game.endTime ? new Date(game.endTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
 
+                  // Countdown to betting close (50% of duration) for the bottom action area
+                  const durationSec = (game.durationMinutes || 10) * 60;
+                  const timeToBetClose = Math.max(0, remaining - (durationSec * 0.5));
+                  const betMins = Math.floor(timeToBetClose / 60);
+                  const betSecs = timeToBetClose % 60;
+                  const betCloseStr = timeToBetClose > 0 ? `${betMins}m ${betSecs}s` : "CLOSED";
+
                   return (
                     <div 
                       key={game.marketId} 
@@ -1605,18 +1612,21 @@ export function Predict() {
                               }}
                               className="mb-2"
                             />
+                            <div className="text-center text-xs text-white/70 mb-1.5">
+                              Bet closes in {betCloseStr}
+                            </div>
                             <div className="flex gap-2">
                               <button 
                                 onClick={() => handleFastBet(game, 'YES')} 
                                 className="flex-1 py-2.5 text-sm rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.985] text-white font-semibold transition-all"
                               >
-                                YES {(gameStakes[game.marketId] || 10)}
+                                UP
                               </button>
                               <button 
                                 onClick={() => handleFastBet(game, 'NO')} 
                                 className="flex-1 py-2.5 text-sm rounded-2xl bg-red-600 hover:bg-red-500 active:scale-[0.985] text-white font-semibold transition-all"
                               >
-                                NO {(gameStakes[game.marketId] || 10)}
+                                DOWN
                               </button>
                             </div>
                           </>
