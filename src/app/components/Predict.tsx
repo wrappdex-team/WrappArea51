@@ -1428,6 +1428,21 @@ export function Predict() {
             ))}
           </div>
 
+          {/* Your recent/pending fast games — always visible to the creator immediately after payment/signing, even if the resolver is rate-limited (429), returning empty, or the direct HGraph fallback is blocked (CORS/DNS from vercel). 
+              This guarantees the game "shows up" after the funds are taken / market making stake, matching the working experience from the backup. 
+              The HCS record (topic CREATE + initial PLACE_BET) is still attempted in the background for official confirmation and visibility to others. */}
+          {Array.from(recentlyCreatedMarketIds).some(id => id.startsWith('fast-')) && (
+            <div className="mb-4 p-3 rounded-2xl border border-[#00f9ff]/40 bg-[#00f9ff]/5 text-sm">
+              <div className="font-semibold text-[#00f9ff] mb-1 text-xs tracking-widest">YOUR RECENT FAST GAMES (visible to you immediately — HCS confirmation pending)</div>
+              {optimisticGames.filter((g: any) => g.marketId && g.marketId.startsWith('fast-')).map((g: any) => (
+                <div key={g.marketId} className="py-1 border-b border-white/10 last:border-0">
+                  {g.question} — {g.currentVolume || g.initialStake} HBAR on {g.direction} — {g._recordFailed ? 'Record pending (see toast for marketId to recover)' : 'Confirming...'}
+                </div>
+              ))}
+              <div className="text-[10px] text-white/50 mt-1">The topic messages (CREATE + initial PLACE_BET) will appear on HCS 0.0.9017517 when the record succeeds. Refresh or re-create if needed.</div>
+            </div>
+          )}
+
           {/* Active list (filtered by toggle). Refresh loads both fast and long prediction wires. */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
