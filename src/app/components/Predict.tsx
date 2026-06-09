@@ -2423,163 +2423,120 @@ export function Predict() {
                       return "payment-sent";
                     });
 
-                    // 3. Payment succeeded — now get a *fresh* authoritative price from the resolver
-                    // at the exact moment after the user committed the on-chain payment.
-                    // This makes the creationPrice + timestamp for the game as accurate as possible.
-                    // The resolver will also do its own fresh fetch in the /create handler for extra authority.
-                    let hbarPrice = 0;
-                    let creationPriceTime: string | undefined;
-                    try {
-                      const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
-                      const pJson = await pRes.json();
-                      hbarPrice = pJson.price || assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
-                      creationPriceTime = pJson.priceTime || pJson.resolvedAt;
-                    } catch {
-                      hbarPrice = assets.find(a => a.symbol === 'HBAR')?.price || 0.05;
-                    }
+                    // Payment succeeded — unblock UI *immediately* so user never sees stuck "Waiting for signature..." after the actual sign.
+                    // The record to HCS (to start the topic) is now background / best-effort so the game card appears right away for the creator (matching the "working extremely well" experience from the backup).
+                    setIsCreatingFastGame(false);
 
-                    const generatedMarketId = `fast-${Date.now()}`;
+                    // Add pending optimistic card + recently + myBetCounts *right after payment* (visible in "Your recent fast games" section and main list).
+                    // This guarantees the game "shows up" after funds are taken / market making stake, even if resolver is busy (429), slow, or record fails transiently.
+                    const pendingMarketId = `fast-${Date.now()}`;
+                    const pendingSideLabel = fastGameSide === 'YES' ? 'Higher' : 'Lower';
+                    const pendingDurationLabel = `${fastGameDuration} min`;
+                    const pendingEstimated = new Date(Date.now() + fastGameDuration * 60 * 1000);
+                    const pendingTimeLabel = pendingEstimated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const pendingQuestion = `Will HBAR price be ${pendingSideLabel} than the current price at resolution? (~${pendingDurationLabel}, est. ${pendingTimeLabel})`;
+                    const approxPrice = (typeof modalHbarPrice === 'number' ? modalHbarPrice : (assets.find(a => a.symbol === 'HBAR')?.price || 0.05));
 
-                    const sideLabel = fastGameSide === 'YES' ? 'Higher' : 'Lower';
-                    const durationLabel = `${fastGameDuration} min`;
-                    const estimatedResolution = new Date(Date.now() + fastGameDuration * 60 * 1000);
-                    const timeLabel = estimatedResolution.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const pendingGame = {
+                      marketId: pendingMarketId,
+                      question: pendingQuestion,
+                      direction: fastGameSide,
+                      durationMinutes: fastGameDuration,
+                      endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                      creationPrice: approxPrice,
+                      currentVolume: fastGameStake,
+                      resolved: false,
+                      creator: session.accountId,
+                      yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
+                      noStake: fastGameSide === 'NO' ? fastGameStake : 0,
+                      yesParticipants: fastGameSide === 'YES' ? 1 : 0,
+                      noParticipants: fastGameSide === 'NO' ? 1 : 0,
+                      totalParticipants: 1,
+                      _pendingRecord: true,
+                    } as any;
 
-                    const questionText = `Will HBAR price be ${sideLabel} than the current price at resolution? (~${durationLabel}, est. ${timeLabel})`;
+                    setOptimisticGames(prev => {
+                      const exists = prev.some(g => g.marketId === pendingMarketId);
+                      if (exists) return prev;
+                      return [pendingGame, ...prev];
+                    });
 
-                    let recordSuccess = false;
-                    let lastRecordError = '';
-                    for (let attempt = 1; attempt <= 3; attempt++) {
+                    setRecentlyCreatedMarketIds((prev: Set<string>) => {
+                      const next = new Set(prev);
+                      next.add(pendingMarketId);
                       try {
-                        const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            marketId: generatedMarketId,
-                            question: questionText,
-                            asset: 'HBAR',
-                            endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                            durationMinutes: fastGameDuration,
-                            initialSide: fastGameSide,
-                            initialStake: fastGameStake,
-                            creationPrice: hbarPrice,
-                            creationPriceTime,
-                            submittedBy: session.accountId,
-                          }),
-                        });
+                        const toSave: Record<string, number> = {};
+                        next.forEach(id => { toSave[id] = Date.now(); });
+                        localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+                      } catch {}
+                      return next;
+                    });
 
-                        const data = await res.json();
+                    setMyBetCounts(prev => ({ ...prev, [pendingMarketId]: 1 }));
 
-                        if (res.ok && data.success) {
-                          recordSuccess = true;
-                          break;
-                        } else {
-                          lastRecordError = data.error || 'Resolver returned error';
+                    showToast('Payment successful. Recording game to HCS in background (card visible now — topic starts on success). Resolver may be busy (429); will retry.', 'success');
+
+                    // Record to resolver/HCS in background (non-blocking, more retries + backoff for resilience against load).
+                    // If succeeds, update the pending card to confirmed.
+                    // If fails after retries, card stays as pending (visible to creator), user has marketId for recovery.
+                    (async () => {
+                      let hbarPrice = approxPrice;
+                      let creationPriceTime: string | undefined;
+                      try {
+                        const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+                        const pJson = await pRes.json();
+                        hbarPrice = pJson.price || approxPrice;
+                        creationPriceTime = pJson.priceTime || pJson.resolvedAt;
+                      } catch {}
+
+                      const questionText = pendingQuestion;
+                      let recordSuccess = false;
+                      let lastRecordError = '';
+                      for (let attempt = 1; attempt <= 5; attempt++) {
+                        try {
+                          const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              marketId: pendingMarketId,
+                              question: questionText,
+                              asset: 'HBAR',
+                              endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                              durationMinutes: fastGameDuration,
+                              initialSide: fastGameSide,
+                              initialStake: fastGameStake,
+                              creationPrice: hbarPrice,
+                              creationPriceTime,
+                              submittedBy: session.accountId,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (res.ok && data.success) {
+                            recordSuccess = true;
+                            break;
+                          } else {
+                            lastRecordError = data.error || 'Resolver returned error';
+                          }
+                        } catch (e: any) {
+                          lastRecordError = e.message || 'Network error calling resolver';
                         }
-                      } catch (e: any) {
-                        lastRecordError = e.message || 'Network error calling resolver';
+                        if (attempt < 5) await new Promise(r => setTimeout(r, 2000 * attempt));
                       }
-                      if (attempt < 3) await new Promise(r => setTimeout(r, 1500)); // small backoff
-                    }
 
-                    if (recordSuccess) {
-                      // ONLY on confirmed backend record success do we show optimistic + persist + toast + close.
-                      // This prevents the lying UI where a card appears locally (and funds left wallet) but no HCS CREATE/PLACE_BET was posted.
-                      const optimisticGame = {
-                        marketId: generatedMarketId,
-                        question: questionText,
-                        direction: fastGameSide,
-                        durationMinutes: fastGameDuration,
-                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                        creationPrice: hbarPrice,
-                        currentVolume: fastGameStake,
-                        resolved: false,
-                        creator: session.accountId,
-                        yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
-                        noStake: fastGameSide === 'NO' ? fastGameStake : 0,
-                        yesParticipants: fastGameSide === 'YES' ? 1 : 0,
-                        noParticipants: fastGameSide === 'NO' ? 1 : 0,
-                        totalParticipants: 1,
-                      } as any;
+                      if (recordSuccess) {
+                        setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? { ...g, creationPrice: hbarPrice, _pendingRecord: false } : g));
+                        showToast('Fast Game recorded on HCS successfully! (topic started)', 'success');
+                        setShowFastGameModal(false);
+                        setTimeout(() => loadFastGames(), 650);
+                        setTimeout(() => loadFastGames(), 2100);
+                        setTimeout(() => loadFastGames(), 5500);
+                      } else {
+                        console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', pendingMarketId, 'resolver:', RESOLVER_BASE);
+                        showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Game card is visible to you (pending confirmation). Payment in escrow (0.0.9006979). MarketId: ${pendingMarketId}. Will keep trying or retry by creating again. Topic starts on success.`, 'error');
+                      }
+                    })();
 
-                      setOptimisticGames(prev => {
-                        const exists = prev.some(g => g.marketId === optimisticGame.marketId);
-                        if (exists) return prev;
-                        return [optimisticGame, ...prev];
-                      });
-
-                      setRecentlyCreatedMarketIds((prev: Set<string>) => {
-                        const next = new Set(prev);
-                        next.add(optimisticGame.marketId);
-                        try {
-                          const toSave: Record<string, number> = {};
-                          next.forEach(id => { toSave[id] = Date.now(); });
-                          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
-                        } catch {}
-                        return next;
-                      });
-
-                      // Creator's initial stake counts as bet #1 toward the 5-bet creator limit.
-                      setMyBetCounts(prev => ({ ...prev, [optimisticGame.marketId]: 1 }));
-
-                      showToast('Fast Game created successfully! (recorded on HCS)', 'success');
-                      setShowFastGameModal(false);
-
-                      // Loading fix (symmetric to bet path): rapid follow-ups after confirmed HCS create + initial bet.
-                      // Creator feels instant via the optimistic card we just set.
-                      // These pull the resolver list (with any concurrent activity) so remote observers see the new game fast.
-                      setTimeout(() => loadFastGames(), 650);
-                      setTimeout(() => loadFastGames(), 2100);
-                      setTimeout(() => loadFastGames(), 5500);
-                    } else {
-                      // Record failed (transient resolver issue, rate limit 429, or wire problem common in current live setup), but add the optimistic card + recently + myBetCounts for the creator's local view.
-                      // This makes the game "show up" immediately after the payment/signing (market making started) — restoring the smooth "working extremely well" experience from the backup state.
-                      // The record was attempted (the 3x loop ran); the payment secured the stake in escrow for this marketId. The HCS topic (CREATE + initial PLACE_BET) will be started when a record succeeds.
-                      // The card appears in Active markets (via optimistic + recently force-include) even if the resolver list is currently empty or the direct HGraph fallback is blocked (CORS/DNS).
-                      const optimisticGame = {
-                        marketId: generatedMarketId,
-                        question: questionText,
-                        direction: fastGameSide,
-                        durationMinutes: fastGameDuration,
-                        endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
-                        creationPrice: hbarPrice,
-                        currentVolume: fastGameStake,
-                        resolved: false,
-                        creator: session.accountId,
-                        yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
-                        noStake: fastGameSide === 'NO' ? fastGameStake : 0,
-                        yesParticipants: fastGameSide === 'YES' ? 1 : 0,
-                        noParticipants: fastGameSide === 'NO' ? 1 : 0,
-                        totalParticipants: 1,
-                        _recordFailed: true,
-                      } as any;
-
-                      setOptimisticGames(prev => {
-                        const exists = prev.some(g => g.marketId === optimisticGame.marketId);
-                        if (exists) return prev;
-                        return [optimisticGame, ...prev];
-                      });
-
-                      setRecentlyCreatedMarketIds((prev: Set<string>) => {
-                        const next = new Set(prev);
-                        next.add(optimisticGame.marketId);
-                        try {
-                          const toSave: Record<string, number> = {};
-                          next.forEach(id => { toSave[id] = Date.now(); });
-                          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
-                        } catch {}
-                        return next;
-                      });
-
-                      // Creator's initial stake counts as bet #1 toward the 5-bet creator limit.
-                      setMyBetCounts(prev => ({ ...prev, [optimisticGame.marketId]: 1 }));
-
-                      console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', generatedMarketId, 'resolver:', RESOLVER_BASE);
-                      showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Game card is now visible to you (pending HCS confirmation). Payment secured in escrow (0.0.9006979). Note this marketId for recovery: ${generatedMarketId}. Record may succeed on next poll/retry or re-create. The topic starts on successful record.`, 'error');
-                      // Keep modal open so user can see the ID.
-                    }
-
-                    // Also do normal refreshes (the optimistic layer will protect the game)
+                    // Normal refreshes (the optimistic/pending layer protects visibility)
                     setTimeout(() => loadFastGames(), 2000);
                     setTimeout(() => loadFastGames(), 6000);
                   } catch (err: any) {
