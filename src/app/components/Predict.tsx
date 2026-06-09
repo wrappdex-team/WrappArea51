@@ -756,6 +756,91 @@ export function Predict() {
   };
 
   // ============================================================
+  // RETRY FOR PENDING/WC-TIMEOUT/FAILED RECORDS (recovery for "funds taken but no topic" cases)
+  // Allows creator to force the /fast-game/create POST (which triggers resolver HCS CREATE_MARKET + PLACE_BET)
+  // even if the initial post-pay background record hit 429, network blip, or the WC sign timed out before reaching the IIFE.
+  // Uses same fields the success path sends. Robust json + 429-aware backoff (up to 8 tries).
+  // ============================================================
+  const retryRecordForGame = async (game: any) => {
+    if (!game?.marketId) return;
+    const submittedBy = game.creator || (game as any).submittedBy;
+    if (!submittedBy) {
+      showToast('Cannot retry record: missing creator account on the pending game.', 'error');
+      return;
+    }
+    setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? { ...g, _retrying: true } : g));
+
+    let hbarPrice = (typeof game.creationPrice === 'number' ? game.creationPrice : 0.05);
+    let creationPriceTime: string | undefined;
+    try {
+      const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+      if (pRes.ok) {
+        const pJson = await pRes.json().catch(() => ({} as any));
+        hbarPrice = pJson?.price ?? hbarPrice;
+        creationPriceTime = pJson?.priceTime || pJson?.resolvedAt;
+      }
+    } catch {}
+
+    let recordSuccess = false;
+    let lastRecordError = '';
+    const dur = (game.durationMinutes as number) || 10;
+    const stk = (game.currentVolume as number) || (game as any).initialStake || 25;
+    const side: 'YES' | 'NO' = (game.direction as any) || 'YES';
+    const q = game.question || `Will HBAR be ${side === 'YES' ? 'Higher' : 'Lower'} than creation price in ${dur} min?`;
+
+    for (let attempt = 1; attempt <= 8; attempt++) {
+      try {
+        const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            marketId: game.marketId,
+            question: q,
+            asset: 'HBAR',
+            endTime: (game.endTime as number) || Math.floor(Date.now() / 1000) + (dur * 60),
+            durationMinutes: dur,
+            initialSide: side,
+            initialStake: stk,
+            creationPrice: hbarPrice,
+            creationPriceTime,
+            submittedBy,
+          }),
+        });
+        let data: any = {};
+        try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
+        if (res.ok && data?.success) {
+          recordSuccess = true;
+          break;
+        } else {
+          lastRecordError = data?.error || data?.stage || `status ${res.status}`;
+          if (res.status === 429) lastRecordError += ' (resolver rate-limited)';
+        }
+      } catch (e: any) {
+        lastRecordError = e?.message || 'Network error calling resolver';
+      }
+      if (attempt < 8) {
+        const isRate = lastRecordError.includes('429') || lastRecordError.includes('rate');
+        const backoff = isRate ? (6500 * attempt) : (1600 * attempt);
+        await new Promise(r => setTimeout(r, backoff));
+      }
+    }
+
+    if (recordSuccess) {
+      setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? {
+        ...g, creationPrice: hbarPrice, _pendingRecord: false, _recordFailed: false, _wcTimedOut: false, _mayHavePayment: false, _retrying: false
+      } : g));
+      showToast('Fast Game recorded on HCS via retry! (CREATE + PLACE_BET topic messages posted)', 'success');
+      setTimeout(() => loadFastGames(), 700);
+      setTimeout(() => loadFastGames(), 2200);
+    } else {
+      setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? {
+        ...g, _recordFailed: true, _retrying: false, _lastRecordError: lastRecordError
+      } : g));
+      showToast(`Retry record failed: ${lastRecordError}. MarketId: ${game.marketId}. Resolver: ${RESOLVER_BASE}. Check HashScan or try again in a minute.`, 'error');
+    }
+  };
+
+  // ============================================================
   // STABLE PORTFOLIO DATA COLLECTION (Web3 Hedera expert layer)
   // Resolver is the authoritative "belt". Client now treats it as the
   // single source of truth with short-TTL cache + smart refresh.
@@ -1434,12 +1519,31 @@ export function Predict() {
           {Array.from(recentlyCreatedMarketIds).some(id => id.startsWith('fast-')) && (
             <div className="mb-4 p-3 rounded-2xl border border-[#00f9ff]/40 bg-[#00f9ff]/5 text-sm">
               <div className="font-semibold text-[#00f9ff] mb-1 text-xs tracking-widest">YOUR RECENT FAST GAMES (visible to you immediately — HCS confirmation pending)</div>
-              {optimisticGames.filter((g: any) => g.marketId && g.marketId.startsWith('fast-')).map((g: any) => (
-                <div key={g.marketId} className="py-1 border-b border-white/10 last:border-0">
-                  {g.question} — {g.currentVolume || g.initialStake} HBAR on {g.direction} — {g._recordFailed ? 'Record pending (see toast for marketId to recover)' : 'Confirming...'}
-                </div>
-              ))}
-              <div className="text-[10px] text-white/50 mt-1">The topic messages (CREATE + initial PLACE_BET) will appear on HCS 0.0.9017517 when the record succeeds. Refresh or re-create if needed.</div>
+              {optimisticGames.filter((g: any) => g.marketId && g.marketId.startsWith('fast-')).map((g: any) => {
+                const isPending = g._pendingRecord || g._wcTimedOut || g._recordFailed;
+                const statusText = g._wcTimedOut
+                  ? 'WC sign timed out (check HashScan for escrow transfer) — retry below'
+                  : g._recordFailed
+                    ? `Record failed${g._lastRecordError ? ' — ' + String(g._lastRecordError).slice(0, 60) : ''} — retry below`
+                    : (g._retrying ? 'Retrying HCS record...' : 'Confirming on HCS...');
+                return (
+                  <div key={g.marketId} className="py-1 border-b border-white/10 last:border-0 flex items-center justify-between gap-2">
+                    <span>
+                      {g.question} — {g.currentVolume || g.initialStake} HBAR on {g.direction} — {statusText}
+                    </span>
+                    {isPending && (
+                      <button
+                        onClick={() => retryRecordForGame(g)}
+                        disabled={!!g._retrying}
+                        className="text-[10px] px-2 py-0.5 rounded-lg bg-[#00f9ff]/20 hover:bg-[#00f9ff]/30 text-[#00f9ff] border border-[#00f9ff]/30 disabled:opacity-50"
+                      >
+                        {g._retrying ? 'Retrying...' : 'Retry record'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="text-[10px] text-white/50 mt-1">The topic messages (CREATE + initial PLACE_BET) will appear on HCS 0.0.9017517 when the record succeeds. Use Retry on timed-out/failed entries to push from escrow stake. MarketId shown in toasts.</div>
             </div>
           )}
 
@@ -2484,15 +2588,15 @@ export function Predict() {
                       let creationPriceTime: string | undefined;
                       try {
                         const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
-                        const pJson = await pRes.json();
-                        hbarPrice = pJson.price || approxPrice;
-                        creationPriceTime = pJson.priceTime || pJson.resolvedAt;
+                        const pJson = await pRes.json().catch(() => ({} as any));
+                        hbarPrice = pJson?.price || approxPrice;
+                        creationPriceTime = pJson?.priceTime || pJson?.resolvedAt;
                       } catch {}
 
                       const questionText = pendingQuestion;
                       let recordSuccess = false;
                       let lastRecordError = '';
-                      for (let attempt = 1; attempt <= 5; attempt++) {
+                      for (let attempt = 1; attempt <= 8; attempt++) {
                         try {
                           const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
                             method: 'POST',
@@ -2510,17 +2614,23 @@ export function Predict() {
                               submittedBy: session.accountId,
                             }),
                           });
-                          const data = await res.json();
-                          if (res.ok && data.success) {
+                          let data: any = {};
+                          try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
+                          if (res.ok && data?.success) {
                             recordSuccess = true;
                             break;
                           } else {
-                            lastRecordError = data.error || 'Resolver returned error';
+                            lastRecordError = data?.error || data?.stage || `status ${res.status}`;
+                            if (res.status === 429) lastRecordError += ' (rate limited)';
                           }
                         } catch (e: any) {
-                          lastRecordError = e.message || 'Network error calling resolver';
+                          lastRecordError = e?.message || 'Network error calling resolver';
                         }
-                        if (attempt < 5) await new Promise(r => setTimeout(r, 2000 * attempt));
+                        if (attempt < 8) {
+                          const isRate = lastRecordError.includes('429') || lastRecordError.includes('rate');
+                          const backoff = isRate ? (6500 * attempt) : (1600 * attempt);
+                          await new Promise(r => setTimeout(r, backoff));
+                        }
                       }
 
                       if (recordSuccess) {
@@ -2532,7 +2642,8 @@ export function Predict() {
                         setTimeout(() => loadFastGames(), 5500);
                       } else {
                         console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', pendingMarketId, 'resolver:', RESOLVER_BASE);
-                        showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Game card is visible to you (pending confirmation). Payment in escrow (0.0.9006979). MarketId: ${pendingMarketId}. Will keep trying or retry by creating again. Topic starts on success.`, 'error');
+                        setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? { ...g, _recordFailed: true, _lastRecordError: lastRecordError } : g));
+                        showToast(`Record to HCS failed after retries: ${lastRecordError}. (resolver=${RESOLVER_BASE}) Game card is visible to you (pending confirmation). Payment in escrow (0.0.9006979). MarketId: ${pendingMarketId}. Use the Retry button in YOUR RECENT section. Topic starts on success.`, 'error');
                       }
                     })();
 
@@ -2542,6 +2653,68 @@ export function Predict() {
                   } catch (err: any) {
                     showToast(`Creation failed: ${err?.message || err}`, 'error');
                     console.error(err);
+
+                    // WC / relay timeout recovery path (the case hitting "still no topic, funds taken, stuck waiting, times out").
+                    // Even though withSigning rejected before the happy-path pending+record code, we still generate the exact same
+                    // pending card + add to recently/optimistic here so the creator sees their game immediately and can retry the
+                    // record POST (which is what actually writes CREATE_MARKET + PLACE_BET to topic 0.0.9017517 via resolver).
+                    // This closes the last hole vs the "working extremely well before" backup experience.
+                    const em = (err?.message || String(err || '')).toLowerCase();
+                    if (em.includes('timed out') || em.includes('walletconnect request') || em.includes('timeout')) {
+                      try {
+                        const pid = `fast-${Date.now()}`;
+                        const pSideLabel = fastGameSide === 'YES' ? 'Higher' : 'Lower';
+                        const pDurLabel = `${fastGameDuration} min`;
+                        const pEst = new Date(Date.now() + fastGameDuration * 60 * 1000);
+                        const pTimeLabel = pEst.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        const pQ = `Will HBAR price be ${pSideLabel} than the current price at resolution? (~${pDurLabel}, est. ${pTimeLabel})`;
+                        const pPrice = (typeof modalHbarPrice === 'number' ? modalHbarPrice : (assets.find(a => a.symbol === 'HBAR')?.price || 0.05));
+
+                        const pGame = {
+                          marketId: pid,
+                          question: pQ,
+                          direction: fastGameSide,
+                          durationMinutes: fastGameDuration,
+                          endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
+                          creationPrice: pPrice,
+                          currentVolume: fastGameStake,
+                          resolved: false,
+                          creator: session.accountId,
+                          yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
+                          noStake: fastGameSide === 'NO' ? fastGameStake : 0,
+                          yesParticipants: fastGameSide === 'YES' ? 1 : 0,
+                          noParticipants: fastGameSide === 'NO' ? 1 : 0,
+                          totalParticipants: 1,
+                          _wcTimedOut: true,
+                          _mayHavePayment: true,
+                          _pendingRecord: true,
+                        } as any;
+
+                        setOptimisticGames(prev => {
+                          const exists = prev.some(gg => gg.marketId === pid);
+                          if (exists) return prev;
+                          return [pGame, ...prev];
+                        });
+
+                        setRecentlyCreatedMarketIds((prev: Set<string>) => {
+                          const next = new Set(prev);
+                          next.add(pid);
+                          try {
+                            const toSave: Record<string, number> = {};
+                            next.forEach(id => { toSave[id] = Date.now(); });
+                            localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave));
+                          } catch {}
+                          return next;
+                        });
+
+                        setMyBetCounts(prev => ({ ...prev, [pid]: 1 }));
+
+                        const totalPaid = (fastGameStake + 2.5).toFixed(2);
+                        showToast(`WalletConnect timed out (120s relay). If you approved the transfer in HashPack, ${totalPaid} HBAR likely reached escrow (0.0.9006979) + treasury (0.0.9006841). Recovery card added to YOUR RECENT FAST GAMES below + main list. Click "Retry record" on it to POST the CREATE + PLACE_BET (this is what starts the topic). MarketId: ${pid}. Resolver: ${RESOLVER_BASE}`, 'error');
+                      } catch (recErr) {
+                        console.warn('[Predict] WC-timeout recovery pending add failed (non-fatal)', recErr);
+                      }
+                    }
                   } finally {
                     setIsCreatingFastGame(false);
                   }
