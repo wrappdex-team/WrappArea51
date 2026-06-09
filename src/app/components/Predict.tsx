@@ -625,7 +625,20 @@ export function Predict() {
 
   const [recentlyClaimedMarketIds] = useState(() => new Set<string>());
 
+  // Simple throttle to prevent the FE from hammering the resolver + HGraph with fast-game polls.
+  // The resolver (and HGraph from browser) were getting 429s every second from the previous tight refresh cadence + fallbacks.
+  // This was starving the /fast-game/create POSTs (the only thing that actually writes CREATE_MARKET + PLACE_BET to topic 0.0.9017517).
+  let _lastFastLoadTs = 0;
+  const MIN_FAST_LOAD_INTERVAL_MS = 30000; // 30s minimum between full refreshes. Cards still live-update via the 1s `now` tick.
+
   const loadFastGames = async () => {
+    const nowTs = Date.now();
+    if (nowTs - _lastFastLoadTs < MIN_FAST_LOAD_INTERVAL_MS) {
+      setIsLoadingFastGames(false);
+      return;
+    }
+    _lastFastLoadTs = nowTs;
+
     setIsLoadingFastGames(true);
 
     // Aggressive cleanup on every load — correct units (cTs is ms)
@@ -788,7 +801,9 @@ export function Predict() {
     const side: 'YES' | 'NO' = (game.direction as any) || 'YES';
     const q = game.question || `Will HBAR be ${side === 'YES' ? 'Higher' : 'Lower'} than creation price in ${dur} min?`;
 
+    console.log('%c[FAST-GAME-CREATE][RETRY] starting manual/auto retry for', 'color:#0ff;font-weight:bold', game.marketId, 'resolver=', RESOLVER_BASE);
     for (let attempt = 1; attempt <= 8; attempt++) {
+      console.log('%c[FAST-GAME-CREATE][RETRY] attempt', 'color:#0ff', attempt, 'for', game.marketId);
       try {
         const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
           method: 'POST',
@@ -809,11 +824,13 @@ export function Predict() {
         let data: any = {};
         try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
         if (res.ok && data?.success) {
+          console.log('%c[FAST-GAME-CREATE][RETRY] SUCCESS on attempt', 'color:#0f0;font-weight:bold', attempt, 'marketId=', game.marketId, 'txs=', data);
           recordSuccess = true;
           break;
         } else {
           lastRecordError = data?.error || data?.stage || `status ${res.status}`;
           if (res.status === 429) lastRecordError += ' (resolver rate-limited)';
+          console.log('%c[FAST-GAME-CREATE][RETRY] attempt', 'color:#f80', attempt, 'failed for', game.marketId, 'status=', res.status, 'err=', lastRecordError);
         }
       } catch (e: any) {
         lastRecordError = e?.message || 'Network error calling resolver';
@@ -830,8 +847,8 @@ export function Predict() {
         ...g, creationPrice: hbarPrice, _pendingRecord: false, _recordFailed: false, _wcTimedOut: false, _mayHavePayment: false, _retrying: false
       } : g));
       showToast('Fast Game recorded on HCS via retry! (CREATE + PLACE_BET topic messages posted)', 'success');
-      setTimeout(() => loadFastGames(), 700);
-      setTimeout(() => loadFastGames(), 2200);
+      setTimeout(() => loadFastGames(), 2000);
+      setTimeout(() => loadFastGames(), 45000);
     } else {
       setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? {
         ...g, _recordFailed: true, _retrying: false, _lastRecordError: lastRecordError
@@ -2594,9 +2611,11 @@ export function Predict() {
                       } catch {}
 
                       const questionText = pendingQuestion;
+                      console.log('%c[FAST-GAME-CREATE] starting background record for', 'color:#0ff;font-weight:bold', pendingMarketId, 'resolver=', RESOLVER_BASE);
                       let recordSuccess = false;
                       let lastRecordError = '';
                       for (let attempt = 1; attempt <= 8; attempt++) {
+                        console.log('%c[FAST-GAME-CREATE] attempt', 'color:#0ff', attempt, 'for', pendingMarketId);
                         try {
                           const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
                             method: 'POST',
@@ -2617,11 +2636,13 @@ export function Predict() {
                           let data: any = {};
                           try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
                           if (res.ok && data?.success) {
+                            console.log('%c[FAST-GAME-CREATE] SUCCESS on attempt', 'color:#0f0;font-weight:bold', attempt, 'marketId=', pendingMarketId, 'txs=', data);
                             recordSuccess = true;
                             break;
                           } else {
                             lastRecordError = data?.error || data?.stage || `status ${res.status}`;
                             if (res.status === 429) lastRecordError += ' (rate limited)';
+                            console.log('%c[FAST-GAME-CREATE] attempt', 'color:#f80', attempt, 'failed for', pendingMarketId, 'status=', res.status, 'err=', lastRecordError);
                           }
                         } catch (e: any) {
                           lastRecordError = e?.message || 'Network error calling resolver';
@@ -2637,9 +2658,10 @@ export function Predict() {
                         setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? { ...g, creationPrice: hbarPrice, _pendingRecord: false } : g));
                         showToast('Fast Game recorded on HCS successfully! (topic started)', 'success');
                         setShowFastGameModal(false);
-                        setTimeout(() => loadFastGames(), 650);
-                        setTimeout(() => loadFastGames(), 2100);
-                        setTimeout(() => loadFastGames(), 5500);
+                        // Throttled refreshes — the optimistic/pending card is already visible immediately.
+                        // Only two spaced calls to let HCS/Mirror settle without adding to the 429 storm.
+                        setTimeout(() => loadFastGames(), 2000);
+                        setTimeout(() => loadFastGames(), 45000);
                       } else {
                         console.error('Fast game record failed after retries:', lastRecordError, 'marketId:', pendingMarketId, 'resolver:', RESOLVER_BASE);
                         setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? { ...g, _recordFailed: true, _lastRecordError: lastRecordError } : g));

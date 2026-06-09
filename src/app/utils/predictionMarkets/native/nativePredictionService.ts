@@ -195,6 +195,18 @@ export async function fetchFastGames(): Promise<FastGame[]> {
     console.warn('[NativePM] Resolver active-fast-games fetch failed, falling back to direct HCS scan');
   }
 
+  // If we got here, the resolver call either failed or returned non-success.
+  // To stop the previous "every second" 429 storm on HGraph (and the resolver's own proxies), we short-circuit
+  // and return [] instead of doing the expensive direct HGraph/Mirror fallback.
+  // The optimistic + "Your recent fast games" + recentlyCreated logic in the UI is what keeps the creator's
+  // just-created game visible even when the resolver is temporarily overloaded or returning empty.
+  // This is the key change that gives the /fast-game/create POSTs a chance to actually reach the resolver
+  // and write the CREATE_MARKET + PLACE_BET messages to topic 0.0.9017517.
+  if (!resolverRes || !resolverRes.ok) {
+    console.warn('[NativePM] Resolver not ok (' + (resolverRes ? resolverRes.status : 'no response') + ') — skipping HGraph fallback to protect rate limits and let creates go through.');
+    return [];
+  }
+
   try {
     // Use reliable (HGraph + Mirror) so volumes from bets by *any* user (including other wallets)
     // appear promptly even when HGraph indexer lags. This directly fixes "bet from another account did not tally".
