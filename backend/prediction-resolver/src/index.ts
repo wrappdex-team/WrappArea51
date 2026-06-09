@@ -203,6 +203,37 @@ app.get('/api/price/hbar', async (req, res) => {
 });
 
 /**
+ * General asset price endpoint (for XRP + other non-HBAR prediction assets).
+ * Uses CoinGecko primary + Binance (BNB oracle) backup exactly as specified for XRP.
+ * HBAR still uses the dedicated /api/price/hbar (rich Saucer/Mirror provenance).
+ * FE cards continue to use the coingecko batch proxy for the grid; this is useful for
+ * modal "current price for this game" consistency on non-HBAR fast games.
+ */
+app.get('/api/price/:symbol', async (req, res) => {
+  try {
+    const symbol = (req.params.symbol || 'HBAR').toUpperCase();
+    const { getAssetPrice } = await import('./resolver');
+    const priceData = await getAssetPrice(symbol);
+
+    res.json({
+      symbol,
+      price: Number(priceData.price.toFixed(symbol === 'XRP' ? 4 : 2)),
+      priceTime: priceData.priceTime,
+      resolvedAt: priceData.resolvedAt,
+      source: priceData.source,
+      isStale: priceData.isStale,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.warn(`[Resolver] /api/price/${req.params.symbol} failed:`, err?.message);
+    res.status(503).json({
+      error: `Failed to fetch price for ${req.params.symbol}`,
+      details: err.message || 'Unknown error',
+    });
+  }
+});
+
+/**
  * Frontend calls this after the user has paid the creation fee + initial stake via HBAR transfer.
  * Backend verifies the transfer (in production) and posts the clean HCS messages using the resolution key.
  */
@@ -240,11 +271,12 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
     }
 
     // Resolver-authoritative fresh price at the moment the funded create record arrives.
-    // CRITICAL: we pass { critical: true } so the new multi-source SaucerSwap last-traded +
-    // direct contract verify + HGraph/Mirror tolerance cross happens with NO cache and full
-    // provenance logged + threaded. This is the exact "after when actually creating the prediction wager" moment.
-    const { getCurrentHbarPriceWithAuditTrail } = await import('./resolver');
-    const priceData = await getCurrentHbarPriceWithAuditTrail({ critical: true }).catch(() => null);
+    // Now asset-aware:
+    // - HBAR: rich SaucerSwap (if key) + Mirror + public fallbacks (unchanged behavior)
+    // - XRP / BTC / ETH / SOL: CoinGecko primary + Binance public (BNB oracle) backup per master plan.
+    // Always { critical: true } for the exact post-payment snap (no cache). Full provenance goes to HCS.
+    const { getAssetPrice } = await import('./resolver');
+    const priceData = await getAssetPrice(asset, { critical: true }).catch(() => null);
     const creationPrice = priceData?.price ?? clientCreationPrice ?? 0;
     const creationPriceTime = priceData?.priceTime ?? priceData?.resolvedAt ?? clientCreationPriceTime ?? new Date().toISOString();
 
@@ -289,7 +321,7 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
     // Register for automatic resolution when time expires.
     // Creation price will be read from the immutable HCS topic at resolution time.
     // Pass durationMinutes so the active list (and client isBettingOpen calc) has the correct 50% cutoff for all durations (10/20/60/240).
-    registerFastGameForAutoResolution(marketId, endTime, durationMinutes);
+    registerFastGameForAutoResolution(marketId, endTime, durationMinutes, asset);
 
     res.json({ success: true, marketId, createTxId, betTxId });
   } catch (err: any) {

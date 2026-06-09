@@ -350,6 +350,7 @@ const activeFastGames: Array<{
   marketId: string;
   endTime: number;
   durationMinutes?: number;
+  asset?: string; // Added for multi-asset support (XRP + future). Populated on register from CREATE_MARKET and persisted. Defaults to 'HBAR' for older data.
   creationPrice: number;
   resolved?: boolean;
   inTieResolution?: boolean;
@@ -447,7 +448,7 @@ async function saveActiveGamesToDisk() {
   }
 }
 
-export function registerFastGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number) {
+export function registerFastGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number, asset?: string) {
   // Guard against duplicate registration (prevents re-resolve loops when reRegister misses a recent MARKET_RESOLVED due to indexer lag or HGraph flakiness)
   const existingIndex = activeFastGames.findIndex(g => g.marketId === marketId);
   if (existingIndex !== -1) {
@@ -460,6 +461,10 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
     if (durationMinutes && !activeFastGames[existingIndex].durationMinutes) {
       activeFastGames[existingIndex].durationMinutes = durationMinutes;
     }
+    // Capture/upgrade asset when provided (supports XRP + future assets on re-register or late info)
+    if (asset && !activeFastGames[existingIndex].asset) {
+      activeFastGames[existingIndex].asset = asset;
+    }
     console.log(`[Resolver] Fast game ${marketId} already registered in active list`);
     return;
   }
@@ -470,15 +475,17 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
 
   // We no longer store creationPrice in memory.
   // It is fetched from the immutable HCS topic at resolution time for maximum auditability.
+  // Asset is carried so autoResolve + getActiveFastGamesState can use the correct price oracle (XRP uses CG+Binance, never SaucerSwap).
   activeFastGames.push({ 
     marketId, 
     endTime, 
     durationMinutes: durationMinutes || 10,
+    asset: asset || 'HBAR',
     creationPrice: 0, // placeholder — will be fetched from chain
     resolved: false,
     inTieResolution: false 
   });
-  console.log(`[Resolver] Registered fast game for auto-resolution: ${marketId}`);
+  console.log(`[Resolver] Registered fast game for auto-resolution: ${marketId} (asset=${asset || 'HBAR'})`);
   saveActiveGamesToDisk().catch(() => {}); // fire and forget
 }
 
@@ -519,12 +526,15 @@ export async function autoResolveExpiredFastGames() {
 
       const openPrice = creationData.creationPrice;
 
+      // Asset-aware closing price (XRP and other non-HBAR use CoinGecko + Binance only — never SaucerSwap)
+      const assetForPrice = game.asset || 'HBAR';
       let closingPrice: number;
+      let priceDataForResolve: any = null;
       try {
-        const priceData = await getCurrentHbarPriceWithAuditTrail();
-        closingPrice = priceData.price;
+        priceDataForResolve = await getAssetPrice(assetForPrice);
+        closingPrice = priceDataForResolve.price;
       } catch (priceErr) {
-        console.error("[Resolver] Failed to get HBAR price from HGraph MCP:", priceErr);
+        console.error(`[Resolver] Failed to get ${assetForPrice} price for resolution:`, priceErr);
         continue;
       }
 
@@ -539,10 +549,11 @@ export async function autoResolveExpiredFastGames() {
         
         game.inTieResolution = true;
         const tieStart = Date.now();
+        const tieAsset = game.asset || 'HBAR';
 
         const intervalId = setInterval(async () => {
           try {
-            const latestPriceData = await getCurrentHbarPriceWithAuditTrail();
+            const latestPriceData = await getAssetPrice(tieAsset);
             const latestPrice = latestPriceData.price;
             const elapsed = Math.floor((Date.now() - tieStart) / 1000);
 
@@ -550,7 +561,7 @@ export async function autoResolveExpiredFastGames() {
               const tieWinner = latestPrice > openPrice ? 'YES' : 'NO';
               console.log(`[Resolver] Tie broken for ${game.marketId}! New price: ${latestPrice} → Winner: ${tieWinner} after ${elapsed}s`);
 
-              const tiePriceData = await getCurrentHbarPriceWithAuditTrail().catch(() => null);
+              const tiePriceData = await getAssetPrice(tieAsset).catch(() => null);
               const decisionTime = tiePriceData?.resolvedAt || new Date().toISOString();
 
               await postMarketResolved({
@@ -593,7 +604,7 @@ export async function autoResolveExpiredFastGames() {
               console.log(`[Resolver] Tie polling timeout for ${game.marketId} after ${elapsed}s. Forcing resolution using last observed price.`);
 
               const forceWinner = latestPrice >= openPrice ? 'YES' : 'NO'; // Bias toward the observed direction at timeout
-              const forcePriceData = await getCurrentHbarPriceWithAuditTrail().catch(() => null);
+              const forcePriceData = await getAssetPrice(tieAsset).catch(() => null);
               const decisionTime = forcePriceData?.resolvedAt || new Date().toISOString();
 
               await postMarketResolved({
@@ -646,7 +657,7 @@ export async function autoResolveExpiredFastGames() {
       }
 
       if (winner) {
-        const priceData = await getCurrentHbarPriceWithAuditTrail().catch(() => null);
+        const priceData = priceDataForResolve || await getAssetPrice(game.asset || 'HBAR').catch(() => null);
         const decisionTime = priceData?.resolvedAt || new Date().toISOString();
 
         await postMarketResolved({
@@ -1033,6 +1044,100 @@ export async function getCurrentHbarPriceWithAuditTrail(options: { critical?: bo
 
   // Last resort (should rarely hit)
   throw new Error('All reliable HBAR price sources (Saucer, CoinGecko card source, Binance) exhausted');
+}
+
+/**
+ * Asset-aware price oracle for fast game creationPrice + resolution.
+ *
+ * Rules (per XRP integration master plan):
+ * - HBAR (or HBARH): delegates fully to the rich getCurrentHbarPriceWithAuditTrail
+ *   (SaucerSwap last-traded when SAUCERSWAP_API_KEY present + Mirror/SDK + CG/Binance fallbacks).
+ *   This preserves all existing HBAR provenance, cache, critical-path bypass, and HCS audit trail.
+ * - XRP, BTC, ETH, SOL (and future non-HBAR prediction assets): CoinGecko primary (using the
+ *   exact same ids as the live card prices in Predict.tsx / coingecko.ts) + Binance public
+ *   ticker (USDT pair) as the "bnb as backup".
+ * - NEVER calls SaucerSwap for non-HBAR assets.
+ * - Returns the exact same shape as the HBAR fn so call sites can switch with zero other changes.
+ * - Used by the /create path (critical: true for fresh snap at funded record time) and by
+ *   autoResolve for fair closing price.
+ */
+export async function getAssetPrice(asset: string, options: { critical?: boolean } = {}): Promise<{
+  price: number;
+  priceTime: string;
+  resolvedAt: string;
+  source: string;
+  isStale: boolean;
+  provenance?: string;
+}> {
+  const upper = (asset || 'HBAR').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (upper === 'HBAR' || upper === 'HBARH') {
+    return getCurrentHbarPriceWithAuditTrail(options);
+  }
+
+  const nowTs = Date.now();
+  const resolvedAt = new Date().toISOString();
+
+  // Supported assets for prediction markets. Keep in sync with coingecko.ts maps + Predict fetchLivePrices ids.
+  const priceMap: Record<string, { cgId: string; binancePair: string; label: string; decimals: number }> = {
+    BTC: { cgId: 'bitcoin',     binancePair: 'BTCUSDT',  label: 'Bitcoin',  decimals: 2 },
+    ETH: { cgId: 'ethereum',    binancePair: 'ETHUSDT',  label: 'Ethereum', decimals: 2 },
+    SOL: { cgId: 'solana',      binancePair: 'SOLUSDT',  label: 'Solana',   decimals: 2 },
+    XRP: { cgId: 'ripple',      binancePair: 'XRPUSDT',  label: 'XRP',      decimals: 4 },
+  };
+
+  const cfg = priceMap[upper];
+  if (!cfg) {
+    console.warn(`[Resolver] Unknown asset "${asset}" for price oracle — falling back to HBAR behavior (defensive)`);
+    return getCurrentHbarPriceWithAuditTrail(options);
+  }
+
+  // 1. CoinGecko (primary — same family as the trusted card prices the user sees)
+  try {
+    const cgRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cfg.cgId}&vs_currencies=usd`);
+    if (cgRes.ok) {
+      const cgJson: any = await cgRes.json();
+      const price = parseFloat(cgJson?.[cfg.cgId]?.usd);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: `CoinGecko (${cfg.label} card price source)`,
+          isStale: false,
+          provenance: `CoinGecko simple/price ${cfg.cgId} (no SaucerSwap)`,
+        };
+        console.log(`[Resolver] ✅ CoinGecko mainnet ${upper}: $${price.toFixed(cfg.decimals)}`);
+        return result;
+      }
+    }
+  } catch (cgErr) {
+    console.warn(`[Resolver] CoinGecko for ${upper} failed, trying Binance BNB oracle`);
+  }
+
+  // 2. Binance public ticker (BNB oracle style final public fallback — exactly as requested for XRP)
+  try {
+    const binRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cfg.binancePair}`);
+    if (binRes.ok) {
+      const binJson: any = await binRes.json();
+      const price = parseFloat(binJson?.price);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: `Binance (BNB oracle ${cfg.binancePair})`,
+          isStale: false,
+          provenance: `Binance public ticker ${cfg.binancePair} (no SaucerSwap)`,
+        };
+        console.log(`[Resolver] ✅ Binance (BNB oracle) mainnet ${upper}: $${price.toFixed(cfg.decimals)}`);
+        return result;
+      }
+    }
+  } catch (binErr) {
+    console.error(`[Resolver] Binance BNB oracle for ${upper} also failed`);
+  }
+
+  throw new Error(`All reliable price sources for ${upper} (CoinGecko + Binance) exhausted`);
 }
 
 // Export for use by the API layer (price endpoint)
@@ -1661,7 +1766,7 @@ export async function reRegisterOverdueFastGames() {
 
           if (!hasResolved && p.endTime && p.endTime < now) {
             console.log(`[Resolver] Re-registering overdue fast game from HCS: ${p.marketId}`);
-            registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes);
+            registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes, p.asset);
           }
         }
       } catch {}
@@ -1684,6 +1789,7 @@ export function getActiveFastGamesState() {
       const isBettingOpen = remaining > (dur * 0.5);
       return {
         marketId: g.marketId,
+        asset: g.asset || 'HBAR',
         endTime: g.endTime,
         durationMinutes: g.durationMinutes || 10,
         resolved: !!g.resolved,

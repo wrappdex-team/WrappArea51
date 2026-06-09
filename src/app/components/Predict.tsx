@@ -159,6 +159,10 @@ export function Predict() {
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
+  // NEW: which asset the current Fast Game modal is for (XRP, BTC, etc. or HBAR)
+  // Set from the card button before opening the modal. Global "Create Fast Game" defaults to HBAR.
+  const [fastGameAsset, setFastGameAsset] = useState<string>('HBAR');
+
   // Controls the collapsible Game Rules section inside the Fast Game create modal.
   // Provides quick rules + advanced factual breakdown with clean prediction/staking language.
   const [showGameRules, setShowGameRules] = useState(false);
@@ -788,13 +792,15 @@ export function Predict() {
     }
     setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? { ...g, _retrying: true } : g));
 
-    let hbarPrice = (typeof game.creationPrice === 'number' ? game.creationPrice : 0.05);
+    const retryAsset = game.asset || 'HBAR';
+    let gamePrice = (typeof game.creationPrice === 'number' ? game.creationPrice : 0.05);
     let creationPriceTime: string | undefined;
     try {
-      const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+      const priceEndpoint = retryAsset === 'HBAR' ? `${RESOLVER_BASE}/api/price/hbar` : `${RESOLVER_BASE}/api/price/${retryAsset}`;
+      const pRes = await fetch(priceEndpoint);
       if (pRes.ok) {
         const pJson = await pRes.json().catch(() => ({} as any));
-        hbarPrice = pJson?.price ?? hbarPrice;
+        gamePrice = pJson?.price ?? gamePrice;
         creationPriceTime = pJson?.priceTime || pJson?.resolvedAt;
       }
     } catch {}
@@ -804,9 +810,9 @@ export function Predict() {
     const dur = (game.durationMinutes as number) || 10;
     const stk = (game.currentVolume as number) || (game as any).initialStake || 25;
     const side: 'YES' | 'NO' = (game.direction as any) || 'YES';
-    const q = game.question || `Will HBAR be ${side === 'YES' ? 'Higher' : 'Lower'} than creation price in ${dur} min?`;
+    const q = game.question || `Will ${retryAsset} be ${side === 'YES' ? 'Higher' : 'Lower'} than creation price in ${dur} min?`;
 
-    console.log('%c[FAST-GAME-CREATE][RETRY] starting manual/auto retry for', 'color:#0ff;font-weight:bold', game.marketId, 'resolver=', RESOLVER_BASE);
+    console.log('%c[FAST-GAME-CREATE][RETRY] starting manual/auto retry for', 'color:#0ff;font-weight:bold', game.marketId, 'resolver=', RESOLVER_BASE, 'asset=', retryAsset);
     for (let attempt = 1; attempt <= 8; attempt++) {
       console.log('%c[FAST-GAME-CREATE][RETRY] attempt', 'color:#0ff', attempt, 'for', game.marketId);
       try {
@@ -816,12 +822,12 @@ export function Predict() {
           body: JSON.stringify({
             marketId: game.marketId,
             question: q,
-            asset: 'HBAR',
+            asset: retryAsset,
             endTime: (game.endTime as number) || Math.floor(Date.now() / 1000) + (dur * 60),
             durationMinutes: dur,
             initialSide: side,
             initialStake: stk,
-            creationPrice: hbarPrice,
+            creationPrice: gamePrice,
             creationPriceTime,
             submittedBy,
           }),
@@ -849,7 +855,7 @@ export function Predict() {
 
     if (recordSuccess) {
       setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? {
-        ...g, creationPrice: hbarPrice, _pendingRecord: false, _recordFailed: false, _wcTimedOut: false, _mayHavePayment: false, _retrying: false
+        ...g, creationPrice: gamePrice, _pendingRecord: false, _recordFailed: false, _wcTimedOut: false, _mayHavePayment: false, _retrying: false
       } : g));
       showToast('Fast Game recorded on HCS via retry! (CREATE + PLACE_BET topic messages posted)', 'success');
       setTimeout(() => loadFastGames(), 2000);
@@ -1249,17 +1255,18 @@ export function Predict() {
     setIsLoadingPrices(true);
     try {
       // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko).
-      // But fall back to direct if the resolver wire is bad (HTML error, unreachable, or proxy not returning JSON) so the 4 tokens (BTC/ETH/HBAR/SOL) + 24h % always show.
+      // Fall back to direct if needed. Now includes XRP (ripple) as the 5th main tracked token per master plan.
+      // All 5 use the same CG + Binance sources the resolver will use for creationPrice / resolution on non-HBAR games.
       const isLive = !RESOLVER_BASE.includes('localhost');
       let coingeckoUrl = isLive
-        ? `${RESOLVER_BASE}/api/proxy/coingecko/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1`
-        : 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+        ? `${RESOLVER_BASE}/api/proxy/coingecko/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1`
+        : 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1';
       let response = await fetch(coingeckoUrl);
       if (!response.ok) throw new Error('proxy bad status');
       let data = await response.json();
       if (!Array.isArray(data) || data.length === 0) {
-        // fallback direct
-        coingeckoUrl = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+        // fallback direct (includes XRP)
+        coingeckoUrl = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1';
         response = await fetch(coingeckoUrl);
         data = await response.json();
       }
@@ -1275,9 +1282,9 @@ export function Predict() {
       if (selected && selected.price !== null) setCurrentPrice(selected.price);
       setErrorMessage('');
     } catch (e) {
-      // last resort direct
+      // last resort direct (includes XRP for the 5 main tracked tokens)
       try {
-        const direct = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana&order=market_cap_desc&per_page=10&page=1';
+        const direct = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1';
         const r = await fetch(direct);
         const d = await r.json();
         const liveAssets: Asset[] = (Array.isArray(d) ? d : []).map((coin: any) => ({
@@ -1415,13 +1422,17 @@ export function Predict() {
   // Legacy modals (showBetModal/showCreateModal) and these functions were remnants from pre-fast-game recovery.
   // Fast game create/bet fully wired via resolver with retries, optimistic, etc. Safe to drop.
 
-  const formatPrice = (price: number | null) => {
+  const formatPrice = (price: number | null, symbol?: string) => {
     if (price === null || price === undefined) return 'N/A';
+    if (symbol === 'XRP') {
+      // XRP typically shown with 4 decimals for clarity in prediction context
+      return price.toFixed(4);
+    }
     if (price < 1) {
       // Very low priced assets (HBAR etc.) → 6 decimals for prediction accuracy (matches resolver PRIMARY source)
       return price.toFixed(6);
     }
-    // Higher priced assets → show 3 decimals for better accuracy (e.g. SOL)
+    // Higher priced assets → show 3 decimals for better accuracy (e.g. SOL, BTC at higher prices)
     return price.toFixed(3);
   };
 
@@ -1545,12 +1556,12 @@ export function Predict() {
                     {asset.change24h >= 0 ? '+' : ''}{asset.change24h.toFixed(1)}%
                   </div>
                 </div>
-                <div className="text-4xl font-semibold tracking-[-1.5px] tabular-nums">${formatPrice(asset.price)}</div>
+                <div className="text-4xl font-semibold tracking-[-1.5px] tabular-nums">${formatPrice(asset.price, asset.symbol)}</div>
 
                 {/* Two-button entry: Fast Game (short) + Prediction (long) — nice first experience, theme + VIP sensitive */}
                 <div className="mt-5 pt-3 border-t border-white/10 grid grid-cols-2 gap-2">
                   <button
-                    onClick={(e) => { e.stopPropagation(); setShowFastGameModal(true); }}
+                    onClick={(e) => { e.stopPropagation(); setFastGameAsset(asset.symbol); setShowFastGameModal(true); }}
                     className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1
                       ${isVIP
                         ? 'bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black vip-shimmer shadow'
@@ -1587,7 +1598,7 @@ export function Predict() {
             <div>
               <h3 className="text-2xl font-semibold tracking-tight">Active markets</h3>
             </div>
-            <button onClick={() => setShowFastGameModal(true)}
+            <button onClick={() => { setFastGameAsset('HBAR'); setShowFastGameModal(true); }}
               className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-semibold hover:brightness-110">
               Create Fast Game
             </button>
@@ -1742,18 +1753,18 @@ export function Predict() {
                       )}
 
                       {/* Beautiful super-informative header per spec:
-                          "Will HBAR be UP or DOWN at [time of close]?"
+                          "Will ${asset} be UP or DOWN at [time of close]?"
                           + open time + creation price + current % under it.
                           Then volume + game details row below. */}
                       <div className="mb-3">
                         <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                          Will HBAR be <span className="text-emerald-400 font-semibold">UP</span> or <span className="text-rose-400 font-semibold">DOWN</span> at {closeTime}?
+                          Will {(game.asset || 'HBAR')} be <span className="text-emerald-400 font-semibold">UP</span> or <span className="text-rose-400 font-semibold">DOWN</span> at {closeTime}?
                         </div>
                         <div className={`mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] ${isDark ? 'text-white/65' : 'text-slate-600'}`}>
                           <span>
-                            Opened <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${(game.creationPrice || 0).toFixed(6)}</span>
+                            Opened <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${formatPrice(game.creationPrice || 0, game.asset)}</span>
                           </span>
-                          {liveHbarPrice != null && game.creationPrice != null && (
+                          {(game.asset || 'HBAR') === 'HBAR' && liveHbarPrice != null && game.creationPrice != null && (
                             <span className="font-mono">
                               {(() => {
                                 const delta = liveHbarPrice - game.creationPrice;
@@ -2352,21 +2363,27 @@ export function Predict() {
                 <div className="font-bold text-2xl tracking-tight">
                   <span className="text-emerald-400">UP</span> or <span className="text-rose-400">DOWN</span>
                 </div>
-                <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                  ${(modalHbarPrice ?? assets.find(a => a.symbol === 'HBAR')?.price ?? 0).toFixed(6)}
-                </div>
                 {(() => {
-                  const hbar = assets.find(a => a.symbol === 'HBAR');
-                  const ch = hbar?.change24h;
-                  if (typeof ch !== 'number') return null;
-                  const pos = ch >= 0;
+                  const thisAsset = assets.find(a => a.symbol === fastGameAsset) || assets.find(a => a.symbol === 'HBAR');
+                  const thisPrice = fastGameAsset === 'HBAR' 
+                    ? (modalHbarPrice ?? thisAsset?.price ?? 0)
+                    : (thisAsset?.price ?? 0);
+                  const ch = thisAsset?.change24h;
+                  const pos = typeof ch === 'number' && ch >= 0;
                   return (
-                    <div className="mt-2 text-center">
-                      <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {pos ? '+' : ''}{ch.toFixed(1)}%
+                    <>
+                      <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
+                        ${thisPrice.toFixed(fastGameAsset === 'HBAR' ? 6 : 4)}
                       </div>
-                      <div className="text-[10px] text-white/50">24h (CoinGecko)</div>
-                    </div>
+                      {typeof ch === 'number' && (
+                        <div className="mt-2 text-center">
+                          <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {pos ? '+' : ''}{ch.toFixed(1)}%
+                          </div>
+                          <div className="text-[10px] text-white/50">24h (CoinGecko) • {fastGameAsset}</div>
+                        </div>
+                      )}
+                    </>
                   );
                 })()}
               </div>
@@ -2633,8 +2650,12 @@ export function Predict() {
                     const pendingDurationLabel = `${fastGameDuration} min`;
                     const pendingEstimated = new Date(Date.now() + fastGameDuration * 60 * 1000);
                     const pendingTimeLabel = pendingEstimated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const pendingQuestion = `Will HBAR price be ${pendingSideLabel} than the current price at resolution? (~${pendingDurationLabel}, est. ${pendingTimeLabel})`;
-                    const approxPrice = (typeof modalHbarPrice === 'number' ? modalHbarPrice : (assets.find(a => a.symbol === 'HBAR')?.price || 0.05));
+                    const thisAssetForPending = fastGameAsset;
+                    const pendingQuestion = `Will ${thisAssetForPending} price be ${pendingSideLabel} than the current price at resolution? (~${pendingDurationLabel}, est. ${pendingTimeLabel})`;
+                    const assetLive = assets.find(a => a.symbol === fastGameAsset);
+                    const approxPrice = fastGameAsset === 'HBAR'
+                      ? (typeof modalHbarPrice === 'number' ? modalHbarPrice : (assetLive?.price || 0.05))
+                      : (assetLive?.price || 0.05);
 
                     const pendingGame = {
                       marketId: pendingMarketId,
@@ -2646,6 +2667,7 @@ export function Predict() {
                       currentVolume: fastGameStake,
                       resolved: false,
                       creator: session.accountId,
+                      asset: fastGameAsset,
                       yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
                       noStake: fastGameSide === 'NO' ? fastGameStake : 0,
                       yesParticipants: fastGameSide === 'YES' ? 1 : 0,
@@ -2679,17 +2701,20 @@ export function Predict() {
                     // If succeeds, update the pending card to confirmed.
                     // If fails after retries, card stays as pending (visible to creator), user has marketId for recovery.
                     (async () => {
-                      let hbarPrice = approxPrice;
+                      let gamePrice = approxPrice;
                       let creationPriceTime: string | undefined;
                       try {
-                        const pRes = await fetch(`${RESOLVER_BASE}/api/price/hbar`);
+                        const priceEndpoint = fastGameAsset === 'HBAR' 
+                          ? `${RESOLVER_BASE}/api/price/hbar` 
+                          : `${RESOLVER_BASE}/api/price/${fastGameAsset}`;
+                        const pRes = await fetch(priceEndpoint);
                         const pJson = await pRes.json().catch(() => ({} as any));
-                        hbarPrice = pJson?.price || approxPrice;
+                        gamePrice = pJson?.price || approxPrice;
                         creationPriceTime = pJson?.priceTime || pJson?.resolvedAt;
                       } catch {}
 
                       const questionText = pendingQuestion;
-                      console.log('%c[FAST-GAME-CREATE] starting background record for', 'color:#0ff;font-weight:bold', pendingMarketId, 'resolver=', RESOLVER_BASE);
+                      console.log('%c[FAST-GAME-CREATE] starting background record for', 'color:#0ff;font-weight:bold', pendingMarketId, 'resolver=', RESOLVER_BASE, 'asset=', fastGameAsset);
                       let recordSuccess = false;
                       let lastRecordError = '';
                       for (let attempt = 1; attempt <= 8; attempt++) {
@@ -2701,12 +2726,12 @@ export function Predict() {
                             body: JSON.stringify({
                               marketId: pendingMarketId,
                               question: questionText,
-                              asset: 'HBAR',
+                              asset: fastGameAsset,
                               endTime: Math.floor(Date.now() / 1000) + (fastGameDuration * 60),
                               durationMinutes: fastGameDuration,
                               initialSide: fastGameSide,
                               initialStake: fastGameStake,
-                              creationPrice: hbarPrice,
+                              creationPrice: gamePrice,
                               creationPriceTime,
                               submittedBy: session.accountId,
                             }),
@@ -2733,7 +2758,7 @@ export function Predict() {
                       }
 
                       if (recordSuccess) {
-                        setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? { ...g, creationPrice: hbarPrice, _pendingRecord: false } : g));
+                        setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? { ...g, creationPrice: gamePrice, _pendingRecord: false } : g));
                         showToast('Fast Game recorded on HCS successfully! (topic started)', 'success');
                         setShowFastGameModal(false);
                         // Throttled refreshes — the optimistic/pending card is already visible immediately.
@@ -2767,8 +2792,12 @@ export function Predict() {
                         const pDurLabel = `${fastGameDuration} min`;
                         const pEst = new Date(Date.now() + fastGameDuration * 60 * 1000);
                         const pTimeLabel = pEst.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                        const pQ = `Will HBAR price be ${pSideLabel} than the current price at resolution? (~${pDurLabel}, est. ${pTimeLabel})`;
-                        const pPrice = (typeof modalHbarPrice === 'number' ? modalHbarPrice : (assets.find(a => a.symbol === 'HBAR')?.price || 0.05));
+                        const pAsset = fastGameAsset;
+                        const pQ = `Will ${pAsset} price be ${pSideLabel} than the current price at resolution? (~${pDurLabel}, est. ${pTimeLabel})`;
+                        const pAssetLive = assets.find(a => a.symbol === fastGameAsset);
+                        const pPrice = fastGameAsset === 'HBAR'
+                          ? (typeof modalHbarPrice === 'number' ? modalHbarPrice : (pAssetLive?.price || 0.05))
+                          : (pAssetLive?.price || 0.05);
 
                         const pGame = {
                           marketId: pid,
@@ -2780,6 +2809,7 @@ export function Predict() {
                           currentVolume: fastGameStake,
                           resolved: false,
                           creator: session.accountId,
+                          asset: pAsset,
                           yesStake: fastGameSide === 'YES' ? fastGameStake : 0,
                           noStake: fastGameSide === 'NO' ? fastGameStake : 0,
                           yesParticipants: fastGameSide === 'YES' ? 1 : 0,
