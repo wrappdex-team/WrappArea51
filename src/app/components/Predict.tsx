@@ -4,7 +4,7 @@
 // It preserves the core Fast Games + Portfolio + extracted components flow.
 // ========================================================
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Zap, X, RefreshCw, TrendingUp, Feather } from 'lucide-react';
 import { Slider } from './ui/slider';
@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useSigning } from '../contexts/SigningContext';
 import { useWallet } from '../contexts/WalletContext';
 import { signAndExecuteTransaction } from '../utils/wallet-core';
-import { getAudioContext, getMasterOutput, getVolumeMultiplier, getSoundMuted, shouldPlayVipSounds } from '../utils/sounds';
+import { getAudioContext, getMasterOutput, getVolumeMultiplier, getSoundMuted, shouldPlayVipSounds, playBetCloseChime } from '../utils/sounds';
 import { isVipEligible, loadVipPrefs } from '../utils/vip';
 import {
   HBARH_LOGO_DARK,
@@ -321,6 +321,11 @@ export function Predict() {
     return new Set();
   });
   const [isLoadingFastGames, setIsLoadingFastGames] = useState(false);
+
+  // Track previous isBettingOpen state per marketId so we can fire a single subtle chime
+  // exactly when a game's betting window (the "Predictions closing in" 50% timer) closes.
+  // The game is then re-sorted to the bottom of the active list until full resolution.
+  const prevBetOpenRef = useRef<Record<string, boolean>>({});
 
   // The highest priority source for display during active smoke testing:
   // the session-persistent "recently active" cache (creations + any bets you placed).
@@ -1426,16 +1431,89 @@ export function Predict() {
       .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
   }, [activeMarkets]);
 
-  // Most-recently-made first for the consolidated "Active markets" view (user spec: "the one that is most recently made should be the one in first que").
-  // Base list is displayFastGames (already has optimistic + recentlyCreated prune + only active logic).
-  // marketId format is typically "fast-<creationTsMs>" so we parse that for recency sort.
+  // Helper: robust bet-close + full resolution timing derived from marketId creationTs + durationMinutes
+  // (same safety logic used inside the card render for 4h+ games and server 50% enforcement).
+  // Returns absolute timestamps (seconds) and the current isBettingOpen flag.
+  const getGameTiming = (game: any, nowSec: number) => {
+    const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+    const durMin = game.durationMinutes || 10;
+    let effectiveEndTime = game.endTime || 0;
+    if (creationTs && durMin > 0) {
+      const safeEnd = Math.floor(creationTs / 1000) + durMin * 60;
+      if (!effectiveEndTime || effectiveEndTime < safeEnd - 30) {
+        effectiveEndTime = safeEnd;
+      }
+    }
+    const remaining = Math.max(0, effectiveEndTime - nowSec);
+    let isBettingOpen = remaining > (durMin * 60 * 0.5);
+    if (game.isBettingOpen !== undefined) {
+      isBettingOpen = !!game.isBettingOpen;
+    }
+    // Absolute timestamp (seconds) when the 50% betting window closes
+    const betCloseTs = effectiveEndTime - (durMin * 60 * 0.5);
+    return { effectiveEndTime, isBettingOpen, betCloseTs, remainingToBetClose: Math.max(0, betCloseTs - nowSec) };
+  };
+
+  // Order by bet-closing urgency (the "Predictions closing in" / 50% timer).
+  // - Games that are still open for betting come first.
+  // - Within open games: lowest (soonest) bet-close time first.
+  // - Games whose bet window has closed sink to the bottom of the active list
+  //   (still visible until full resolution + archive), ordered by when their bet window closed.
+  // This replaces the previous "newest created first" ordering.
   const activeFastSorted = React.useMemo(() => {
-    return [...displayFastGames].sort((a: any, b: any) => {
-      const ta = parseInt((a.marketId || '').split('-')[1] || '0', 10) || ((a.endTime || 0) * 1000) || 0;
-      const tb = parseInt((b.marketId || '').split('-')[1] || '0', 10) || ((b.endTime || 0) * 1000) || 0;
-      return tb - ta; // desc: newest creation first
+    const nowSec = Math.floor(Date.now() / 1000);
+    const withTiming = displayFastGames.map((g: any) => {
+      const t = getGameTiming(g, nowSec);
+      return { ...g, ...t };
+    });
+
+    return withTiming.sort((a: any, b: any) => {
+      // Open-for-bets games always before bet-closed games
+      if (a.isBettingOpen !== b.isBettingOpen) {
+        return a.isBettingOpen ? -1 : 1;
+      }
+      // Same group: sort by betCloseTs ascending (lowest/soonest timer first)
+      const ta = typeof a.betCloseTs === 'number' ? a.betCloseTs : Infinity;
+      const tb = typeof b.betCloseTs === 'number' ? b.betCloseTs : Infinity;
+      return ta - tb;
     });
   }, [displayFastGames]);
+
+  // Detect when any game's bet window (50% point) closes and play a little chime.
+  // Also keeps the prevBetOpenRef up to date so we only chime on actual transitions.
+  useEffect(() => {
+    if (!activeFastSorted || activeFastSorted.length === 0) return;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const nextPrev: Record<string, boolean> = { ...prevBetOpenRef.current };
+
+    activeFastSorted.forEach((game: any) => {
+      const timing = getGameTiming(game, nowSec);
+      const marketId = game.marketId;
+      const wasOpen = prevBetOpenRef.current[marketId];
+      const isOpen = timing.isBettingOpen;
+
+      // Transition: was open for betting, now the bet window has closed
+      if (wasOpen === true && isOpen === false) {
+        try {
+          playBetCloseChime();
+        } catch {
+          /* ignore audio errors */
+        }
+      }
+
+      nextPrev[marketId] = isOpen;
+    });
+
+    // Clean up refs for games that are no longer in the active list (they resolved/archived)
+    Object.keys(nextPrev).forEach(id => {
+      if (!activeFastSorted.some((g: any) => g.marketId === id)) {
+        delete nextPrev[id];
+      }
+    });
+
+    prevBetOpenRef.current = nextPrev;
+  }, [activeFastSorted]);
 
   return (
     <div className={`min-h-[calc(100vh-120px)] ${isDark ? 'bg-[#080a12] text-white' : 'bg-[#f8fafc] text-slate-900'} p-6`}>
@@ -1584,7 +1662,7 @@ export function Predict() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <AnimatePresence>
-                    {activeFastSorted.slice(0, 6).map((game: any) => {
+                    {activeFastSorted.map((game: any) => {
                   // Strengthen 4h (and long-duration) timer enforcement in the UI.
                   // The marketId timestamp + declared durationMinutes is the reliable source of truth
                   // for when the game truly ends. Some data paths (resolver list during lag, direct HCS
@@ -1859,7 +1937,7 @@ export function Predict() {
 
                                     {/* Live safety status line (centered, prominent per prior UX direction) */}
                                     <div className={`mt-1 text-center text-[11px] font-medium ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
-                                      You have placed <span className="font-mono">{myCount}</span>/{limitForDisplay} bets in this market
+                                      You have placed <span className="font-mono">{myCount}</span>/{limitForDisplay} predictions in this market
                                       {betsExhausted && <span className="ml-1 text-rose-400">(limit reached)</span>}
                                     </div>
 
@@ -1867,7 +1945,7 @@ export function Predict() {
                                     {(overLimit || betsExhausted) && (
                                       <div className="mt-1.5 px-2 py-1 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] text-center">
                                         {overLimit && `Exceeds max: ${maxAllowed.toFixed(2)} HBAR. `}
-                                        {betsExhausted && 'Wallet bet limit reached for this game. '}
+                                        {betsExhausted && 'Prediction limit reached for this market. '}
                                         {isPastHalf ? 'Whale cap active after halfway.' : '1.25× pot limit until halfway.'}
                                       </div>
                                     )}
@@ -1887,7 +1965,7 @@ export function Predict() {
                                   />
 
                                   <div className={`text-center text-xs mb-1.5 ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
-                                    Bet closes in {betCloseStr}
+                                    Prediction closes in {betCloseStr}
                                   </div>
 
                                   <div className="flex gap-2">
@@ -1912,7 +1990,7 @@ export function Predict() {
                           </>
                         ) : (
                           <div className={`text-center text-xs py-2 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>
-                            {isBettingOpen ? 'Betting open' : 'Betting closed — resolution in progress'}
+                            {isBettingOpen ? 'Predictions open' : 'Predictions closed — resolution in progress'}
                           </div>
                         )}
                       </div>
@@ -1951,8 +2029,8 @@ export function Predict() {
                             </div>
                           </div>
                           <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
-                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} bets</div>
-                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place bet on this market →</div>
+                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} predictions</div>
+                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place prediction on this market →</div>
                         </div>
                       );
                     })}
