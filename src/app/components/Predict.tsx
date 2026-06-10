@@ -159,8 +159,10 @@ export function Predict() {
   const [fastGameMaxBalance, setFastGameMaxBalance] = useState<number | null>(null); // dynamic from Mirror via resolver for slider UX
   const [isCreatingFastGame, setIsCreatingFastGame] = useState(false);
 
-  // NEW: which asset the current Fast Game modal is for (XRP, BTC, etc. or HBAR)
-  // Set from the card button before opening the modal. Global "Create Fast Game" defaults to HBAR.
+  // NEW: which asset the current Fast Game modal is for (SOL, XRP, BTC, ETH, etc. or HBAR).
+  // Set from the per-card "Fast Game" button (or global Create defaults to HBAR).
+  // SOL (and future BTC/ETH) activated via the post-XRP master plan using the exact same generic fastGameAsset flow.
+  // Only HBAR uses the special modalHbarPrice + /api/price/hbar rich path; all others (SOL/XRP/BTC/ETH) use live assets + public CG+Binance via resolver.
   const [fastGameAsset, setFastGameAsset] = useState<string>('HBAR');
 
   // Controls the collapsible Game Rules section inside the Fast Game create modal.
@@ -1255,8 +1257,10 @@ export function Predict() {
     setIsLoadingPrices(true);
     try {
       // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko).
-      // Fall back to direct if needed. Now includes XRP (ripple) as the 5th main tracked token per master plan.
-      // All 5 use the same CG + Binance sources the resolver will use for creationPrice / resolution on non-HBAR games.
+      // Fall back to direct if needed. Fetches the first-class tracked tokens for live price cards + Fast Game entry:
+      // BTC, ETH, SOL, HBAR, XRP. All non-HBAR tokens use the exact same CoinGecko + Binance public sources
+      // that the resolver's getAssetPrice() uses for creationPrice (at funding) and resolution (closing price).
+      // HBAR continues to use its richer SaucerSwap + Mirror path exclusively.
       const isLive = !RESOLVER_BASE.includes('localhost');
       let coingeckoUrl = isLive
         ? `${RESOLVER_BASE}/api/proxy/coingecko/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1`
@@ -1265,7 +1269,7 @@ export function Predict() {
       if (!response.ok) throw new Error('proxy bad status');
       let data = await response.json();
       if (!Array.isArray(data) || data.length === 0) {
-        // fallback direct (includes XRP)
+        // fallback direct (first-class tracked tokens: BTC, ETH, SOL, HBAR, XRP)
         coingeckoUrl = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1';
         response = await fetch(coingeckoUrl);
         data = await response.json();
@@ -1282,7 +1286,7 @@ export function Predict() {
       if (selected && selected.price !== null) setCurrentPrice(selected.price);
       setErrorMessage('');
     } catch (e) {
-      // last resort direct (includes XRP for the 5 main tracked tokens)
+      // last resort direct (first-class tracked tokens: BTC, ETH, SOL, HBAR, XRP — same list as resolver oracle)
       try {
         const direct = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,hedera-hashgraph,solana,ripple&order=market_cap_desc&per_page=10&page=1';
         const r = await fetch(direct);
@@ -1754,7 +1758,8 @@ export function Predict() {
 
                       {/* Beautiful super-informative header per spec:
                           "Will ${asset} be UP or DOWN at [time of close]?"
-                          + open time + creation price + current % under it.
+                          + open time + creation price + current % under it (HBAR-only delta).
+                          Asset is dynamic (SOL / XRP / BTC / ETH / HBAR) from game.asset.
                           Then volume + game details row below. */}
                       <div className="mb-3">
                         <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>

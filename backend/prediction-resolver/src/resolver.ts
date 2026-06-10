@@ -1077,7 +1077,9 @@ export async function getAssetPrice(asset: string, options: { critical?: boolean
   const nowTs = Date.now();
   const resolvedAt = new Date().toISOString();
 
-  // Supported assets for prediction markets. Keep in sync with coingecko.ts maps + Predict fetchLivePrices ids.
+  // Supported assets for prediction markets (SOL/BTC/ETH/XRP).
+  // Pre-populated during XRP integration; activated sequentially via the post-XRP master plan prompts (SOL first, then BTC, then ETH).
+  // Keep in sync with coingecko.ts maps + Predict fetchLivePrices ids list. HBAR is handled in the early return above (rich SaucerSwap + Mirror provenance preserved exclusively for HBAR).
   const priceMap: Record<string, { cgId: string; binancePair: string; label: string; decimals: number }> = {
     BTC: { cgId: 'bitcoin',     binancePair: 'BTCUSDT',  label: 'Bitcoin',  decimals: 2 },
     ETH: { cgId: 'ethereum',    binancePair: 'ETHUSDT',  label: 'Ethereum', decimals: 2 },
