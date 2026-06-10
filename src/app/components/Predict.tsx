@@ -1680,21 +1680,15 @@ export function Predict() {
   };
 
   // Consistent full countdown formatter for all markets (fast + long).
-  // Always includes days, hours, minutes, seconds when relevant.
-  // Used for both full resolution timer and the "Predictions closing in" (50% bet close) timer.
+  // Always shows days, hours, minutes, and seconds (0 when appropriate) so the support for long durations is obvious.
+  // Used for both the main close timer and the "Predictions closing in" (50% window) timer on every card.
   const formatCountdown = (totalSeconds: number): string => {
     if (totalSeconds <= 0) return 'EXPIRED';
     const d = Math.floor(totalSeconds / 86400);
     const h = Math.floor((totalSeconds % 86400) / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
     const s = Math.floor(totalSeconds % 60);
-
-    const parts: string[] = [];
-    if (d > 0) parts.push(`${d}d`);
-    if (h > 0 || d > 0) parts.push(`${h}h`);
-    if (m > 0 || h > 0 || d > 0) parts.push(`${m}m`);
-    parts.push(`${s}s`);
-    return parts.join(' ');
+    return `${d}d ${h}h ${m}m ${s}s`;
   };
 
   // Order by bet-closing urgency (the "Predictions closing in" / 50% timer).
@@ -1744,19 +1738,75 @@ export function Predict() {
     }
   };
 
-  const activeLongSorted = React.useMemo(() => {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const withTiming = longGames.map((g: any) => {
+  // Robust display list for long games, mirroring the fast game optimistic + recentlyCreated safeguards.
+  // This prevents long games from "disappearing" right after creation while the resolver/HCS confirms,
+  // and ensures the countdown (using the declared duration) is visible immediately with proper endTime.
+  const displayLongGames = React.useMemo(() => {
+    const map = new Map<string, any>();
+
+    // Authoritative from resolver
+    longGames.forEach(g => map.set(g.marketId, g));
+
+    // Overlay optimistic (from just-created long games)
+    optimisticGames.forEach(g => {
+      if (g.marketId && g.marketId.startsWith('long-')) {
+        map.set(g.marketId, { ...g, _optimistic: true });
+      }
+    });
+
+    const now = Date.now();
+
+    // Force-include recently created long games (much longer protection window than fast, since durations are days)
+    recentlyCreatedMarketIds.forEach(id => {
+      if (!id.startsWith('long-')) return;
+      if (map.has(id)) return;
+
+      const cTsMs = parseInt(id.split('-')[1] || '0', 10);
+      if (!cTsMs) return;
+
+      const creationSec = Math.floor(cTsMs / 1000);
+      const nowSec = now / 1000;
+      const ageSec = nowSec - creationSec;
+
+      // Generous window for long games (up to ~2 days protection; real endTime from duration will take over)
+      const MAX_RECENT_LONG_AGE_SEC = 2 * 24 * 60 * 60;
+      if (ageSec > MAX_RECENT_LONG_AGE_SEC) return;
+
+      // Use the duration from the optimistic pending game if we have it, otherwise assume a safe default
+      // The pendingGame we create in handleCreateLongGame already has durationMinutes and endTime.
+      // If not present, fall back to a large safe window so the card doesn't vanish.
+      const gameDurMin = (optimisticGames.find(og => og.marketId === id)?.durationMinutes) || (90 * 1440);
+      const fixedEndTimeSec = creationSec + (gameDurMin * 60);
+
+      if (nowSec > fixedEndTimeSec + 30 * 60) return; // grace
+
+      map.set(id, {
+        marketId: id,
+        // The optimistic pending already carries good fields; this is a minimal safe placeholder
+        durationMinutes: gameDurMin,
+        endTime: fixedEndTimeSec,
+        currentVolume: 0,
+        resolved: false,
+        _pendingRecord: true,
+        _optimistic: true,
+      });
+    });
+
+    const nowSec = Math.floor(now / 1000);
+    const list = Array.from(map.values()).map((g: any) => {
       const t = getGameTiming(g, nowSec);
       return { ...g, ...t };
     });
-    return withTiming.sort((a: any, b: any) => {
+
+    return list.sort((a: any, b: any) => {
       if (a.isBettingOpen !== b.isBettingOpen) return a.isBettingOpen ? -1 : 1;
       const ta = typeof a.betCloseTs === 'number' ? a.betCloseTs : Infinity;
       const tb = typeof b.betCloseTs === 'number' ? b.betCloseTs : Infinity;
       return ta - tb;
     });
-  }, [longGames]);
+  }, [longGames, optimisticGames, recentlyCreatedMarketIds]);
+
+  const activeLongSorted = displayLongGames;
 
   // Detect when any game's bet window (50% point) closes and play a little chime.
   // Also keeps the prevBetOpenRef up to date so we only chime on actual transitions.
@@ -2029,8 +2079,8 @@ export function Predict() {
               The HCS record (topic CREATE + initial PLACE_BET) is still attempted in the background for official confirmation and visibility to others. */}
           {Array.from(recentlyCreatedMarketIds).some(id => id.startsWith('fast-') || id.startsWith('long-')) && (
             <div className="mb-4 p-3 rounded-2xl border border-[#00f9ff]/40 bg-[#00f9ff]/5 text-sm">
-              <div className="font-semibold text-[#00f9ff] mb-1 text-xs tracking-widest">YOUR RECENT FAST GAMES (visible to you immediately — HCS confirmation pending)</div>
-              {optimisticGames.filter((g: any) => g.marketId && g.marketId.startsWith('fast-')).map((g: any) => {
+              <div className="font-semibold text-[#00f9ff] mb-1 text-xs tracking-widest">YOUR RECENT GAMES (Fast + Long Predictions — visible immediately, HCS confirmation pending)</div>
+              {optimisticGames.filter((g: any) => g.marketId && (g.marketId.startsWith('fast-') || g.marketId.startsWith('long-'))).map((g: any) => {
                 const isPending = g._pendingRecord || g._wcTimedOut || g._recordFailed;
                 const statusText = g._wcTimedOut
                   ? 'WC sign timed out (check HashScan for escrow transfer) — retry below'
@@ -2482,7 +2532,12 @@ export function Predict() {
                             {assetInfo?.logo && <img src={assetInfo.logo} alt={game.asset} className="absolute top-3 right-3 w-5 h-5 rounded-full object-contain z-10 opacity-90" />}
                             <div className="flex items-center justify-between mb-2">
                               <div className="font-mono text-[10px] text-white/50">{game.marketId} • LONG</div>
-                              <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${isBettingOpen ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{isBettingOpen ? 'OPEN' : 'CLOSED'}</div>
+                              <div className="flex items-center gap-1">
+                                {(game._optimistic || game._pendingRecord) && (
+                                  <div className="text-[9px] px-1.5 py-0.5 rounded bg-[#00f9ff]/20 text-[#00f9ff]">PENDING</div>
+                                )}
+                                <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${isBettingOpen ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{isBettingOpen ? 'OPEN' : 'CLOSED'}</div>
+                              </div>
                             </div>
                             <div className="font-semibold text-[15px] mb-1">Will {(game.asset || 'HBAR')} be UP or DOWN?</div>
                             <div className="text-xs mb-1">Closes in {timeStr}{deltaNode && <span className="ml-1.5">{deltaNode}</span>}</div>
