@@ -1254,7 +1254,9 @@ export function Predict() {
   };
 
   // Buyout (forfeit 50%) for long games — only allowed while isBettingOpen.
-  // Records on HCS via resolver; the 50% claim is settled at payout time (first), other 50% augments winners.
+  // Requires a valid wallet signature from the *same wallet* that created the original prediction (proves ownership).
+  // Then records the BUYOUT (the "unbet"/pull-out) on HCS topic 0.0.9017517 via the resolver, just like PLACE_BET.
+  // The 50% returned is claimed at final payout; the other 50% is forfeited to the winning side.
   const handleLongBuyout = async (game: any) => {
     const session = hashPackSession;
     if (!session?.accountId) { alert("Connect wallet"); return; }
@@ -1262,30 +1264,40 @@ export function Predict() {
       showToast('Buyout window closed for this prediction', 'error');
       return;
     }
-    if (!confirm(`Buyout this position? You will receive 50% of your stake back at resolution (the other 50% is forfeited to the winning side). Tokens stay locked until the game resolves. This cannot be undone.`)) return;
+    if (!confirm(`Buyout this position? You will receive 50% of your stake back at resolution (the other 50% is forfeited to the winning side). Tokens stay locked until the game resolves. This cannot be undone. You will be asked to sign with the same wallet that created the prediction.`)) return;
 
     try {
       const myCurrentStake = (game.myStake || userPositions[game.marketId]?.amount || 0) || gameStakes[game.marketId] || 10;
-      const res = await fetch(`${RESOLVER_BASE}/api/prediction/buyout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          marketId: game.marketId,
-          side: game.direction || game.userSide || 'YES',
-          amount: myCurrentStake,
-          user: session.accountId,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast(`Buyout recorded. You will receive ${data.returnedHalf || '50%'} HBAR at payout time.`, 'success');
+
+      // Force a wallet signature from the original predictor's wallet to authorize the buyout/unbet.
+      // This is the "valid signature from the same wallet" requirement.
+      await withSigning(`Buyout (50% early exit) my long prediction in ${game.marketId}`, async () => {
+        const res = await fetch(`${RESOLVER_BASE}/api/prediction/buyout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            marketId: game.marketId,
+            side: game.direction || game.userSide || 'YES',
+            amount: myCurrentStake,
+            user: session.accountId,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Buyout record failed on resolver');
+        }
+        // On success the resolver will have posted the BUYOUT message to HCS (the "unbet" record).
+        showToast(`Buyout authorized and recorded on HCS. You will receive ${data.returnedHalf || '50%'} HBAR at payout time.`, 'success');
+
+        // Optimistic update in the rich cards + any long list
         setLongGames(prev => prev.map(g => g.marketId === game.marketId ? { ...g, _userForfeited: true, forfeitCount: (g.forfeitCount || 0) + 1 } : g));
-        setTimeout(() => { loadLongGames(); }, 1200);
-      } else {
-        showToast(data.error || 'Buyout failed', 'error');
-      }
-    } catch (e) {
-      showToast('Buyout error', 'error');
+
+        // Refresh both lists
+        setTimeout(() => { loadFastGames(); loadLongGames(); }, 1200);
+        return "buyout-signed-and-recorded";
+      });
+    } catch (e: any) {
+      showToast('Buyout error: ' + (e?.message || e), 'error');
     }
   };
 
@@ -2144,7 +2156,7 @@ export function Predict() {
             {/* Fast games content - only for fast or both. Using pre-sorted for recent first. 
                 Loading is fully background now (no visible "Loading..." message to avoid UI instability).
                 New/updated games animate in with a smooth pop + slide for a polished feel. */}
-            {(activeMarketFilter === 'fast' || activeMarketFilter === 'both') && (
+            {(activeMarketFilter === 'fast' || activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
               activeFastSorted.length === 0 ? (
                 <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
                   <div>No active fast games right now.</div>
@@ -2155,6 +2167,11 @@ export function Predict() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <AnimatePresence>
                     {activeFastSorted.map((game: any) => {
+                      // When "Prediction Markets" filter is active, only show long games in this grid (rich UI).
+                      // Fast games are hidden for pure prediction view.
+                      if (activeMarketFilter === 'prediction' && !(game.marketId && game.marketId.startsWith('long-'))) {
+                        return null;
+                      }
                   // Strengthen 4h (and long-duration) timer enforcement in the UI.
                   // The marketId timestamp + declared durationMinutes is the reliable source of truth
                   // for when the game truly ends. Some data paths (resolver list during lag, direct HCS
@@ -2518,86 +2535,8 @@ export function Predict() {
               </div>
             ))}
 
-            {/* Real Long Predictions (Prediction Markets toggle now shows live long_updown games with forfeit + buyout) */}
-            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
-              activeLongSorted.length === 0 ? (
-                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 mt-2`}>No active long predictions right now. Use the "Prediction" button on any asset card above (1d–90d durations).</div>
-              ) : (
-                <div className="mt-4">
-                  {activeMarketFilter === 'both' && (
-                    <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Long Predictions (1d–90d)</div>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <AnimatePresence>
-                      {activeLongSorted.map((game: any) => {
-                        const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
-                        const durMin = game.durationMinutes || (1*1440);
-                        let effectiveEndTime = game.endTime || 0;
-                        if (creationTs && durMin > 0) {
-                          const safeEnd = Math.floor(creationTs / 1000) + durMin * 60;
-                          if (!effectiveEndTime || effectiveEndTime < safeEnd - 30) effectiveEndTime = safeEnd;
-                        }
-                        const remaining = Math.max(0, effectiveEndTime - now);
-                        const isBettingOpen = game.isBettingOpen !== undefined ? !!game.isBettingOpen : remaining > (durMin * 60 * 0.5);
-
-                        const timeStr = formatCountdown(remaining);
-
-                        // Also compute the 50% "Predictions closing in" timer for buyout availability display
-                        const durationSec = durMin * 60;
-                        const timeToBetClose = Math.max(0, remaining - (durationSec * 0.5));
-                        const betCloseStr = formatCountdown(timeToBetClose);
-
-                        const assetInfo = assets.find(a => a.symbol === (game.asset || 'HBAR'));
-                        let deltaNode = null;
-                        if (game.creationPrice != null) {
-                          let currentPrice = null;
-                          if ((game.asset || 'HBAR') === 'HBAR' && liveHbarPrice != null) currentPrice = liveHbarPrice;
-                          else if (assetInfo?.price != null) currentPrice = assetInfo.price;
-                          if (currentPrice != null) {
-                            const delta = currentPrice - game.creationPrice;
-                            const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
-                            const sign = delta >= 0 ? '▲' : '▼';
-                            const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
-                            deltaNode = <span className={color}>{sign} {pct.toFixed(1)}%</span>;
-                          }
-                        }
-
-                        const forfeitDisplay = game.forfeitCount > 0 ? ` • ${game.forfeitCount} forfeits` : '';
-                        const userForfeited = game._userForfeited;
-
-                        return (
-                          <motion.div key={game.marketId} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`group rounded-3xl border p-5 relative ${isDark ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-white shadow-sm'}`}>
-                            {assetInfo?.logo && <img src={assetInfo.logo} alt={game.asset} className="absolute top-3 right-3 w-5 h-5 rounded-full object-contain z-10 opacity-90" />}
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="font-mono text-[10px] text-white/50">{game.marketId} • LONG</div>
-                              <div className="flex items-center gap-1">
-                                {(game._optimistic || game._pendingRecord) && (
-                                  <div className="text-[9px] px-1.5 py-0.5 rounded bg-[#00f9ff]/20 text-[#00f9ff]">PENDING</div>
-                                )}
-                                <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${isBettingOpen ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{isBettingOpen ? 'OPEN' : 'CLOSED'}</div>
-                              </div>
-                            </div>
-                            <div className="font-semibold text-[15px] mb-1">Will {(game.asset || 'HBAR')} be UP or DOWN?</div>
-                            <div className="text-xs mb-1">Closes in {timeStr}{deltaNode && <span className="ml-1.5">{deltaNode}</span>}</div>
-                          <div className="text-[10px] text-amber-400 mb-2">Predictions closing in {betCloseStr}</div>
-
-                            <div className="text-xs mb-3">{(game.currentVolume || 0).toFixed(1)} HBAR • {(game.totalParticipants || 0)} predictors{forfeitDisplay}</div>
-
-                            {isBettingOpen && !userForfeited ? (
-                              <button onClick={() => handleLongBuyout(game)} className="w-full py-2 text-sm rounded-2xl border border-amber-500/60 text-amber-400 hover:bg-amber-500/10">Buyout (50% early exit)</button>
-                            ) : userForfeited ? (
-                              <div className="text-center text-xs text-amber-400 py-1">Bought out — 50% at resolution</div>
-                            ) : (
-                              <div className="text-center text-xs py-1 text-white/60">Predictions closed</div>
-                            )}
-                          </motion.div>
-                        );
-                      })}
-                    </AnimatePresence>
-                  </div>
-                </div>
-              )
-            )}
+            {/* Long games now appear in the main Active Markets grid (via optimistic + rich cards) when "Prediction Markets" or "Both" filter is selected.
+                The dedicated "Long Predictions" section has been removed per request — the "Prediction" per-asset button and "Create Long Prediction" global button + main toggle are sufficient. */}
           </div>
 
         </div>
