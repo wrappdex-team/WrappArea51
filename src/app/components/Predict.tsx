@@ -161,8 +161,8 @@ export function Predict() {
 
   // NEW: which asset the current Fast Game modal is for (SOL, XRP, BTC, ETH, etc. or HBAR).
   // Set from the per-card "Fast Game" button (or global Create defaults to HBAR).
-  // SOL (and future BTC/ETH) activated via the post-XRP master plan using the exact same generic fastGameAsset flow.
-  // Only HBAR uses the special modalHbarPrice + /api/price/hbar rich path; all others (SOL/XRP/BTC/ETH) use live assets + public CG+Binance via resolver.
+  // BTC now activated (alongside SOL/XRP) via the post-XRP master plan using the exact same generic fastGameAsset flow.
+  // Only HBAR uses the special modalHbarPrice + /api/price/hbar rich path; all others (BTC/ETH/SOL/XRP) use live assets + public CG+Binance via resolver.
   const [fastGameAsset, setFastGameAsset] = useState<string>('HBAR');
 
   // Controls the collapsible Game Rules section inside the Fast Game create modal.
@@ -1258,7 +1258,7 @@ export function Predict() {
     try {
       // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko).
       // Fall back to direct if needed. Fetches the first-class tracked tokens for live price cards + Fast Game entry:
-      // BTC, ETH, SOL, HBAR, XRP. All non-HBAR tokens use the exact same CoinGecko + Binance public sources
+      // BTC (now activated), ETH, SOL, HBAR, XRP. All non-HBAR tokens use the exact same CoinGecko + Binance public sources
       // that the resolver's getAssetPrice() uses for creationPrice (at funding) and resolution (closing price).
       // HBAR continues to use its richer SaucerSwap + Mirror path exclusively.
       const isLive = !RESOLVER_BASE.includes('localhost');
@@ -1759,7 +1759,7 @@ export function Predict() {
                       {/* Beautiful super-informative header per spec:
                           "Will ${asset} be UP or DOWN at [time of close]?"
                           + open time + creation price + current % under it (HBAR-only delta).
-                          Asset is dynamic (SOL / XRP / BTC / ETH / HBAR) from game.asset.
+                          Asset is dynamic (BTC now first-class, plus ETH/SOL/XRP/HBAR) from game.asset.
                           Then volume + game details row below. */}
                       <div className="mb-3">
                         <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>
@@ -2720,6 +2720,7 @@ export function Predict() {
 
                       const questionText = pendingQuestion;
                       console.log('%c[FAST-GAME-CREATE] starting background record for', 'color:#0ff;font-weight:bold', pendingMarketId, 'resolver=', RESOLVER_BASE, 'asset=', fastGameAsset);
+                      // BTC (and ETH/SOL/XRP) use the generic non-HBAR path; asset carried through to HCS + resolver getAssetPrice('BTC') + payout logic.
                       let recordSuccess = false;
                       let lastRecordError = '';
                       for (let attempt = 1; attempt <= 8; attempt++) {
