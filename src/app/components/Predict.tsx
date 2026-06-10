@@ -165,6 +165,16 @@ export function Predict() {
   // Only HBAR uses the special modalHbarPrice + /api/price/hbar rich path; all others (ETH/BTC/SOL/XRP) use live assets + public CG+Binance via resolver.
   const [fastGameAsset, setFastGameAsset] = useState<string>('HBAR');
 
+  // Long Game (Predictions) states — parallel to fast for 1d/2d/.../90d games with buyout support.
+  // All stakes in HBAR. Same rules, 50% buyout window, forfeit 50% at payout, other 50% to winners.
+  const [showLongGameModal, setShowLongGameModal] = useState(false);
+  const [longGameDurationDays, setLongGameDurationDays] = useState<1 | 2 | 3 | 5 | 7 | 14 | 21 | 30 | 60 | 90>(1);
+  const [longGameSide, setLongGameSide] = useState<'YES' | 'NO'>('YES');
+  const [longGameStake, setLongGameStake] = useState(25);
+  const [longGameMaxBalance, setLongGameMaxBalance] = useState<number | null>(null);
+  const [isCreatingLongGame, setIsCreatingLongGame] = useState(false);
+  const [longGameAsset, setLongGameAsset] = useState<string>('HBAR');
+
   // Controls the collapsible Game Rules section inside the Fast Game create modal.
   // Provides quick rules + advanced factual breakdown with clean prediction/staking language.
   const [showGameRules, setShowGameRules] = useState(false);
@@ -1226,8 +1236,45 @@ export function Predict() {
       recentlyClaimedMarketIds.add(game.marketId);
       setMyClaimables(prev => prev.filter(g => g.marketId !== game.marketId));
       loadFastGames();
+      loadLongGames();
     } catch (e: any) {
       alert("Claim failed: " + (e?.message || e));
+    }
+  };
+
+  // Buyout (forfeit 50%) for long games — only allowed while isBettingOpen.
+  // Records on HCS via resolver; the 50% claim is settled at payout time (first), other 50% augments winners.
+  const handleLongBuyout = async (game: any) => {
+    const session = hashPackSession;
+    if (!session?.accountId) { alert("Connect wallet"); return; }
+    if (!game.isBettingOpen) {
+      showToast('Buyout window closed for this prediction', 'error');
+      return;
+    }
+    if (!confirm(`Buyout this position? You will receive 50% of your stake back at resolution (the other 50% is forfeited to the winning side). Tokens stay locked until the game resolves. This cannot be undone.`)) return;
+
+    try {
+      const myCurrentStake = (game.myStake || userPositions[game.marketId]?.amount || 0) || gameStakes[game.marketId] || 10;
+      const res = await fetch(`${RESOLVER_BASE}/api/prediction/buyout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          marketId: game.marketId,
+          side: game.direction || game.userSide || 'YES',
+          amount: myCurrentStake,
+          user: session.accountId,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Buyout recorded. You will receive ${data.returnedHalf || '50%'} HBAR at payout time.`, 'success');
+        setLongGames(prev => prev.map(g => g.marketId === game.marketId ? { ...g, _userForfeited: true, forfeitCount: (g.forfeitCount || 0) + 1 } : g));
+        setTimeout(() => { loadLongGames(); }, 1200);
+      } else {
+        showToast(data.error || 'Buyout failed', 'error');
+      }
+    } catch (e) {
+      showToast('Buyout error', 'error');
     }
   };
 
@@ -1332,6 +1379,7 @@ export function Predict() {
     fetchLivePrices();
     loadOnChainMarkets();
     loadFastGames();
+    loadLongGames();
     loadMyClaimsAndHistory(); // will hit cache fast-path on most mounts
     if (hashPackSession?.accountId) {
       fetchUserActiveBets(hashPackSession.accountId).then(setUserBets);
@@ -1494,6 +1542,42 @@ export function Predict() {
     });
   }, [displayFastGames]);
 
+  // Long games list + sort (reuses the exact same getGameTiming + soonest-bet-close ordering as fast).
+  // Enriched from resolver /active-long-games (includes forfeitCount/forfeitTotal).
+  const [longGames, setLongGames] = useState<any[]>([]);
+  const [isLoadingLongGames, setIsLoadingLongGames] = useState(false);
+
+  const loadLongGames = async () => {
+    try {
+      setIsLoadingLongGames(true);
+      const res = await fetch(`${RESOLVER_BASE}/api/prediction/active-long-games`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.games)) {
+          setLongGames(data.games);
+        }
+      }
+    } catch (e) {
+      console.warn('[Predict] loadLongGames failed', e);
+    } finally {
+      setIsLoadingLongGames(false);
+    }
+  };
+
+  const activeLongSorted = React.useMemo(() => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const withTiming = longGames.map((g: any) => {
+      const t = getGameTiming(g, nowSec);
+      return { ...g, ...t };
+    });
+    return withTiming.sort((a: any, b: any) => {
+      if (a.isBettingOpen !== b.isBettingOpen) return a.isBettingOpen ? -1 : 1;
+      const ta = typeof a.betCloseTs === 'number' ? a.betCloseTs : Infinity;
+      const tb = typeof b.betCloseTs === 'number' ? b.betCloseTs : Infinity;
+      return ta - tb;
+    });
+  }, [longGames]);
+
   // Detect when any game's bet window (50% point) closes and play a little chime.
   // Also keeps the prevBetOpenRef up to date so we only chime on actual transitions.
   useEffect(() => {
@@ -1576,7 +1660,7 @@ export function Predict() {
                     <Zap className="w-3 h-3" /> Fast Game
                   </button>
                   <button
-                    onClick={(e) => { e.stopPropagation(); setSelectedAsset(asset.symbol); setShowCreateModal(true); }}
+                    onClick={(e) => { e.stopPropagation(); setLongGameAsset(asset.symbol); setShowLongGameModal(true); }}
                     className={`py-2 rounded-2xl text-xs font-semibold tracking-wide transition-all active:scale-[0.985] flex items-center justify-center gap-1 border
                       ${isVIP
                         ? (isDark 
@@ -1605,6 +1689,10 @@ export function Predict() {
             <button onClick={() => { setFastGameAsset('HBAR'); setShowFastGameModal(true); }}
               className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-semibold hover:brightness-110">
               Create Fast Game
+            </button>
+            <button onClick={() => { setLongGameAsset('HBAR'); setShowLongGameModal(true); }}
+              className="px-6 py-2.5 rounded-2xl border border-[#00f9ff]/60 text-[#00f9ff] font-semibold hover:bg-[#00f9ff]/10">
+              Create Long Prediction
             </button>
           </div>
 
@@ -2033,41 +2121,76 @@ export function Predict() {
               </div>
             ))}
 
-            {/* Prediction markets (consolidated toggle view) */}
+            {/* Real Long Predictions (Prediction Markets toggle now shows live long_updown games with forfeit + buyout) */}
+            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
+              activeLongSorted.length === 0 ? (
+                <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 mt-2`}>No active long predictions right now. Use the "Prediction" button on any asset card above (1d–90d durations).</div>
+              ) : (
+                <div className="mt-4">
+                  {activeMarketFilter === 'both' && (
+                    <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Long Predictions (1d–90d)</div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <AnimatePresence>
+                      {activeLongSorted.map((game: any) => {
+                        const creationTs = parseInt((game.marketId || '').split('-')[1] || '0', 10);
+                        const durMin = game.durationMinutes || (1*1440);
+                        let effectiveEndTime = game.endTime || 0;
+                        if (creationTs && durMin > 0) {
+                          const safeEnd = Math.floor(creationTs / 1000) + durMin * 60;
+                          if (!effectiveEndTime || effectiveEndTime < safeEnd - 30) effectiveEndTime = safeEnd;
+                        }
+                        const remaining = Math.max(0, effectiveEndTime - now);
+                        const isBettingOpen = game.isBettingOpen !== undefined ? !!game.isBettingOpen : remaining > (durMin * 60 * 0.5);
 
-              {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && activePredSorted.length === 0 && activeMarketFilter === 'prediction' && (
-              <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4`}>No active prediction markets right now.</div>
-            )}
-            {(activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && activePredSorted.length > 0 && (
-              <div className="mt-4">
-                {activeMarketFilter === 'both' && (
-                  <div className={`text-sm font-semibold mb-2 ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Prediction Markets</div>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {activePredSorted.slice(0, 6).map((m: any) => {
-                      const remaining = m.endTime ? Math.max(0, m.endTime - Math.floor(Date.now() / 1000)) : 0;
-                      const mins = Math.floor(remaining / 60);
-                      const timeStr = remaining > 0 ? `${mins}m` : 'EXPIRED';
-                      return (
-                        <div
-                          key={m.marketId || m.id}
-                          onClick={() => openBetModal(m)}
-                          className={`group rounded-3xl border p-5 transition-all cursor-pointer ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{m.asset} • {m.marketId}</div>
-                            <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${remaining > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                              {remaining > 0 ? 'OPEN' : 'CLOSED'}
+                        const days = Math.floor(remaining / 86400);
+                        const hours = Math.floor((remaining % 86400) / 3600);
+                        const timeStr = remaining > 0 ? (days > 0 ? `${days}d ${hours}h` : `${hours}h`) : 'EXPIRED';
+
+                        const assetInfo = assets.find(a => a.symbol === (game.asset || 'HBAR'));
+                        let deltaNode = null;
+                        if (game.creationPrice != null) {
+                          let currentPrice = null;
+                          if ((game.asset || 'HBAR') === 'HBAR' && liveHbarPrice != null) currentPrice = liveHbarPrice;
+                          else if (assetInfo?.price != null) currentPrice = assetInfo.price;
+                          if (currentPrice != null) {
+                            const delta = currentPrice - game.creationPrice;
+                            const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
+                            const sign = delta >= 0 ? '▲' : '▼';
+                            const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                            deltaNode = <span className={color}>{sign} {pct.toFixed(1)}%</span>;
+                          }
+                        }
+
+                        const forfeitDisplay = game.forfeitCount > 0 ? ` • ${game.forfeitCount} forfeits` : '';
+                        const userForfeited = game._userForfeited;
+
+                        return (
+                          <motion.div key={game.marketId} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`group rounded-3xl border p-5 relative ${isDark ? 'border-white/10 bg-white/5' : 'border-slate-200 bg-white shadow-sm'}`}>
+                            {assetInfo?.logo && <img src={assetInfo.logo} alt={game.asset} className="absolute top-3 right-3 w-5 h-5 rounded-full object-contain z-10 opacity-90" />}
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="font-mono text-[10px] text-white/50">{game.marketId} • LONG</div>
+                              <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${isBettingOpen ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{isBettingOpen ? 'OPEN' : 'CLOSED'}</div>
                             </div>
-                          </div>
-                          <div className="font-semibold text-[15px] leading-tight tracking-[-0.2px] mb-2 pr-1 line-clamp-2">{m.question}</div>
-                          <div className="text-sm mb-1">~{timeStr} • {m.volume} vol • {m.totalBets} predictions</div>
-                          <div className="mt-2 text-xs text-[#00f9ff] group-hover:underline">Place prediction on this market →</div>
-                        </div>
-                      );
-                    })}
+                            <div className="font-semibold text-[15px] mb-1">Will {(game.asset || 'HBAR')} be UP or DOWN?</div>
+                            <div className="text-xs mb-2">Closes in {timeStr}{deltaNode && <span className="ml-1.5">{deltaNode}</span>}</div>
+
+                            <div className="text-xs mb-3">{(game.currentVolume || 0).toFixed(1)} HBAR • {(game.totalParticipants || 0)} predictors{forfeitDisplay}</div>
+
+                            {isBettingOpen && !userForfeited ? (
+                              <button onClick={() => handleLongBuyout(game)} className="w-full py-2 text-sm rounded-2xl border border-amber-500/60 text-amber-400 hover:bg-amber-500/10">Buyout (50% early exit)</button>
+                            ) : userForfeited ? (
+                              <div className="text-center text-xs text-amber-400 py-1">Bought out — 50% at resolution</div>
+                            ) : (
+                              <div className="text-center text-xs py-1 text-white/60">Predictions closed</div>
+                            )}
+                          </motion.div>
+                        );
+                      })}
+                    </AnimatePresence>
+                  </div>
                 </div>
-              </div>
+              )
             )}
           </div>
 
