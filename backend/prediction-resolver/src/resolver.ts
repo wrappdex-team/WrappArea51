@@ -322,11 +322,17 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
       console.log(`[Resolver] Fast game ${marketId} resolved via manual path — relying on scheduled automatic payouts`);
     }
 
-    // Remove from active list for fast games (admin resolve path)
+    // Remove from active list for fast or long games (admin resolve path)
     if (marketId.startsWith('fast-')) {
       const ridx = activeFastGames.findIndex(g => g.marketId === marketId);
       if (ridx !== -1) {
         activeFastGames.splice(ridx, 1);
+        saveActiveGamesToDisk().catch(() => {});
+      }
+    } else if (marketId.startsWith('long-')) {
+      const ridx = activeLongGames.findIndex(g => g.marketId === marketId);
+      if (ridx !== -1) {
+        activeLongGames.splice(ridx, 1);
         saveActiveGamesToDisk().catch(() => {});
       }
     }
@@ -354,6 +360,20 @@ const activeFastGames: Array<{
   creationPrice: number;
   resolved?: boolean;
   inTieResolution?: boolean;
+}> = [];
+
+// Long Game (Predictions) — parallel authoritative in-memory list (same pattern as fast for clarity and restart safety).
+// Populated by long-game/create and re-register from HCS.
+// Carries the same fields + explicit gameType for future unified views.
+const activeLongGames: Array<{
+  marketId: string;
+  endTime: number;
+  durationMinutes?: number;   // days * 1440 for 1d/2d/.../90d predictions
+  asset?: string;
+  creationPrice: number;
+  resolved?: boolean;
+  inTieResolution?: boolean;
+  gameType?: string;          // 'long_updown'
 }> = [];
 
 // Games currently in tie resolution (price is flat at creation price)
@@ -417,11 +437,15 @@ export async function loadActiveGamesFromDisk() {
       activeFastGames.length = 0;
       parsed.activeFastGames.filter((g: any) => !g.resolved).forEach((g: any) => activeFastGames.push(g));
     }
+    if (Array.isArray(parsed.activeLongGames)) {
+      activeLongGames.length = 0;
+      parsed.activeLongGames.filter((g: any) => !g.resolved).forEach((g: any) => activeLongGames.push(g));
+    }
     if (Array.isArray(parsed.tieResolutionGames)) {
       tieResolutionGames.length = 0;
       parsed.tieResolutionGames.forEach((t: any) => tieResolutionGames.push(t));
     }
-    console.log(`[Resolver] Loaded ${activeFastGames.length} active games from disk`);
+    console.log(`[Resolver] Loaded ${activeFastGames.length} fast + ${activeLongGames.length} long games from disk`);
   } catch (e: any) {
     if (e.code !== 'ENOENT') {
       console.warn('[Resolver] Failed to load active games from disk:', e.message);
@@ -436,6 +460,7 @@ async function saveActiveGamesToDisk() {
     await fs.mkdir(DATA_DIR, { recursive: true });
     const data = {
       activeFastGames: activeFastGames.filter(g => !g.resolved),
+      activeLongGames: activeLongGames.filter(g => !g.resolved),  // Long Game (Predictions) persistence — same restart resilience as fast
       tieResolutionGames: tieResolutionGames.map(t => ({
         marketId: t.marketId,
         creationPrice: t.creationPrice,
@@ -487,6 +512,48 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
   });
   console.log(`[Resolver] Registered fast game for auto-resolution: ${marketId} (asset=${asset || 'HBAR'})`);
   saveActiveGamesToDisk().catch(() => {}); // fire and forget
+}
+
+/**
+ * Long Game (Predictions) registration — identical pattern and safety guarantees as fast.
+ * Supports 1d–90d via durationMinutes (caller passes days*1440).
+ * Creation price is intentionally NOT stored in memory (fetched from immutable HCS at resolution for audit).
+ * Asset carried for correct oracle routing at resolution time.
+ */
+export function registerLongGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number, asset?: string) {
+  const existingIndex = activeLongGames.findIndex(g => g.marketId === marketId);
+  if (existingIndex !== -1) {
+    if (activeLongGames[existingIndex].resolved) {
+      console.log(`[Resolver] ${marketId} already resolved in long list, skipping register`);
+      knownResolvedMarkets.add(marketId);
+      return;
+    }
+    if (durationMinutes && !activeLongGames[existingIndex].durationMinutes) {
+      activeLongGames[existingIndex].durationMinutes = durationMinutes;
+    }
+    if (asset && !activeLongGames[existingIndex].asset) {
+      activeLongGames[existingIndex].asset = asset;
+    }
+    console.log(`[Resolver] Long game ${marketId} already registered in active list`);
+    return;
+  }
+  if (knownResolvedMarkets.has(marketId)) {
+    console.log(`[Resolver] ${marketId} known resolved, skipping long register`);
+    return;
+  }
+
+  activeLongGames.push({
+    marketId,
+    endTime,
+    durationMinutes: durationMinutes || (1 * 1440), // default 1 day in minutes if missing
+    asset: asset || 'HBAR',
+    creationPrice: 0,
+    resolved: false,
+    inTieResolution: false,
+    gameType: 'long_updown',
+  });
+  console.log(`[Resolver] Registered LONG game for auto-resolution: ${marketId} (asset=${asset || 'HBAR'}, durationMinutes=${durationMinutes})`);
+  saveActiveGamesToDisk().catch(() => {});
 }
 
 export async function autoResolveExpiredFastGames() {
@@ -861,26 +928,40 @@ export async function getMarketVolume(marketId: string) {
   const yesParticipants = new Set<string>();
   const noParticipants = new Set<string>();
 
+  // Long Game (Predictions) forfeit enrichment — count buyouts so cards can display "X forfeits" like participant counts.
+  let forfeitCount = 0;
+  let forfeitTotal = 0; // sum of original bought-out stakes (or forfeited halves; we return original for UI clarity)
+
   for (const row of messages) {
     try {
       const raw = row.message || '';
       const decoded = decodeHcsMessage(raw);
       const p = JSON.parse(decoded);
 
-      if (p.marketId !== marketId || p.type !== 'PLACE_BET') continue;
+      if (p.marketId !== marketId) continue;
 
-      const side = (p.side || '').toUpperCase();
-      const amount = Number(p.amount) || 0;
-      const user = p.user || p.submittedBy;
+      if (p.type === 'PLACE_BET') {
+        const side = (p.side || '').toUpperCase();
+        const amount = Number(p.amount) || 0;
+        const user = p.user || p.submittedBy;
 
-      if (!user || amount <= 0) continue;
+        if (!user || amount <= 0) continue;
 
-      if (side === 'YES') {
-        yesStake += amount;
-        yesParticipants.add(user);
-      } else if (side === 'NO') {
-        noStake += amount;
-        noParticipants.add(user);
+        if (side === 'YES') {
+          yesStake += amount;
+          yesParticipants.add(user);
+        } else if (side === 'NO') {
+          noStake += amount;
+          noParticipants.add(user);
+        }
+      }
+
+      if (p.type === 'BUYOUT') {
+        const amt = Number(p.amount) || 0;
+        if (amt > 0) {
+          forfeitCount += 1;
+          forfeitTotal += amt;
+        }
       }
     } catch {
       // skip malformed messages
@@ -896,6 +977,8 @@ export async function getMarketVolume(marketId: string) {
     totalVolume: Math.round(totalVolume * 100) / 100,
     yesParticipants: yesParticipants.size,
     noParticipants: noParticipants.size,
+    forfeitCount,
+    forfeitTotal: Math.round(forfeitTotal * 100) / 100,
     lastUpdated: new Date().toISOString(),
     source: 'HCS reliable (HGraph + Mirror)',
   };
@@ -1187,9 +1270,11 @@ export async function fetchTopicMessages(limit = 500) {
 }
 
 /**
- * Fetches the original CREATE_MARKET message for a fast game from the immutable HCS topic.
+ * Fetches the original CREATE_MARKET message for a game (fast or long/prediction) from the immutable HCS topic.
+ * Works for any marketId — no gameType filter needed (the caller / register knows the type).
  * This ensures we always use the price that was actually recorded on-chain at creation time,
- * making resolution tamper-resistant.
+ * making resolution tamper-resistant. Also returns durationMinutes (or durationDays if present) for 50% window enforcement.
+ * Long Game (Predictions) support: same function serves both fast (minutes) and long (days*1440 minutes).
  */
 export async function fetchFastGameCreationData(marketId: string): Promise<{
   creationPrice: number;
@@ -1233,15 +1318,17 @@ export async function fetchFastGameCreationData(marketId: string): Promise<{
 
 export async function computePayoutForUser(marketId: string, userAccountId: string): Promise<{
   owed: number;
-  reason: 'WIN' | 'UNMATCHED_RETURN';
+  reason: 'WIN' | 'UNMATCHED_RETURN' | 'FORFEIT_RETURN';
   myStake: number;
   totalWinningSideStake: number;
   totalLosingSideStake: number;
   winningSide: 'YES' | 'NO' | null;
   alreadyPaid: boolean;
 }> {
-  // Use reliable fetch so UI claimables and history always see the real PLACE_BET records
+  // Use reliable fetch so UI claimables and history always see the real PLACE_BET + BUYOUT records
   // (even when HGraph is lagging behind raw consensus).
+  // Long Game (Predictions) buyout support: BUYOUT messages close the user's position for pool math
+  // but create a guaranteed 50% claim (FORFEIT_RETURN) paid before normal winner math.
   const messages = await fetchReliableTopicMessages(800);
 
   let winningSide: 'YES' | 'NO' | null = null;
@@ -1250,6 +1337,11 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   let myNo = 0;
   let totalYes = 0;
   let totalNo = 0;
+
+  // Long Game buyout tracking (per-market, for this user and globally for pot recalc)
+  let userHasBuyout = false;
+  let userBuyoutStake = 0;   // the original stake that was bought out (for 50% calc)
+  let totalForfeitedHalves = 0;
 
   for (const row of messages) {
     try {
@@ -1268,6 +1360,14 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
         if (side === 'YES') totalYes += amt;
         if (side === 'NO') totalNo += amt;
       }
+      if (p.type === 'BUYOUT') {
+        const bAmt = Number(p.amount) || 0;
+        totalForfeitedHalves += (bAmt * 0.5);   // the forfeited half augments the winning side
+        if ((p.user || p.submittedBy) === userAccountId) {
+          userHasBuyout = true;
+          userBuyoutStake += bAmt;
+        }
+      }
     } catch {}
   }
 
@@ -1275,9 +1375,7 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null, alreadyPaid: false };
   }
 
-  // Re-walk to get the user's actual stake(s) — we need the real side they bet on
-  // so we can correctly refund in completely one-sided markets even if the price
-  // resolution made their side the "loser".
+  // Re-walk to get the user's actual stake(s) from PLACE_BET (buyouts close positions)
   myStake = 0;
   myYes = 0;
   myNo = 0;
@@ -1297,11 +1395,13 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     } catch {}
   }
 
+  // If the user executed a buyout on this market, their effective claim is the forfeit 50% of the bought-out stake.
+  // Their original stakes are removed from the active win/lose pools (they no longer participate in the final parimutuel).
   const totalWinning = winningSide === 'YES' ? totalYes : totalNo;
   const totalLosing = winningSide === 'YES' ? totalNo : totalYes;
   const isOneSided = totalYes === 0 || totalNo === 0;
 
-  if (myStake === 0) {
+  if (myStake === 0 && !userHasBuyout) {
     return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide, alreadyPaid: false };
   }
 
@@ -1332,38 +1432,45 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     };
   }
 
-  // === Professional Parimutuel Math + One-Sided Refund Rule ===
-  // If one side had *zero* bettors at resolution time, all participants on the only
-  // active side get their stake back (minus any applicable creation fee which was
-  // already taken at creation). This is independent of the price-based winner.
-  // The 2% facilitation fee is only ever taken when there was opposing stake.
+  // === Professional Parimutuel Math + One-Sided Refund Rule + Long Game Forfeit Rule ===
+  // Fast games: unchanged behavior.
+  // Long games with BUYOUT:
+  //  - If userHasBuyout, they get exactly 50% of the bought-out stake back as FORFEIT_RETURN (paid first at payout time).
+  //  - Their full stake is excluded from active yes/no pools.
+  //  - The forfeitedHalf augments the losing pool for the remaining active winners (see processAutomaticPayoutsForMarket).
+  // One-sided rule still applies to the *active* (non-bought-out) stakes only.
   let owed = 0;
-  let reason: 'WIN' | 'UNMATCHED_RETURN' = 'WIN';
+  let reason: 'WIN' | 'UNMATCHED_RETURN' | 'FORFEIT_RETURN' = 'WIN';
 
-  if (isOneSided) {
-    // Completely one-sided market — refund everyone who bet, regardless of price outcome.
-    owed = myStake;
-    reason = 'UNMATCHED_RETURN';
-  } else {
-    const userStakeOnWinningSide = (winningSide === 'YES' ? myYes : myNo);
-    if (userStakeOnWinningSide > 0) {
-      if (totalLosing === 0) {
-        // No one on the other side (edge case of the above)
-        owed = myStake;
-        reason = 'UNMATCHED_RETURN';
-      } else {
-        const profit = (userStakeOnWinningSide / totalWinning) * totalLosing;
-        owed = userStakeOnWinningSide + profit;
-        reason = 'WIN';
+  if (userHasBuyout && userBuyoutStake > 0) {
+    // Buyout claim takes precedence for this user. 50% guaranteed, paid before winner recalc.
+    owed = userBuyoutStake * 0.5;
+    reason = 'FORFEIT_RETURN';
+  } else if (myStake > 0) {
+    if (isOneSided) {
+      // Completely one-sided market — refund everyone who bet (active stakes only), regardless of price outcome.
+      owed = myStake;
+      reason = 'UNMATCHED_RETURN';
+    } else {
+      const userStakeOnWinningSide = (winningSide === 'YES' ? myYes : myNo);
+      if (userStakeOnWinningSide > 0) {
+        const effectiveLosing = totalLosing + totalForfeitedHalves; // Long Game: forfeited halves go to winners
+        if (effectiveLosing <= 0) {
+          owed = myStake;
+          reason = 'UNMATCHED_RETURN';
+        } else {
+          const profit = (userStakeOnWinningSide / totalWinning) * effectiveLosing;
+          owed = userStakeOnWinningSide + profit;
+          reason = 'WIN';
+        }
       }
     }
-    // else: user was purely on the losing side in a two-sided market → owed = 0
   }
 
   return {
     owed: Math.round(owed * 100) / 100,
     reason,
-    myStake,
+    myStake: userHasBuyout ? userBuyoutStake : myStake,
     totalWinningSideStake: totalWinning,
     totalLosingSideStake: totalLosing,
     winningSide,
@@ -1527,10 +1634,14 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
 
   // Authoritative data from HCS (reliable path: HGraph + Mirror Node fallback)
   // This ensures PLACE_BET records are never missed due to indexer lag → proper win/loss + payouts.
+  // Long Game (Predictions) buyout support added: we collect BUYOUTs, pay 50% forfeit claims *first*,
+  // remove bought-out stakes from active pools, and add the forfeited halves into the effective losing
+  // pool for the remaining active winners (exactly as specified in the master plan).
   const messages = await fetchReliableTopicMessages(2000);
 
   let winner: 'YES' | 'NO' | null = null;
   const bets: Array<{ user: string; side: 'YES' | 'NO'; amount: number }> = [];
+  const buyouts: Array<{ user: string; side: 'YES' | 'NO'; amount: number }> = [];
 
   for (const row of messages) {
     try {
@@ -1551,6 +1662,14 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
           bets.push({ user, side, amount });
         }
       }
+      if (p.type === 'BUYOUT') {
+        const side = (p.side || '').toUpperCase() as 'YES' | 'NO';
+        const amount = Number(p.amount) || 0;
+        const user = p.user || p.submittedBy;
+        if (user && side && amount > 0) {
+          buyouts.push({ user, side, amount });
+        }
+      }
     } catch {}
   }
 
@@ -1559,25 +1678,33 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     return { success: false, error: 'No resolution found on HCS' };
   }
 
-  // Compute totals to detect completely one-sided markets
+  // Build set of users who bought out (their full position is closed for active pool math)
+  const boughtOutUsers = new Set(buyouts.map(bo => bo.user));
+
+  // Active bets only (exclude anyone who executed a buyout on this market)
+  const activeBets = bets.filter(b => !boughtOutUsers.has(b.user));
+
+  // Compute totals on *active* stakes only for one-sided detection and winner math
   let totalYesStake = 0;
   let totalNoStake = 0;
-  for (const b of bets) {
+  for (const b of activeBets) {
     if (b.side === 'YES') totalYesStake += b.amount;
     else totalNoStake += b.amount;
   }
   const isOneSided = totalYesStake === 0 || totalNoStake === 0;
 
+  // Total forfeited halves (added to the losing side for winner profit distribution)
+  const totalForfeitedHalves = buyouts.reduce((sum, bo) => sum + (bo.amount * 0.5), 0);
+
   // Compute per-user payout.
-  // If the market was completely one-sided (one pool had zero bettors), everyone who
-  // participated on the only active side gets their stake back as UNMATCHED_RETURN,
-  // *regardless* of what the price resolution said. This stops one-sided "losing" bets
-  // from being forfeited to the house/escrow.
+  // Long Game rule: first settle all forfeit claims (50% back), then recalculate the remaining pot.
+  // Forfeited halves augment the losing pool for active winners on the correct side.
+  // One-sided rule applies to active (non-bought-out) stakes only.
   const winnersMap = new Map<string, number>();
   let totalWinningStake = 0;
   let totalLosingStake = 0;
 
-  for (const b of bets) {
+  for (const b of activeBets) {
     if (b.side === winner) {
       totalWinningStake += b.amount;
     } else {
@@ -1585,15 +1712,24 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     }
   }
 
-  for (const b of bets) {
+  // 1. Forfeit claims (paid first, regardless of winner). These users get exactly 50% of their original stake.
+  for (const bo of buyouts) {
+    const forfeitOwed = Math.round((bo.amount * 0.5) * 100) / 100;
+    if (forfeitOwed > 0) {
+      winnersMap.set(bo.user, (winnersMap.get(bo.user) || 0) + forfeitOwed);
+    }
+  }
+
+  // 2. Active (non-bought-out) winner / unmatched payouts
+  const effectiveLosingStake = totalLosingStake + totalForfeitedHalves;
+  for (const b of activeBets) {
     let owed = 0;
     if (isOneSided) {
-      // One side had no bettors at all → refund the only participants
       owed = b.amount;
     } else if (b.side === winner) {
       owed = b.amount;
-      if (totalLosingStake > 0) {
-        const profit = (b.amount / totalWinningStake) * totalLosingStake;
+      if (effectiveLosingStake > 0) {
+        const profit = (b.amount / totalWinningStake) * effectiveLosingStake;
         owed = b.amount + profit;
       }
     }
@@ -1607,7 +1743,7 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     amount: Math.round(amount * 100) / 100,
   }));
 
-  console.log(`[Resolver] Auto-payout for ${marketId}: ${payouts.length} recipients, total ≈ ${payouts.reduce((s, p) => s + p.amount, 0).toFixed(2)} HBAR`);
+  console.log(`[Resolver] Auto-payout for ${marketId}: ${payouts.length} recipients (incl. ${buyouts.length} forfeit claims), total ≈ ${payouts.reduce((s, p) => s + p.amount, 0).toFixed(2)} HBAR`);
 
   // Phase 3 Funding Safety
   const resolverBalance = await getResolverBalance();
@@ -1651,7 +1787,13 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
       if (txId) transactionIds.push(String(txId));
       totalPaidActual += p.amount;
 
-      const payoutReason = isOneSided ? 'UNMATCHED_RETURN' : 'WIN';
+      // Determine reason per recipient: FORFEIT_RETURN for anyone who had a buyout on this market,
+      // otherwise fall back to the one-sided or WIN logic for active participants.
+      const isForfeitClaimant = buyouts.some(bo => bo.user === p.account);
+      const payoutReason = isForfeitClaimant
+        ? 'FORFEIT_RETURN'
+        : (isOneSided ? 'UNMATCHED_RETURN' : 'WIN');
+
       await postPayoutMessage({
         marketId,
         recipient: p.account,
@@ -1808,6 +1950,30 @@ export async function reRegisterOverdueFastGames() {
             registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes, p.asset);
           }
         }
+
+        // Long Game (Predictions) overdue re-register (same topic scan, different gameType)
+        if (p.type === 'CREATE_MARKET' && p.gameType === 'long_updown' && p.marketId) {
+          if (seenMarkets.has(p.marketId)) continue;
+          seenMarkets.add(p.marketId);
+
+          if (knownResolvedMarkets.has(p.marketId)) {
+            continue;
+          }
+
+          const hasResolved = messages.some((m: any) => {
+            try {
+              const r = m.message || '';
+              const rd = decodeHcsMessage(r);
+              const pr = JSON.parse(rd);
+              return pr.type === 'MARKET_RESOLVED' && pr.marketId === p.marketId;
+            } catch { return false; }
+          });
+
+          if (!hasResolved && p.endTime && p.endTime < now) {
+            console.log(`[Resolver] Re-registering overdue LONG game from HCS: ${p.marketId}`);
+            registerLongGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes, p.asset);
+          }
+        }
       } catch {}
     }
   } catch (e) {
@@ -1846,6 +2012,35 @@ export function getActiveFastGamesState() {
       enabled: true,
       file: ACTIVE_GAMES_FILE,
     },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Long Game (Predictions) equivalent of getActiveFastGamesState.
+ * Returns the authoritative in-memory list + computed isBettingOpen (50% of durationMinutes) for each.
+ * Used by the new /api/prediction/active-long-games endpoint.
+ * Same structure and timing logic as fast for maximum reuse in the UI layer (once wired).
+ */
+export function getActiveLongGamesState() {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    activeGames: activeLongGames.map(g => {
+      const dur = (g.durationMinutes || (1 * 1440)) * 60; // default 1 day
+      const remaining = (g.endTime || 0) - now;
+      const isBettingOpen = remaining > (dur * 0.5);
+      return {
+        marketId: g.marketId,
+        asset: g.asset || 'HBAR',
+        endTime: g.endTime,
+        durationMinutes: g.durationMinutes || (1 * 1440),
+        gameType: g.gameType || 'long_updown',
+        resolved: !!g.resolved,
+        inTieResolution: !!g.inTieResolution,
+        isBettingOpen,
+      };
+    }),
+    priceHealth: lastPriceHealth,
     timestamp: new Date().toISOString(),
   };
 }

@@ -25,10 +25,12 @@ import {
   resolveAndPayout, 
   autoResolveExpiredFastGames,
   registerFastGameForAutoResolution,
+  registerLongGameForAutoResolution,
   processClaim,
   retireDeadFastGames,
   computePayoutForUser,
-  shutdownResolver
+  shutdownResolver,
+  getActiveLongGamesState
 } from './resolver';
 import { postCreateMarket, postPlaceBet } from './hedera';
 
@@ -332,6 +334,94 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
 });
 
 /**
+ * Long Game (Predictions) create — identical flow and safety as fast-game/create.
+ * Durations are expressed in days by the caller (1/2/3/5/7/14/21/30/60/90) and converted to durationMinutes = days * 1440 upstream.
+ * All stakes remain in HBAR. 50% "Predictions closing" window enforcement (buyouts + new bets only before half).
+ * Uses the generic asset price oracle (HBAR rich path preserved; others CG+Binance).
+ */
+app.post('/api/prediction/long-game/create', async (req, res) => {
+  console.log('[Resolver] Received LONG game create request from frontend:', req.body);
+
+  try {
+    const {
+      marketId,
+      question,
+      asset = 'HBAR',
+      endTime,
+      durationMinutes,
+      initialSide,
+      initialStake,
+      creationPrice: clientCreationPrice,
+      creationPriceTime: clientCreationPriceTime,
+      submittedBy,
+    } = req.body;
+
+    if (!marketId || !question || !endTime || !submittedBy) {
+      console.warn('[Resolver] Missing required fields in long-game create');
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Server-side 50% betting/buyout close enforcement (works for day-scale durations too).
+    const now = Math.floor(Date.now() / 1000);
+    const durationSec = (durationMinutes || (1 * 1440)) * 60;
+    const remaining = endTime - now;
+    const isBettingOpen = remaining > (durationSec * 0.5);
+    if (!isBettingOpen) {
+      console.warn(`[Resolver] Long create rejected for ${marketId}: betting/buyout window closed`);
+      return res.status(400).json({ error: 'Betting window has closed for this prediction' });
+    }
+
+    const { getAssetPrice } = await import('./resolver');
+    const priceData = await getAssetPrice(asset, { critical: true }).catch(() => null);
+    const creationPrice = priceData?.price ?? clientCreationPrice ?? 0;
+    const creationPriceTime = priceData?.priceTime ?? priceData?.resolvedAt ?? clientCreationPriceTime ?? new Date().toISOString();
+
+    let createTxId: string | undefined;
+    try {
+      createTxId = await postCreateMarket({
+        marketId,
+        question,
+        asset,
+        endTime,
+        gameType: 'long_updown',
+        durationMinutes,
+        initialSide,
+        initialStake,
+        creationPrice,
+        creationPriceTime,
+        submittedBy,
+      });
+      console.log(`[Resolver] Successfully posted CREATE_MARKET (long) for ${marketId} tx=${createTxId}`);
+    } catch (hcsCreateErr: any) {
+      console.error(`[Resolver] HCS CREATE_MARKET (long) failed for ${marketId}:`, hcsCreateErr);
+      throw new Error(`hcs_create_failed: ${hcsCreateErr.message || hcsCreateErr}`);
+    }
+
+    let betTxId: string | undefined;
+    try {
+      betTxId = await postPlaceBet({
+        marketId,
+        side: initialSide,
+        amount: initialStake,
+        user: submittedBy,
+        // gameType passed via the any-cast inside postPlaceBet for long_updown
+      } as any);
+      console.log(`[Resolver] Posted Initial Market Maker Bet #1 (long) for ${marketId} tx=${betTxId}`);
+    } catch (hcsBetErr: any) {
+      console.error(`[Resolver] HCS initial PLACE_BET (long) failed for ${marketId}:`, hcsBetErr);
+      throw new Error(`hcs_initial_bet_failed: ${hcsBetErr.message || hcsBetErr} (CREATE tx may exist: ${createTxId})`);
+    }
+
+    registerLongGameForAutoResolution(marketId, endTime, durationMinutes, asset);
+
+    res.json({ success: true, marketId, createTxId, betTxId });
+  } catch (err: any) {
+    console.error('[Resolver] Long game create error:', err);
+    res.status(500).json({ error: err.message || 'Internal error', stage: err.message?.startsWith('hcs_') ? err.message.split(':')[0] : 'unknown' });
+  }
+});
+
+/**
  * Endpoint for placing a bet on an existing market (after user has sent stake).
  */
 app.post('/api/prediction/bet', async (req, res) => {
@@ -421,6 +511,59 @@ app.post('/api/prediction/bet', async (req, res) => {
       error: 'Bet recording failed. An automatic refund has been attempted.',
       details: err.message
     });
+  }
+});
+
+/**
+ * Long Game (Predictions) buyout / early exit.
+ * Records the BUYOUT on HCS (no HBAR movement at this step — settlement only at payout time).
+ * Must be called while the 50% window is still open (server-enforced).
+ * User receives exactly 50% of their stake back at payout; the other 50% is forfeited to winners.
+ */
+app.post('/api/prediction/buyout', async (req, res) => {
+  const { marketId, side, amount, user } = req.body;
+
+  try {
+    if (!marketId || !side || !amount || !user) {
+      return res.status(400).json({ error: 'Missing fields (marketId, side, amount, user)' });
+    }
+
+    // Server-side window check (re-uses the same creation data + duration logic)
+    try {
+      const { fetchFastGameCreationData } = await import('./resolver');
+      const creation = await fetchFastGameCreationData(marketId).catch(() => null);
+      if (creation && creation.endTime) {
+        const now = Math.floor(Date.now() / 1000);
+        const dur = (creation.durationMinutes || (1 * 1440)) * 60;
+        const remaining = creation.endTime - now;
+        if (remaining <= (dur * 0.5)) {
+          console.warn(`[Resolver] Buyout rejected for ${marketId}: window closed`);
+          return res.status(400).json({ error: 'Buyout window has closed for this prediction' });
+        }
+      }
+    } catch {}
+
+    const returnedHalf = Math.round((Number(amount) * 0.5) * 100) / 100;
+    const forfeitedHalf = Math.round((Number(amount) * 0.5) * 100) / 100;
+
+    // Record on HCS (the postBuyout function lives in hedera.ts)
+    const { postBuyout } = await import('./hedera');
+    await postBuyout({
+      marketId,
+      user,
+      side: side as 'YES' | 'NO',
+      amount: Number(amount),
+      returnedHalf,
+      forfeitedHalf,
+      gameType: 'long_updown',
+    });
+
+    console.log(`[Resolver] BUYOUT recorded for ${marketId} | user=${user} | original=${amount} | returned=${returnedHalf} | forfeited=${forfeitedHalf}`);
+
+    res.json({ success: true, recorded: true, returnedHalf, forfeitedHalf });
+  } catch (err: any) {
+    console.error('[Resolver] Buyout error:', err);
+    res.status(500).json({ error: 'Buyout recording failed', details: err.message });
   }
 });
 
@@ -842,6 +985,60 @@ app.get('/api/prediction/active-fast-games', async (req, res) => {
         };
       } catch {
         return { ...g, yesStake: 0, noStake: 0, currentVolume: 0, totalVolume: 0 };
+      }
+    }));
+
+    res.json({ success: true, games: enriched });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Public endpoint for the frontend to get current active LONG games (Predictions).
+ * Same enrichment, re-register, creationPrice, and volume (now including forfeitCount) as fast.
+ * This will power the "Prediction Markets" toggle / long cards.
+ */
+app.get('/api/prediction/active-long-games', async (req, res) => {
+  try {
+    const { getActiveLongGamesState, getMarketVolume, reRegisterOverdueFastGames } = await import('./resolver');
+
+    // Run the (now extended) re-register so long games created on any resolver instance are visible.
+    try { await reRegisterOverdueFastGames(); } catch {}
+
+    const state = getActiveLongGamesState();
+    const baseGames = state.activeGames || [];
+
+    const enriched = await Promise.all(baseGames.map(async (g: any) => {
+      try {
+        const vol = await getMarketVolume(g.marketId);
+        let creationPrice = g.creationPrice;
+        let creationPriceTime: string | undefined;
+        try {
+          const { fetchFastGameCreationData } = await import('./resolver');
+          const cdata = await fetchFastGameCreationData(g.marketId).catch(() => null);
+          if (cdata) {
+            creationPrice = cdata.creationPrice ?? creationPrice;
+            creationPriceTime = cdata.creationPriceTime ?? creationPriceTime;
+          }
+        } catch {}
+
+        return {
+          ...g,
+          yesStake: vol.yesStake ?? 0,
+          noStake: vol.noStake ?? 0,
+          totalVolume: vol.totalVolume ?? 0,
+          currentVolume: vol.totalVolume ?? 0,
+          yesParticipants: vol.yesParticipants ?? 0,
+          noParticipants: vol.noParticipants ?? 0,
+          totalParticipants: (vol.yesParticipants ?? 0) + (vol.noParticipants ?? 0),
+          forfeitCount: vol.forfeitCount ?? 0,
+          forfeitTotal: vol.forfeitTotal ?? 0,
+          creationPrice,
+          creationPriceTime,
+        };
+      } catch {
+        return { ...g, yesStake: 0, noStake: 0, currentVolume: 0, totalVolume: 0, forfeitCount: 0, forfeitTotal: 0 };
       }
     }));
 
