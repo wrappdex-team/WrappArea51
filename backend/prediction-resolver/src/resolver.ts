@@ -1244,6 +1244,8 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
 
   let winningSide: 'YES' | 'NO' | null = null;
   let myStake = 0;
+  let myYes = 0;
+  let myNo = 0;
   let totalYes = 0;
   let totalNo = 0;
 
@@ -1263,12 +1265,6 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
         const amt = Number(p.amount) || 0;
         if (side === 'YES') totalYes += amt;
         if (side === 'NO') totalNo += amt;
-
-        if ((p.user || p.submittedBy) === userAccountId) {
-          if (side === 'YES') {
-            // we accumulate later based on winningSide
-          }
-        }
       }
     } catch {}
   }
@@ -1280,9 +1276,9 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
   // Re-walk to get the user's actual stake(s) — we need the real side they bet on
   // so we can correctly refund in completely one-sided markets even if the price
   // resolution made their side the "loser".
-  let myStake = 0;
-  let myYes = 0;
-  let myNo = 0;
+  myStake = 0;
+  myYes = 0;
+  myNo = 0;
   for (const row of messages) {
     try {
       const raw = row.message || '';
