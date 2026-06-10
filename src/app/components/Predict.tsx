@@ -2377,23 +2377,12 @@ export function Predict() {
                       )}
 
                       <div className="flex items-baseline justify-between mb-4">
-                        {(() => {
-                          const mainValue = isBettingOpen ? betCloseStr : timeStr;
-                          const isUrgent = isBettingOpen ? timeToBetClose < 120 : remaining < 120;
-                          const label = isBettingOpen 
-                            ? (timeToBetClose < 120 ? 'Closing soon' : 'Predictions close at 50%') 
-                            : 'Resolution pending';
-                          return (
-                            <>
-                              <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${isUrgent ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
-                                {mainValue}
-                              </div>
-                              <div className={`text-right text-[10px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
-                                {label}
-                              </div>
-                            </>
-                          );
-                        })()}
+                        <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${remaining < 120 ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
+                          {timeStr}
+                        </div>
+                        <div className={`text-right text-[10px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
+                          {isBettingOpen ? (timeToBetClose < 120 ? 'Closing soon' : 'Full resolution') : 'Resolution pending'}
+                        </div>
                       </div>
 
                       {/* Stable bottom section: always rendered with min-height to prevent card "unstable" / layout jump when the 50% betting window closes (e.g. 5min on 10m game) */}
@@ -2500,6 +2489,18 @@ export function Predict() {
                                       DOWN
                                     </button>
                                   </div>
+
+                                  {/* Buyout option for long games - only while within the 50% "Predictions closing" window.
+                                      The timer "Predictions closing in {betCloseStr}" above is the authoritative cutoff for buyouts (and new bets).
+                                      Synced with the 1/2 duration rule. */}
+                                  {(game.marketId && game.marketId.startsWith('long-')) && (
+                                    <button
+                                      onClick={() => handleLongBuyout(game)}
+                                      className="w-full mt-2 py-2 text-sm rounded-2xl border border-amber-500/60 text-amber-400 hover:bg-amber-500/10 active:scale-[0.985]"
+                                    >
+                                      Buyout (50% early exit)
+                                    </button>
+                                  )}
                                 </>
                               );
                             })()}
