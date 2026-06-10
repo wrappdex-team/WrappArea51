@@ -804,6 +804,7 @@ export function Predict() {
     }
     setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? { ...g, _retrying: true } : g));
 
+    const isLong = game.marketId.startsWith('long-');
     const retryAsset = game.asset || 'HBAR';
     let gamePrice = (typeof game.creationPrice === 'number' ? game.creationPrice : 0.05);
     let creationPriceTime: string | undefined;
@@ -819,16 +820,19 @@ export function Predict() {
 
     let recordSuccess = false;
     let lastRecordError = '';
-    const dur = (game.durationMinutes as number) || 10;
+    const dur = (game.durationMinutes as number) || (isLong ? 1440 : 10);  // default 1 day for long if missing
     const stk = (game.currentVolume as number) || (game as any).initialStake || 25;
     const side: 'YES' | 'NO' = (game.direction as any) || 'YES';
-    const q = game.question || `Will ${retryAsset} be ${side === 'YES' ? 'Higher' : 'Lower'} than creation price in ${dur} min?`;
+    const q = game.question || `Will ${retryAsset} be ${side === 'YES' ? 'Higher' : 'Lower'} than creation price in ${isLong ? dur/1440 + ' day(s)' : dur + ' min'}?`;
 
-    console.log('%c[FAST-GAME-CREATE][RETRY] starting manual/auto retry for', 'color:#0ff;font-weight:bold', game.marketId, 'resolver=', RESOLVER_BASE, 'asset=', retryAsset);
+    const endpoint = isLong ? '/api/prediction/long-game/create' : '/api/prediction/fast-game/create';
+    const logPrefix = isLong ? '[LONG-GAME-CREATE][RETRY]' : '[FAST-GAME-CREATE][RETRY]';
+
+    console.log(`%c${logPrefix} starting manual/auto retry for`, 'color:#0ff;font-weight:bold', game.marketId, 'resolver=', RESOLVER_BASE, 'asset=', retryAsset, 'isLong=', isLong);
     for (let attempt = 1; attempt <= 8; attempt++) {
-      console.log('%c[FAST-GAME-CREATE][RETRY] attempt', 'color:#0ff', attempt, 'for', game.marketId);
+      console.log(`%c${logPrefix} attempt`, 'color:#0ff', attempt, 'for', game.marketId);
       try {
-        const res = await fetch(`${RESOLVER_BASE}/api/prediction/fast-game/create`, {
+        const res = await fetch(`${RESOLVER_BASE}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -847,13 +851,13 @@ export function Predict() {
         let data: any = {};
         try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
         if (res.ok && data?.success) {
-          console.log('%c[FAST-GAME-CREATE][RETRY] SUCCESS on attempt', 'color:#0f0;font-weight:bold', attempt, 'marketId=', game.marketId, 'txs=', data);
+          console.log(`%c${logPrefix} SUCCESS on attempt`, 'color:#0f0;font-weight:bold', attempt, 'marketId=', game.marketId, 'txs=', data);
           recordSuccess = true;
           break;
         } else {
           lastRecordError = data?.error || data?.stage || `status ${res.status}`;
           if (res.status === 429) lastRecordError += ' (resolver rate-limited)';
-          console.log('%c[FAST-GAME-CREATE][RETRY] attempt', 'color:#f80', attempt, 'failed for', game.marketId, 'status=', res.status, 'err=', lastRecordError);
+          console.log(`%c${logPrefix} attempt`, 'color:#f80', attempt, 'failed for', game.marketId, 'status=', res.status, 'err=', lastRecordError);
         }
       } catch (e: any) {
         lastRecordError = e?.message || 'Network error calling resolver';
@@ -869,9 +873,16 @@ export function Predict() {
       setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? {
         ...g, creationPrice: gamePrice, _pendingRecord: false, _recordFailed: false, _wcTimedOut: false, _mayHavePayment: false, _retrying: false
       } : g));
-      showToast('Fast Game recorded on HCS via retry! (CREATE + PLACE_BET topic messages posted)', 'success');
+      const toastMsg = isLong
+        ? 'Long Prediction recorded on HCS via retry! (CREATE + PLACE_BET topic messages posted)'
+        : 'Fast Game recorded on HCS via retry! (CREATE + PLACE_BET topic messages posted)';
+      showToast(toastMsg, 'success');
       setTimeout(() => loadFastGames(), 2000);
       setTimeout(() => loadFastGames(), 45000);
+      if (isLong) {
+        setTimeout(() => loadLongGames(), 2000);
+        setTimeout(() => loadLongGames(), 45000);
+      }
     } else {
       setOptimisticGames(prev => prev.map(g => g.marketId === game.marketId ? {
         ...g, _recordFailed: true, _retrying: false, _lastRecordError: lastRecordError
@@ -1421,11 +1432,19 @@ export function Predict() {
             loadLongGames();
           } else {
             const errData = await recordRes.json().catch(() => ({}));
+            const errMsg = errData?.error || errData?.stage || `status ${recordRes.status}`;
             console.warn('Long record failed:', errData);
+            setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? {
+              ...g, _recordFailed: true, _lastRecordError: errMsg
+            } : g));
             showToast('Long prediction payment succeeded but record pending — use retry if needed.', 'error');
           }
-        } catch (recordErr) {
+        } catch (recordErr: any) {
           console.error('Long record error:', recordErr);
+          const errMsg = recordErr?.message || 'Network error calling resolver';
+          setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? {
+            ...g, _recordFailed: true, _lastRecordError: errMsg
+          } : g));
           showToast('Record step failed — card will stay visible for retry.', 'error');
         }
       })();
