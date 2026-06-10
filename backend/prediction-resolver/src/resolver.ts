@@ -1277,8 +1277,12 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null, alreadyPaid: false };
   }
 
-  // Re-walk to get user's stake on the actual winning side
-  myStake = 0;
+  // Re-walk to get the user's actual stake(s) — we need the real side they bet on
+  // so we can correctly refund in completely one-sided markets even if the price
+  // resolution made their side the "loser".
+  let myStake = 0;
+  let myYes = 0;
+  let myNo = 0;
   for (const row of messages) {
     try {
       const raw = row.message || '';
@@ -1287,14 +1291,17 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
       if (p.marketId !== marketId || p.type !== 'PLACE_BET') continue;
       const side = (p.side || '').toUpperCase();
       const amt = Number(p.amount) || 0;
-      if ((p.user || p.submittedBy) === userAccountId && side === winningSide) {
+      if ((p.user || p.submittedBy) === userAccountId) {
         myStake += amt;
+        if (side === 'YES') myYes += amt;
+        else myNo += amt;
       }
     } catch {}
   }
 
   const totalWinning = winningSide === 'YES' ? totalYes : totalNo;
   const totalLosing = winningSide === 'YES' ? totalNo : totalYes;
+  const isOneSided = totalYes === 0 || totalNo === 0;
 
   if (myStake === 0) {
     return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide, alreadyPaid: false };
@@ -1327,19 +1334,32 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     };
   }
 
-  // === Professional Parimutuel Math (high volume ready) ===
+  // === Professional Parimutuel Math + One-Sided Refund Rule ===
+  // If one side had *zero* bettors at resolution time, all participants on the only
+  // active side get their stake back (minus any applicable creation fee which was
+  // already taken at creation). This is independent of the price-based winner.
+  // The 2% facilitation fee is only ever taken when there was opposing stake.
   let owed = 0;
   let reason: 'WIN' | 'UNMATCHED_RETURN' = 'WIN';
 
-  if (totalLosing === 0) {
-    // No one on the other side — user gets stake back (unmatched)
+  if (isOneSided) {
+    // Completely one-sided market — refund everyone who bet, regardless of price outcome.
     owed = myStake;
     reason = 'UNMATCHED_RETURN';
   } else {
-    // Stake returned + proportional share of the losing pool
-    const profit = (myStake / totalWinning) * totalLosing;
-    owed = myStake + profit;
-    reason = 'WIN';
+    const userStakeOnWinningSide = (winningSide === 'YES' ? myYes : myNo);
+    if (userStakeOnWinningSide > 0) {
+      if (totalLosing === 0) {
+        // No one on the other side (edge case of the above)
+        owed = myStake;
+        reason = 'UNMATCHED_RETURN';
+      } else {
+        const profit = (userStakeOnWinningSide / totalWinning) * totalLosing;
+        owed = userStakeOnWinningSide + profit;
+        reason = 'WIN';
+      }
+    }
+    // else: user was purely on the losing side in a two-sided market → owed = 0
   }
 
   return {
@@ -1541,7 +1561,20 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     return { success: false, error: 'No resolution found on HCS' };
   }
 
-  // Compute per-user payout using the same professional logic as computePayoutForUser
+  // Compute totals to detect completely one-sided markets
+  let totalYesStake = 0;
+  let totalNoStake = 0;
+  for (const b of bets) {
+    if (b.side === 'YES') totalYesStake += b.amount;
+    else totalNoStake += b.amount;
+  }
+  const isOneSided = totalYesStake === 0 || totalNoStake === 0;
+
+  // Compute per-user payout.
+  // If the market was completely one-sided (one pool had zero bettors), everyone who
+  // participated on the only active side gets their stake back as UNMATCHED_RETURN,
+  // *regardless* of what the price resolution said. This stops one-sided "losing" bets
+  // from being forfeited to the house/escrow.
   const winnersMap = new Map<string, number>();
   let totalWinningStake = 0;
   let totalLosingStake = 0;
@@ -1555,13 +1588,20 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
   }
 
   for (const b of bets) {
-    if (b.side !== winner) continue;
-    let owed = b.amount;
-    if (totalLosingStake > 0) {
-      const profit = (b.amount / totalWinningStake) * totalLosingStake;
-      owed = b.amount + profit;
+    let owed = 0;
+    if (isOneSided) {
+      // One side had no bettors at all → refund the only participants
+      owed = b.amount;
+    } else if (b.side === winner) {
+      owed = b.amount;
+      if (totalLosingStake > 0) {
+        const profit = (b.amount / totalWinningStake) * totalLosingStake;
+        owed = b.amount + profit;
+      }
     }
-    winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    if (owed > 0) {
+      winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    }
   }
 
   const payouts = Array.from(winnersMap.entries()).map(([account, amount]) => ({
@@ -1613,13 +1653,14 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
       if (txId) transactionIds.push(String(txId));
       totalPaidActual += p.amount;
 
+      const payoutReason = isOneSided ? 'UNMATCHED_RETURN' : 'WIN';
       await postPayoutMessage({
         marketId,
         recipient: p.account,
         amount: p.amount,
-        reason: 'WIN',
+        reason: payoutReason,
       });
-      console.log(`[Resolver] Paid ${p.amount} HBAR to ${p.account} for ${marketId}`);
+      console.log(`[Resolver] Paid ${p.amount} HBAR to ${p.account} for ${marketId} (reason=${payoutReason})`);
     } catch (e) {
       console.error(`[Resolver] Payout execution failed for ${p.account}:`, e);
     }
@@ -1854,6 +1895,14 @@ export async function simulatePayoutsForMarket(marketId: string) {
 
   if (!winner) return { error: 'No MARKET_RESOLVED on HCS', payouts: [] };
 
+  let totalYesStake = 0;
+  let totalNoStake = 0;
+  for (const b of bets) {
+    if (b.side === 'YES') totalYesStake += b.amount;
+    else totalNoStake += b.amount;
+  }
+  const isOneSided = totalYesStake === 0 || totalNoStake === 0;
+
   const winnersMap = new Map<string, number>();
   let totalWinning = 0;
   let totalLosing = 0;
@@ -1864,12 +1913,20 @@ export async function simulatePayoutsForMarket(marketId: string) {
   }
 
   for (const b of bets) {
-    if (b.side !== winner) continue;
-    let owed = b.amount;
-    if (totalLosing > 0) {
-      owed = b.amount + (b.amount / totalWinning) * totalLosing;
+    let owed = 0;
+    if (isOneSided) {
+      owed = b.amount;
+    } else if (b.side !== winner) {
+      continue;
+    } else {
+      owed = b.amount;
+      if (totalLosing > 0) {
+        owed = b.amount + (b.amount / totalWinning) * totalLosing;
+      }
     }
-    winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    if (owed > 0) {
+      winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    }
   }
 
   const payouts = Array.from(winnersMap.entries()).map(([account, amount]) => ({
@@ -1883,7 +1940,8 @@ export async function simulatePayoutsForMarket(marketId: string) {
     totalWinningStake: totalWinning,
     totalLosingStake: totalLosing,
     payouts,
-    note: 'Read-only simulation — no funds moved, no HCS messages posted',
+    isOneSided,
+    note: 'Read-only simulation — no funds moved, no HCS messages posted. One-sided markets now correctly simulate full stake return (UNMATCHED_RETURN).',
   };
 }
 
