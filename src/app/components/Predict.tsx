@@ -1721,6 +1721,25 @@ export function Predict() {
                   const betSecs = timeToBetClose % 60;
                   const betCloseStr = timeToBetClose > 0 ? `${betMins}m ${betSecs}s` : "CLOSED";
 
+                  const assetInfo = assets.find(a => a.symbol === (game.asset || 'HBAR'));
+
+                  let deltaNode = null;
+                  if (game.creationPrice != null) {
+                    let currentPrice = null;
+                    if ((game.asset || 'HBAR') === 'HBAR' && liveHbarPrice != null) {
+                      currentPrice = liveHbarPrice;
+                    } else if (assetInfo?.price != null) {
+                      currentPrice = assetInfo.price;
+                    }
+                    if (currentPrice != null) {
+                      const delta = currentPrice - game.creationPrice;
+                      const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
+                      const sign = delta >= 0 ? '▲' : '▼';
+                      const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                      deltaNode = <span className={color}>{sign} {pct.toFixed(1)}%</span>;
+                    }
+                  }
+
                   return (
                     <motion.div 
                       key={game.marketId} 
@@ -1729,8 +1748,15 @@ export function Predict() {
                       exit={{ opacity: 0, y: -10 }}
                       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
                       layout
-                      className={`group rounded-3xl border p-5 transition-all ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
+                      className={`group rounded-3xl border p-5 transition-all relative ${isDark ? 'border-white/10 bg-white/5 hover:bg-white/[0.08]' : 'border-slate-200 bg-white shadow-sm hover:shadow-md'} ${isVIP ? 'vip-glass vip-shimmer ring-1 ring-white/10' : ''}`}
                     >
+                      {assetInfo?.logo && (
+                        <img 
+                          src={assetInfo.logo} 
+                          alt={game.asset || 'HBAR'} 
+                          className="absolute top-3 right-3 w-5 h-5 rounded-full object-contain z-10 opacity-90"
+                        />
+                      )}
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <div className="font-mono text-[10px] text-white/50 tracking-[0.5px]">{game.marketId}</div>
@@ -1758,9 +1784,9 @@ export function Predict() {
 
                       {/* Beautiful super-informative header per spec:
                           "Will ${asset} be UP or DOWN at [time of close]?"
-                          + open time + creation price + current % under it (HBAR-only delta).
+                          + open time + creation price + current % since open (for all assets).
                           Asset is dynamic (ETH now first-class, plus BTC/SOL/XRP/HBAR) from game.asset.
-                          Then volume + game details row below. */}
+                          Small token logo in top-right corner. Then volume + game details row below. */}
                       <div className="mb-3">
                         <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>
                           Will {(game.asset || 'HBAR')} be <span className="text-emerald-400 font-semibold">UP</span> or <span className="text-rose-400 font-semibold">DOWN</span> at {closeTime}?
@@ -1768,18 +1794,8 @@ export function Predict() {
                         <div className={`mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] ${isDark ? 'text-white/65' : 'text-slate-600'}`}>
                           <span>
                             Opened <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{createdTime}</span> at <span className="font-mono text-[#00f9ff]">${formatPrice(game.creationPrice || 0, game.asset)}</span>
+                            {deltaNode && <span className="font-mono ml-1.5">{deltaNode}</span>}
                           </span>
-                          {(game.asset || 'HBAR') === 'HBAR' && liveHbarPrice != null && game.creationPrice != null && (
-                            <span className="font-mono">
-                              {(() => {
-                                const delta = liveHbarPrice - game.creationPrice;
-                                const pct = game.creationPrice > 0 ? (delta / game.creationPrice) * 100 : 0;
-                                const sign = delta >= 0 ? '▲' : '▼';
-                                const color = delta >= 0 ? 'text-emerald-400' : 'text-rose-400';
-                                return <span className={color}>{sign} {pct.toFixed(1)}%</span>;
-                              })()}
-                            </span>
-                          )}
                           <span>Closes <span className={`${isDark ? 'text-white/85' : 'text-slate-700'}`}>{closeTime}</span></span>
                         </div>
                       </div>
