@@ -1278,6 +1278,168 @@ export function Predict() {
     }
   };
 
+  // Long Game create handler — bank-grade, modeled exactly on fast create.
+  // Payment: 2.5 HBAR creation fee + stake to escrow.
+  // POST to /long-game/create with durationMinutes = days * 1440, gameType: 'long_updown', asset.
+  // Optimistic long- card + recentlyCreated support (reuses the general recentlyCreatedMarketIds Set).
+  const handleCreateLongGame = async () => {
+    const session = hashPackSession;
+    if (!session?.accountId) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+
+    setIsCreatingLongGame(true);
+
+    try {
+      // Pre-payment reachability probe
+      try {
+        const probe = await fetch(`${RESOLVER_BASE}/api/price/hbar`, { method: 'HEAD' });
+        if (!probe.ok) throw new Error(`status ${probe.status}`);
+      } catch (probeErr: any) {
+        const msg = `Resolver not reachable at ${RESOLVER_BASE}. Payment would succeed but record would fail. Set VITE_RESOLVER_URL correctly in Vercel and redeploy.`;
+        showToast(msg, 'error');
+        console.error('[Predict] Resolver probe failed before long create:', RESOLVER_BASE, probeErr?.message || probeErr);
+        setIsCreatingLongGame(false);
+        return;
+      }
+
+      const durationMinutes = longGameDurationDays * 1440;
+      const paymentPrepare = await prepareBetPaymentTransfer({
+        userAccountId: session.accountId,
+        amountHbar: 2.5 + longGameStake,
+        stakeAmount: longGameStake,
+        feeAmount: 2.5,
+        resolutionAccountId: ESCROW_ACCOUNT_ID,
+        treasuryAccountId: TREASURY_ACCOUNT_ID,
+      });
+
+      if (!paymentPrepare.success) {
+        throw new Error("Failed to prepare payment for long prediction");
+      }
+
+      const paymentBytes = base64ToUint8Array(paymentPrepare.transactionBytes);
+      const paymentTxId = paymentPrepare.transactionId;
+
+      await withSigning(`Creating ${longGameDurationDays}d Long Prediction (${longGameStake} HBAR stake)...`, async () => {
+        await signAndExecuteTransaction(session.wcTopic, 'testnet', session.accountId, paymentBytes);
+        return "payment-sent";
+      });
+
+      setIsCreatingLongGame(false);
+
+      // Optimistic pending long game (visible immediately)
+      const pendingMarketId = `long-${Date.now()}`;
+      const pendingSideLabel = longGameSide === 'YES' ? 'Higher' : 'Lower';
+      const pendingDurationLabel = `${longGameDurationDays} day${longGameDurationDays > 1 ? 's' : ''}`;
+      const pendingEstimated = new Date(Date.now() + durationMinutes * 60 * 1000);
+      const pendingTimeLabel = pendingEstimated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const thisAssetForPending = longGameAsset;
+      const pendingQuestion = `Will ${thisAssetForPending} price be ${pendingSideLabel} than the current price at resolution? (~${pendingDurationLabel}, est. ${pendingTimeLabel})`;
+      const assetLive = assets.find(a => a.symbol === longGameAsset);
+      const approxPrice = longGameAsset === 'HBAR'
+        ? (typeof modalHbarPrice === 'number' ? modalHbarPrice : (assetLive?.price || 0.05))
+        : (assetLive?.price || 0.05);
+
+      const pendingGame = {
+        marketId: pendingMarketId,
+        question: pendingQuestion,
+        direction: longGameSide,
+        durationMinutes,
+        endTime: Math.floor(Date.now() / 1000) + (durationMinutes * 60),
+        creationPrice: approxPrice,
+        currentVolume: longGameStake,
+        resolved: false,
+        creator: session.accountId,
+        asset: longGameAsset,
+        yesStake: longGameSide === 'YES' ? longGameStake : 0,
+        noStake: longGameSide === 'NO' ? longGameStake : 0,
+        yesParticipants: longGameSide === 'YES' ? 1 : 0,
+        noParticipants: longGameSide === 'NO' ? 1 : 0,
+        totalParticipants: 1,
+        _pendingRecord: true,
+      } as any;
+
+      setOptimisticGames(prev => {
+        const exists = prev.some(g => g.marketId === pendingMarketId);
+        if (exists) return prev;
+        return [pendingGame, ...prev];
+      });
+
+      setRecentlyCreatedMarketIds((prev: Set<string>) => {
+        const next = new Set(prev);
+        next.add(pendingMarketId);
+        try {
+          const toSave: Record<string, number> = {};
+          next.forEach(id => { toSave[id] = Date.now(); });
+          localStorage.setItem('recentlyCreatedFastGames', JSON.stringify(toSave)); // reuse the same storage for simplicity
+        } catch {}
+        return next;
+      });
+
+      setMyBetCounts(prev => ({ ...prev, [pendingMarketId]: 1 }));
+
+      showToast('Payment successful. Recording long prediction to HCS in background.', 'success');
+
+      // Background record to resolver
+      (async () => {
+        let gamePrice = approxPrice;
+        let creationPriceTime: string | undefined;
+        try {
+          const priceEndpoint = longGameAsset === 'HBAR' 
+            ? `${RESOLVER_BASE}/api/price/hbar` 
+            : `${RESOLVER_BASE}/api/price/${longGameAsset}`;
+          const pRes = await fetch(priceEndpoint);
+          const pJson = await pRes.json().catch(() => ({} as any));
+          gamePrice = pJson?.price || approxPrice;
+          creationPriceTime = pJson?.priceTime || pJson?.resolvedAt;
+        } catch {}
+
+        const endTime = Math.floor(Date.now() / 1000) + (durationMinutes * 60);
+
+        try {
+          const recordRes = await fetch(`${RESOLVER_BASE}/api/prediction/long-game/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              marketId: pendingMarketId,
+              question: pendingQuestion,
+              asset: longGameAsset,
+              endTime,
+              durationMinutes,
+              initialSide: longGameSide,
+              initialStake: longGameStake,
+              creationPrice: gamePrice,
+              creationPriceTime,
+              submittedBy: session.accountId,
+            }),
+          });
+
+          if (recordRes.ok) {
+            showToast('Long prediction recorded on HCS!', 'success');
+            setOptimisticGames(prev => prev.filter(g => g.marketId !== pendingMarketId));
+            loadLongGames();
+          } else {
+            const errData = await recordRes.json().catch(() => ({}));
+            console.warn('Long record failed:', errData);
+            showToast('Long prediction payment succeeded but record pending — use retry if needed.', 'error');
+          }
+        } catch (recordErr) {
+          console.error('Long record error:', recordErr);
+          showToast('Record step failed — card will stay visible for retry.', 'error');
+        }
+      })();
+
+      setShowLongGameModal(false);
+      setLongGameStake(25);
+
+    } catch (err: any) {
+      console.error('Long game create error:', err);
+      showToast('Long prediction create failed: ' + (err?.message || err), 'error');
+      setIsCreatingLongGame(false);
+    }
+  };
+
   // Minimal stubs so the page doesn't explode
   const [selectedMarket, setSelectedMarket] = useState<MockMarket | null>(null);
   const [betSide, setBetSide] = useState<'YES' | 'NO'>('YES');
@@ -1714,7 +1876,7 @@ export function Predict() {
           {/* Your recent/pending fast games — always visible to the creator immediately after payment/signing, even if the resolver is rate-limited (429), returning empty, or the direct HGraph fallback is blocked (CORS/DNS from vercel). 
               This guarantees the game "shows up" after the funds are taken / market making stake, matching the working experience from the backup. 
               The HCS record (topic CREATE + initial PLACE_BET) is still attempted in the background for official confirmation and visibility to others. */}
-          {Array.from(recentlyCreatedMarketIds).some(id => id.startsWith('fast-')) && (
+          {Array.from(recentlyCreatedMarketIds).some(id => id.startsWith('fast-') || id.startsWith('long-')) && (
             <div className="mb-4 p-3 rounded-2xl border border-[#00f9ff]/40 bg-[#00f9ff]/5 text-sm">
               <div className="font-semibold text-[#00f9ff] mb-1 text-xs tracking-widest">YOUR RECENT FAST GAMES (visible to you immediately — HCS confirmation pending)</div>
               {optimisticGames.filter((g: any) => g.marketId && g.marketId.startsWith('fast-')).map((g: any) => {
@@ -2422,6 +2584,139 @@ export function Predict() {
                       );
                     })}
                   </div>
+
+                  {/* Long Game (Predictions) Create Modal — exact same premium UX as Fast Game, but with day durations and buyout rules. */}
+                  {showLongGameModal && (
+                    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4" onClick={() => setShowLongGameModal(false)}>
+                      <div 
+                        className={`rounded-3xl w-full max-w-[480px] max-h-[92vh] flex flex-col overflow-hidden ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} 
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <div className="flex-none p-5 pb-3">
+                          <div className="flex justify-center mb-2">
+                            <HolidayLogo 
+                              defaultDarkSrc={brandLogos.dark} 
+                              defaultLightSrc={brandLogos.light} 
+                              isDark={isDark} 
+                              alt="WRAPpDEX" 
+                              imgClassName="h-20 w-auto object-contain"
+                            />
+                          </div>
+                          <div className="relative text-center">
+                            <button onClick={() => setShowLongGameModal(false)} className="absolute right-0 top-1 text-white/70 hover:text-white">
+                              <X size={18} />
+                            </button>
+                            <div className="font-bold text-2xl tracking-tight">
+                              <span className="text-emerald-400">UP</span> or <span className="text-rose-400">DOWN</span>
+                            </div>
+                            {(() => {
+                              const thisAsset = assets.find(a => a.symbol === longGameAsset) || assets.find(a => a.symbol === 'HBAR');
+                              const thisPrice = longGameAsset === 'HBAR' 
+                                ? (modalHbarPrice ?? thisAsset?.price ?? 0)
+                                : (thisAsset?.price ?? 0);
+                              const ch = thisAsset?.change24h;
+                              const pos = typeof ch === 'number' && ch >= 0;
+                              return (
+                                <>
+                                  <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
+                                    ${thisPrice.toFixed(longGameAsset === 'HBAR' ? 6 : 4)}
+                                  </div>
+                                  {typeof ch === 'number' && (
+                                    <div className="mt-2 text-center">
+                                      <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {pos ? '+' : ''}{ch.toFixed(1)}%
+                                      </div>
+                                      <div className="text-[10px] text-white/50">24h • {longGameAsset} • Long Prediction</div>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-auto px-5 space-y-3 pb-1 text-sm">
+                          {/* Duration - Days for Long Predictions */}
+                          <div>
+                            <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                              PREDICTION DURATION (DAYS)
+                            </div>
+                            <div className="grid grid-cols-5 gap-2">
+                              {[1,2,3,5,7,14,21,30,60,90].map((days) => {
+                                const isActive = longGameDurationDays === days;
+                                return (
+                                  <button
+                                    key={days}
+                                    onClick={() => setLongGameDurationDays(days as any)}
+                                    className={`p-2 rounded-2xl transition-all border text-center text-sm
+                                      ${isActive 
+                                        ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
+                                        : isDark 
+                                          ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/90' 
+                                          : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-800'
+                                      }`}
+                                  >
+                                    {days}d
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="text-[9px] text-white/50 mt-1">Buyouts allowed only before the 50% close window. 50% returned at payout; other 50% forfeited to winners.</div>
+                          </div>
+
+                          {/* Side Selection */}
+                          <div>
+                            <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>DIRECTION</div>
+                            <div className="grid grid-cols-2 gap-3">
+                              {(['YES', 'NO'] as const).map((s) => {
+                                const isActive = longGameSide === s;
+                                return (
+                                  <button
+                                    key={s}
+                                    onClick={() => setLongGameSide(s)}
+                                    className={`py-3 rounded-2xl border font-semibold transition-all ${isActive ? 'bg-[#00f9ff] text-black border-[#00f9ff]' : isDark ? 'bg-white/5 border-white/10 text-white/90' : 'bg-gray-100 border-gray-200 text-gray-800'}`}
+                                  >
+                                    {s === 'YES' ? 'UP (Higher)' : 'DOWN (Lower)'}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Stake */}
+                          <div>
+                            <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>YOUR STAKE (HBAR)</div>
+                            <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
+                              <input 
+                                type="number" 
+                                value={longGameStake} 
+                                min={25}
+                                onChange={(e) => {
+                                  const raw = parseFloat(e.target.value);
+                                  const clamped = isNaN(raw) ? 25 : Math.max(25, raw);
+                                  setLongGameStake(clamped);
+                                }}
+                                className={`flex-1 bg-transparent text-xl font-mono focus:outline-none tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}
+                              />
+                              <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
+                            </div>
+                            <Slider min={25} max={500} step={1} value={[longGameStake]} onValueChange={(vals) => setLongGameStake(Math.max(25, vals[0] || 25))} />
+                          </div>
+                        </div>
+
+                        <div className="flex-none p-5 pt-3 border-t border-white/10 bg-inherit">
+                          <button
+                            onClick={handleCreateLongGame}
+                            disabled={isCreatingLongGame}
+                            className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-bold disabled:opacity-50 active:scale-[0.985]"
+                          >
+                            {isCreatingLongGame ? 'Creating Long Prediction...' : `Create ${longGameDurationDays}d Long Prediction — Pay 2.5 + ${longGameStake} HBAR`}
+                          </button>
+                          <div className="text-[10px] text-center text-white/50 mt-2">All stakes in HBAR. Buyout available before 50% window.</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <PredictionHistory 
                     myHistory={myHistory
