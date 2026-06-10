@@ -1842,6 +1842,139 @@ export function Predict() {
           )}
         </div>
 
+        {/* Long Game (Predictions) Create Modal — placed at high level like the fast modal so the overlay works reliably from the top buttons. */}
+        {showLongGameModal && (
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4" onClick={() => setShowLongGameModal(false)}>
+            <div 
+              className={`rounded-3xl w-full max-w-[480px] max-h-[92vh] flex flex-col overflow-hidden ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} 
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex-none p-5 pb-3">
+                <div className="flex justify-center mb-2">
+                  <HolidayLogo 
+                    defaultDarkSrc={brandLogos.dark} 
+                    defaultLightSrc={brandLogos.light} 
+                    isDark={isDark} 
+                    alt="WRAPpDEX" 
+                    imgClassName="h-20 w-auto object-contain"
+                  />
+                </div>
+                <div className="relative text-center">
+                  <button onClick={() => setShowLongGameModal(false)} className="absolute right-0 top-1 text-white/70 hover:text-white">
+                    <X size={18} />
+                  </button>
+                  <div className="font-bold text-2xl tracking-tight">
+                    <span className="text-emerald-400">UP</span> or <span className="text-rose-400">DOWN</span>
+                  </div>
+                  {(() => {
+                    const thisAsset = assets.find(a => a.symbol === longGameAsset) || assets.find(a => a.symbol === 'HBAR');
+                    const thisPrice = longGameAsset === 'HBAR' 
+                      ? (modalHbarPrice ?? thisAsset?.price ?? 0)
+                      : (thisAsset?.price ?? 0);
+                    const ch = thisAsset?.change24h;
+                    const pos = typeof ch === 'number' && ch >= 0;
+                    return (
+                      <>
+                        <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
+                          ${thisPrice.toFixed(longGameAsset === 'HBAR' ? 6 : 4)}
+                        </div>
+                        {typeof ch === 'number' && (
+                          <div className="mt-2 text-center">
+                            <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {pos ? '+' : ''}{ch.toFixed(1)}%
+                            </div>
+                            <div className="text-[10px] text-white/50">24h • {longGameAsset} • Long Prediction</div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto px-5 space-y-3 pb-1 text-sm">
+                {/* Duration - Days for Long Predictions */}
+                <div>
+                  <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                    PREDICTION DURATION (DAYS)
+                  </div>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[1,2,3,5,7,14,21,30,60,90].map((days) => {
+                      const isActive = longGameDurationDays === days;
+                      return (
+                        <button
+                          key={days}
+                          onClick={() => setLongGameDurationDays(days as any)}
+                          className={`p-2 rounded-2xl transition-all border text-center text-sm
+                            ${isActive 
+                              ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
+                              : isDark 
+                                ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/90' 
+                                : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-800'
+                            }`}
+                        >
+                          {days}d
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[9px] text-white/50 mt-1">Buyouts allowed only before the 50% close window. 50% returned at payout; other 50% forfeited to winners.</div>
+                </div>
+
+                {/* Side Selection */}
+                <div>
+                  <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>DIRECTION</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(['YES', 'NO'] as const).map((s) => {
+                      const isActive = longGameSide === s;
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => setLongGameSide(s)}
+                          className={`py-3 rounded-2xl border font-semibold transition-all ${isActive ? 'bg-[#00f9ff] text-black border-[#00f9ff]' : isDark ? 'bg-white/5 border-white/10 text-white/90' : 'bg-gray-100 border-gray-200 text-gray-800'}`}
+                        >
+                          {s === 'YES' ? 'UP (Higher)' : 'DOWN (Lower)'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Stake */}
+                <div>
+                  <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>YOUR STAKE (HBAR)</div>
+                  <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
+                    <input 
+                      type="number" 
+                      value={longGameStake} 
+                      min={25}
+                      onChange={(e) => {
+                        const raw = parseFloat(e.target.value);
+                        const clamped = isNaN(raw) ? 25 : Math.max(25, raw);
+                        setLongGameStake(clamped);
+                      }}
+                      className={`flex-1 bg-transparent text-xl font-mono focus:outline-none tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}
+                    />
+                    <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
+                  </div>
+                  <Slider min={25} max={500} step={1} value={[longGameStake]} onValueChange={(vals) => setLongGameStake(Math.max(25, vals[0] || 25))} />
+                </div>
+              </div>
+
+              <div className="flex-none p-5 pt-3 border-t border-white/10 bg-inherit">
+                <button
+                  onClick={handleCreateLongGame}
+                  disabled={isCreatingLongGame}
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-bold disabled:opacity-50 active:scale-[0.985]"
+                >
+                  {isCreatingLongGame ? 'Creating Long Prediction...' : `Create ${longGameDurationDays}d Long Prediction — Pay 2.5 + ${longGameStake} HBAR`}
+                </button>
+                <div className="text-[10px] text-center text-white/50 mt-2">All stakes in HBAR. Buyout available before 50% window.</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Active markets - consolidated view (fast + prediction/long) with toggle. Most recent first. Only active (unresolved). Same timers, backend, care as before. */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
@@ -2584,139 +2717,6 @@ export function Predict() {
                       );
                     })}
                   </div>
-
-                  {/* Long Game (Predictions) Create Modal — exact same premium UX as Fast Game, but with day durations and buyout rules. */}
-                  {showLongGameModal && (
-                    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4" onClick={() => setShowLongGameModal(false)}>
-                      <div 
-                        className={`rounded-3xl w-full max-w-[480px] max-h-[92vh] flex flex-col overflow-hidden ${isDark ? 'bg-[#0a0c17] border-white/10' : 'bg-white'}`} 
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <div className="flex-none p-5 pb-3">
-                          <div className="flex justify-center mb-2">
-                            <HolidayLogo 
-                              defaultDarkSrc={brandLogos.dark} 
-                              defaultLightSrc={brandLogos.light} 
-                              isDark={isDark} 
-                              alt="WRAPpDEX" 
-                              imgClassName="h-20 w-auto object-contain"
-                            />
-                          </div>
-                          <div className="relative text-center">
-                            <button onClick={() => setShowLongGameModal(false)} className="absolute right-0 top-1 text-white/70 hover:text-white">
-                              <X size={18} />
-                            </button>
-                            <div className="font-bold text-2xl tracking-tight">
-                              <span className="text-emerald-400">UP</span> or <span className="text-rose-400">DOWN</span>
-                            </div>
-                            {(() => {
-                              const thisAsset = assets.find(a => a.symbol === longGameAsset) || assets.find(a => a.symbol === 'HBAR');
-                              const thisPrice = longGameAsset === 'HBAR' 
-                                ? (modalHbarPrice ?? thisAsset?.price ?? 0)
-                                : (thisAsset?.price ?? 0);
-                              const ch = thisAsset?.change24h;
-                              const pos = typeof ch === 'number' && ch >= 0;
-                              return (
-                                <>
-                                  <div className={`mt-0.5 text-3xl font-semibold tabular-nums ${isDark ? 'text-[#00f9ff]' : 'text-blue-600'}`}>
-                                    ${thisPrice.toFixed(longGameAsset === 'HBAR' ? 6 : 4)}
-                                  </div>
-                                  {typeof ch === 'number' && (
-                                    <div className="mt-2 text-center">
-                                      <div className={`text-lg font-semibold ${pos ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {pos ? '+' : ''}{ch.toFixed(1)}%
-                                      </div>
-                                      <div className="text-[10px] text-white/50">24h • {longGameAsset} • Long Prediction</div>
-                                    </div>
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </div>
-                        </div>
-
-                        <div className="flex-1 overflow-auto px-5 space-y-3 pb-1 text-sm">
-                          {/* Duration - Days for Long Predictions */}
-                          <div>
-                            <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                              PREDICTION DURATION (DAYS)
-                            </div>
-                            <div className="grid grid-cols-5 gap-2">
-                              {[1,2,3,5,7,14,21,30,60,90].map((days) => {
-                                const isActive = longGameDurationDays === days;
-                                return (
-                                  <button
-                                    key={days}
-                                    onClick={() => setLongGameDurationDays(days as any)}
-                                    className={`p-2 rounded-2xl transition-all border text-center text-sm
-                                      ${isActive 
-                                        ? 'bg-[#00f9ff] text-black border-[#00f9ff] shadow-lg' 
-                                        : isDark 
-                                          ? 'bg-white/5 border-white/10 hover:bg-white/10 text-white/90' 
-                                          : 'bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-800'
-                                      }`}
-                                  >
-                                    {days}d
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            <div className="text-[9px] text-white/50 mt-1">Buyouts allowed only before the 50% close window. 50% returned at payout; other 50% forfeited to winners.</div>
-                          </div>
-
-                          {/* Side Selection */}
-                          <div>
-                            <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>DIRECTION</div>
-                            <div className="grid grid-cols-2 gap-3">
-                              {(['YES', 'NO'] as const).map((s) => {
-                                const isActive = longGameSide === s;
-                                return (
-                                  <button
-                                    key={s}
-                                    onClick={() => setLongGameSide(s)}
-                                    className={`py-3 rounded-2xl border font-semibold transition-all ${isActive ? 'bg-[#00f9ff] text-black border-[#00f9ff]' : isDark ? 'bg-white/5 border-white/10 text-white/90' : 'bg-gray-100 border-gray-200 text-gray-800'}`}
-                                  >
-                                    {s === 'YES' ? 'UP (Higher)' : 'DOWN (Lower)'}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* Stake */}
-                          <div>
-                            <div className={`text-xs font-medium tracking-[1px] mb-2 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>YOUR STAKE (HBAR)</div>
-                            <div className={`flex items-center rounded-2xl border px-4 py-3 mb-2 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-100'}`}>
-                              <input 
-                                type="number" 
-                                value={longGameStake} 
-                                min={25}
-                                onChange={(e) => {
-                                  const raw = parseFloat(e.target.value);
-                                  const clamped = isNaN(raw) ? 25 : Math.max(25, raw);
-                                  setLongGameStake(clamped);
-                                }}
-                                className={`flex-1 bg-transparent text-xl font-mono focus:outline-none tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}
-                              />
-                              <span className={`ml-2 text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>HBAR</span>
-                            </div>
-                            <Slider min={25} max={500} step={1} value={[longGameStake]} onValueChange={(vals) => setLongGameStake(Math.max(25, vals[0] || 25))} />
-                          </div>
-                        </div>
-
-                        <div className="flex-none p-5 pt-3 border-t border-white/10 bg-inherit">
-                          <button
-                            onClick={handleCreateLongGame}
-                            disabled={isCreatingLongGame}
-                            className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00f9ff] to-[#7c3aed] text-black font-bold disabled:opacity-50 active:scale-[0.985]"
-                          >
-                            {isCreatingLongGame ? 'Creating Long Prediction...' : `Create ${longGameDurationDays}d Long Prediction — Pay 2.5 + ${longGameStake} HBAR`}
-                          </button>
-                          <div className="text-[10px] text-center text-white/50 mt-2">All stakes in HBAR. Buyout available before 50% window.</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
 
                   <PredictionHistory 
                     myHistory={myHistory
