@@ -161,8 +161,8 @@ export function Predict() {
 
   // NEW: which asset the current Fast Game modal is for (SOL, XRP, BTC, ETH, etc. or HBAR).
   // Set from the per-card "Fast Game" button (or global Create defaults to HBAR).
-  // BTC now activated (alongside SOL/XRP) via the post-XRP master plan using the exact same generic fastGameAsset flow.
-  // Only HBAR uses the special modalHbarPrice + /api/price/hbar rich path; all others (BTC/ETH/SOL/XRP) use live assets + public CG+Binance via resolver.
+  // ETH now activated (alongside BTC/SOL/XRP) via the post-XRP master plan using the exact same generic fastGameAsset flow.
+  // Only HBAR uses the special modalHbarPrice + /api/price/hbar rich path; all others (ETH/BTC/SOL/XRP) use live assets + public CG+Binance via resolver.
   const [fastGameAsset, setFastGameAsset] = useState<string>('HBAR');
 
   // Controls the collapsible Game Rules section inside the Fast Game create modal.
@@ -1258,7 +1258,7 @@ export function Predict() {
     try {
       // Prefer resolver proxy for live deploys (avoids CORS from vercel.app origin to CoinGecko).
       // Fall back to direct if needed. Fetches the first-class tracked tokens for live price cards + Fast Game entry:
-      // BTC (now activated), ETH, SOL, HBAR, XRP. All non-HBAR tokens use the exact same CoinGecko + Binance public sources
+      // BTC, ETH (now activated), SOL, HBAR, XRP. All non-HBAR tokens use the exact same CoinGecko + Binance public sources
       // that the resolver's getAssetPrice() uses for creationPrice (at funding) and resolution (closing price).
       // HBAR continues to use its richer SaucerSwap + Mirror path exclusively.
       const isLive = !RESOLVER_BASE.includes('localhost');
@@ -1436,7 +1436,7 @@ export function Predict() {
       // Very low priced assets (HBAR etc.) → 6 decimals for prediction accuracy (matches resolver PRIMARY source)
       return price.toFixed(6);
     }
-    // Higher priced assets → show 3 decimals for better accuracy (e.g. SOL, BTC at higher prices)
+    // Higher priced assets → show 3 decimals for better accuracy (e.g. ETH, SOL, BTC at higher prices)
     return price.toFixed(3);
   };
 
@@ -1759,7 +1759,7 @@ export function Predict() {
                       {/* Beautiful super-informative header per spec:
                           "Will ${asset} be UP or DOWN at [time of close]?"
                           + open time + creation price + current % under it (HBAR-only delta).
-                          Asset is dynamic (BTC now first-class, plus ETH/SOL/XRP/HBAR) from game.asset.
+                          Asset is dynamic (ETH now first-class, plus BTC/SOL/XRP/HBAR) from game.asset.
                           Then volume + game details row below. */}
                       <div className="mb-3">
                         <div className={`font-semibold text-[15px] leading-snug tracking-[-0.3px] ${isDark ? 'text-white' : 'text-slate-900'}`}>
@@ -2720,7 +2720,7 @@ export function Predict() {
 
                       const questionText = pendingQuestion;
                       console.log('%c[FAST-GAME-CREATE] starting background record for', 'color:#0ff;font-weight:bold', pendingMarketId, 'resolver=', RESOLVER_BASE, 'asset=', fastGameAsset);
-                      // BTC (and ETH/SOL/XRP) use the generic non-HBAR path; asset carried through to HCS + resolver getAssetPrice('BTC') + payout logic.
+                      // ETH (and BTC/SOL/XRP) use the generic non-HBAR path; asset carried through to HCS + resolver getAssetPrice('ETH') + payout logic.
                       let recordSuccess = false;
                       let lastRecordError = '';
                       for (let attempt = 1; attempt <= 8; attempt++) {
