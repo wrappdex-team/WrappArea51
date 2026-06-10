@@ -1679,6 +1679,24 @@ export function Predict() {
     return { effectiveEndTime, isBettingOpen, betCloseTs, remainingToBetClose: Math.max(0, betCloseTs - nowSec) };
   };
 
+  // Consistent full countdown formatter for all markets (fast + long).
+  // Always includes days, hours, minutes, seconds when relevant.
+  // Used for both full resolution timer and the "Predictions closing in" (50% bet close) timer.
+  const formatCountdown = (totalSeconds: number): string => {
+    if (totalSeconds <= 0) return 'EXPIRED';
+    const d = Math.floor(totalSeconds / 86400);
+    const h = Math.floor((totalSeconds % 86400) / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = Math.floor(totalSeconds % 60);
+
+    const parts: string[] = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0 || d > 0) parts.push(`${h}h`);
+    if (m > 0 || h > 0 || d > 0) parts.push(`${m}m`);
+    parts.push(`${s}s`);
+    return parts.join(' ');
+  };
+
   // Order by bet-closing urgency (the "Predictions closing in" / 50% timer).
   // - Games that are still open for betting come first.
   // - Within open games: lowest (soonest) bet-close time first.
@@ -2080,9 +2098,7 @@ export function Predict() {
                   }
 
                   const remaining = Math.max(0, effectiveEndTime - now);
-                  const mins = Math.floor(remaining / 60);
-                  const secs = remaining % 60;
-                  const timeStr = remaining > 0 ? `${mins}m ${secs}s` : "EXPIRED";
+                  const timeStr = formatCountdown(remaining);
 
                   // Prefer server-computed isBettingOpen (authoritative, includes correct durationMinutes
                   // from the CREATE memo or /create body) for reliable 50% cutoff across all durations.
@@ -2097,12 +2113,10 @@ export function Predict() {
                   const createdTime = creationTs ? new Date(creationTs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
                   const closeTime = effectiveEndTime ? new Date(effectiveEndTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
 
-                  // Countdown to betting close (50% of duration) for the bottom action area
+                  // Countdown to betting close (50% of duration) for the "Predictions closing in" area
                   const durationSec = (game.durationMinutes || 10) * 60;
                   const timeToBetClose = Math.max(0, remaining - (durationSec * 0.5));
-                  const betMins = Math.floor(timeToBetClose / 60);
-                  const betSecs = timeToBetClose % 60;
-                  const betCloseStr = timeToBetClose > 0 ? `${betMins}m ${betSecs}s` : "CLOSED";
+                  const betCloseStr = formatCountdown(timeToBetClose);
 
                   const assetInfo = assets.find(a => a.symbol === (game.asset || 'HBAR'));
 
@@ -2380,7 +2394,7 @@ export function Predict() {
                                   />
 
                                   <div className={`text-center text-xs mb-1.5 ${isDark ? 'text-white/70' : 'text-slate-600'}`}>
-                                    Prediction closes in {betCloseStr}
+                                    Predictions closing in {betCloseStr}
                                   </div>
 
                                   <div className="flex gap-2">
@@ -2438,9 +2452,12 @@ export function Predict() {
                         const remaining = Math.max(0, effectiveEndTime - now);
                         const isBettingOpen = game.isBettingOpen !== undefined ? !!game.isBettingOpen : remaining > (durMin * 60 * 0.5);
 
-                        const days = Math.floor(remaining / 86400);
-                        const hours = Math.floor((remaining % 86400) / 3600);
-                        const timeStr = remaining > 0 ? (days > 0 ? `${days}d ${hours}h` : `${hours}h`) : 'EXPIRED';
+                        const timeStr = formatCountdown(remaining);
+
+                        // Also compute the 50% "Predictions closing in" timer for buyout availability display
+                        const durationSec = durMin * 60;
+                        const timeToBetClose = Math.max(0, remaining - (durationSec * 0.5));
+                        const betCloseStr = formatCountdown(timeToBetClose);
 
                         const assetInfo = assets.find(a => a.symbol === (game.asset || 'HBAR'));
                         let deltaNode = null;
@@ -2468,7 +2485,8 @@ export function Predict() {
                               <div className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium ${isBettingOpen ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{isBettingOpen ? 'OPEN' : 'CLOSED'}</div>
                             </div>
                             <div className="font-semibold text-[15px] mb-1">Will {(game.asset || 'HBAR')} be UP or DOWN?</div>
-                            <div className="text-xs mb-2">Closes in {timeStr}{deltaNode && <span className="ml-1.5">{deltaNode}</span>}</div>
+                            <div className="text-xs mb-1">Closes in {timeStr}{deltaNode && <span className="ml-1.5">{deltaNode}</span>}</div>
+                          <div className="text-[10px] text-amber-400 mb-2">Predictions closing in {betCloseStr}</div>
 
                             <div className="text-xs mb-3">{(game.currentVolume || 0).toFixed(1)} HBAR • {(game.totalParticipants || 0)} predictors{forfeitDisplay}</div>
 
