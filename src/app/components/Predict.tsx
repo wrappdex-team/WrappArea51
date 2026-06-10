@@ -2377,12 +2377,23 @@ export function Predict() {
                       )}
 
                       <div className="flex items-baseline justify-between mb-4">
-                        <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${remaining < 120 ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
-                          {timeStr}
-                        </div>
-                        <div className={`text-right text-[10px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
-                          {isBettingOpen ? (remaining < 120 ? 'Closing soon' : 'Predictions close at 50%') : 'Resolution pending'}
-                        </div>
+                        {(() => {
+                          const mainValue = isBettingOpen ? betCloseStr : timeStr;
+                          const isUrgent = isBettingOpen ? timeToBetClose < 120 : remaining < 120;
+                          const label = isBettingOpen 
+                            ? (timeToBetClose < 120 ? 'Closing soon' : 'Predictions close at 50%') 
+                            : 'Resolution pending';
+                          return (
+                            <>
+                              <div className={`text-[28px] font-semibold tabular-nums tracking-[-1px] leading-none ${isUrgent ? 'text-rose-400' : 'text-[#00f9ff]'}`}>
+                                {mainValue}
+                              </div>
+                              <div className={`text-right text-[10px] ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
+                                {label}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
 
                       {/* Stable bottom section: always rendered with min-height to prevent card "unstable" / layout jump when the 50% betting window closes (e.g. 5min on 10m game) */}
