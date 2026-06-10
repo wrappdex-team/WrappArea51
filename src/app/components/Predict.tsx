@@ -1698,16 +1698,23 @@ export function Predict() {
     return { effectiveEndTime, isBettingOpen, betCloseTs, remainingToBetClose: Math.max(0, betCloseTs - nowSec) };
   };
 
-  // Consistent full countdown formatter for all markets (fast + long).
-  // Always shows days, hours, minutes, and seconds (0 when appropriate) so the support for long durations is obvious.
-  // Used for both the main close timer and the "Predictions closing in" (50% window) timer on every card.
+  // Consistent countdown formatter for all markets (fast + long).
+  // Only show days if > 0, only show hours if > 0. No leading 0d or 0h.
+  // Used for the main "Closes in" timer and the "Predictions closing in" (50% window) timer.
   const formatCountdown = (totalSeconds: number): string => {
     if (totalSeconds <= 0) return 'EXPIRED';
     const d = Math.floor(totalSeconds / 86400);
     const h = Math.floor((totalSeconds % 86400) / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
     const s = Math.floor(totalSeconds % 60);
-    return `${d}d ${h}h ${m}m ${s}s`;
+
+    if (d > 0) {
+      return `${d}d ${h}h ${m}m ${s}s`;
+    }
+    if (h > 0) {
+      return `${h}h ${m}m ${s}s`;
+    }
+    return `${m}m ${s}s`;
   };
 
   // Order by bet-closing urgency (the "Predictions closing in" / 50% timer).
