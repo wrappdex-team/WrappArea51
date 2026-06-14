@@ -40,8 +40,8 @@ if (typeof window !== 'undefined') {
     console.error(
       '[CRITICAL CONFIG] RESOLVER_BASE =', RESOLVER_BASE,
       'This is the exact URL the Predict create flow will POST to after payment. ' +
-      'Fast game creates will take your HBAR (to the hardcoded escrow/treasury) but the record step will fail (no HCS CREATE/PLACE_BET, no register). ' +
-      'Fix: set VITE_RESOLVER_URL=https://wrapparea51-production.up.railway.app (or current Railway) in Vercel project settings and redeploy frontend.'
+      'Fast/long game creates will take your HBAR (to the hardcoded escrow/treasury) but the record step will fail (no HCS CREATE/PLACE_BET, no register). ' +
+      'Fix: set VITE_RESOLVER_URL=https://wrapparea51-production-3951.up.railway.app (the dedicated long resolver) in Vercel Production + Preview envs and redeploy frontend.'
     );
   }
   if (typeof window !== 'undefined' && (window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'))) {
@@ -828,6 +828,9 @@ export function Predict() {
     const endpoint = isLong ? '/api/prediction/long-game/create' : '/api/prediction/fast-game/create';
     const logPrefix = isLong ? '[LONG-GAME-CREATE][RETRY]' : '[FAST-GAME-CREATE][RETRY]';
 
+    // Use the already-normalized RESOLVER_BASE (guaranteed absolute URL).
+    // This prevents the "current-origin + bare-domain-as-path" 405s when the env var
+    // was set without https:// or with a stale value.
     console.log(`%c${logPrefix} starting manual/auto retry for`, 'color:#0ff;font-weight:bold', game.marketId, 'resolver=', RESOLVER_BASE, 'asset=', retryAsset, 'isLong=', isLong);
     for (let attempt = 1; attempt <= 8; attempt++) {
       console.log(`%c${logPrefix} attempt`, 'color:#0ff', attempt, 'for', game.marketId);
@@ -1289,10 +1292,12 @@ export function Predict() {
         // On success the resolver will have posted the BUYOUT message to HCS (the "unbet" record).
         showToast(`Buyout authorized and recorded on HCS. You will receive ${data.returnedHalf || '50%'} HBAR at payout time.`, 'success');
 
-        // Optimistic update in the rich cards + any long list
-        setLongGames(prev => prev.map(g => g.marketId === game.marketId ? { ...g, _userForfeited: true, forfeitCount: (g.forfeitCount || 0) + 1 } : g));
+        // Optimistic update in BOTH the longGames state and the main optimisticGames (so rich cards in main list reflect the forfeited state immediately)
+        const update = (g: any) => g.marketId === game.marketId ? { ...g, _userForfeited: true, forfeitCount: (g.forfeitCount || 0) + 1 } : g;
+        setLongGames(prev => prev.map(update));
+        setOptimisticGames(prev => prev.map(update));
 
-        // Refresh both lists
+        // Refresh authoritative lists (will merge with our updated optimistic)
         setTimeout(() => { loadFastGames(); loadLongGames(); }, 1200);
         return "buyout-signed-and-recorded";
       });
@@ -1446,6 +1451,10 @@ export function Predict() {
             const errData = await recordRes.json().catch(() => ({}));
             const errMsg = errData?.error || errData?.stage || `status ${recordRes.status}`;
             console.warn('Long record failed:', errData);
+            if (recordRes.status === 404) {
+              console.error('[CRITICAL] long-game/create 404 from', RESOLVER_BASE,
+                '— record cannot complete. The resolver behind this VITE_RESOLVER_URL is missing the long routes from the feature branch. See the loadLongGames 404 log for remediation (local resolver or matching Railway deploy + Vercel env update for this preview).');
+            }
             setOptimisticGames(prev => prev.map(g => g.marketId === pendingMarketId ? {
               ...g, _recordFailed: true, _lastRecordError: errMsg
             } : g));
@@ -1768,6 +1777,12 @@ export function Predict() {
         if (data.success && Array.isArray(data.games)) {
           setLongGames(data.games);
         }
+      } else {
+        if (res.status === 404) {
+          console.error('[CRITICAL] /active-long-games returned 404 from', RESOLVER_BASE,
+            '— the resolver instance the FE is talking to does not have the long-game routes. This almost always means VITE_RESOLVER_URL is missing, empty, or pointing at an old resolver service without the /long-game and /active-long-games endpoints. Fix: in Vercel set VITE_RESOLVER_URL=https://wrapparea51-production-3951.up.railway.app for Production (and Preview) environments, redeploy, then hard-refresh. Confirm the Railway long-resolver service is the one showing heartbeats + topic scans.');
+        }
+        console.warn('[Predict] loadLongGames non-ok', res.status);
       }
     } catch (e) {
       console.warn('[Predict] loadLongGames failed', e);
@@ -1845,6 +1860,24 @@ export function Predict() {
   }, [longGames, optimisticGames, recentlyCreatedMarketIds]);
 
   const activeLongSorted = displayLongGames;
+
+  // Consolidated source for the Active Markets grid based on the current filter.
+  // This ensures "Prediction Markets" tab actually renders longs (from displayLongGames which has
+  // optimistic pending + recentlyCreated long protection + authoritative from resolver),
+  // and prevents longs from vanishing once a successful record moves them out of optimisticGames.
+  // For 'both' we combine + re-sort by the shared bet-close urgency so everything stays in one coherent list.
+  const gamesForActiveList = React.useMemo(() => {
+    if (activeMarketFilter === 'fast') return activeFastSorted;
+    if (activeMarketFilter === 'prediction') return activeLongSorted;
+    // both
+    const combined = [...activeFastSorted, ...activeLongSorted];
+    return combined.sort((a: any, b: any) => {
+      if (a.isBettingOpen !== b.isBettingOpen) return a.isBettingOpen ? -1 : 1;
+      const ta = typeof a.betCloseTs === 'number' ? a.betCloseTs : Infinity;
+      const tb = typeof b.betCloseTs === 'number' ? b.betCloseTs : Infinity;
+      return ta - tb;
+    });
+  }, [activeMarketFilter, activeFastSorted, activeLongSorted]);
 
   // Detect when any game's bet window (50% point) closes and play a little chime.
   // Also keeps the prevBetOpenRef up to date so we only chime on actual transitions.
@@ -2150,28 +2183,38 @@ export function Predict() {
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
               <div className={`text-sm font-semibold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>Active Markets (Live Timers)</div>
-              <button onClick={() => { loadFastGames(); loadOnChainMarkets(); }} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
+              <button onClick={() => { loadFastGames(); loadLongGames(); loadOnChainMarkets(); }} className="text-xs px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20">Refresh</button>
             </div>
 
-            {/* Fast games content - only for fast or both. Using pre-sorted for recent first. 
-                Loading is fully background now (no visible "Loading..." message to avoid UI instability).
-                New/updated games animate in with a smooth pop + slide for a polished feel. */}
+            {/* Active markets grid — now correctly sources longs for the "Prediction Markets" filter (and combined for Both).
+                Uses gamesForActiveList so authoritative longs (post-record) + pending longs (optimistic + long protection window)
+                stay visible and do not vanish after the cleanup removal of the old dedicated long section.
+                The inner "leak" filter is no longer needed because we pick the right source list up front. */}
             {(activeMarketFilter === 'fast' || activeMarketFilter === 'prediction' || activeMarketFilter === 'both') && (
-              activeFastSorted.length === 0 ? (
+              gamesForActiveList.length === 0 ? (
                 <div className={`${isDark ? 'text-white/60' : 'text-slate-500'} text-sm py-4 space-y-1`}>
-                  <div>No active fast games right now.</div>
-                  <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+                  {activeMarketFilter === 'prediction' ? (
+                    <>
+                      <div>No active prediction markets right now.</div>
+                      <div className="text-white/40 text-xs">Create a Long Prediction above (1–90 days). Buyout available before the 50% "Predictions closing in" point. All activity on HCS 0.0.9017517.</div>
+                    </>
+                  ) : activeMarketFilter === 'fast' ? (
+                    <>
+                      <div>No active fast games right now.</div>
+                      <div className="text-white/40 text-xs">Create one above or wait for others — games last 10m-4h and auto-settle on HCS with weighted payouts.</div>
+                    </>
+                  ) : (
+                    <>
+                      <div>No active markets right now.</div>
+                      <div className="text-white/40 text-xs">Create a Fast Game or Long Prediction above. Check Portfolio below for your receipts.</div>
+                    </>
+                  )}
                   <div className="text-white/40 text-xs">All activity on HCS 0.0.9017517. Check Portfolio below for your receipts.</div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <AnimatePresence>
-                    {activeFastSorted.map((game: any) => {
-                      // When "Prediction Markets" filter is active, only show long games in this grid (rich UI).
-                      // Fast games are hidden for pure prediction view.
-                      if (activeMarketFilter === 'prediction' && !(game.marketId && game.marketId.startsWith('long-'))) {
-                        return null;
-                      }
+                    {gamesForActiveList.map((game: any) => {
                   // Strengthen 4h (and long-duration) timer enforcement in the UI.
                   // The marketId timestamp + declared durationMinutes is the reliable source of truth
                   // for when the game truly ends. Some data paths (resolver list during lag, direct HCS
@@ -3092,7 +3135,7 @@ export function Predict() {
                       const probe = await fetch(`${RESOLVER_BASE}/api/price/hbar`, { method: 'HEAD' });
                       if (!probe.ok) throw new Error(`status ${probe.status}`);
                     } catch (probeErr: any) {
-                      const msg = `Resolver not reachable at ${RESOLVER_BASE}. Payment would succeed but record (HCS CREATE + register) would fail. Set VITE_RESOLVER_URL to the current Railway URL (e.g. https://wrapparea51-production.up.railway.app) in Vercel and redeploy frontend.`;
+                      const msg = `Resolver not reachable at ${RESOLVER_BASE}. Payment would succeed but record (HCS CREATE + register) would fail. Set VITE_RESOLVER_URL=https://wrapparea51-production-3951.up.railway.app (dedicated long resolver) in Vercel Production/Preview envs and redeploy frontend.`;
                       showToast(msg, 'error');
                       console.error('[Predict] Resolver probe failed before create payment:', RESOLVER_BASE, probeErr?.message || probeErr);
                       setIsCreatingFastGame(false);

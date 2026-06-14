@@ -86,5 +86,17 @@ export const ENV = {
   APP_URL: import.meta.env.VITE_APP_URL || "https://www.wrappdex.io",
   // Resolver backend (Railway in prod, localhost in dev). Set VITE_RESOLVER_URL in Vercel when switching.
   // Current live Railway (update this default + the Vercel env var whenever Railway gives a new hostname on redeploy).
-  RESOLVER_BASE: import.meta.env.VITE_RESOLVER_URL || 'https://wrapparea51-production.up.railway.app',
+  // We normalize here so that if someone pastes a bare domain (without https://) the fetch sites below
+  // still produce a valid absolute URL instead of a path on the current origin (which was causing the
+  // "vercel.app + resolver-domain-as-path" 405s you saw).
+  // NOTE: Point this at the dedicated long-games resolver service (the one running the full backend/prediction-resolver
+  // with both fast + long routes + HCS re-registration). The -3951 (or current) hostname below is the production target.
+  RESOLVER_BASE: (() => {
+    let b = import.meta.env.VITE_RESOLVER_URL || 'https://wrapparea51-production-3951.up.railway.app';
+    if (b && !/^https?:\/\//i.test(b)) {
+      b = `https://${b.replace(/^\/+/, '')}`;
+    }
+    // trim trailing slash for consistent `${RESOLVER_BASE}/api...` usage
+    return b.replace(/\/+$/, '');
+  })(),
 } as const;
