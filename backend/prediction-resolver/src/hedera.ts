@@ -285,7 +285,7 @@ export async function postCreateMarket(params: {
     feeBps: 250,
     treasury: treasuryAccountId,
     submittedBy: params.submittedBy,
-    gameType: 'fast_updown',   // Phase 0: Consistent organization across the entire topic for reliable queries
+    gameType: params.gameType || 'fast_updown',   // Long Game (Predictions) support: accept 'long_updown' from caller. Fast games continue to pass or default.
     memo,   // Phase 0: Clean detailed memo (plain text only, no special characters)
   };
 
@@ -296,17 +296,15 @@ export async function postCreateMarket(params: {
   return submitHcsMessage(message);
 }
 
-// Single source of truth for platform facilitation fee (P4P fair market — taken ONLY at final payout/claim per safety rules v1).
-// 2% (200 bps) of winnings/profit portion or payout amount is facilitated to treasury at settlement.
-// Never charged upfront on bet creation or individual PLACE_BET transfers.
-export const PLATFORM_FEE_BPS = 200; // 2% — settled on payout/claim only. Recorded for audit.
+// Single source of truth for platform fee on every bet
+export const PLATFORM_FEE_BPS = 100; // 1% — charged on every single PLACE_BET with zero exceptions
 
 export async function postPlaceBet(params: {
   marketId: string;
   side: 'YES' | 'NO';
   amount: number;
   user: string;
-  platformFeeCollected?: number; // legacy/optional field. Under current rules the 2% facilitation is NOT collected on the bet transfer — it is applied only at payout/claim time.
+  platformFeeCollected?: number; // actual on-chain 1% tax that left the bettor's wallet
 }) {
   // === Step 1: World-Class Audit Memo + Sequencing (Hashgraph Architect Standard) ===
   // Every PLACE_BET (technical type) must produce a human-readable memo using "predict" language
@@ -338,8 +336,8 @@ export async function postPlaceBet(params: {
 
   const sideText = params.side === 'YES' ? 'YES (up)' : 'NO (down)';
   const feeText = (typeof params.platformFeeCollected === 'number' && params.platformFeeCollected > 0)
-    ? `${params.platformFeeCollected} HBAR 2% facilitation fee (settled at payout).`
-    : '2% facilitation fee declared (applied only on final payout/claim — no upfront on bet).';
+    ? `${params.platformFeeCollected} HBAR 1% platform fee collected.`
+    : '1% platform fee declared.';
 
   const isInitial = betSequence === 1;
   const sequenceLabel = isInitial
@@ -363,7 +361,7 @@ export async function postPlaceBet(params: {
     feeBps: PLATFORM_FEE_BPS,
     treasury: treasuryAccountId,
     submittedBy: params.user,
-    gameType: 'fast_updown',
+    gameType: (params as any).gameType || 'fast_updown',  // Long Game (Predictions) support: callers for long games pass gameType. Preserves exact fast behavior.
     betSequence,                    // Machine-readable sequence number (internal)
     masterTopicId: masterTopicId,   // Explicit reference for easy filtering across all tools
     memo,                           // The gold-standard human-readable receipt (uses "predict" language for all forward-facing / legal visibility)
@@ -376,7 +374,84 @@ export async function postPlaceBet(params: {
   console.log(
     `[Resolver] PREDICTION recorded (Hashgraph-grade): market=${params.marketId} | ` +
     `predictionSequence=#${betSequence} | side=${params.side} | amount=${params.amount} HBAR | ` +
-    `feeBps=200 (2% facilitation settled at payout only) | collectedThisBet=${params.platformFeeCollected ?? 0}`
+    `fee=${params.platformFeeCollected ?? 0} HBAR → Treasury`
+  );
+
+  return submitHcsMessage(message);
+}
+
+/**
+ * Long Game (Predictions) — Bank-grade early exit / buyout.
+ * Records a BUYOUT on the immutable HCS topic.
+ * Semantics (per master plan):
+ *  - User exits with exactly 50% of their stake (returnedHalf).
+ *  - The other 50% (forfeitedHalf) is forfeited to the eventual winning side (augments loser pool at payout time).
+ *  - No funds move at buyout time. All settlement (forfeit claim + remaining pot) happens only at resolution/payout time.
+ *  - User cannot re-enter or swing the vote with the bought-out position.
+ *  - Displayed on cards as forfeit count (like participant counts).
+ * This produces the same high-quality human + machine memo standard as PLACE_BET and CREATE.
+ */
+export async function postBuyout(params: {
+  marketId: string;
+  user: string;
+  side: 'YES' | 'NO';
+  amount: number;            // original stake being bought out
+  returnedHalf: number;      // amount user will receive at payout time (50%)
+  forfeitedHalf: number;     // amount added to winning side math
+  gameType?: string;
+}) {
+  // === World-Class Audit Memo + Sequencing (same standard as PLACE_BET) ===
+  const { fetchReliableTopicMessages, decodeHcsMessage } = await import('./resolver');
+
+  let buyoutSequence = 1;
+  try {
+    const messages = await fetchReliableTopicMessages(2000);
+    let count = 0;
+    for (const row of messages) {
+      try {
+        const raw = row.message || '';
+        const decoded = decodeHcsMessage(raw);
+        const p = JSON.parse(decoded);
+        if (p.type === 'BUYOUT' && p.marketId === params.marketId) {
+          count++;
+        }
+      } catch {}
+    }
+    buyoutSequence = count + 1;
+  } catch (e) {
+    console.warn('[Resolver] Could not compute buyoutSequence, defaulting to 1.');
+  }
+
+  const sideText = params.side === 'YES' ? 'YES (up)' : 'NO (down)';
+  const sequenceLabel = buyoutSequence === 1
+    ? 'First Buyout (Early Exit) for this Prediction'
+    : `Buyout #${buyoutSequence} for this Prediction`;
+
+  const memo =
+    `PREDICTION BUYOUT | Master Topic: ${masterTopicId} | Market: ${params.marketId} | ` +
+    `Side: ${sideText} | Original Stake: ${params.amount} HBAR | Returns ${params.returnedHalf} HBAR (50%) at payout | ` +
+    `${params.forfeitedHalf} HBAR forfeited to winning side | ${sequenceLabel} | ` +
+    `User: ${params.user} | ` +
+    `Recorded on HCS for cryptographic audit and user proof. Tokens remain locked until game resolution.`;
+
+  const message: any = {
+    type: 'BUYOUT',
+    marketId: params.marketId,
+    user: params.user,
+    side: params.side,
+    amount: params.amount,
+    returnedHalf: params.returnedHalf,
+    forfeitedHalf: params.forfeitedHalf,
+    timestamp: new Date().toISOString(),
+    gameType: params.gameType || 'long_updown',
+    buyoutSequence,
+    masterTopicId: masterTopicId,
+    memo,
+  };
+
+  console.log(
+    `[Resolver] PREDICTION BUYOUT recorded (Hashgraph-grade): market=${params.marketId} | ` +
+    `user=${params.user} | side=${params.side} | original=${params.amount} HBAR | returned=${params.returnedHalf} | forfeited=${params.forfeitedHalf} → winners`
   );
 
   return submitHcsMessage(message);
@@ -448,7 +523,7 @@ export async function postPayoutMessage(params: {
   marketId: string;
   recipient: string;
   amount: number;
-  reason: 'WIN' | 'UNMATCHED_RETURN';
+  reason: 'WIN' | 'UNMATCHED_RETURN' | 'FORFEIT_RETURN';
   relatedBets?: number; // optional metadata
 }) {
   const message = {

@@ -92,11 +92,8 @@ export async function pollMirrorNodeForTransfers() {
 }
 
 /**
- * Phase 2 – Real Fee Integrity (legacy path)
- * Historically used to verify the upfront % platform fee on individual bets.
- * Under the current safety rules (2% facilitation taken only at payout/claim):
- * - On bet/create transfers the variable % is 0.
- * - This function is now mostly a no-op for bets (fee=0) or used for the fixed creation fee.
+ * Phase 2 – Real Fee Integrity (improved)
+ * Verifies via Mirror Node that the 1% platform fee was actually transferred.
  * If paymentTxId is provided, it does a precise lookup on that specific transaction.
  */
 /**
@@ -325,11 +322,17 @@ export async function resolveAndPayout(marketId: string, winner: 'YES' | 'NO', c
       console.log(`[Resolver] Fast game ${marketId} resolved via manual path — relying on scheduled automatic payouts`);
     }
 
-    // Remove from active list for fast games (admin resolve path)
+    // Remove from active list for fast or long games (admin resolve path)
     if (marketId.startsWith('fast-')) {
       const ridx = activeFastGames.findIndex(g => g.marketId === marketId);
       if (ridx !== -1) {
         activeFastGames.splice(ridx, 1);
+        saveActiveGamesToDisk().catch(() => {});
+      }
+    } else if (marketId.startsWith('long-')) {
+      const ridx = activeLongGames.findIndex(g => g.marketId === marketId);
+      if (ridx !== -1) {
+        activeLongGames.splice(ridx, 1);
         saveActiveGamesToDisk().catch(() => {});
       }
     }
@@ -353,9 +356,24 @@ const activeFastGames: Array<{
   marketId: string;
   endTime: number;
   durationMinutes?: number;
+  asset?: string; // Added for multi-asset support (XRP + future). Populated on register from CREATE_MARKET and persisted. Defaults to 'HBAR' for older data.
   creationPrice: number;
   resolved?: boolean;
   inTieResolution?: boolean;
+}> = [];
+
+// Long Game (Predictions) — parallel authoritative in-memory list (same pattern as fast for clarity and restart safety).
+// Populated by long-game/create and re-register from HCS.
+// Carries the same fields + explicit gameType for future unified views.
+const activeLongGames: Array<{
+  marketId: string;
+  endTime: number;
+  durationMinutes?: number;   // days * 1440 for 1d/2d/.../90d predictions
+  asset?: string;
+  creationPrice: number;
+  resolved?: boolean;
+  inTieResolution?: boolean;
+  gameType?: string;          // 'long_updown'
 }> = [];
 
 // Games currently in tie resolution (price is flat at creation price)
@@ -419,11 +437,15 @@ export async function loadActiveGamesFromDisk() {
       activeFastGames.length = 0;
       parsed.activeFastGames.filter((g: any) => !g.resolved).forEach((g: any) => activeFastGames.push(g));
     }
+    if (Array.isArray(parsed.activeLongGames)) {
+      activeLongGames.length = 0;
+      parsed.activeLongGames.filter((g: any) => !g.resolved).forEach((g: any) => activeLongGames.push(g));
+    }
     if (Array.isArray(parsed.tieResolutionGames)) {
       tieResolutionGames.length = 0;
       parsed.tieResolutionGames.forEach((t: any) => tieResolutionGames.push(t));
     }
-    console.log(`[Resolver] Loaded ${activeFastGames.length} active games from disk`);
+    console.log(`[Resolver] Loaded ${activeFastGames.length} fast + ${activeLongGames.length} long games from disk`);
   } catch (e: any) {
     if (e.code !== 'ENOENT') {
       console.warn('[Resolver] Failed to load active games from disk:', e.message);
@@ -438,6 +460,7 @@ async function saveActiveGamesToDisk() {
     await fs.mkdir(DATA_DIR, { recursive: true });
     const data = {
       activeFastGames: activeFastGames.filter(g => !g.resolved),
+      activeLongGames: activeLongGames.filter(g => !g.resolved),  // Long Game (Predictions) persistence — same restart resilience as fast
       tieResolutionGames: tieResolutionGames.map(t => ({
         marketId: t.marketId,
         creationPrice: t.creationPrice,
@@ -450,7 +473,7 @@ async function saveActiveGamesToDisk() {
   }
 }
 
-export function registerFastGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number) {
+export function registerFastGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number, asset?: string) {
   // Guard against duplicate registration (prevents re-resolve loops when reRegister misses a recent MARKET_RESOLVED due to indexer lag or HGraph flakiness)
   const existingIndex = activeFastGames.findIndex(g => g.marketId === marketId);
   if (existingIndex !== -1) {
@@ -463,6 +486,10 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
     if (durationMinutes && !activeFastGames[existingIndex].durationMinutes) {
       activeFastGames[existingIndex].durationMinutes = durationMinutes;
     }
+    // Capture/upgrade asset when provided (supports XRP + future assets on re-register or late info)
+    if (asset && !activeFastGames[existingIndex].asset) {
+      activeFastGames[existingIndex].asset = asset;
+    }
     console.log(`[Resolver] Fast game ${marketId} already registered in active list`);
     return;
   }
@@ -473,16 +500,60 @@ export function registerFastGameForAutoResolution(marketId: string, endTime: num
 
   // We no longer store creationPrice in memory.
   // It is fetched from the immutable HCS topic at resolution time for maximum auditability.
+  // Asset is carried so autoResolve + getActiveFastGamesState can use the correct price oracle (XRP uses CG+Binance, never SaucerSwap).
   activeFastGames.push({ 
     marketId, 
     endTime, 
     durationMinutes: durationMinutes || 10,
+    asset: asset || 'HBAR',
     creationPrice: 0, // placeholder — will be fetched from chain
     resolved: false,
     inTieResolution: false 
   });
-  console.log(`[Resolver] Registered fast game for auto-resolution: ${marketId}`);
+  console.log(`[Resolver] Registered fast game for auto-resolution: ${marketId} (asset=${asset || 'HBAR'})`);
   saveActiveGamesToDisk().catch(() => {}); // fire and forget
+}
+
+/**
+ * Long Game (Predictions) registration — identical pattern and safety guarantees as fast.
+ * Supports 1d–90d via durationMinutes (caller passes days*1440).
+ * Creation price is intentionally NOT stored in memory (fetched from immutable HCS at resolution for audit).
+ * Asset carried for correct oracle routing at resolution time.
+ */
+export function registerLongGameForAutoResolution(marketId: string, endTime: number, durationMinutes?: number, asset?: string) {
+  const existingIndex = activeLongGames.findIndex(g => g.marketId === marketId);
+  if (existingIndex !== -1) {
+    if (activeLongGames[existingIndex].resolved) {
+      console.log(`[Resolver] ${marketId} already resolved in long list, skipping register`);
+      knownResolvedMarkets.add(marketId);
+      return;
+    }
+    if (durationMinutes && !activeLongGames[existingIndex].durationMinutes) {
+      activeLongGames[existingIndex].durationMinutes = durationMinutes;
+    }
+    if (asset && !activeLongGames[existingIndex].asset) {
+      activeLongGames[existingIndex].asset = asset;
+    }
+    console.log(`[Resolver] Long game ${marketId} already registered in active list`);
+    return;
+  }
+  if (knownResolvedMarkets.has(marketId)) {
+    console.log(`[Resolver] ${marketId} known resolved, skipping long register`);
+    return;
+  }
+
+  activeLongGames.push({
+    marketId,
+    endTime,
+    durationMinutes: durationMinutes || (1 * 1440), // default 1 day in minutes if missing
+    asset: asset || 'HBAR',
+    creationPrice: 0,
+    resolved: false,
+    inTieResolution: false,
+    gameType: 'long_updown',
+  });
+  console.log(`[Resolver] Registered LONG game for auto-resolution: ${marketId} (asset=${asset || 'HBAR'}, durationMinutes=${durationMinutes})`);
+  saveActiveGamesToDisk().catch(() => {});
 }
 
 export async function autoResolveExpiredFastGames() {
@@ -522,12 +593,15 @@ export async function autoResolveExpiredFastGames() {
 
       const openPrice = creationData.creationPrice;
 
+      // Asset-aware closing price (XRP and other non-HBAR use CoinGecko + Binance only — never SaucerSwap)
+      const assetForPrice = game.asset || 'HBAR';
       let closingPrice: number;
+      let priceDataForResolve: any = null;
       try {
-        const priceData = await getCurrentHbarPriceWithAuditTrail();
-        closingPrice = priceData.price;
+        priceDataForResolve = await getAssetPrice(assetForPrice);
+        closingPrice = priceDataForResolve.price;
       } catch (priceErr) {
-        console.error("[Resolver] Failed to get HBAR price from HGraph MCP:", priceErr);
+        console.error(`[Resolver] Failed to get ${assetForPrice} price for resolution:`, priceErr);
         continue;
       }
 
@@ -542,10 +616,11 @@ export async function autoResolveExpiredFastGames() {
         
         game.inTieResolution = true;
         const tieStart = Date.now();
+        const tieAsset = game.asset || 'HBAR';
 
         const intervalId = setInterval(async () => {
           try {
-            const latestPriceData = await getCurrentHbarPriceWithAuditTrail();
+            const latestPriceData = await getAssetPrice(tieAsset);
             const latestPrice = latestPriceData.price;
             const elapsed = Math.floor((Date.now() - tieStart) / 1000);
 
@@ -553,7 +628,7 @@ export async function autoResolveExpiredFastGames() {
               const tieWinner = latestPrice > openPrice ? 'YES' : 'NO';
               console.log(`[Resolver] Tie broken for ${game.marketId}! New price: ${latestPrice} → Winner: ${tieWinner} after ${elapsed}s`);
 
-              const tiePriceData = await getCurrentHbarPriceWithAuditTrail().catch(() => null);
+              const tiePriceData = await getAssetPrice(tieAsset).catch(() => null);
               const decisionTime = tiePriceData?.resolvedAt || new Date().toISOString();
 
               await postMarketResolved({
@@ -596,7 +671,7 @@ export async function autoResolveExpiredFastGames() {
               console.log(`[Resolver] Tie polling timeout for ${game.marketId} after ${elapsed}s. Forcing resolution using last observed price.`);
 
               const forceWinner = latestPrice >= openPrice ? 'YES' : 'NO'; // Bias toward the observed direction at timeout
-              const forcePriceData = await getCurrentHbarPriceWithAuditTrail().catch(() => null);
+              const forcePriceData = await getAssetPrice(tieAsset).catch(() => null);
               const decisionTime = forcePriceData?.resolvedAt || new Date().toISOString();
 
               await postMarketResolved({
@@ -649,7 +724,7 @@ export async function autoResolveExpiredFastGames() {
       }
 
       if (winner) {
-        const priceData = await getCurrentHbarPriceWithAuditTrail().catch(() => null);
+        const priceData = priceDataForResolve || await getAssetPrice(game.asset || 'HBAR').catch(() => null);
         const decisionTime = priceData?.resolvedAt || new Date().toISOString();
 
         await postMarketResolved({
@@ -853,26 +928,40 @@ export async function getMarketVolume(marketId: string) {
   const yesParticipants = new Set<string>();
   const noParticipants = new Set<string>();
 
+  // Long Game (Predictions) forfeit enrichment — count buyouts so cards can display "X forfeits" like participant counts.
+  let forfeitCount = 0;
+  let forfeitTotal = 0; // sum of original bought-out stakes (or forfeited halves; we return original for UI clarity)
+
   for (const row of messages) {
     try {
       const raw = row.message || '';
       const decoded = decodeHcsMessage(raw);
       const p = JSON.parse(decoded);
 
-      if (p.marketId !== marketId || p.type !== 'PLACE_BET') continue;
+      if (p.marketId !== marketId) continue;
 
-      const side = (p.side || '').toUpperCase();
-      const amount = Number(p.amount) || 0;
-      const user = p.user || p.submittedBy;
+      if (p.type === 'PLACE_BET') {
+        const side = (p.side || '').toUpperCase();
+        const amount = Number(p.amount) || 0;
+        const user = p.user || p.submittedBy;
 
-      if (!user || amount <= 0) continue;
+        if (!user || amount <= 0) continue;
 
-      if (side === 'YES') {
-        yesStake += amount;
-        yesParticipants.add(user);
-      } else if (side === 'NO') {
-        noStake += amount;
-        noParticipants.add(user);
+        if (side === 'YES') {
+          yesStake += amount;
+          yesParticipants.add(user);
+        } else if (side === 'NO') {
+          noStake += amount;
+          noParticipants.add(user);
+        }
+      }
+
+      if (p.type === 'BUYOUT') {
+        const amt = Number(p.amount) || 0;
+        if (amt > 0) {
+          forfeitCount += 1;
+          forfeitTotal += amt;
+        }
       }
     } catch {
       // skip malformed messages
@@ -888,209 +977,11 @@ export async function getMarketVolume(marketId: string) {
     totalVolume: Math.round(totalVolume * 100) / 100,
     yesParticipants: yesParticipants.size,
     noParticipants: noParticipants.size,
+    forfeitCount,
+    forfeitTotal: Math.round(forfeitTotal * 100) / 100,
     lastUpdated: new Date().toISOString(),
     source: 'HCS reliable (HGraph + Mirror)',
   };
-}
-
-/**
- * ============================================================
- * HARD-CODED GAME SAFETY RULES — WRAPpDEX Fast Games (P4P Fair Engine)
- * Single source of truth: Resolver enforces BEFORE recording any PLACE_BET on HCS.
- * All rules are deterministic, on-chain auditable via HCS, and whale/spam resistant.
- * ============================================================
- *
- * Per-Individual-Bet Limits:
- *   - Pre-halfway (<50% duration elapsed): maxBet = 1.25 × currentPot
- *   - Post-halfway: maxBet = Math.max(1, 0.40 × currentPot)   // whale cap
- *
- * Per-Wallet Limits (count of PLACE_BET messages by that account for the marketId):
- *   - Normal players: 3 bets total per market
- *   - Market creator (the account on the very first PLACE_BET for that market, or CREATE.submittedBy): 5 bets total
- *
- * Platform Fee: 2% (200 bps) — applied ONLY at payout/claim time on the final owed amount
- *   (and only when the game had opposing stake / real matched predictions).
- *   No upfront % fee is charged on bet or create stake transfers.
- *   Pure unmatched returns (no opposing stake) return the full original stake with zero facilitation fee.
- *
- * Edge cases handled:
- *   - pot === 0 (very first additional bet after creator): allow up to 1.25x initialStake or a sensible floor.
- *   - last 10s / closed window: already rejected by 50% server gate before this validator.
- *   - creator's own initial counts as bet #1.
- *   - All validations fully logged with wallet / pot / rule / result.
- *   - On any reject we still emit a BET_REJECTED to the master topic for permanent audit (no funds moved).
- */
-export async function validateBetLimits(
-  marketId: string,
-  user: string,
-  amount: number,
-  _side: 'YES' | 'NO' // side kept for future expansion / logging
-): Promise<{
-  ok: boolean;
-  error?: string;
-  currentPot: number;
-  maxAllowed: number;
-  isPastHalfway: boolean;
-  myBetCount: number;
-  isCreator: boolean;
-  rule: string;
-}> {
-  const logPrefix = `[Safety:${marketId}]`;
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  let currentPot = 0;
-  let myBetCount = 0;
-  let creatorAccount: string | null = null;
-  let creationEndTime: number | null = null;
-  let creationDurationMin: number | null = null;
-  let firstBetUser: string | null = null;
-
-  try {
-    // 1. Get authoritative creation data (endTime + duration) from immutable HCS CREATE
-    const creation = await fetchFastGameCreationData(marketId).catch(() => null);
-    if (creation) {
-      creationEndTime = creation.endTime ?? null;
-      creationDurationMin = creation.durationMinutes ?? null;
-    }
-
-    // 2. Full reliable scan for pot + historical bet counts + creator detection
-    const messages = await fetchReliableTopicMessages(3000);
-
-    for (const row of messages) {
-      try {
-        const raw = row.message || '';
-        const decoded = decodeHcsMessage(raw);
-        const p = JSON.parse(decoded);
-
-        if (p.marketId !== marketId) continue;
-
-        if (p.type === 'CREATE_MARKET' || p.type === 'MARKET_CREATED') {
-          creatorAccount = (p.submittedBy || p.creator || '').toString();
-        }
-
-        if (p.type === 'PLACE_BET') {
-          const betUser = (p.user || p.submittedBy || '').toString();
-          const betAmt = Number(p.amount) || 0;
-
-          currentPot += betAmt;
-
-          if (!firstBetUser) {
-            firstBetUser = betUser;
-          }
-
-          if (betUser === user) {
-            myBetCount += 1;
-          }
-        }
-      } catch {
-        // skip malformed
-      }
-    }
-
-    // Creator = the one who posted the CREATE, or if missing, the very first PLACE_BET actor (initial stake)
-    const isCreator = !!(creatorAccount && creatorAccount === user) || (!creatorAccount && firstBetUser === user);
-
-    // 3. Halfway calculation (use creation data for precision; fallback to 10m)
-    const durMin = creationDurationMin || 10;
-    const durSec = durMin * 60;
-    let isPastHalfway = false;
-
-    if (creationEndTime && creationEndTime > 0) {
-      const halfwayTs = creationEndTime - (durSec * 0.5);
-      isPastHalfway = nowSec >= Math.floor(halfwayTs);
-    } else {
-      // Fallback: if we have at least one bet time or use endTime heuristic
-      isPastHalfway = creationEndTime ? (nowSec >= (creationEndTime - durSec * 0.5)) : false;
-    }
-
-    // 4. Compute max allowed per rules (handle pot==0 edge gracefully)
-    let maxAllowed: number;
-    const ruleLabel = isPastHalfway ? 'post-half (whale cap 40%)' : 'pre-half (1.25x pot)';
-
-    if (currentPot <= 0) {
-      // Extremely early game or only creator stake not yet visible in this scan window.
-      // Allow a sensible starter amount (min 25 or 1.25x reported initial if we can infer).
-      // The initial creator stake is already in pot from the scan above in normal flow.
-      maxAllowed = 25; // floor safety
-    } else if (isPastHalfway) {
-      maxAllowed = Math.max(1, Math.floor(currentPot * 0.40 * 100) / 100);
-    } else {
-      maxAllowed = Math.max(1, Math.floor(currentPot * 1.25 * 100) / 100);
-    }
-
-    const rule = `${ruleLabel} | pot=${currentPot.toFixed(2)} | max=${maxAllowed.toFixed(2)} | count=${myBetCount}${isCreator ? ' (creator)' : ''}`;
-
-    // 5. Hard validations
-    if (amount > maxAllowed + 0.0001) { // tiny epsilon for float
-      const msg = `Bet size exceeds limit. ${rule}. Your bet: ${amount} HBAR.`;
-      console.warn(`${logPrefix} REJECT size | wallet=${user} | bet=${amount} | ${rule} | isCreator=${isCreator}`);
-      // Audit reject on HCS (non-blocking, best effort)
-      try {
-        const { submitHcsMessage } = await import('./hedera');
-        await submitHcsMessage({
-          type: 'BET_REJECTED',
-          marketId,
-          user,
-          amount,
-          reason: 'SIZE_LIMIT',
-          currentPot,
-          maxAllowed,
-          isPastHalfway,
-          myBetCount,
-          isCreator,
-          rule,
-          timestamp: new Date().toISOString(),
-        }).catch(() => {});
-      } catch {}
-      return { ok: false, error: msg, currentPot, maxAllowed, isPastHalfway, myBetCount, isCreator, rule };
-    }
-
-    const walletLimit = isCreator ? 5 : 3;
-    if (myBetCount >= walletLimit) {
-      const msg = `Per-wallet limit reached (${walletLimit} bets total for ${isCreator ? 'creator' : 'player'}). You already have ${myBetCount} bets on this market.`;
-      console.warn(`${logPrefix} REJECT count | wallet=${user} | bet=${amount} | ${rule} | limit=${walletLimit}`);
-      try {
-        const { submitHcsMessage } = await import('./hedera');
-        await submitHcsMessage({
-          type: 'BET_REJECTED',
-          marketId,
-          user,
-          amount,
-          reason: 'WALLET_LIMIT',
-          currentPot,
-          maxAllowed,
-          isPastHalfway,
-          myBetCount,
-          isCreator,
-          rule,
-          timestamp: new Date().toISOString(),
-        }).catch(() => {});
-      } catch {}
-      return { ok: false, error: msg, currentPot, maxAllowed, isPastHalfway, myBetCount, isCreator, rule };
-    }
-
-    // Success path — full detail log
-    console.log(
-      `${logPrefix} ALLOW | wallet=${user} | bet=${amount} HBAR | pot=${currentPot.toFixed(2)} | ` +
-      `halfway=${isPastHalfway} | max=${maxAllowed.toFixed(2)} | count=${myBetCount}/${walletLimit} | isCreator=${isCreator}`
-    );
-
-    return { ok: true, currentPot, maxAllowed, isPastHalfway, myBetCount, isCreator, rule };
-  } catch (e: any) {
-    console.error(`${logPrefix} VALIDATION ERROR (fail-open for safety? NO — reject on uncertainty)`, e);
-    // Conservative: on unexpected scan failure we still reject to protect the game integrity.
-    // In production you might allow with extra treasury review, but here we stay strict.
-    return {
-      ok: false,
-      error: 'Safety validation could not complete (temporary resolver issue). Please retry in a moment.',
-      currentPot,
-      maxAllowed: 0,
-      isPastHalfway: false,
-      myBetCount,
-      isCreator: false,
-      rule: 'error-during-validation',
-    };
-  }
 }
 
 /**
@@ -1238,6 +1129,102 @@ export async function getCurrentHbarPriceWithAuditTrail(options: { critical?: bo
   throw new Error('All reliable HBAR price sources (Saucer, CoinGecko card source, Binance) exhausted');
 }
 
+/**
+ * Asset-aware price oracle for fast game creationPrice + resolution.
+ *
+ * Rules (per XRP integration master plan):
+ * - HBAR (or HBARH): delegates fully to the rich getCurrentHbarPriceWithAuditTrail
+ *   (SaucerSwap last-traded when SAUCERSWAP_API_KEY present + Mirror/SDK + CG/Binance fallbacks).
+ *   This preserves all existing HBAR provenance, cache, critical-path bypass, and HCS audit trail.
+ * - XRP, BTC, ETH, SOL (and future non-HBAR prediction assets): CoinGecko primary (using the
+ *   exact same ids as the live card prices in Predict.tsx / coingecko.ts) + Binance public
+ *   ticker (USDT pair) as the "bnb as backup".
+ * - NEVER calls SaucerSwap for non-HBAR assets.
+ * - Returns the exact same shape as the HBAR fn so call sites can switch with zero other changes.
+ * - Used by the /create path (critical: true for fresh snap at funded record time) and by
+ *   autoResolve for fair closing price.
+ */
+export async function getAssetPrice(asset: string, options: { critical?: boolean } = {}): Promise<{
+  price: number;
+  priceTime: string;
+  resolvedAt: string;
+  source: string;
+  isStale: boolean;
+  provenance?: string;
+}> {
+  const upper = (asset || 'HBAR').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (upper === 'HBAR' || upper === 'HBARH') {
+    return getCurrentHbarPriceWithAuditTrail(options);
+  }
+
+  const nowTs = Date.now();
+  const resolvedAt = new Date().toISOString();
+
+  // Supported assets for prediction markets (SOL/BTC/ETH/XRP).
+  // Pre-populated during XRP integration; activated sequentially via the post-XRP master plan prompts (SOL complete; BTC complete; ETH now activating).
+  // Keep in sync with coingecko.ts maps + Predict fetchLivePrices ids list. HBAR is handled in the early return above (rich SaucerSwap + Mirror provenance preserved exclusively for HBAR).
+  const priceMap: Record<string, { cgId: string; binancePair: string; label: string; decimals: number }> = {
+    BTC: { cgId: 'bitcoin',     binancePair: 'BTCUSDT',  label: 'Bitcoin',  decimals: 2 },
+    ETH: { cgId: 'ethereum',    binancePair: 'ETHUSDT',  label: 'Ethereum', decimals: 2 },
+    SOL: { cgId: 'solana',      binancePair: 'SOLUSDT',  label: 'Solana',   decimals: 2 },
+    XRP: { cgId: 'ripple',      binancePair: 'XRPUSDT',  label: 'XRP',      decimals: 4 },
+  };
+
+  const cfg = priceMap[upper];
+  if (!cfg) {
+    console.warn(`[Resolver] Unknown asset "${asset}" for price oracle — falling back to HBAR behavior (defensive)`);
+    return getCurrentHbarPriceWithAuditTrail(options);
+  }
+
+  // 1. CoinGecko (primary — same family as the trusted card prices the user sees)
+  try {
+    const cgRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cfg.cgId}&vs_currencies=usd`);
+    if (cgRes.ok) {
+      const cgJson: any = await cgRes.json();
+      const price = parseFloat(cgJson?.[cfg.cgId]?.usd);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: `CoinGecko (${cfg.label} card price source)`,
+          isStale: false,
+          provenance: `CoinGecko simple/price ${cfg.cgId} (no SaucerSwap)`,
+        };
+        console.log(`[Resolver] ✅ CoinGecko mainnet ${upper}: $${price.toFixed(cfg.decimals)}`);
+        return result;
+      }
+    }
+  } catch (cgErr) {
+    console.warn(`[Resolver] CoinGecko for ${upper} failed, trying Binance BNB oracle`);
+  }
+
+  // 2. Binance public ticker (BNB oracle style final public fallback — exactly as requested for XRP)
+  try {
+    const binRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cfg.binancePair}`);
+    if (binRes.ok) {
+      const binJson: any = await binRes.json();
+      const price = parseFloat(binJson?.price);
+      if (!isNaN(price) && price > 0) {
+        const result = {
+          price,
+          priceTime: resolvedAt,
+          resolvedAt,
+          source: `Binance (BNB oracle ${cfg.binancePair})`,
+          isStale: false,
+          provenance: `Binance public ticker ${cfg.binancePair} (no SaucerSwap)`,
+        };
+        console.log(`[Resolver] ✅ Binance (BNB oracle) mainnet ${upper}: $${price.toFixed(cfg.decimals)}`);
+        return result;
+      }
+    }
+  } catch (binErr) {
+    console.error(`[Resolver] Binance BNB oracle for ${upper} also failed`);
+  }
+
+  throw new Error(`All reliable price sources for ${upper} (CoinGecko + Binance) exhausted`);
+}
+
 // Export for use by the API layer (price endpoint)
 
 
@@ -1283,9 +1270,11 @@ export async function fetchTopicMessages(limit = 500) {
 }
 
 /**
- * Fetches the original CREATE_MARKET message for a fast game from the immutable HCS topic.
+ * Fetches the original CREATE_MARKET message for a game (fast or long/prediction) from the immutable HCS topic.
+ * Works for any marketId — no gameType filter needed (the caller / register knows the type).
  * This ensures we always use the price that was actually recorded on-chain at creation time,
- * making resolution tamper-resistant.
+ * making resolution tamper-resistant. Also returns durationMinutes (or durationDays if present) for 50% window enforcement.
+ * Long Game (Predictions) support: same function serves both fast (minutes) and long (days*1440 minutes).
  */
 export async function fetchFastGameCreationData(marketId: string): Promise<{
   creationPrice: number;
@@ -1329,21 +1318,30 @@ export async function fetchFastGameCreationData(marketId: string): Promise<{
 
 export async function computePayoutForUser(marketId: string, userAccountId: string): Promise<{
   owed: number;
-  reason: 'WIN' | 'UNMATCHED_RETURN';
+  reason: 'WIN' | 'UNMATCHED_RETURN' | 'FORFEIT_RETURN';
   myStake: number;
   totalWinningSideStake: number;
   totalLosingSideStake: number;
   winningSide: 'YES' | 'NO' | null;
   alreadyPaid: boolean;
 }> {
-  // Use reliable fetch so UI claimables and history always see the real PLACE_BET records
+  // Use reliable fetch so UI claimables and history always see the real PLACE_BET + BUYOUT records
   // (even when HGraph is lagging behind raw consensus).
+  // Long Game (Predictions) buyout support: BUYOUT messages close the user's position for pool math
+  // but create a guaranteed 50% claim (FORFEIT_RETURN) paid before normal winner math.
   const messages = await fetchReliableTopicMessages(800);
 
   let winningSide: 'YES' | 'NO' | null = null;
   let myStake = 0;
+  let myYes = 0;
+  let myNo = 0;
   let totalYes = 0;
   let totalNo = 0;
+
+  // Long Game buyout tracking (per-market, for this user and globally for pot recalc)
+  let userHasBuyout = false;
+  let userBuyoutStake = 0;   // the original stake that was bought out (for 50% calc)
+  let totalForfeitedHalves = 0;
 
   for (const row of messages) {
     try {
@@ -1361,11 +1359,13 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
         const amt = Number(p.amount) || 0;
         if (side === 'YES') totalYes += amt;
         if (side === 'NO') totalNo += amt;
-
+      }
+      if (p.type === 'BUYOUT') {
+        const bAmt = Number(p.amount) || 0;
+        totalForfeitedHalves += (bAmt * 0.5);   // the forfeited half augments the winning side
         if ((p.user || p.submittedBy) === userAccountId) {
-          if (side === 'YES') {
-            // we accumulate later based on winningSide
-          }
+          userHasBuyout = true;
+          userBuyoutStake += bAmt;
         }
       }
     } catch {}
@@ -1375,8 +1375,10 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: 0, totalLosingSideStake: 0, winningSide: null, alreadyPaid: false };
   }
 
-  // Re-walk to get user's stake on the actual winning side
+  // Re-walk to get the user's actual stake(s) from PLACE_BET (buyouts close positions)
   myStake = 0;
+  myYes = 0;
+  myNo = 0;
   for (const row of messages) {
     try {
       const raw = row.message || '';
@@ -1385,16 +1387,21 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
       if (p.marketId !== marketId || p.type !== 'PLACE_BET') continue;
       const side = (p.side || '').toUpperCase();
       const amt = Number(p.amount) || 0;
-      if ((p.user || p.submittedBy) === userAccountId && side === winningSide) {
+      if ((p.user || p.submittedBy) === userAccountId) {
         myStake += amt;
+        if (side === 'YES') myYes += amt;
+        else myNo += amt;
       }
     } catch {}
   }
 
+  // If the user executed a buyout on this market, their effective claim is the forfeit 50% of the bought-out stake.
+  // Their original stakes are removed from the active win/lose pools (they no longer participate in the final parimutuel).
   const totalWinning = winningSide === 'YES' ? totalYes : totalNo;
   const totalLosing = winningSide === 'YES' ? totalNo : totalYes;
+  const isOneSided = totalYes === 0 || totalNo === 0;
 
-  if (myStake === 0) {
+  if (myStake === 0 && !userHasBuyout) {
     return { owed: 0, reason: 'WIN', myStake: 0, totalWinningSideStake: totalWinning, totalLosingSideStake: totalLosing, winningSide, alreadyPaid: false };
   }
 
@@ -1425,25 +1432,45 @@ export async function computePayoutForUser(marketId: string, userAccountId: stri
     };
   }
 
-  // === Professional Parimutuel Math (high volume ready) ===
+  // === Professional Parimutuel Math + One-Sided Refund Rule + Long Game Forfeit Rule ===
+  // Fast games: unchanged behavior.
+  // Long games with BUYOUT:
+  //  - If userHasBuyout, they get exactly 50% of the bought-out stake back as FORFEIT_RETURN (paid first at payout time).
+  //  - Their full stake is excluded from active yes/no pools.
+  //  - The forfeitedHalf augments the losing pool for the remaining active winners (see processAutomaticPayoutsForMarket).
+  // One-sided rule still applies to the *active* (non-bought-out) stakes only.
   let owed = 0;
-  let reason: 'WIN' | 'UNMATCHED_RETURN' = 'WIN';
+  let reason: 'WIN' | 'UNMATCHED_RETURN' | 'FORFEIT_RETURN' = 'WIN';
 
-  if (totalLosing === 0) {
-    // No one on the other side — user gets stake back (unmatched)
-    owed = myStake;
-    reason = 'UNMATCHED_RETURN';
-  } else {
-    // Stake returned + proportional share of the losing pool
-    const profit = (myStake / totalWinning) * totalLosing;
-    owed = myStake + profit;
-    reason = 'WIN';
+  if (userHasBuyout && userBuyoutStake > 0) {
+    // Buyout claim takes precedence for this user. 50% guaranteed, paid before winner recalc.
+    owed = userBuyoutStake * 0.5;
+    reason = 'FORFEIT_RETURN';
+  } else if (myStake > 0) {
+    if (isOneSided) {
+      // Completely one-sided market — refund everyone who bet (active stakes only), regardless of price outcome.
+      owed = myStake;
+      reason = 'UNMATCHED_RETURN';
+    } else {
+      const userStakeOnWinningSide = (winningSide === 'YES' ? myYes : myNo);
+      if (userStakeOnWinningSide > 0) {
+        const effectiveLosing = totalLosing + totalForfeitedHalves; // Long Game: forfeited halves go to winners
+        if (effectiveLosing <= 0) {
+          owed = myStake;
+          reason = 'UNMATCHED_RETURN';
+        } else {
+          const profit = (userStakeOnWinningSide / totalWinning) * effectiveLosing;
+          owed = userStakeOnWinningSide + profit;
+          reason = 'WIN';
+        }
+      }
+    }
   }
 
   return {
     owed: Math.round(owed * 100) / 100,
     reason,
-    myStake,
+    myStake: userHasBuyout ? userBuyoutStake : myStake,
     totalWinningSideStake: totalWinning,
     totalLosingSideStake: totalLosing,
     winningSide,
@@ -1489,52 +1516,25 @@ export async function processClaim(marketId: string, winnerAccountId: string, cl
     return { success: false, error: 'Resolver has insufficient balance for this claim', amountPaid: 0 };
   }
 
-  // SAFETY v1: Apply 2% facilitation fee at claim time only (P4P settlement).
-  // Fee is only taken when there was opposing stake (real matched predictions).
-  // Unmatched returns (no one on the other side) return the full original stake with no facilitation fee.
-  const grossOwed = calc.owed;
-  const isUnmatched = calc.reason === 'UNMATCHED_RETURN' || (calc.totalLosingSideStake || 0) === 0;
-  const claimPlatformFee = isUnmatched ? 0 : Math.round(grossOwed * 0.02 * 100) / 100;
-  const netClaim = Math.round((grossOwed - claimPlatformFee) * 100) / 100;
-
   const txId = await executePayout({
     toAccountId: winnerAccountId,
-    amountHbar: netClaim,
-    memo: isUnmatched 
-      ? `Claim ${calc.reason} for ${marketId} (full unmatched return, no fee)` 
-      : `Claim ${calc.reason} for ${marketId} (2% fee applied at settlement)`,
+    amountHbar: calc.owed,
+    memo: `Claim ${calc.reason} for ${marketId}`,
   });
-
-  // Route the 2% fee to treasury (best effort; user already received net)
-  if (claimPlatformFee > 0.0001) {
-    try {
-      const { treasuryAccountId: TREAS } = await import('./hedera');
-      await executePayout({
-        toAccountId: TREAS,
-        amountHbar: claimPlatformFee,
-        memo: `2% claim fee for ${marketId} user ${winnerAccountId}`,
-      });
-      console.log(`[Resolver] Claim fee 2% collected: ${claimPlatformFee} HBAR → treasury`);
-    } catch (feeE) {
-      console.warn('[Resolver] Claim fee transfer to treasury skipped:', feeE);
-    }
-  }
 
   claimedPayouts.add(claimKey);
 
   await postPayoutMessage({
     marketId,
     recipient: winnerAccountId,
-    amount: netClaim,
+    amount: calc.owed,
     reason: calc.reason,
   });
 
   return {
     success: true,
     transactionId: txId,
-    amountPaid: netClaim,
-    grossBeforeFee: grossOwed,
-    platformFeeApplied: claimPlatformFee,
+    amountPaid: calc.owed,
     reason: calc.reason,
     myStake: calc.myStake,
     totalWinning: calc.totalWinningSideStake,
@@ -1634,10 +1634,14 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
 
   // Authoritative data from HCS (reliable path: HGraph + Mirror Node fallback)
   // This ensures PLACE_BET records are never missed due to indexer lag → proper win/loss + payouts.
+  // Long Game (Predictions) buyout support added: we collect BUYOUTs, pay 50% forfeit claims *first*,
+  // remove bought-out stakes from active pools, and add the forfeited halves into the effective losing
+  // pool for the remaining active winners (exactly as specified in the master plan).
   const messages = await fetchReliableTopicMessages(2000);
 
   let winner: 'YES' | 'NO' | null = null;
   const bets: Array<{ user: string; side: 'YES' | 'NO'; amount: number }> = [];
+  const buyouts: Array<{ user: string; side: 'YES' | 'NO'; amount: number }> = [];
 
   for (const row of messages) {
     try {
@@ -1658,6 +1662,14 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
           bets.push({ user, side, amount });
         }
       }
+      if (p.type === 'BUYOUT') {
+        const side = (p.side || '').toUpperCase() as 'YES' | 'NO';
+        const amount = Number(p.amount) || 0;
+        const user = p.user || p.submittedBy;
+        if (user && side && amount > 0) {
+          buyouts.push({ user, side, amount });
+        }
+      }
     } catch {}
   }
 
@@ -1666,12 +1678,33 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     return { success: false, error: 'No resolution found on HCS' };
   }
 
-  // Compute per-user payout using the same professional logic as computePayoutForUser
+  // Build set of users who bought out (their full position is closed for active pool math)
+  const boughtOutUsers = new Set(buyouts.map(bo => bo.user));
+
+  // Active bets only (exclude anyone who executed a buyout on this market)
+  const activeBets = bets.filter(b => !boughtOutUsers.has(b.user));
+
+  // Compute totals on *active* stakes only for one-sided detection and winner math
+  let totalYesStake = 0;
+  let totalNoStake = 0;
+  for (const b of activeBets) {
+    if (b.side === 'YES') totalYesStake += b.amount;
+    else totalNoStake += b.amount;
+  }
+  const isOneSided = totalYesStake === 0 || totalNoStake === 0;
+
+  // Total forfeited halves (added to the losing side for winner profit distribution)
+  const totalForfeitedHalves = buyouts.reduce((sum, bo) => sum + (bo.amount * 0.5), 0);
+
+  // Compute per-user payout.
+  // Long Game rule: first settle all forfeit claims (50% back), then recalculate the remaining pot.
+  // Forfeited halves augment the losing pool for active winners on the correct side.
+  // One-sided rule applies to active (non-bought-out) stakes only.
   const winnersMap = new Map<string, number>();
   let totalWinningStake = 0;
   let totalLosingStake = 0;
 
-  for (const b of bets) {
+  for (const b of activeBets) {
     if (b.side === winner) {
       totalWinningStake += b.amount;
     } else {
@@ -1679,14 +1712,30 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     }
   }
 
-  for (const b of bets) {
-    if (b.side !== winner) continue;
-    let owed = b.amount;
-    if (totalLosingStake > 0) {
-      const profit = (b.amount / totalWinningStake) * totalLosingStake;
-      owed = b.amount + profit;
+  // 1. Forfeit claims (paid first, regardless of winner). These users get exactly 50% of their original stake.
+  for (const bo of buyouts) {
+    const forfeitOwed = Math.round((bo.amount * 0.5) * 100) / 100;
+    if (forfeitOwed > 0) {
+      winnersMap.set(bo.user, (winnersMap.get(bo.user) || 0) + forfeitOwed);
     }
-    winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+  }
+
+  // 2. Active (non-bought-out) winner / unmatched payouts
+  const effectiveLosingStake = totalLosingStake + totalForfeitedHalves;
+  for (const b of activeBets) {
+    let owed = 0;
+    if (isOneSided) {
+      owed = b.amount;
+    } else if (b.side === winner) {
+      owed = b.amount;
+      if (effectiveLosingStake > 0) {
+        const profit = (b.amount / totalWinningStake) * effectiveLosingStake;
+        owed = b.amount + profit;
+      }
+    }
+    if (owed > 0) {
+      winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    }
   }
 
   const payouts = Array.from(winnersMap.entries()).map(([account, amount]) => ({
@@ -1694,7 +1743,7 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
     amount: Math.round(amount * 100) / 100,
   }));
 
-  console.log(`[Resolver] Auto-payout for ${marketId}: ${payouts.length} recipients, total ≈ ${payouts.reduce((s, p) => s + p.amount, 0).toFixed(2)} HBAR`);
+  console.log(`[Resolver] Auto-payout for ${marketId}: ${payouts.length} recipients (incl. ${buyouts.length} forfeit claims), total ≈ ${payouts.reduce((s, p) => s + p.amount, 0).toFixed(2)} HBAR`);
 
   // Phase 3 Funding Safety
   const resolverBalance = await getResolverBalance();
@@ -1725,61 +1774,33 @@ export async function processAutomaticPayoutsForMarket(marketId: string) {
   }
 
   // Execute the actual on-chain payouts
-  // SAFETY v1: 2% facilitation fee is taken ONLY here at final settlement (never on bet or create).
-  // Net paid to user; fee portion sent to treasury. Full audit on HCS.
   const transactionIds: string[] = [];
   let totalPaidActual = 0;
-  let totalFeesCollected = 0;
-
-  // We need treasury for fee routing (imported at top of this module via hedera re-export patterns)
-  const { treasuryAccountId: TREASURY_FOR_FEES } = await import('./hedera').then(m => ({ treasuryAccountId: m.treasuryAccountId })).catch(() => ({ treasuryAccountId: process.env.TREASURY_ACCOUNT_ID || '0.0.9006841' }));
 
   for (const p of payouts) {
     try {
-      const gross = p.amount;
-
-      // Fee policy (post-safety-rules model):
-      // - 2% facilitation only when there was real opposing stake (the market actually matched predictions).
-      // - If the entire game had no opposing side (unmatched return), user gets full stake back with no facilitation fee.
-      // This is applied at payout/claim time only — never on the original stake or create transfers.
-      let platformFee = 0;
-      let netToUser = gross;
-      if (totalLosingStake > 0) {
-        platformFee = Math.round(gross * 0.02 * 100) / 100; // 2%
-        netToUser = Math.round((gross - platformFee) * 100) / 100;
-      }
-
       const txId = await executePayout({
         toAccountId: p.account,
-        amountHbar: netToUser,
-        memo: totalLosingStake > 0 
-          ? `Auto payout ${marketId} (${winner}) net of 2% fee` 
-          : `Auto payout ${marketId} (${winner}) - full unmatched return`,
+        amountHbar: p.amount,
+        memo: `Auto payout ${marketId} (${winner})`,
       });
       if (txId) transactionIds.push(String(txId));
-      totalPaidActual += netToUser;
+      totalPaidActual += p.amount;
 
-      if (platformFee > 0.0001) {
-        try {
-          await executePayout({
-            toAccountId: TREASURY_FOR_FEES,
-            amountHbar: platformFee,
-            memo: `2% facilitation fee from ${marketId} payout to ${p.account}`,
-          });
-          totalFeesCollected += platformFee;
-          console.log(`[Resolver] 2% fee collected: ${platformFee} HBAR from payout to treasury for ${marketId}`);
-        } catch (feeErr) {
-          console.warn('[Resolver] Fee leg to treasury failed (non-fatal to user payout):', feeErr);
-        }
-      }
+      // Determine reason per recipient: FORFEIT_RETURN for anyone who had a buyout on this market,
+      // otherwise fall back to the one-sided or WIN logic for active participants.
+      const isForfeitClaimant = buyouts.some(bo => bo.user === p.account);
+      const payoutReason = isForfeitClaimant
+        ? 'FORFEIT_RETURN'
+        : (isOneSided ? 'UNMATCHED_RETURN' : 'WIN');
 
       await postPayoutMessage({
         marketId,
         recipient: p.account,
-        amount: netToUser,
-        reason: 'WIN',
+        amount: p.amount,
+        reason: payoutReason,
       });
-      console.log(`[Resolver] Paid net ${netToUser} HBAR (gross ${gross}, fee ${platformFee}) to ${p.account} for ${marketId}`);
+      console.log(`[Resolver] Paid ${p.amount} HBAR to ${p.account} for ${marketId} (reason=${payoutReason})`);
     } catch (e) {
       console.error(`[Resolver] Payout execution failed for ${p.account}:`, e);
     }
@@ -1926,7 +1947,31 @@ export async function reRegisterOverdueFastGames() {
 
           if (!hasResolved && p.endTime && p.endTime < now) {
             console.log(`[Resolver] Re-registering overdue fast game from HCS: ${p.marketId}`);
-            registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes);
+            registerFastGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes, p.asset);
+          }
+        }
+
+        // Long Game (Predictions) overdue re-register (same topic scan, different gameType)
+        if (p.type === 'CREATE_MARKET' && p.gameType === 'long_updown' && p.marketId) {
+          if (seenMarkets.has(p.marketId)) continue;
+          seenMarkets.add(p.marketId);
+
+          if (knownResolvedMarkets.has(p.marketId)) {
+            continue;
+          }
+
+          const hasResolved = messages.some((m: any) => {
+            try {
+              const r = m.message || '';
+              const rd = decodeHcsMessage(r);
+              const pr = JSON.parse(rd);
+              return pr.type === 'MARKET_RESOLVED' && pr.marketId === p.marketId;
+            } catch { return false; }
+          });
+
+          if (!hasResolved && p.endTime && p.endTime < now) {
+            console.log(`[Resolver] Re-registering overdue LONG game from HCS: ${p.marketId}`);
+            registerLongGameForAutoResolution(p.marketId, p.endTime, p.durationMinutes, p.asset);
           }
         }
       } catch {}
@@ -1949,6 +1994,7 @@ export function getActiveFastGamesState() {
       const isBettingOpen = remaining > (dur * 0.5);
       return {
         marketId: g.marketId,
+        asset: g.asset || 'HBAR',
         endTime: g.endTime,
         durationMinutes: g.durationMinutes || 10,
         resolved: !!g.resolved,
@@ -1966,6 +2012,35 @@ export function getActiveFastGamesState() {
       enabled: true,
       file: ACTIVE_GAMES_FILE,
     },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Long Game (Predictions) equivalent of getActiveFastGamesState.
+ * Returns the authoritative in-memory list + computed isBettingOpen (50% of durationMinutes) for each.
+ * Used by the new /api/prediction/active-long-games endpoint.
+ * Same structure and timing logic as fast for maximum reuse in the UI layer (once wired).
+ */
+export function getActiveLongGamesState() {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    activeGames: activeLongGames.map(g => {
+      const dur = (g.durationMinutes || (1 * 1440)) * 60; // default 1 day
+      const remaining = (g.endTime || 0) - now;
+      const isBettingOpen = remaining > (dur * 0.5);
+      return {
+        marketId: g.marketId,
+        asset: g.asset || 'HBAR',
+        endTime: g.endTime,
+        durationMinutes: g.durationMinutes || (1 * 1440),
+        gameType: g.gameType || 'long_updown',
+        resolved: !!g.resolved,
+        inTieResolution: !!g.inTieResolution,
+        isBettingOpen,
+      };
+    }),
+    priceHealth: lastPriceHealth,
     timestamp: new Date().toISOString(),
   };
 }
@@ -2013,6 +2088,14 @@ export async function simulatePayoutsForMarket(marketId: string) {
 
   if (!winner) return { error: 'No MARKET_RESOLVED on HCS', payouts: [] };
 
+  let totalYesStake = 0;
+  let totalNoStake = 0;
+  for (const b of bets) {
+    if (b.side === 'YES') totalYesStake += b.amount;
+    else totalNoStake += b.amount;
+  }
+  const isOneSided = totalYesStake === 0 || totalNoStake === 0;
+
   const winnersMap = new Map<string, number>();
   let totalWinning = 0;
   let totalLosing = 0;
@@ -2023,12 +2106,20 @@ export async function simulatePayoutsForMarket(marketId: string) {
   }
 
   for (const b of bets) {
-    if (b.side !== winner) continue;
-    let owed = b.amount;
-    if (totalLosing > 0) {
-      owed = b.amount + (b.amount / totalWinning) * totalLosing;
+    let owed = 0;
+    if (isOneSided) {
+      owed = b.amount;
+    } else if (b.side !== winner) {
+      continue;
+    } else {
+      owed = b.amount;
+      if (totalLosing > 0) {
+        owed = b.amount + (b.amount / totalWinning) * totalLosing;
+      }
     }
-    winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    if (owed > 0) {
+      winnersMap.set(b.user, (winnersMap.get(b.user) || 0) + owed);
+    }
   }
 
   const payouts = Array.from(winnersMap.entries()).map(([account, amount]) => ({
@@ -2042,7 +2133,8 @@ export async function simulatePayoutsForMarket(marketId: string) {
     totalWinningStake: totalWinning,
     totalLosingStake: totalLosing,
     payouts,
-    note: 'Read-only simulation — no funds moved, no HCS messages posted',
+    isOneSided,
+    note: 'Read-only simulation — no funds moved, no HCS messages posted. One-sided markets now correctly simulate full stake return (UNMATCHED_RETURN).',
   };
 }
 

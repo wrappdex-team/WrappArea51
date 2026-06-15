@@ -988,3 +988,48 @@ export function shouldPlayVipSounds(
     return false;
   }
 }
+
+/**
+ * Subtle, short chime when a fast game's *betting window* (the 50% "Predictions closing in" timer) expires.
+ * The game moves to the bottom of the active list and stays there until full resolution.
+ * Gentle two-note soft sine (not celebratory, just informational).
+ * Respects the global sound volume (off/low/medium/high) via the master gain.
+ */
+export function playBetCloseChime(): void {
+  if (getSoundMuted()) return;
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // Soft, calm descending pair — "bet window just closed"
+    const notes = [
+      { f: 932.33, t: 0.00, dur: 0.38 }, // Bb5
+      { f: 739.99, t: 0.08, dur: 0.42 }, // F#5
+    ];
+
+    notes.forEach(({ f, t, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const lp = ctx.createBiquadFilter();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, now + t);
+
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(1800, now + t);
+
+      gain.gain.setValueAtTime(0, now + t);
+      gain.gain.linearRampToValueAtTime(0.085, now + t + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0008, now + t + dur);
+
+      osc.connect(lp);
+      lp.connect(gain);
+      gain.connect(getMasterOutput());
+
+      osc.start(now + t);
+      osc.stop(now + t + dur + 0.06);
+    });
+  } catch {
+    /* audio not supported */
+  }
+}

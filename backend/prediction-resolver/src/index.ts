@@ -25,10 +25,12 @@ import {
   resolveAndPayout, 
   autoResolveExpiredFastGames,
   registerFastGameForAutoResolution,
+  registerLongGameForAutoResolution,
   processClaim,
   retireDeadFastGames,
   computePayoutForUser,
-  shutdownResolver
+  shutdownResolver,
+  getActiveLongGamesState
 } from './resolver';
 import { postCreateMarket, postPlaceBet } from './hedera';
 
@@ -203,6 +205,37 @@ app.get('/api/price/hbar', async (req, res) => {
 });
 
 /**
+ * General asset price endpoint (for XRP + other non-HBAR prediction assets).
+ * Uses CoinGecko primary + Binance (BNB oracle) backup exactly as specified for XRP.
+ * HBAR still uses the dedicated /api/price/hbar (rich Saucer/Mirror provenance).
+ * FE cards continue to use the coingecko batch proxy for the grid; this is useful for
+ * modal "current price for this game" consistency on non-HBAR fast games.
+ */
+app.get('/api/price/:symbol', async (req, res) => {
+  try {
+    const symbol = (req.params.symbol || 'HBAR').toUpperCase();
+    const { getAssetPrice } = await import('./resolver');
+    const priceData = await getAssetPrice(symbol);
+
+    res.json({
+      symbol,
+      price: Number(priceData.price.toFixed(symbol === 'XRP' ? 4 : 2)),
+      priceTime: priceData.priceTime,
+      resolvedAt: priceData.resolvedAt,
+      source: priceData.source,
+      isStale: priceData.isStale,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.warn(`[Resolver] /api/price/${req.params.symbol} failed:`, err?.message);
+    res.status(503).json({
+      error: `Failed to fetch price for ${req.params.symbol}`,
+tdetails: err.message || 'Unknown error',
+    });
+  }
+});
+
+/**
  * Frontend calls this after the user has paid the creation fee + initial stake via HBAR transfer.
  * Backend verifies the transfer (in production) and posts the clean HCS messages using the resolution key.
  */
@@ -240,11 +273,12 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
     }
 
     // Resolver-authoritative fresh price at the moment the funded create record arrives.
-    // CRITICAL: we pass { critical: true } so the new multi-source SaucerSwap last-traded +
-    // direct contract verify + HGraph/Mirror tolerance cross happens with NO cache and full
-    // provenance logged + threaded. This is the exact "after when actually creating the prediction wager" moment.
-    const { getCurrentHbarPriceWithAuditTrail } = await import('./resolver');
-    const priceData = await getCurrentHbarPriceWithAuditTrail({ critical: true }).catch(() => null);
+    // Now asset-aware:
+    // - HBAR: rich SaucerSwap (if key) + Mirror + public fallbacks (unchanged behavior)
+    // - XRP / BTC / ETH / SOL: CoinGecko primary + Binance public (BNB oracle) backup per master plan.
+    // Always { critical: true } for the exact post-payment snap (no cache). Full provenance goes to HCS.
+    const { getAssetPrice } = await import('./resolver');
+    const priceData = await getAssetPrice(asset, { critical: true }).catch(() => null);
     const creationPrice = priceData?.price ?? clientCreationPrice ?? 0;
     const creationPriceTime = priceData?.priceTime ?? priceData?.resolvedAt ?? clientCreationPriceTime ?? new Date().toISOString();
 
@@ -289,12 +323,100 @@ app.post('/api/prediction/fast-game/create', async (req, res) => {
     // Register for automatic resolution when time expires.
     // Creation price will be read from the immutable HCS topic at resolution time.
     // Pass durationMinutes so the active list (and client isBettingOpen calc) has the correct 50% cutoff for all durations (10/20/60/240).
-    registerFastGameForAutoResolution(marketId, endTime, durationMinutes);
+    registerFastGameForAutoResolution(marketId, endTime, durationMinutes, asset);
 
     res.json({ success: true, marketId, createTxId, betTxId });
   } catch (err: any) {
     console.error('[Resolver] Create market error:', err);
     // Return stage so frontend can show precise "record failed at X" for recovery/support.
+    res.status(500).json({ error: err.message || 'Internal error', stage: err.message?.startsWith('hcs_') ? err.message.split(':')[0] : 'unknown' });
+  }
+});
+
+/**
+ * Long Game (Predictions) create — identical flow and safety as fast-game/create.
+ * Durations are expressed in days by the caller (1/2/3/5/7/14/21/30/60/90) and converted to durationMinutes = days * 1440 upstream.
+ * All stakes remain in HBAR. 50% "Predictions closing" window enforcement (buyouts + new bets only before half).
+ * Uses the generic asset price oracle (HBAR rich path preserved; others CG+Binance).
+ */
+app.post('/api/prediction/long-game/create', async (req, res) => {
+  console.log('[Resolver] Received LONG game create request from frontend:', req.body);
+
+  try {
+    const {
+      marketId,
+      question,
+      asset = 'HBAR',
+      endTime,
+      durationMinutes,
+      initialSide,
+      initialStake,
+      creationPrice: clientCreationPrice,
+      creationPriceTime: clientCreationPriceTime,
+      submittedBy,
+    } = req.body;
+
+    if (!marketId || !question || !endTime || !submittedBy) {
+      console.warn('[Resolver] Missing required fields in long-game create');
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Server-side 50% betting/buyout close enforcement (works for day-scale durations too).
+    const now = Math.floor(Date.now() / 1000);
+    const durationSec = (durationMinutes || (1 * 1440)) * 60;
+    const remaining = endTime - now;
+    const isBettingOpen = remaining > (durationSec * 0.5);
+    if (!isBettingOpen) {
+      console.warn(`[Resolver] Long create rejected for ${marketId}: betting/buyout window closed`);
+      return res.status(400).json({ error: 'Betting window has closed for this prediction' });
+    }
+
+    const { getAssetPrice } = await import('./resolver');
+    const priceData = await getAssetPrice(asset, { critical: true }).catch(() => null);
+    const creationPrice = priceData?.price ?? clientCreationPrice ?? 0;
+    const creationPriceTime = priceData?.priceTime ?? priceData?.resolvedAt ?? clientCreationPriceTime ?? new Date().toISOString();
+
+    let createTxId: string | undefined;
+    try {
+      createTxId = await postCreateMarket({
+        marketId,
+        question,
+        asset,
+        endTime,
+        gameType: 'long_updown',
+        durationMinutes,
+        initialSide,
+        initialStake,
+        creationPrice,
+        creationPriceTime,
+        submittedBy,
+      });
+      console.log(`[Resolver] Successfully posted CREATE_MARKET (long) for ${marketId} tx=${createTxId}`);
+    } catch (hcsCreateErr: any) {
+      console.error(`[Resolver] HCS CREATE_MARKET (long) failed for ${marketId}:`, hcsCreateErr);
+      throw new Error(`hcs_create_failed: ${hcsCreateErr.message || hcsCreateErr}`);
+    }
+
+    let betTxId: string | undefined;
+    try {
+      betTxId = await postPlaceBet({
+        marketId,
+        side: initialSide,
+        amount: initialStake,
+        user: submittedBy,
+        // gameType passed via the any-cast inside postPlaceBet for long_updown
+      } as any);
+      console.log(`[Resolver] Posted Initial Market Maker Bet #1 (long) for ${marketId} tx=${betTxId}`);
+    } catch (hcsBetErr: any) {
+      console.error(`[Resolver] HCS initial PLACE_BET (long) failed for ${marketId}:`, hcsBetErr);
+      throw new Error(`hcs_initial_bet_failed: ${hcsBetErr.message || hcsBetErr} (CREATE tx may exist: ${createTxId})`);
+    }
+
+    registerLongGameForAutoResolution(marketId, endTime, durationMinutes, asset);
+
+    res.json({ success: true, marketId, createTxId, betTxId });
+  } catch (err: any) {
+    console.error('[Resolver] Long game create error:', err);
     res.status(500).json({ error: err.message || 'Internal error', stage: err.message?.startsWith('hcs_') ? err.message.split(':')[0] : 'unknown' });
   }
 });
@@ -311,8 +433,8 @@ app.post('/api/prediction/bet', async (req, res) => {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
-    // Phase 1 stability: Server-side 50% close enforcement for fast games (prevents refresh races).
-    // Look up the CREATE to get endTime + duration and reject if betting window closed.
+    // Phase 1 stability: Server-side 50% close enforcement (fast + long/prediction games; prevents refresh races).
+    // Look up the CREATE to get endTime + duration and reject if betting/buyout window closed.
     try {
       const { fetchFastGameCreationData } = await import('./resolver');
       const creation = await fetchFastGameCreationData(marketId).catch(() => null);
@@ -327,38 +449,8 @@ app.post('/api/prediction/bet', async (req, res) => {
       }
     } catch {}
 
-    // ============================================================
-    // HARD SAFETY RULES ENFORCEMENT (single source of truth)
-    // Must run BEFORE any balance check or HCS write.
-    // ============================================================
-    try {
-      const { validateBetLimits } = await import('./resolver');
-      const safety = await validateBetLimits(marketId, user, Number(amount), side as 'YES' | 'NO');
-
-      if (!safety.ok) {
-        console.warn(`[Resolver] HARD SAFETY REJECT for ${marketId} user=${user}: ${safety.error}`);
-        return res.status(400).json({
-          error: safety.error || 'Bet rejected by hard-coded safety rules',
-          safety: {
-            currentPot: safety.currentPot,
-            maxAllowed: safety.maxAllowed,
-            isPastHalfway: safety.isPastHalfway,
-            myBetCount: safety.myBetCount,
-            isCreator: safety.isCreator,
-            rule: safety.rule,
-          },
-        });
-      }
-    } catch (safetyErr: any) {
-      console.error('[Resolver] Safety validator threw (conservative reject):', safetyErr);
-      return res.status(500).json({ error: 'Safety check failed — please retry shortly' });
-    }
-
-    // Under new P4P safety rules (fee taken only at final payout/claim):
-    // We accept amount = pure stake. platformFeeCollected is kept for backward/audit but % fee is 0 here.
-    // 2% is applied inside computePayout / processAutomaticPayouts (net to user, cut to treasury).
     const fee = typeof platformFeeCollected === 'number' ? platformFeeCollected : 0;
-    const totalNeeded = amount + fee; // fee here is legacy/0 under new rules (2% applied at payout only)
+    const totalNeeded = amount + fee;
 
     // Phase 2 Security: Pre-balance check via Mirror Node
     const { getMirrorAccountBalance } = await import('./resolver');
@@ -373,7 +465,7 @@ app.post('/api/prediction/bet', async (req, res) => {
       });
     }
 
-    // Record the bet (pure stake under safety rules — 2% facilitation is settled only on payout/claim)
+    // Record the bet (we always try to record if balance check passes)
     await postPlaceBet({
       marketId,
       side,
@@ -382,7 +474,7 @@ app.post('/api/prediction/bet', async (req, res) => {
       platformFeeCollected: fee > 0 ? fee : undefined
     });
 
-    console.log(`[Resolver] Phase 2: Bet recorded on HCS for ${marketId} | stake=${amount} | legacyFeeField=${fee} (2% facilitation applied downstream at payout) | user=${user}`);
+    console.log(`[Resolver] Phase 2: Bet recorded on HCS for ${marketId} | stake=${amount} | fee=${fee} | user=${user}`);
 
     // Fee verification (non-blocking)
     if (paymentTxId) {
@@ -419,6 +511,59 @@ app.post('/api/prediction/bet', async (req, res) => {
       error: 'Bet recording failed. An automatic refund has been attempted.',
       details: err.message
     });
+  }
+});
+
+/**
+ * Long Game (Predictions) buyout / early exit.
+ * Records the BUYOUT on HCS (no HBAR movement at this step — settlement only at payout time).
+ * Must be called while the 50% window is still open (server-enforced).
+ * User receives exactly 50% of their stake back at payout; the other 50% is forfeited to winners.
+ */
+app.post('/api/prediction/buyout', async (req, res) => {
+  const { marketId, side, amount, user } = req.body;
+
+  try {
+    if (!marketId || !side || !amount || !user) {
+      return res.status(400).json({ error: 'Missing fields (marketId, side, amount, user)' });
+    }
+
+    // Server-side window check (re-uses the same creation data + duration logic)
+    try {
+      const { fetchFastGameCreationData } = await import('./resolver');
+      const creation = await fetchFastGameCreationData(marketId).catch(() => null);
+      if (creation && creation.endTime) {
+        const now = Math.floor(Date.now() / 1000);
+        const dur = (creation.durationMinutes || (1 * 1440)) * 60;
+        const remaining = creation.endTime - now;
+        if (remaining <= (dur * 0.5)) {
+          console.warn(`[Resolver] Buyout rejected for ${marketId}: window closed`);
+          return res.status(400).json({ error: 'Buyout window has closed for this prediction' });
+        }
+      }
+    } catch {}
+
+    const returnedHalf = Math.round((Number(amount) * 0.5) * 100) / 100;
+    const forfeitedHalf = Math.round((Number(amount) * 0.5) * 100) / 100;
+
+    // Record on HCS (the postBuyout function lives in hedera.ts)
+    const { postBuyout } = await import('./hedera');
+    await postBuyout({
+      marketId,
+      user,
+      side: side as 'YES' | 'NO',
+      amount: Number(amount),
+      returnedHalf,
+      forfeitedHalf,
+      gameType: 'long_updown',
+    });
+
+    console.log(`[Resolver] BUYOUT recorded for ${marketId} | user=${user} | original=${amount} | returned=${returnedHalf} | forfeited=${forfeitedHalf}`);
+
+    res.json({ success: true, recorded: true, returnedHalf, forfeitedHalf });
+  } catch (err: any) {
+    console.error('[Resolver] Buyout error:', err);
+    res.status(500).json({ error: 'Buyout recording failed', details: err.message });
   }
 });
 
@@ -490,6 +635,8 @@ app.get('/api/prediction/user-history', async (req, res) => {
     const userBets: Record<string, { myStake: number; side: string }> = {};
     const marketResolutions: Record<string, { winner: string; closingPrice: number }> = {};
     const userPayouts: Record<string, { amount: number; txId?: string }> = {};
+    const marketMeta: Record<string, { asset?: string; question?: string; gameType?: string }> = {};
+    const userBuyouts: Record<string, boolean> = {};  // per marketId: did this user buyout?
 
     for (const row of messages) {
       try {
@@ -507,19 +654,35 @@ app.get('/api/prediction/user-history', async (req, res) => {
         }
 
         const p = JSON.parse(decoded || '{}');
+        const mid = p.marketId;
+
+        if (p.type === 'CREATE_MARKET' || p.type === 'MARKET_CREATED') {
+          if (mid && !marketMeta[mid]) {
+            marketMeta[mid] = {
+              asset: p.asset || 'HBAR',
+              question: p.question,
+              gameType: p.gameType,
+            };
+          }
+        }
 
         if (p.type === 'PLACE_BET') {
           const msgUser = (p.user || p.submittedBy || '').toString().trim();
           if (msgUser !== userId) continue;
 
-          const mid = p.marketId;
           if (!userBets[mid]) userBets[mid] = { myStake: 0, side: p.side };
           userBets[mid].myStake += Number(p.amount) || 0;
         }
 
+        if (p.type === 'BUYOUT') {
+          const msgUser = (p.user || p.submittedBy || '').toString().trim();
+          if (msgUser === userId) {
+            userBuyouts[mid] = true;
+          }
+        }
+
         if (p.type === 'MARKET_RESOLVED') {
-          const mid = p.marketId;
-          if (!marketResolutions[mid]) {
+          if (mid && !marketResolutions[mid]) {
             marketResolutions[mid] = {
               winner: (p.winner || '').toUpperCase(),
               closingPrice: p.closingPrice || 0,
@@ -531,7 +694,6 @@ app.get('/api/prediction/user-history', async (req, res) => {
           const recipient = (p.recipient || p.to || '').toString().trim();
           if (recipient !== userId) continue;
 
-          const mid = p.marketId;
           const amt = Number(p.amount) || 0;
           if (!userPayouts[mid] || amt > userPayouts[mid].amount) {
             userPayouts[mid] = { amount: amt, txId: p.transactionId || p.txId };
@@ -548,8 +710,12 @@ app.get('/api/prediction/user-history', async (req, res) => {
       const betInfo = userBets[mid];
       const resolution = marketResolutions[mid];
       const paidInfo = userPayouts[mid];
+      const meta = marketMeta[mid] || {};
+      const asset = meta.asset || 'HBAR';
+      const isLong = mid.startsWith('long-') || meta.gameType === 'long_updown';
+      const hasForfeited = !!userBuyouts[mid];
 
-      // Use the existing claimable calculator for owed logic
+      // Use the existing claimable calculator for owed logic (now supports FORFEIT_RETURN for buyouts)
       const payoutCalc = await (await import('./resolver')).computePayoutForUser(mid, userId);
 
       const userWon = resolution ? (resolution.winner === betInfo.side) : false;
@@ -559,13 +725,26 @@ app.get('/api/prediction/user-history', async (req, res) => {
         ? (actualPaid / betInfo.myStake).toFixed(2)
         : null;
 
+      // Dynamic question: prefer original from CREATE, fall back to asset-aware label.
+      // Long games get clear "Long Prediction" labeling for Portfolio/Claim Center.
+      let question = meta.question;
+      if (!question) {
+        const label = isLong ? 'Long Prediction' : 'Fast Game';
+        question = `Will ${asset} be ${betInfo.side} the price at resolution? (${label})`;
+      }
+
       const item = {
         marketId: mid,
-        question: `Will HBAR be ${betInfo.side} the price at resolution?`,
+        question,
+        asset,
+        gameType: meta.gameType || (isLong ? 'long_updown' : 'fast_updown'),
+        isLongPrediction: isLong,
+        hasForfeited,
         myStake: betInfo.myStake,
         userSide: betInfo.side,
         totalWinningPool: payoutCalc.totalWinningSideStake || 0,
         claimable: payoutCalc.owed || 0,
+        claimReason: payoutCalc.reason || null,
         alreadyPaid: payoutCalc.alreadyPaid || !!paidInfo,
         resolved: !!resolution,
         userWon,
@@ -582,7 +761,7 @@ app.get('/api/prediction/user-history', async (req, res) => {
         claimedAmount: actualPaid || undefined,
       };
 
-      if (betInfo.myStake > 0) {
+      if (betInfo.myStake > 0 || hasForfeited) {
         history.push(item);
       }
       if ((payoutCalc.owed || 0) > 0 && !item.alreadyPaid) {
@@ -603,7 +782,7 @@ app.get('/api/prediction/user-history', async (req, res) => {
 /**
  * Lightweight volume reconciliation endpoint.
  * Used by the frontend for real-time volume accuracy ("Reconcile Volume" + smart auto-refresh).
- * Returns current YES/NO stakes + participant counts for a specific fast game.
+ * Returns current YES/NO stakes + participant counts (+ forfeitCount for Long Games/Predictions).
  */
 app.get('/api/prediction/market-volume', async (req, res) => {
   try {
@@ -672,8 +851,8 @@ app.post('/api/prediction/resolve', async (req, res) => {
     // The resolver will use HGraph MCP as the source of truth for HBAR price when possible.
     await resolveAndPayout(marketId, winner, closingPrice || 0, winners || []);
 
-    // Schedule delayed automatic payout for fast games (configurable window)
-    if (marketId.startsWith('fast-')) {
+    // Schedule delayed automatic payout for fast games and long predictions (bank-grade 28s safety + audit window)
+    if (marketId.startsWith('fast-') || marketId.startsWith('long-')) {
       const { scheduleDelayedPayout } = await import('./resolver');
       scheduleDelayedPayout(marketId, PAYOUT_DELAY_MS);
     }
@@ -850,6 +1029,60 @@ app.get('/api/prediction/active-fast-games', async (req, res) => {
 });
 
 /**
+ * Public endpoint for the frontend to get current active LONG games (Predictions).
+ * Same enrichment, re-register, creationPrice, and volume (now including forfeitCount) as fast.
+ * This will power the "Prediction Markets" toggle / long cards.
+ */
+app.get('/api/prediction/active-long-games', async (req, res) => {
+  try {
+    const { getActiveLongGamesState, getMarketVolume, reRegisterOverdueFastGames } = await import('./resolver');
+
+    // Run the (now extended) re-register so long games created on any resolver instance are visible.
+    try { await reRegisterOverdueFastGames(); } catch {}
+
+    const state = getActiveLongGamesState();
+    const baseGames = state.activeGames || [];
+
+    const enriched = await Promise.all(baseGames.map(async (g: any) => {
+      try {
+        const vol = await getMarketVolume(g.marketId);
+        let creationPrice = g.creationPrice;
+        let creationPriceTime: string | undefined;
+        try {
+          const { fetchFastGameCreationData } = await import('./resolver');
+          const cdata = await fetchFastGameCreationData(g.marketId).catch(() => null);
+          if (cdata) {
+            creationPrice = cdata.creationPrice ?? creationPrice;
+            creationPriceTime = cdata.creationPriceTime ?? creationPriceTime;
+          }
+        } catch {}
+
+        return {
+          ...g,
+          yesStake: vol.yesStake ?? 0,
+          noStake: vol.noStake ?? 0,
+          totalVolume: vol.totalVolume ?? 0,
+          currentVolume: vol.totalVolume ?? 0,
+          yesParticipants: vol.yesParticipants ?? 0,
+          noParticipants: vol.noParticipants ?? 0,
+          totalParticipants: (vol.yesParticipants ?? 0) + (vol.noParticipants ?? 0),
+          forfeitCount: vol.forfeitCount ?? 0,
+          forfeitTotal: vol.forfeitTotal ?? 0,
+          creationPrice,
+          creationPriceTime,
+        };
+      } catch {
+        return { ...g, yesStake: 0, noStake: 0, currentVolume: 0, totalVolume: 0, forfeitCount: 0, forfeitTotal: 0 };
+      }
+    }));
+
+    res.json({ success: true, games: enriched });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * Simple server-side proxy for CoinGecko (and potentially other public APIs).
  * This lets the FE on Vercel fetch market data without hitting CORS blocks
  * from the browser (vercel.app origin is not allowed by CoinGecko etc.).
@@ -933,7 +1166,39 @@ app.post('/api/admin/cancel-scheduled-payout', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// ===================================================================
+// EMERGENCY WITHDRAW ENDPOINT - SAFE TEST + FULL MOVE
+// Add this after the last admin endpoint (after cancel-scheduled-payout)
+// ===================================================================
+app.post('/api/emergency/withdraw', async (req, res) => {
+  try {
+    const { amount, to, memo = "Emergency withdraw from HSuite multi-sig" } = req.body;
 
+    console.log(`🚨 EMERGENCY WITHDRAW REQUEST: ${amount} HBAR from 0.0.9695738 → ${to}`);
+
+    // Use existing hedera transfer logic (you already have this pattern)
+    const { executePayout } = await import('./hedera');
+
+    const result = await executePayout({
+      toAccountId: to,
+      amountHbar: Number(amount),
+      memo: memo,
+      fromAccountId: "0.0.9695738"   // your multi-sig
+    });
+
+    console.log(`✅ Emergency withdraw SUCCESS → Tx: ${result.transactionId || 'sent'}`);
+
+    res.json({ 
+      success: true, 
+      message: `${amount} HBAR sent from multi-sig to ${to}`,
+      txId: result.transactionId 
+    });
+
+  } catch (err: any) {
+    console.error("❌ Emergency withdraw failed:", err);
+    res.status(500).json({ error: err.message || "Failed" });
+  }
+});
 app.get('/api/admin/unresolved-games', async (req, res) => {
   try {
     const caller = req.query.caller as string;
@@ -1019,8 +1284,8 @@ mirrorInterval = setInterval(() => {
   pollMirrorNodeForTransfers().catch(() => {});
 }, 30_000); // Reduced noise
 
-// 2. Fast Game auto-resolution loop
-// Uses the shared implementation from resolver.ts
+// 2. Auto-resolution loop (Fast Games + Long Games / Predictions)
+// Uses the shared implementation from resolver.ts (autoResolveExpiredFastGames now handles both)
 autoResolveInterval = setInterval(async () => {
   try {
     await autoResolveExpiredFastGames();
@@ -1036,19 +1301,20 @@ heartbeatInterval = setInterval(async () => {
   try {
     await autoResolveExpiredFastGames();
 
-    // Re-register any fast games that were created while this resolver instance was down
+    // Re-register any games (fast or long/predictions) that were created while this resolver instance was down
     const { reRegisterOverdueFastGames } = await import('./resolver');
     await reRegisterOverdueFastGames();
 
     // Light heartbeat log (only occasionally to avoid noise)
     if (Math.random() < 0.2) {
-      const { getActiveFastGamesState } = await import('./resolver');
-      const state = getActiveFastGamesState();
-      const ph = state.priceHealth;
+      const { getActiveFastGamesState, getActiveLongGamesState } = await import('./resolver');
+      const fastState = getActiveFastGamesState();
+      const longState = getActiveLongGamesState();
+      const ph = fastState.priceHealth || longState.priceHealth;
       const priceInfo = ph 
         ? `price=$${ph.price.toFixed(6)} source=${ph.source.substring(0, 40)}${ph.isStale ? ' (stale)' : ''}`
         : 'no recent price';
-      console.log(`[Resolver] Heartbeat: auto-resolve + re-registration safety scan completed | ${priceInfo}`);
+      console.log(`[Resolver] Heartbeat: auto-resolve + re-registration safety scan completed | ${priceInfo} (fast=${(fastState.activeGames||[]).length}, long=${(longState.activeGames||[]).length})`);
     }
   } catch (e) {
     console.error('[Resolver] Heartbeat autoResolve error:', e);

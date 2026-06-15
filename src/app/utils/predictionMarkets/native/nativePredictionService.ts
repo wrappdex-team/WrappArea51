@@ -18,14 +18,14 @@ import { ENV } from "../../env";
 export const MASTER_TOPIC_ID = "0.0.9017517";
 const RESOLVER_BASE = ENV.RESOLVER_BASE; // Authoritative payout oracle (single source of truth). Configured via VITE_RESOLVER_URL (Railway URL in prod).
 
-// Same critical warning as in Predict.tsx
+// Same critical warning as in Predict.tsx (updated for current Railway + create wire)
 if (typeof window !== 'undefined' &&
     !window.location.hostname.includes('localhost') &&
     !window.location.hostname.includes('127.0.0.1') &&
-    RESOLVER_BASE.includes('localhost')) {
+    (RESOLVER_BASE.includes('localhost') || !RESOLVER_BASE.includes('wrapparea51'))) {
   console.error(
-    '[CRITICAL CONFIG] RESOLVER_BASE is localhost while not on localhost. ' +
-    'Global fast game visibility (multiplayer across team members) requires VITE_RESOLVER_URL set in Vercel.'
+    '[CRITICAL CONFIG] RESOLVER_BASE =', RESOLVER_BASE,
+    'Fast + long game list + creates depend on this. If wrong/stale, new markets will not wire to HCS/resolver. Set VITE_RESOLVER_URL to the dedicated long resolver Railway (https://wrapparea51-production-3951.up.railway.app) in Vercel Production env and redeploy.'
   );
 }
 
@@ -158,15 +158,20 @@ export async function fetchNativeActiveMarkets(): Promise<NativeMarket[]> {
  * and returns a clean list ready for timer + resolution UI.
  */
 export async function fetchFastGames(): Promise<FastGame[]> {
+  let resolverRes: Response | undefined;
   try {
     // Prefer the resolver's in-memory state (populated from HCS + live creates/bets).
     // This avoids direct browser CORS problems with HGraph/Mirror when the FE is on Vercel.
     // The resolver does the reliable fetching server-side.
-    const resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
+    resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
     if (resolverRes.ok) {
       const data = await resolverRes.json();
-      if (data.success && Array.isArray(data.games) && data.games.length > 0) {
-        // Map the resolver's active list shape to the FE FastGame shape if needed (it is already close).
+      if (data.success && Array.isArray(data.games)) {
+        // Always trust the resolver for the list of active fast games (even if the array is empty).
+        // This is the design: resolver is the single source of truth (in-memory registered games + re-register from HCS).
+        // Avoid falling back to direct browser HCS/HGraph/Mirror which are frequently broken by CORS
+        // (HGraph blocks the vercel.app origin) and DNS (mirror nodes).
+        // Map and strengthen endTime for long-duration games as before.
         const normalized = data.games.map((g: any) => ({
           ...g,
           yesStake: g.yesStake || g.yes_stake || 0,
@@ -174,9 +179,6 @@ export async function fetchFastGames(): Promise<FastGame[]> {
           yesParticipants: g.yesParticipants || g.yes_participants || 0,
           noParticipants: g.noParticipants || g.no_participants || 0,
         }));
-
-        // Strengthen long-duration (4h+) timer using the same reliable creationTs + durationMinutes rule
-        // even for the preferred resolver path (in case the in-memory active list had a stale/short endTime).
         return normalized.map((g: any) => {
           const cTs = parseInt((g.marketId || '').split('-')[1] || '0', 10);
           const dMin = g.durationMinutes || 10;
@@ -192,6 +194,18 @@ export async function fetchFastGames(): Promise<FastGame[]> {
     }
   } catch (e) {
     console.warn('[NativePM] Resolver active-fast-games fetch failed, falling back to direct HCS scan');
+  }
+
+  // If we got here, the resolver call either failed or returned non-success.
+  // To stop the previous "every second" 429 storm on HGraph (and the resolver's own proxies), we short-circuit
+  // and return [] instead of doing the expensive direct HGraph/Mirror fallback.
+  // The optimistic + "Your recent fast games" + recentlyCreated logic in the UI is what keeps the creator's
+  // just-created game visible even when the resolver is temporarily overloaded or returning empty.
+  // This is the key change that gives the /fast-game/create POSTs a chance to actually reach the resolver
+  // and write the CREATE_MARKET + PLACE_BET messages to topic 0.0.9017517.
+  if (!resolverRes || !resolverRes.ok) {
+    console.warn('[NativePM] Resolver not ok (' + (resolverRes ? resolverRes.status : 'no response') + ') — skipping HGraph fallback to protect rate limits and let creates go through.');
+    return [];
   }
 
   try {
