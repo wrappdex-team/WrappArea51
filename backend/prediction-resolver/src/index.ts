@@ -1243,35 +1243,43 @@ app.post('/api/prediction/retire-dead-fast-games', async (req, res) => {
   }
 });
 // ──────────────────────────────────────────────────────────────
-// EMERGENCY SAFE TRANSFER — TEMPORARY (delete after use)
-// Uses exact same executePayout pattern that already works in your file
+// SCHEDULED RESCUE — Option 2 (Multi-sig safe method)
+// Creates a schedule that both of your signer wallets can approve
 // ──────────────────────────────────────────────────────────────
-app.post('/api/emergency/transfer', async (req, res) => {
+app.post('/api/emergency/schedule-rescue', async (req, res) => {
   try {
-    const { amount = 3, to = "0.0.518487" } = req.body;
+    const { testAmount = 5 } = req.body;   // default 5 HBAR test
 
-    console.log(`🚨 EMERGENCY TEST → Sending ${amount} HBAR to ${to}`);
+    console.log(`🚨 Creating SCHEDULED RESCUE → ${testAmount} HBAR from multi-sig 0.0.9695738`);
 
-    const { executePayout } = await import('./hedera');
+    const { client } = await import('./hedera');   // reuse existing client
 
-    // Matches the exact pattern used in your refunds and claims
-    const result = await executePayout({
-      toAccountId: to,
-      amountHbar: amount,
-      memo: `Emergency rescue test 3 HBAR from 0.0.9695738`,
+    const scheduleTx = await new ScheduleCreateTransaction()
+      .setScheduledTransaction(
+        new TransferTransaction()
+          .addHbarTransfer("0.0.9695738", new Hbar(-testAmount))
+          .addHbarTransfer("0.0.518487", new Hbar(testAmount))
+          .setTransactionMemo(`WRAPpDEX Multi-sig rescue test ${testAmount} HBAR - ${Date.now()}`)
+      )
+      .setAdminKey(/* optional */) 
+      .freezeWith(client);
+
+    const txResponse = await scheduleTx.execute(client);
+    const receipt = await txResponse.getReceipt(client);
+    const scheduleId = receipt.scheduleId.toString();
+
+    console.log(`✅ Schedule created! Schedule ID: ${scheduleId}`);
+
+    res.json({
+      success: true,
+      message: "Schedule created successfully. Now sign it from BOTH signer wallets.",
+      scheduleId: scheduleId,
+      testAmount,
+      nextStep: "Open HashPack or HSuite, search for this Schedule ID, and sign with both keys."
     });
 
-    console.log(`✅ Emergency transfer submitted! Check HashScan for account ${to}`);
-
-    res.json({ 
-      success: true, 
-      message: "Test 3 HBAR sent successfully. Check HashScan now.",
-      amount,
-      to,
-      note: "If this works we do the full $416k cleanup next."
-    });
   } catch (err: any) {
-    console.error("❌ Emergency transfer failed:", err.message);
+    console.error("❌ Failed to create schedule:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
