@@ -25,7 +25,7 @@ if (typeof window !== 'undefined' &&
     (RESOLVER_BASE.includes('localhost') || !RESOLVER_BASE.includes('wrapparea51'))) {
   console.error(
     '[CRITICAL CONFIG] RESOLVER_BASE =', RESOLVER_BASE,
-    'Fast + long game list + creates depend on this. If wrong/stale, new markets will not wire to HCS/resolver. Set VITE_RESOLVER_URL to the dedicated long resolver Railway (https://wrapparea51-production-3951.up.railway.app) in Vercel Production env and redeploy.'
+    'Fast game list + creates depend on this. If wrong/stale, new markets will not wire to HCS/resolver. Set VITE_RESOLVER_URL to current Railway (https://wrapparea51-production.up.railway.app) in Vercel and redeploy.'
   );
 }
 
@@ -158,12 +158,11 @@ export async function fetchNativeActiveMarkets(): Promise<NativeMarket[]> {
  * and returns a clean list ready for timer + resolution UI.
  */
 export async function fetchFastGames(): Promise<FastGame[]> {
-  let resolverRes: Response | undefined;
   try {
     // Prefer the resolver's in-memory state (populated from HCS + live creates/bets).
     // This avoids direct browser CORS problems with HGraph/Mirror when the FE is on Vercel.
     // The resolver does the reliable fetching server-side.
-    resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
+    const resolverRes = await fetch(`${RESOLVER_BASE}/api/prediction/active-fast-games`);
     if (resolverRes.ok) {
       const data = await resolverRes.json();
       if (data.success && Array.isArray(data.games)) {
