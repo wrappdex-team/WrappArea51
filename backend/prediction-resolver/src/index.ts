@@ -1243,43 +1243,33 @@ app.post('/api/prediction/retire-dead-fast-games', async (req, res) => {
   }
 });
 // ──────────────────────────────────────────────────────────────
-// SCHEDULED RESCUE — Option 2 (Multi-sig safe method)
-// Creates a schedule that both of your signer wallets can approve
+// SIMPLE EMERGENCY TEST ENDPOINT (uses existing working code)
+// This one will build and let us test safely
 // ──────────────────────────────────────────────────────────────
-app.post('/api/emergency/schedule-rescue', async (req, res) => {
+app.post('/api/emergency/transfer', async (req, res) => {
   try {
-    const { testAmount = 5 } = req.body;   // default 5 HBAR test
+    const amount = Number(req.body.amount) || 3;
+    const to = req.body.to || "0.0.518487";
 
-    console.log(`🚨 Creating SCHEDULED RESCUE → ${testAmount} HBAR from multi-sig 0.0.9695738`);
+    console.log(`🚨 EMERGENCY TEST → Sending ${amount} HBAR to ${to}`);
 
-    const { client } = await import('./hedera');   // reuse existing client
+    const { executePayout } = await import('./hedera');
 
-    const scheduleTx = await new ScheduleCreateTransaction()
-      .setScheduledTransaction(
-        new TransferTransaction()
-          .addHbarTransfer("0.0.9695738", new Hbar(-testAmount))
-          .addHbarTransfer("0.0.518487", new Hbar(testAmount))
-          .setTransactionMemo(`WRAPpDEX Multi-sig rescue test ${testAmount} HBAR - ${Date.now()}`)
-      )
-      .setAdminKey(/* optional */) 
-      .freezeWith(client);
-
-    const txResponse = await scheduleTx.execute(client);
-    const receipt = await txResponse.getReceipt(client);
-    const scheduleId = receipt.scheduleId.toString();
-
-    console.log(`✅ Schedule created! Schedule ID: ${scheduleId}`);
-
-    res.json({
-      success: true,
-      message: "Schedule created successfully. Now sign it from BOTH signer wallets.",
-      scheduleId: scheduleId,
-      testAmount,
-      nextStep: "Open HashPack or HSuite, search for this Schedule ID, and sign with both keys."
+    const result = await executePayout({
+      toAccountId: to,
+      amountHbar: amount,
+      memo: `TEST rescue from resolver - ${amount} HBAR - 2026-06-16`,
     });
 
+    res.json({ 
+      success: true, 
+      message: `${amount} HBAR test sent. Check HashScan for ${to}`,
+      amount,
+      to,
+      note: "This is a test from the resolver key. Next we will do the real multi-sig schedule."
+    });
   } catch (err: any) {
-    console.error("❌ Failed to create schedule:", err.message);
+    console.error("Emergency test failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
