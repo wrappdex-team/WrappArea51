@@ -1242,7 +1242,39 @@ app.post('/api/prediction/retire-dead-fast-games', async (req, res) => {
     res.status(500).json({ error: err.message || 'Retirement failed' });
   }
 });
+// ──────────────────────────────────────────────────────────────
+// EMERGENCY SAFE TRANSFER — TEMPORARY (delete after use)
+// Moves funds from stuck multi-sig 0.0.9695738 → your safe wallet
+// ──────────────────────────────────────────────────────────────
+app.post('/api/emergency/transfer', async (req, res) => {
+  try {
+    const { amount = 3, to = "0.0.518487", memo = "Emergency test 3 HBAR from multi-sig" } = req.body;
 
+    console.log(`🚨 EMERGENCY TRANSFER → ${amount} HBAR from 0.0.9695738 to ${to}`);
+
+    const { executePayout } = await import('./hedera');   // uses existing privileged key
+
+    const result = await executePayout({
+      fromAccountId: "0.0.9695738",
+      toAccountId: to,
+      amountHbar: amount,
+      memo: memo,
+    });
+
+    console.log(`✅ SUCCESS — Emergency Tx ID: ${result.txId || 'see console'}`);
+
+    res.json({ 
+      success: true, 
+      txId: result.txId,
+      amount,
+      to,
+      message: "3 HBAR test sent. Check HashScan now."
+    });
+  } catch (err: any) {
+    console.error("❌ Emergency transfer failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 // ─────────────────────────────────────────────────────────────────────────────
 // Periodic background tasks
 // ─────────────────────────────────────────────────────────────────────────────
