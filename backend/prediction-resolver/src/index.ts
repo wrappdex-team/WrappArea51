@@ -1244,31 +1244,31 @@ app.post('/api/prediction/retire-dead-fast-games', async (req, res) => {
 });
 // ──────────────────────────────────────────────────────────────
 // EMERGENCY SAFE TRANSFER — TEMPORARY (delete after use)
-// Moves funds from stuck multi-sig 0.0.9695738 → your safe wallet
+// Uses exact same executePayout pattern that already works in your file
 // ──────────────────────────────────────────────────────────────
 app.post('/api/emergency/transfer', async (req, res) => {
   try {
-    const { amount = 3, to = "0.0.518487", memo = "Emergency test 3 HBAR from multi-sig" } = req.body;
+    const { amount = 3, to = "0.0.518487" } = req.body;
 
-    console.log(`🚨 EMERGENCY TRANSFER → ${amount} HBAR from 0.0.9695738 to ${to}`);
+    console.log(`🚨 EMERGENCY TEST → Sending ${amount} HBAR to ${to}`);
 
-    const { executePayout } = await import('./hedera');   // uses existing privileged key
+    const { executePayout } = await import('./hedera');
 
+    // Matches the exact pattern used in your refunds and claims
     const result = await executePayout({
-      fromAccountId: "0.0.9695738",
       toAccountId: to,
       amountHbar: amount,
-      memo: memo,
+      memo: `Emergency rescue test 3 HBAR from 0.0.9695738`,
     });
 
-    console.log(`✅ SUCCESS — Emergency Tx ID: ${result.txId || 'see console'}`);
+    console.log(`✅ Emergency transfer submitted! Check HashScan for account ${to}`);
 
     res.json({ 
       success: true, 
-      txId: result.txId,
+      message: "Test 3 HBAR sent successfully. Check HashScan now.",
       amount,
       to,
-      message: "3 HBAR test sent. Check HashScan now."
+      note: "If this works we do the full $416k cleanup next."
     });
   } catch (err: any) {
     console.error("❌ Emergency transfer failed:", err.message);
