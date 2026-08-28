@@ -29,7 +29,7 @@ Token IDs come from **env** on Area 51 (testnet copies Kyle mints). Do not treat
 - NFT votes: `floor(nftCount / 3)` max 1
 - Server re-verifies weight at vote time via Mirror Node
 - HashPack ED25519/ECDSA session still required (SEC-01/SEC-02, 30 min TTL)
-- **Create proposal** is **admin-only**. Eligible members post **ideas** to KV (`dao_idea_*`). Admins **promote** an idea into a vote proposal (then that proposal gets its own treasury-locked HCS topic; submitter `0.0.9006841` only)
+- **Create proposal** is **admin-only**. Eligible members post **ideas** to KV (`dao_v2_ideas` / `dao_v2_i:{id}`). Admins **promote** an idea into a vote proposal (then that proposal gets its own treasury-locked HCS topic; submitter `0.0.9006841` only)
 - Founder `0.0.518487` unremovable. Extra admins `0.0.3967564`, `0.0.9715988` stay in KV (`dao_admin_accounts`) — do not drop
 - Keep `dao_v2_*` shards and `prop-{8 hex}` IDs
 

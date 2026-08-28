@@ -44,8 +44,8 @@ const DAO_V2_PROP_PREFIX = "dao_v2_p:";
 const DAO_V2_CMT_PREFIX = "dao_v2_c:";
 const DAO_MAX_PROPOSALS = 100;
 const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
-const DAO_IDEA_INDEX_KEY = "dao_idea_idx";
-const DAO_IDEA_PREFIX = "dao_idea:";
+const DAO_IDEA_INDEX_KEY = "dao_v2_ideas";
+const DAO_IDEA_PREFIX = "dao_v2_i:";
 const DAO_MAX_IDEAS = 200;
 
 /**
@@ -104,7 +104,7 @@ const DAO_INDEX_LOCK_CONFIG: KvLockConfig = {
 };
 
 const DAO_IDEA_LOCK_CONFIG: KvLockConfig = {
-  key: "dao_ideas_lock",
+  key: "dao_v2_ideas_lock",
   ttlMs: 8_000,
   waitMs: 5_000,
   retryMs: POOL_LOCK_RETRY_INTERVAL_MS,

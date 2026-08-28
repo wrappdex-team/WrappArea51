@@ -321,7 +321,7 @@ export async function postIdea(
     });
     const data = await res.json();
     if (!res.ok) {
-      log.error("DAO", `Post idea failed: ${data.error}`);
+      log.error("DAO", `Submit idea failed: ${data.error}`);
       return { ideas: [], error: data.error || "Failed to post idea" };
     }
     return { ideas: data.ideas as DaoIdea[] };

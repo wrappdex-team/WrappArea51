@@ -535,7 +535,7 @@ export function DAO() {
           toast.success("Idea posted. An admin can promote it to a vote.", { duration: 3000 });
         }
       } catch (err: any) {
-        toast.error(err?.message || "Post idea failed", { duration: 5000 });
+        toast.error(err?.message || "Submit idea failed", { duration: 5000 });
       } finally {
         setActionLoading(false);
         setShowIdea(false);
@@ -726,7 +726,7 @@ export function DAO() {
             }`}
           >
             <MessageSquare className="w-4 h-4" />
-            Post idea
+            Submit idea
           </button>}
           {isAdmin && <button
             onClick={() => setShowCreate(true)}
@@ -2244,7 +2244,7 @@ function PostIdeaModal({
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Post idea"
+      aria-label="Submit idea"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-slate-900 border border-pink-500/20 rounded-xl p-6 max-w-lg w-full">
@@ -2283,7 +2283,7 @@ function PostIdeaModal({
             onClick={() => onPost(title, description, category)}
             className="px-4 py-2 rounded-lg text-sm text-white bg-gradient-to-r from-pink-600 to-purple-600 disabled:opacity-50"
           >
-            {actionLoading ? "Posting…" : "Post idea"}
+            {actionLoading ? "Submitting…" : "Submit idea"}
           </button>
         </div>
       </div>
