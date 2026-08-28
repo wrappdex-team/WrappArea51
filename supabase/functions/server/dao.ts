@@ -11,13 +11,22 @@
 // Deduplication via voterLog. Inputs sanitized, rate-limited, fail-closed.
 // Caps: 100 proposals, 200 comments per proposal.
 //
-// KZN-20260828-04: each promoted proposal gets its own testnet HCS topic
-// (treasury 0.0.9006841 submitKey). Never reuse 0.0.9017517. This PR: fail-closed
-// create/vote if DAO_HCS_TOPIC_ID unset. Ideas are KV-only.
+// KZN-20260828-04: admin create + admin promote TopicCreate a NEW testnet HCS
+// topic per proposal (adminKey+submitKey = treasury 0.0.9006841). Operator
+// 0.0.9006979 is fee payer. PROPOSAL_CREATE and VOTE go to that topic, then KV.
+// Fail closed if operator/treasury keys missing. Never reuse 0.0.9017517.
+// Ideas are KV-only. Create stays admin-only.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
+import {
+  Client,
+  AccountId,
+  PrivateKey,
+  TopicCreateTransaction,
+  TopicMessageSubmitTransaction,
+} from "npm:@hashgraph/sdk";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
@@ -66,22 +75,88 @@ function isValidIdeaId(id: string): boolean {
   return typeof id === "string" && /^idea-[a-f0-9]{8}$/.test(id);
 }
 
-// ── Testnet HCS topic (env) ────────────────────────────────────────
-// Topic IDs are public. Operator keys are NOT read here.
-const DAO_HCS_TOPIC_RE = /^0\.0\.\d+$/;
+// ── Testnet HCS (per-proposal topics) ──────────────────────────────
+// Keys live in Area 51 Supabase only. Never log key material.
+const DAO_HCS_ACCOUNT_RE = /^0\.0\.\d+$/;
+const DAO_HCS_FORBIDDEN_TOPIC = "0.0.9017517";
+const DAO_HCS_TREASURY_EXPECTED = "0.0.9006841";
+const DAO_HCS_OPERATOR_EXPECTED = "0.0.9006979";
 
-export type DaoHcsConfig = { topicId: string; network: "testnet" };
+export type DaoHcsConfig = {
+  network: "testnet";
+  operatorId: string;
+  treasuryId: string;
+  operatorKey: string;
+  treasuryKey: string;
+};
+
+function parseDaoHcsPrivateKey(keyStr: string): PrivateKey {
+  // Local parse. Never log keyStr.
+  if (keyStr.startsWith("302e")) return PrivateKey.fromString(keyStr);
+  return PrivateKey.fromStringED25519(keyStr);
+}
+
+function assertAllowedTopicId(topicId: string): string {
+  const id = (topicId || "").trim();
+  if (!DAO_HCS_ACCOUNT_RE.test(id) || id === DAO_HCS_FORBIDDEN_TOPIC) {
+    throw new Error("DAO_HCS_FORBIDDEN_TOPIC");
+  }
+  return id;
+}
 
 export function getDaoHcsConfig(): DaoHcsConfig | { error: "DAO_HCS_UNCONFIGURED" | "DAO_HCS_TESTNET_ONLY" } {
-  const topicId = (Deno.env.get("DAO_HCS_TOPIC_ID") || "").trim();
   const network = (Deno.env.get("DAO_HCS_NETWORK") || "testnet").trim().toLowerCase();
   if (network !== "testnet") {
     return { error: "DAO_HCS_TESTNET_ONLY" };
   }
-  if (!topicId || !DAO_HCS_TOPIC_RE.test(topicId)) {
+  const leftoverTopic = (Deno.env.get("DAO_HCS_TOPIC_ID") || "").trim();
+  if (leftoverTopic === DAO_HCS_FORBIDDEN_TOPIC) {
     return { error: "DAO_HCS_UNCONFIGURED" };
   }
-  return { topicId, network: "testnet" };
+  const operatorId = (Deno.env.get("DAO_HCS_OPERATOR_ID") || "").trim();
+  const treasuryId = (Deno.env.get("DAO_HCS_TREASURY_ID") || "").trim();
+  const operatorKey = (Deno.env.get("DAO_HCS_OPERATOR_KEY") || "").trim();
+  const treasuryKey = (Deno.env.get("DAO_HCS_TREASURY_KEY") || "").trim();
+  if (
+    !operatorId || !treasuryId || !operatorKey || !treasuryKey ||
+    !DAO_HCS_ACCOUNT_RE.test(operatorId) || !DAO_HCS_ACCOUNT_RE.test(treasuryId) ||
+    operatorId !== DAO_HCS_OPERATOR_EXPECTED ||
+    treasuryId !== DAO_HCS_TREASURY_EXPECTED
+  ) {
+    return { error: "DAO_HCS_UNCONFIGURED" };
+  }
+  return { network: "testnet", operatorId, treasuryId, operatorKey, treasuryKey };
+}
+
+function daoHcsPublicStatus(): {
+  configured: boolean;
+  network: string;
+  operatorId: string | null;
+  treasuryId: string | null;
+  topics: "per-proposal";
+  code?: "DAO_HCS_UNCONFIGURED" | "DAO_HCS_TESTNET_ONLY";
+} {
+  const operatorId = (Deno.env.get("DAO_HCS_OPERATOR_ID") || "").trim() || null;
+  const treasuryId = (Deno.env.get("DAO_HCS_TREASURY_ID") || "").trim() || null;
+  const cfg = getDaoHcsConfig();
+  if ("error" in cfg) {
+    const network = (Deno.env.get("DAO_HCS_NETWORK") || "testnet").trim().toLowerCase();
+    return {
+      configured: false,
+      network: network || "testnet",
+      operatorId,
+      treasuryId,
+      topics: "per-proposal",
+      code: cfg.error,
+    };
+  }
+  return {
+    configured: true,
+    network: cfg.network,
+    operatorId: cfg.operatorId,
+    treasuryId: cfg.treasuryId,
+    topics: "per-proposal",
+  };
 }
 
 function daoHcsGuard(c: { json: (body: unknown, status: number) => Response }): Response | DaoHcsConfig {
@@ -89,17 +164,95 @@ function daoHcsGuard(c: { json: (body: unknown, status: number) => Response }): 
   if ("error" in cfg) {
     const msg = cfg.error === "DAO_HCS_TESTNET_ONLY"
       ? "DAO HCS is testnet-only for this slice. Set DAO_HCS_NETWORK=testnet."
-      : "DAO HCS topic is not configured. Set DAO_HCS_TOPIC_ID (testnet 0.0.x) in Area 51 env.";
+      : "DAO HCS operator/treasury keys are not configured. Set DAO_HCS_OPERATOR_ID/KEY and DAO_HCS_TREASURY_ID/KEY in Area 51 Supabase.";
     return c.json({ error: msg, code: cfg.error }, 503);
   }
   return cfg;
 }
 
+function getDaoHcsOperatorClient(cfg: DaoHcsConfig): Client {
+  const client = Client.forTestnet();
+  client.setOperator(AccountId.fromString(cfg.operatorId), parseDaoHcsPrivateKey(cfg.operatorKey));
+  return client;
+}
+
+async function daoHcsSubmitMessage(
+  client: Client,
+  treasuryKey: PrivateKey,
+  topicId: string,
+  message: Record<string, unknown>,
+): Promise<void> {
+  assertAllowedTopicId(topicId);
+  const tx = new TopicMessageSubmitTransaction()
+    .setTopicId(topicId)
+    .setMessage(JSON.stringify(message));
+  const frozen = await tx.freezeWith(client);
+  const signed = await frozen.sign(treasuryKey);
+  const resp = await signed.execute(client);
+  await resp.getReceipt(client);
+}
+
+async function daoHcsCreateTopicAndSubmitProposalCreate(opts: {
+  cfg: DaoHcsConfig;
+  proposalId: string;
+  accountId: string;
+  proposerType: "admin" | "promote";
+  title: string;
+  category: string;
+  durationDays: number;
+  ideaId?: string;
+}): Promise<string> {
+  const treasuryKey = parseDaoHcsPrivateKey(opts.cfg.treasuryKey);
+  const client = getDaoHcsOperatorClient(opts.cfg);
+  try {
+    const createTx = new TopicCreateTransaction()
+      .setAdminKey(treasuryKey.publicKey)
+      .setSubmitKey(treasuryKey.publicKey)
+      .setTopicMemo(`WRAPpDEX DAO ${opts.proposalId}`);
+    const frozen = await createTx.freezeWith(client);
+    const signed = await frozen.sign(treasuryKey);
+    const resp = await signed.execute(client);
+    const receipt = await resp.getReceipt(client);
+    const topicId = assertAllowedTopicId(receipt.topicId?.toString() ?? "");
+    const payload: Record<string, unknown> = {
+      v: 1,
+      type: "PROPOSAL_CREATE",
+      proposalId: opts.proposalId,
+      accountId: opts.accountId,
+      proposerType: opts.proposerType,
+      title: opts.title,
+      category: opts.category,
+      durationDays: opts.durationDays,
+      ts: Date.now(),
+    };
+    if (opts.ideaId) payload.ideaId = opts.ideaId;
+    await daoHcsSubmitMessage(client, treasuryKey, topicId, payload);
+    console.log(`[DAO] HCS TopicCreate ${opts.proposalId} topic=${topicId}`);
+    return topicId;
+  } finally {
+    try { client.close(); } catch { /* ignore */ }
+  }
+}
+
+async function daoHcsSubmitVote(
+  cfg: DaoHcsConfig,
+  topicId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const treasuryKey = parseDaoHcsPrivateKey(cfg.treasuryKey);
+  const client = getDaoHcsOperatorClient(cfg);
+  try {
+    await daoHcsSubmitMessage(client, treasuryKey, topicId, payload);
+  } finally {
+    try { client.close(); } catch { /* ignore */ }
+  }
+}
+
 // Global lock for INDEX-mutating operations (create/delete proposals).
 const DAO_INDEX_LOCK_CONFIG: KvLockConfig = {
   key: "dao_proposals_lock",
-  ttlMs: 8_000,
-  waitMs: 5_000,
+  ttlMs: 25_000,
+  waitMs: 15_000,
   retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
 };
 
@@ -115,8 +268,8 @@ const DAO_IDEA_LOCK_CONFIG: KvLockConfig = {
 function daoProposalLock(proposalId: string): KvLockConfig {
   return {
     key: `dao_plock:${proposalId}`,
-    ttlMs: 6_000,
-    waitMs: 4_000,
+    ttlMs: 20_000,
+    waitMs: 12_000,
     retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
   };
 }
@@ -187,6 +340,7 @@ interface DAOProposal {
   quorum: number; createdAt: number; endsAt: number;
   voterLog: Record<string, { direction: "for" | "against"; weight: number }>;
   comments: DAOComment[];
+  topicId?: string;
 }
 
 function canModifyDaoProposal(p: DAOProposal, acct: string, adminList: string[]): boolean {
@@ -339,13 +493,9 @@ async function saveDaoIdea(idea: DaoIdea): Promise<void> {
 
 export function registerDaoRoutes(app: Hono): void {
 
-  // GET /dao/hcs — Public: whether the testnet topic is configured (ID is not a secret)
+  // GET /dao/hcs — Public: operator/treasury IDs only (no keys). Topics are per-proposal.
   app.get(`${ROUTE_PREFIX}/dao/hcs`, (c) => {
-    const cfg = getDaoHcsConfig();
-    if ("error" in cfg) {
-      return c.json({ configured: false, code: cfg.error, network: "testnet" });
-    }
-    return c.json({ configured: true, topicId: cfg.topicId, network: cfg.network });
+    return c.json(daoHcsPublicStatus());
   });
 
   // GET /dao/proposals — Public read
@@ -400,9 +550,22 @@ export function registerDaoRoutes(app: Hono): void {
           category, proposer: accountId, status: "active", votesFor: 0, votesAgainst: 0, quorum: q,
           createdAt: now, endsAt: now + days * 86_400_000, voterLog: {}, comments: [],
         };
-        // Write proposal to its own key + add to index
+        try {
+          newP.topicId = await daoHcsCreateTopicAndSubmitProposalCreate({
+            cfg: hcs,
+            proposalId: newP.id,
+            accountId,
+            proposerType: "admin",
+            title: newP.title,
+            category: newP.category,
+            durationDays: days,
+          });
+        } catch (hcsErr) {
+          console.error(`[DAO] HCS TopicCreate/submit failed for create ${newP.id}: ${hcsErr}`);
+          return c.json({ error: "Failed to create HCS topic for proposal", code: "DAO_HCS_SUBMIT_FAILED" }, 503);
+        }
         await Promise.all([saveDaoProposal(newP), addToIndex(newP.id)]);
-        console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}"`);
+        console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}" topic=${newP.topicId}`);
         // Return full list for frontend compatibility
         const allProposals = await loadDaoProposals();
         return c.json({ proposal: newP, proposals: allProposals });
@@ -521,6 +684,23 @@ export function registerDaoRoutes(app: Hono): void {
         if (Date.now() >= proposal.endsAt) return c.json({ error: "Voting period has ended" }, 400);
         if (proposal.voterLog[accountId]) {
           return c.json({ error: "You have already voted on this proposal", code: "DAO_ALREADY_VOTED", existingVote: proposal.voterLog[accountId] }, 409);
+        }
+        if (!proposal.topicId) {
+          return c.json({ error: "Proposal has no HCS topic", code: "DAO_HCS_UNCONFIGURED" }, 503);
+        }
+        try {
+          await daoHcsSubmitVote(hcs, proposal.topicId, {
+            v: 1,
+            type: "VOTE",
+            proposalId,
+            accountId,
+            direction,
+            weight,
+            ts: Date.now(),
+          });
+        } catch (hcsErr) {
+          console.error(`[DAO] HCS VOTE submit failed for ${proposalId}: ${hcsErr}`);
+          return c.json({ error: "Failed to submit vote to HCS", code: "DAO_HCS_SUBMIT_FAILED" }, 503);
         }
         const voted: DAOProposal = {
           ...proposal,
@@ -807,10 +987,25 @@ export function registerDaoRoutes(app: Hono): void {
           votesFor: 0, votesAgainst: 0, quorum: q,
           createdAt: now, endsAt: now + days * 86_400_000, voterLog: {}, comments: [],
         };
+        try {
+          newP.topicId = await daoHcsCreateTopicAndSubmitProposalCreate({
+            cfg: hcs,
+            proposalId: newP.id,
+            accountId,
+            proposerType: "promote",
+            title: newP.title,
+            category: newP.category,
+            durationDays: days,
+            ideaId: idea.id,
+          });
+        } catch (hcsErr) {
+          console.error(`[DAO] HCS TopicCreate/submit failed for promote ${newP.id}: ${hcsErr}`);
+          return c.json({ error: "Failed to create HCS topic for proposal", code: "DAO_HCS_SUBMIT_FAILED" }, 503);
+        }
         idea.status = "promoted";
         idea.proposalId = newP.id;
         await Promise.all([saveDaoProposal(newP), addToIndex(newP.id), saveDaoIdea(idea)]);
-        console.log(`[DAO] Idea ${idea.id} promoted to ${newP.id} by admin ${accountId}`);
+        console.log(`[DAO] Idea ${idea.id} promoted to ${newP.id} by admin ${accountId} topic=${newP.topicId}`);
         return c.json({ proposal: newP, idea, proposals: await loadDaoProposals(), ideas: await loadDaoIdeas() });
       });
       return result;

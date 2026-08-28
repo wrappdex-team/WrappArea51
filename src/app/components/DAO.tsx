@@ -1231,6 +1231,17 @@ function ProposalList({
                   <div className={`flex items-center gap-3 mt-1 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                     <span className="font-mono">{p.proposer}</span>
                     <span>{timeRemaining(p.endsAt)}</span>
+                    {p.topicId && (
+                      <a
+                        href={`https://hashscan.io/testnet/topic/${p.topicId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono hover:text-pink-400"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {p.topicId}
+                      </a>
+                    )}
                   </div>
                 </div>
 

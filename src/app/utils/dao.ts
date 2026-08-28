@@ -158,6 +158,7 @@ export interface Proposal {
   endsAt: number;
   voterLog: Record<string, { direction: "for" | "against"; weight: number }>;
   comments: ProposalComment[];
+  topicId?: string;
 }
 
 export type IdeaStatus = "open" | "promoted";
@@ -269,7 +270,7 @@ export async function createProposal(
       method: "POST",
       headers: walletHeaders(accountId),
       body: JSON.stringify({ title, description, category, durationDays, quorum }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -342,7 +343,7 @@ export async function promoteIdea(
       method: "POST",
       headers: walletHeaders(accountId),
       body: JSON.stringify({ durationDays, quorum }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -422,7 +423,7 @@ export async function castVote(
       method: "POST",
       headers: walletHeaders(accountId),
       body: JSON.stringify({ direction }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
     const data = await res.json();
     if (!res.ok) {

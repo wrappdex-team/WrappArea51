@@ -84,7 +84,7 @@ export const ENV = {
   APP_NAME: "WRAPpDEX",
   APP_VERSION: import.meta.env.VITE_APP_VERSION || "1.0.0",
   APP_URL: import.meta.env.VITE_APP_URL || "https://www.wrappdex.io",
-  // Public testnet DAO HCS topic (not a secret). Empty until CEO pastes ID into Vercel.
+  // Unused shared-topic leftover. Server TopicCreate is per-proposal. Empty is OK; do not require it.
   DAO_HCS_TOPIC_ID: (import.meta.env.VITE_DAO_HCS_TOPIC_ID as string | undefined) || "",
   DAO_HCS_NETWORK: "testnet" as const,
   HASHSCAN_TESTNET_URL: "https://hashscan.io/testnet",
