@@ -160,6 +160,18 @@ export interface Proposal {
   comments: ProposalComment[];
 }
 
+export type IdeaStatus = "open" | "promoted";
+export interface DaoIdea {
+  id: string;
+  title: string;
+  description: string;
+  category: ProposalCategory;
+  author: string;
+  createdAt: number;
+  status: IdeaStatus;
+  proposalId?: string;
+}
+
 // ── Helper: build authenticated headers for DAO endpoints ────────────
 // SEC-02: All authenticated endpoints require ED25519 session token
 // (X-Session-Token). No header-based identity fallback.
@@ -241,7 +253,7 @@ async function _fetchProposals(): Promise<Proposal[]> {
 }
 
 /**
- * Create a new proposal. Eligible wallet (server-enforced Mirror gate), not admin-only.
+ * Create a new proposal. Admin-only (server-enforced). Eligible members post ideas instead.
  * Returns the updated proposals list from the server.
  */
 export async function createProposal(
@@ -275,6 +287,76 @@ export async function createProposal(
 /**
  * Edit a proposal. Admin or proposer (server-enforced).
  */
+
+export async function loadIdeas(): Promise<DaoIdea[]> {
+  try {
+    const res = await fetch(`${API_BASE}/dao/ideas`, {
+      headers: publicHeaders,
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      log.error("DAO", `Failed to load ideas: ${data.error || res.status}`);
+      return [];
+    }
+    return (data.ideas ?? []) as DaoIdea[];
+  } catch (err) {
+    log.error("DAO", "Error loading ideas", err);
+    return [];
+  }
+}
+
+export async function postIdea(
+  accountId: string,
+  title: string,
+  description: string,
+  category: ProposalCategory,
+): Promise<{ ideas: DaoIdea[]; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/dao/ideas`, {
+      method: "POST",
+      headers: walletHeaders(accountId),
+      body: JSON.stringify({ title, description, category }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      log.error("DAO", `Post idea failed: ${data.error}`);
+      return { ideas: [], error: data.error || "Failed to post idea" };
+    }
+    return { ideas: data.ideas as DaoIdea[] };
+  } catch (err: any) {
+    log.error("DAO", "Error posting idea", err);
+    return { ideas: [], error: err?.message || "Network error" };
+  }
+}
+
+export async function promoteIdea(
+  accountId: string,
+  ideaId: string,
+  durationDays = 7,
+  quorum = 10,
+): Promise<{ proposals: Proposal[]; ideas: DaoIdea[]; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/dao/ideas/${ideaId}/promote`, {
+      method: "POST",
+      headers: walletHeaders(accountId),
+      body: JSON.stringify({ durationDays, quorum }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      log.error("DAO", `Promote idea failed: ${data.error}`);
+      return { proposals: [], ideas: [], error: data.error || "Failed to promote idea" };
+    }
+    invalidateProposalsCache();
+    return { proposals: data.proposals as Proposal[], ideas: data.ideas as DaoIdea[] };
+  } catch (err: any) {
+    log.error("DAO", "Error promoting idea", err);
+    return { proposals: [], ideas: [], error: err?.message || "Network error" };
+  }
+}
+
 export async function editProposal(
   accountId: string,
   proposalId: string,

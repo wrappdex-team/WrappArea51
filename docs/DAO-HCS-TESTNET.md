@@ -4,7 +4,7 @@ Area 51 only. Never wrappdex.io / Wrappmvp10.
 
 ## Outcome
 
-On wrapp-area51.vercel.app, an eligible HashPack wallet creates a proposal and votes. **CEO override: not one shared DAO topic.** Each proposal creates a **new Hedera TESTNET HCS topic**. KV indexes `proposalId → topicId`. Eligibility: Mirror Node 100M HBAR.h **or** 1 Wrapped Ones NFT (whitepaper v2 §12), token IDs from env.
+On wrapp-area51.vercel.app, eligible members **post ideas to KV only**. Admins promote an idea into a vote proposal. Eligible wallets vote. **CEO override: not one shared DAO topic.** Each proposal creates a **new Hedera TESTNET HCS topic**. KV indexes `proposalId → topicId`. Eligibility: Mirror Node 100M HBAR.h **or** 1 Wrapped Ones NFT (whitepaper v2 §12), token IDs from env.
 
 ## Source of truth
 
@@ -29,7 +29,7 @@ Token IDs come from **env** on Area 51 (testnet copies Kyle mints). Do not treat
 - NFT votes: `floor(nftCount / 3)` max 1
 - Server re-verifies weight at vote time via Mirror Node
 - HashPack ED25519/ECDSA session still required (SEC-01/SEC-02, 30 min TTL)
-- **Create** is eligible-wallet (Mirror gate), not admin-only
+- **Create proposal** is **admin-only**. Eligible members post **ideas** to KV (`dao_idea_*`). Admins **promote** an idea into a vote proposal (then that proposal gets its own treasury-locked HCS topic; submitter `0.0.9006841` only)
 - Founder `0.0.518487` unremovable. Extra admins `0.0.3967564`, `0.0.9715988` stay in KV (`dao_admin_accounts`) — do not drop
 - Keep `dao_v2_*` shards and `prop-{8 hex}` IDs
 
@@ -90,9 +90,9 @@ JSON, UTF-8, versioned. Keep under HCS 1 KiB when possible.
 
 ## This PR vs remaining work
 
-**This PR:** spec (per-proposal topics) + read/validate env + fail-closed create/vote if unset. Merge-as-is.
+**This PR:** spec (per-proposal topics) + fail-closed env + admin-only create + member ideas in KV + admin promote. Merge-as-is for HCS submit (not implemented yet).
 
-**Next PR after merge:** `TopicCreate` per proposal (adminKey + submitKey = treasury `0.0.9006841`); server submits; operator `0.0.9006979` fee payer; KV `proposalId → topicId`. Users HashPack-sign only.
+**Next PR after merge:** `TopicCreate` per *promoted* proposal (adminKey + submitKey = treasury `0.0.9006841`); server submits; operator `0.0.9006979` fee payer; KV `proposalId → topicId`. Users HashPack-sign only.
 
 **Not this work:** Fast Games rewrite; shared DAO topic; reusing `0.0.9017517`.
 
