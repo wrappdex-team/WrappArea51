@@ -10,6 +10,10 @@
 // Deduplication via voterLog. Inputs sanitized, rate-limited, fail-closed.
 // Caps: 100 proposals, 200 comments per proposal.
 //
+// KZN-20260828-04: canonical ledger is one Hedera TESTNET HCS topic
+// (DAO_HCS_TOPIC_ID). KV is indexer only. Create/vote fail closed if the
+// topic ID is missing. HCS submit lands in a follow-up once CEO sets env.
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
@@ -47,6 +51,35 @@ const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
  */
 function isValidProposalId(id: string): boolean {
   return typeof id === "string" && id.length > 0 && id.length <= 80 && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
+// ── Testnet HCS topic (env) ────────────────────────────────────────
+// Topic IDs are public. Operator keys are NOT read here.
+const DAO_HCS_TOPIC_RE = /^0\.0\.\d+$/;
+
+export type DaoHcsConfig = { topicId: string; network: "testnet" };
+
+export function getDaoHcsConfig(): DaoHcsConfig | { error: "DAO_HCS_UNCONFIGURED" | "DAO_HCS_TESTNET_ONLY" } {
+  const topicId = (Deno.env.get("DAO_HCS_TOPIC_ID") || "").trim();
+  const network = (Deno.env.get("DAO_HCS_NETWORK") || "testnet").trim().toLowerCase();
+  if (network !== "testnet") {
+    return { error: "DAO_HCS_TESTNET_ONLY" };
+  }
+  if (!topicId || !DAO_HCS_TOPIC_RE.test(topicId)) {
+    return { error: "DAO_HCS_UNCONFIGURED" };
+  }
+  return { topicId, network: "testnet" };
+}
+
+function daoHcsGuard(c: { json: (body: unknown, status: number) => Response }): Response | DaoHcsConfig {
+  const cfg = getDaoHcsConfig();
+  if ("error" in cfg) {
+    const msg = cfg.error === "DAO_HCS_TESTNET_ONLY"
+      ? "DAO HCS is testnet-only for this slice. Set DAO_HCS_NETWORK=testnet."
+      : "DAO HCS topic is not configured. Set DAO_HCS_TOPIC_ID (testnet 0.0.x) in Area 51 env.";
+    return c.json({ error: msg, code: cfg.error }, 503);
+  }
+  return cfg;
 }
 
 // Global lock for INDEX-mutating operations (create/delete proposals).
@@ -259,6 +292,15 @@ async function migrateLegacyDaoProposals(proposals: DAOProposal[]): Promise<void
 
 export function registerDaoRoutes(app: Hono): void {
 
+  // GET /dao/hcs — Public: whether the testnet topic is configured (ID is not a secret)
+  app.get(`${ROUTE_PREFIX}/dao/hcs`, (c) => {
+    const cfg = getDaoHcsConfig();
+    if ("error" in cfg) {
+      return c.json({ configured: false, code: cfg.error, network: "testnet" });
+    }
+    return c.json({ configured: true, topicId: cfg.topicId, network: cfg.network });
+  });
+
   // GET /dao/proposals — Public read
   app.get(`${ROUTE_PREFIX}/dao/proposals`, async (c) => {
     try {
@@ -283,6 +325,9 @@ export function registerDaoRoutes(app: Hono): void {
         console.log(`[DAO] Non-admin proposal creation attempt: ${accountId}`);
         return c.json({ error: "Only DAO admins can create proposals", code: "DAO_NOT_ADMIN" }, 403);
       }
+
+      const hcs = daoHcsGuard(c);
+      if (hcs instanceof Response) return hcs;
 
       // Input validation (outside lock — no state mutations)
       const body = await c.req.json();
@@ -408,6 +453,9 @@ export function registerDaoRoutes(app: Hono): void {
       const body = await c.req.json();
       const { direction } = body;
       if (direction !== "for" && direction !== "against") return c.json({ error: "Direction must be 'for' or 'against'" }, 400);
+
+      const hcs = daoHcsGuard(c);
+      if (hcs instanceof Response) return hcs;
 
       // Pre-lock: VIP eligibility check (Mirror Node call — keep outside lock to minimize hold time)
       const vipStatus = await verifyVipEligibilityFull(accountId);

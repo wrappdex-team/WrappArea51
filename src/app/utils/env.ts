@@ -84,6 +84,10 @@ export const ENV = {
   APP_NAME: "WRAPpDEX",
   APP_VERSION: import.meta.env.VITE_APP_VERSION || "1.0.0",
   APP_URL: import.meta.env.VITE_APP_URL || "https://www.wrappdex.io",
+  // Public testnet DAO HCS topic (not a secret). Empty until CEO pastes ID into Vercel.
+  DAO_HCS_TOPIC_ID: (import.meta.env.VITE_DAO_HCS_TOPIC_ID as string | undefined) || "",
+  DAO_HCS_NETWORK: "testnet" as const,
+  HASHSCAN_TESTNET_URL: "https://hashscan.io/testnet",
   // Resolver backend (Railway in prod, localhost in dev). Set VITE_RESOLVER_URL in Vercel when switching.
   // Current live Railway (update this default + the Vercel env var whenever Railway gives a new hostname on redeploy).
   // We normalize here so that if someone pastes a bare domain (without https://) the fetch sites below
