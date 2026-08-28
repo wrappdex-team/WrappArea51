@@ -54,6 +54,9 @@ import {
   maxVotesForBalance,
   loadProposals,
   createProposal,
+  loadIdeas,
+  postIdea,
+  promoteIdea,
   castVote,
   editProposal,
   deleteProposal,
@@ -71,6 +74,7 @@ import {
   type Proposal,
   type ProposalCategory,
   type ProposalStatus,
+  type DaoIdea,
 } from "../utils/dao";
 import { authenticate, hasValidSession } from "../utils/auth";
 import { SpinWheel } from "./SpinWheel";
@@ -162,6 +166,8 @@ export function DAO() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showIdea, setShowIdea] = useState(false);
+  const [ideas, setIdeas] = useState<DaoIdea[]>([]);
   const [adminList, setAdminList] = useState<string[]>([DAO_FOUNDER_ACCOUNT]);
 
   // ── Derived state (must be above useEffects that reference them) ───
@@ -292,6 +298,7 @@ export function DAO() {
       setProposals(p);
       setLoading(false);
     });
+    loadIdeas().then(setIdeas);
   }, []);
 
   // Discover admin status from server on wallet connect
@@ -514,6 +521,52 @@ export function DAO() {
     [accountId, actionLoading, refreshAdminStatus, ensureSession]
   );
 
+  const handlePostIdea = useCallback(
+    async (title: string, desc: string, cat: ProposalCategory) => {
+      if (actionLoading) return;
+      if (!(await ensureSession())) return;
+      setActionLoading(true);
+      try {
+        const result = await postIdea(accountId, title, desc, cat);
+        if (result.error) {
+          toast.error(result.error, { duration: 5000 });
+        } else {
+          setIdeas(result.ideas);
+          toast.success("Idea posted. An admin can promote it to a vote.", { duration: 3000 });
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Submit idea failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
+        setShowIdea(false);
+      }
+    },
+    [accountId, actionLoading, ensureSession]
+  );
+
+  const handlePromoteIdea = useCallback(
+    async (ideaId: string) => {
+      if (actionLoading) return;
+      if (!(await ensureSession())) return;
+      setActionLoading(true);
+      try {
+        const result = await promoteIdea(accountId, ideaId);
+        if (result.error) {
+          toast.error(result.error, { duration: 5000 });
+        } else {
+          if (result.proposals.length) setProposals(result.proposals);
+          setIdeas(result.ideas);
+          toast.success("Idea promoted to a vote proposal", { duration: 3000 });
+        }
+      } catch (err: any) {
+        toast.error(err?.message || "Promote failed", { duration: 5000 });
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [accountId, actionLoading, ensureSession]
+  );
+
   // ── Render: Not connected ──────────────────────────────────────────
 
   if (!connected) {
@@ -540,7 +593,7 @@ export function DAO() {
               Connect your HashPack wallet to participate in WRAPpDEX governance.
               You need at least{" "}
               <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>{formatTokenCount(GATE_THRESHOLD)} WRAPpDEX</span>{" "}
-              tokens or <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>1 VIP NFT</span> to vote or create proposals.
+              tokens or <span className={`font-semibold ${isDark ? "text-cyan-400" : "text-cyan-600"}`}>1 VIP NFT</span> to vote or post ideas.
             </p>
             <button
               onClick={handleConnect}
@@ -647,7 +700,7 @@ export function DAO() {
 
   return (
     <div className="space-y-6">
-      {isAdmin && daoTab === "governance" && (
+      {daoTab === "governance" && (isOwner || isAdmin || eligible) && (
         <div className="flex justify-end gap-2">
           {/* Admin management — OWNER ONLY (0.0.518487) */}
           {isOwner && <button
@@ -663,7 +716,19 @@ export function DAO() {
             <Settings className="w-3.5 h-3.5" />
             Admin
           </button>}
-          <button
+          {eligible && <button
+            onClick={() => setShowIdea(true)}
+            disabled={actionLoading}
+            className={`px-5 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-white disabled:opacity-50 ${
+              isSky
+                ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25"
+                : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500"
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+            Submit idea
+          </button>}
+          {isAdmin && <button
             onClick={() => setShowCreate(true)}
             disabled={actionLoading}
             className={`px-5 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2 text-white disabled:opacity-50 ${
@@ -674,7 +739,7 @@ export function DAO() {
           >
             <Plus className="w-4 h-4" />
             New Proposal
-          </button>
+          </button>}
         </div>
       )}
 
@@ -744,6 +809,12 @@ export function DAO() {
       {/* ── Tab Content ── */}
       {daoTab === "governance" && (
         <>
+          <IdeaList
+            ideas={ideas}
+            isAdmin={isAdmin}
+            actionLoading={actionLoading}
+            onPromote={handlePromoteIdea}
+          />
           {loading ? (
             <DAOProposalListSkeleton rows={4} />
           ) : (
@@ -783,6 +854,14 @@ export function DAO() {
           accountId={accountId}
           onClose={() => setShowCreate(false)}
           onCreate={handleCreate}
+          actionLoading={actionLoading}
+        />
+      )}
+
+      {showIdea && eligible && (
+        <PostIdeaModal
+          onClose={() => setShowIdea(false)}
+          onPost={handlePostIdea}
           actionLoading={actionLoading}
         />
       )}
@@ -1083,7 +1162,7 @@ function ProposalList({
             </div>
             <h3 className="text-slate-400 mb-1">No Proposals Yet</h3>
             <p className="text-xs text-slate-600 max-w-xs">
-              Governance proposals will appear here once the DAO admin publishes them. Check back soon.
+              Admins publish vote proposals here. Eligible members post ideas first; an admin promotes an idea into a vote.
             </p>
           </div>
         )}
@@ -1152,6 +1231,17 @@ function ProposalList({
                   <div className={`flex items-center gap-3 mt-1 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                     <span className="font-mono">{p.proposer}</span>
                     <span>{timeRemaining(p.endsAt)}</span>
+                    {p.topicId && (
+                      <a
+                        href={`https://hashscan.io/testnet/topic/${p.topicId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono hover:text-pink-400"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {p.topicId}
+                      </a>
+                    )}
                   </div>
                 </div>
 
@@ -2097,3 +2187,118 @@ function AdminManagementPanel({
     </div>
   );
 }
+
+function IdeaList({
+  ideas,
+  isAdmin,
+  actionLoading,
+  onPromote,
+}: {
+  ideas: DaoIdea[];
+  isAdmin: boolean;
+  actionLoading: boolean;
+  onPromote: (id: string) => void;
+}) {
+  const { isDark } = useTheme();
+  const open = ideas.filter((i) => i.status === "open");
+  const promoted = ideas.filter((i) => i.status === "promoted");
+  if (ideas.length === 0) return null;
+  return (
+    <div className={`rounded-xl border p-4 space-y-3 ${isDark ? "bg-slate-900/40 border-white/5" : "bg-white border-gray-200"}`}>
+      <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Member ideas (KV only)</h3>
+      {open.length === 0 && (
+        <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-400"}`}>No open ideas. Eligible members can post one.</p>
+      )}
+      {open.map((idea) => (
+        <div key={idea.id} className={`rounded-lg p-3 border ${isDark ? "border-white/5 bg-slate-800/40" : "border-gray-200 bg-gray-50"}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className={`text-sm font-medium ${isDark ? "text-white" : "text-gray-900"}`}>{idea.title}</p>
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{idea.description}</p>
+              <p className={`text-[10px] mt-2 ${isDark ? "text-slate-600" : "text-gray-400"}`}>{idea.author} · {idea.category}</p>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => onPromote(idea.id)}
+                disabled={actionLoading}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-xs text-white bg-gradient-to-r from-pink-600 to-purple-600 disabled:opacity-50"
+              >
+                Promote to vote
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      {promoted.length > 0 && (
+        <p className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>{promoted.length} idea(s) already promoted.</p>
+      )}
+    </div>
+  );
+}
+
+function PostIdeaModal({
+  onClose,
+  onPost,
+  actionLoading,
+}: {
+  onClose: () => void;
+  onPost: (title: string, desc: string, cat: ProposalCategory) => void;
+  actionLoading: boolean;
+}) {
+  useEscapeKey(onClose);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<ProposalCategory>("Features");
+  const valid = title.trim().length >= 5 && description.trim().length >= 20;
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Submit idea"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-slate-900 border border-pink-500/20 rounded-xl p-6 max-w-lg w-full">
+        <h3 className="text-xl bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-transparent mb-2">Post an idea</h3>
+        <p className="text-xs text-slate-500 mb-4">Goes to KV only. An admin can promote it into a vote proposal (its own HCS topic).</p>
+        <div className="space-y-3">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title (min 5 chars)"
+            maxLength={120}
+            className="w-full bg-slate-800/50 border border-white/5 rounded-lg px-4 py-2.5 text-sm outline-none"
+          />
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description (min 20 chars)"
+            maxLength={2000}
+            rows={4}
+            className="w-full bg-slate-800/50 border border-white/5 rounded-lg px-4 py-2.5 text-sm outline-none"
+          />
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as ProposalCategory)}
+            className="w-full bg-slate-800/50 border border-white/5 rounded-lg px-4 py-2.5 text-sm"
+          >
+            {["Fees","Staking","Listing","Tokenomics","Features","Partnership","Governance","Other"].map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-slate-400">Cancel</button>
+          <button
+            disabled={!valid || actionLoading}
+            onClick={() => onPost(title, description, category)}
+            className="px-4 py-2 rounded-lg text-sm text-white bg-gradient-to-r from-pink-600 to-purple-600 disabled:opacity-50"
+          >
+            {actionLoading ? "Submitting…" : "Submit idea"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

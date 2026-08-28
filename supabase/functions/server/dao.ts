@@ -5,14 +5,28 @@
 // Sharded KV storage: index + per-proposal + per-proposal-comments keys.
 // Auto-migrates from legacy single-blob (dao_proposals) on first read.
 // Admin CRUD restricted to 0.0.518487 (owner only for admin management).
-// All admins can create/edit/delete proposals. Vote weight from Mirror Node.
+// All admins can create/edit/delete proposals. Eligible members post ideas to KV only;
+// admins promote an idea into a vote proposal. Vote weight from Mirror Node.
 // Per-proposal locks for vote/edit/comment — global lock only for create/delete.
 // Deduplication via voterLog. Inputs sanitized, rate-limited, fail-closed.
 // Caps: 100 proposals, 200 comments per proposal.
 //
+// KZN-20260828-04: admin create + admin promote TopicCreate a NEW testnet HCS
+// topic per proposal (adminKey+submitKey = treasury 0.0.9006841). Operator
+// 0.0.9006979 is fee payer. PROPOSAL_CREATE and VOTE go to that topic, then KV.
+// Fail closed if operator/treasury keys missing. Never reuse 0.0.9017517.
+// Ideas are KV-only. Create stays admin-only.
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { Hono } from "npm:hono@4.6.3";
+import {
+  Client,
+  AccountId,
+  PrivateKey,
+  TopicCreateTransaction,
+  TopicMessageSubmitTransaction,
+} from "npm:@hashgraph/sdk";
 import * as kv from "./kv_store.tsx";
 import {
   getClientIp, isRateLimited, sanitizeString, isValidHederaAccountId,
@@ -39,6 +53,9 @@ const DAO_V2_PROP_PREFIX = "dao_v2_p:";
 const DAO_V2_CMT_PREFIX = "dao_v2_c:";
 const DAO_MAX_PROPOSALS = 100;
 const DAO_MAX_COMMENTS_PER_PROPOSAL = 200;
+const DAO_IDEA_INDEX_KEY = "dao_v2_ideas";
+const DAO_IDEA_PREFIX = "dao_v2_i:";
+const DAO_MAX_IDEAS = 200;
 
 /**
  * Validate proposalId format — must be a safe alphanumeric+dash+underscore string.
@@ -49,20 +66,210 @@ function isValidProposalId(id: string): boolean {
   return typeof id === "string" && id.length > 0 && id.length <= 80 && /^[a-zA-Z0-9_-]+$/.test(id);
 }
 
+type DaoIdeaStatus = "open" | "promoted";
+interface DaoIdea {
+  id: string; title: string; description: string; category: string;
+  author: string; createdAt: number; status: DaoIdeaStatus; proposalId?: string;
+}
+function isValidIdeaId(id: string): boolean {
+  return typeof id === "string" && /^idea-[a-f0-9]{8}$/.test(id);
+}
+
+// ── Testnet HCS (per-proposal topics) ──────────────────────────────
+// Keys live in Area 51 Supabase only. Never log key material.
+const DAO_HCS_ACCOUNT_RE = /^0\.0\.\d+$/;
+const DAO_HCS_FORBIDDEN_TOPIC = "0.0.9017517";
+const DAO_HCS_TREASURY_EXPECTED = "0.0.9006841";
+const DAO_HCS_OPERATOR_EXPECTED = "0.0.9006979";
+
+export type DaoHcsConfig = {
+  network: "testnet";
+  operatorId: string;
+  treasuryId: string;
+  operatorKey: string;
+  treasuryKey: string;
+};
+
+function parseDaoHcsPrivateKey(keyStr: string): PrivateKey {
+  // Local parse. Never log keyStr.
+  if (keyStr.startsWith("302e")) return PrivateKey.fromString(keyStr);
+  return PrivateKey.fromStringED25519(keyStr);
+}
+
+function assertAllowedTopicId(topicId: string): string {
+  const id = (topicId || "").trim();
+  if (!DAO_HCS_ACCOUNT_RE.test(id) || id === DAO_HCS_FORBIDDEN_TOPIC) {
+    throw new Error("DAO_HCS_FORBIDDEN_TOPIC");
+  }
+  return id;
+}
+
+export function getDaoHcsConfig(): DaoHcsConfig | { error: "DAO_HCS_UNCONFIGURED" | "DAO_HCS_TESTNET_ONLY" } {
+  const network = (Deno.env.get("DAO_HCS_NETWORK") || "testnet").trim().toLowerCase();
+  if (network !== "testnet") {
+    return { error: "DAO_HCS_TESTNET_ONLY" };
+  }
+  const leftoverTopic = (Deno.env.get("DAO_HCS_TOPIC_ID") || "").trim();
+  if (leftoverTopic === DAO_HCS_FORBIDDEN_TOPIC) {
+    return { error: "DAO_HCS_UNCONFIGURED" };
+  }
+  const operatorId = (Deno.env.get("DAO_HCS_OPERATOR_ID") || "").trim();
+  const treasuryId = (Deno.env.get("DAO_HCS_TREASURY_ID") || "").trim();
+  const operatorKey = (Deno.env.get("DAO_HCS_OPERATOR_KEY") || "").trim();
+  const treasuryKey = (Deno.env.get("DAO_HCS_TREASURY_KEY") || "").trim();
+  if (
+    !operatorId || !treasuryId || !operatorKey || !treasuryKey ||
+    !DAO_HCS_ACCOUNT_RE.test(operatorId) || !DAO_HCS_ACCOUNT_RE.test(treasuryId) ||
+    operatorId !== DAO_HCS_OPERATOR_EXPECTED ||
+    treasuryId !== DAO_HCS_TREASURY_EXPECTED
+  ) {
+    return { error: "DAO_HCS_UNCONFIGURED" };
+  }
+  return { network: "testnet", operatorId, treasuryId, operatorKey, treasuryKey };
+}
+
+function daoHcsPublicStatus(): {
+  configured: boolean;
+  network: string;
+  operatorId: string | null;
+  treasuryId: string | null;
+  topics: "per-proposal";
+  code?: "DAO_HCS_UNCONFIGURED" | "DAO_HCS_TESTNET_ONLY";
+} {
+  const operatorId = (Deno.env.get("DAO_HCS_OPERATOR_ID") || "").trim() || null;
+  const treasuryId = (Deno.env.get("DAO_HCS_TREASURY_ID") || "").trim() || null;
+  const cfg = getDaoHcsConfig();
+  if ("error" in cfg) {
+    const network = (Deno.env.get("DAO_HCS_NETWORK") || "testnet").trim().toLowerCase();
+    return {
+      configured: false,
+      network: network || "testnet",
+      operatorId,
+      treasuryId,
+      topics: "per-proposal",
+      code: cfg.error,
+    };
+  }
+  return {
+    configured: true,
+    network: cfg.network,
+    operatorId: cfg.operatorId,
+    treasuryId: cfg.treasuryId,
+    topics: "per-proposal",
+  };
+}
+
+function daoHcsGuard(c: { json: (body: unknown, status: number) => Response }): Response | DaoHcsConfig {
+  const cfg = getDaoHcsConfig();
+  if ("error" in cfg) {
+    const msg = cfg.error === "DAO_HCS_TESTNET_ONLY"
+      ? "DAO HCS is testnet-only for this slice. Set DAO_HCS_NETWORK=testnet."
+      : "DAO HCS operator/treasury keys are not configured. Set DAO_HCS_OPERATOR_ID/KEY and DAO_HCS_TREASURY_ID/KEY in Area 51 Supabase.";
+    return c.json({ error: msg, code: cfg.error }, 503);
+  }
+  return cfg;
+}
+
+function getDaoHcsOperatorClient(cfg: DaoHcsConfig): Client {
+  const client = Client.forTestnet();
+  client.setOperator(AccountId.fromString(cfg.operatorId), parseDaoHcsPrivateKey(cfg.operatorKey));
+  return client;
+}
+
+async function daoHcsSubmitMessage(
+  client: Client,
+  treasuryKey: PrivateKey,
+  topicId: string,
+  message: Record<string, unknown>,
+): Promise<void> {
+  assertAllowedTopicId(topicId);
+  const tx = new TopicMessageSubmitTransaction()
+    .setTopicId(topicId)
+    .setMessage(JSON.stringify(message));
+  const frozen = await tx.freezeWith(client);
+  const signed = await frozen.sign(treasuryKey);
+  const resp = await signed.execute(client);
+  await resp.getReceipt(client);
+}
+
+async function daoHcsCreateTopicAndSubmitProposalCreate(opts: {
+  cfg: DaoHcsConfig;
+  proposalId: string;
+  accountId: string;
+  proposerType: "admin" | "promote";
+  title: string;
+  category: string;
+  durationDays: number;
+  ideaId?: string;
+}): Promise<string> {
+  const treasuryKey = parseDaoHcsPrivateKey(opts.cfg.treasuryKey);
+  const client = getDaoHcsOperatorClient(opts.cfg);
+  try {
+    const createTx = new TopicCreateTransaction()
+      .setAdminKey(treasuryKey.publicKey)
+      .setSubmitKey(treasuryKey.publicKey)
+      .setTopicMemo(`WRAPpDEX DAO ${opts.proposalId}`);
+    const frozen = await createTx.freezeWith(client);
+    const signed = await frozen.sign(treasuryKey);
+    const resp = await signed.execute(client);
+    const receipt = await resp.getReceipt(client);
+    const topicId = assertAllowedTopicId(receipt.topicId?.toString() ?? "");
+    const payload: Record<string, unknown> = {
+      v: 1,
+      type: "PROPOSAL_CREATE",
+      proposalId: opts.proposalId,
+      accountId: opts.accountId,
+      proposerType: opts.proposerType,
+      title: opts.title,
+      category: opts.category,
+      durationDays: opts.durationDays,
+      ts: Date.now(),
+    };
+    if (opts.ideaId) payload.ideaId = opts.ideaId;
+    await daoHcsSubmitMessage(client, treasuryKey, topicId, payload);
+    console.log(`[DAO] HCS TopicCreate ${opts.proposalId} topic=${topicId}`);
+    return topicId;
+  } finally {
+    try { client.close(); } catch { /* ignore */ }
+  }
+}
+
+async function daoHcsSubmitVote(
+  cfg: DaoHcsConfig,
+  topicId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const treasuryKey = parseDaoHcsPrivateKey(cfg.treasuryKey);
+  const client = getDaoHcsOperatorClient(cfg);
+  try {
+    await daoHcsSubmitMessage(client, treasuryKey, topicId, payload);
+  } finally {
+    try { client.close(); } catch { /* ignore */ }
+  }
+}
+
 // Global lock for INDEX-mutating operations (create/delete proposals).
 const DAO_INDEX_LOCK_CONFIG: KvLockConfig = {
   key: "dao_proposals_lock",
+  ttlMs: 25_000,
+  waitMs: 15_000,
+  retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
+};
+
+const DAO_IDEA_LOCK_CONFIG: KvLockConfig = {
+  key: "dao_v2_ideas_lock",
   ttlMs: 8_000,
   waitMs: 5_000,
   retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
 };
 
+
 // Per-proposal lock factory for vote/edit/comment (much better concurrency).
 function daoProposalLock(proposalId: string): KvLockConfig {
   return {
     key: `dao_plock:${proposalId}`,
-    ttlMs: 6_000,
-    waitMs: 4_000,
+    ttlMs: 20_000,
+    waitMs: 12_000,
     retryMs: POOL_LOCK_RETRY_INTERVAL_MS,
   };
 }
@@ -133,6 +340,7 @@ interface DAOProposal {
   quorum: number; createdAt: number; endsAt: number;
   voterLog: Record<string, { direction: "for" | "against"; weight: number }>;
   comments: DAOComment[];
+  topicId?: string;
 }
 
 function canModifyDaoProposal(p: DAOProposal, acct: string, adminList: string[]): boolean {
@@ -255,9 +463,40 @@ async function migrateLegacyDaoProposals(proposals: DAOProposal[]): Promise<void
   console.log(`[DAO] Migrated ${proposals.length} proposals from legacy blob to sharded keys`);
 }
 
+
+async function loadDaoIdeas(): Promise<DaoIdea[]> {
+  try {
+    const ids: string[] | null = await kv.get(DAO_IDEA_INDEX_KEY);
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const rows = await Promise.all(ids.map(async (id) => {
+      try {
+        const row: DaoIdea | null = await kv.get(`${DAO_IDEA_PREFIX}${id}`);
+        return row && row.id ? row : null;
+      } catch { return null; }
+    }));
+    return rows.filter(Boolean) as DaoIdea[];
+  } catch { return []; }
+}
+
+async function loadDaoIdea(id: string): Promise<DaoIdea | null> {
+  try {
+    const row: DaoIdea | null = await kv.get(`${DAO_IDEA_PREFIX}${id}`);
+    return row && row.id ? row : null;
+  } catch { return null; }
+}
+
+async function saveDaoIdea(idea: DaoIdea): Promise<void> {
+  await kv.set(`${DAO_IDEA_PREFIX}${idea.id}`, idea);
+}
+
 // ── Route Registration ──────────────────────────────────────────────
 
 export function registerDaoRoutes(app: Hono): void {
+
+  // GET /dao/hcs — Public: operator/treasury IDs only (no keys). Topics are per-proposal.
+  app.get(`${ROUTE_PREFIX}/dao/hcs`, (c) => {
+    return c.json(daoHcsPublicStatus());
+  });
 
   // GET /dao/proposals — Public read
   app.get(`${ROUTE_PREFIX}/dao/proposals`, async (c) => {
@@ -271,7 +510,7 @@ export function registerDaoRoutes(app: Hono): void {
     }
   });
 
-  // POST /dao/proposals — Admin-only create
+  // POST /dao/proposals — Admin-only create (members post ideas; admin promotes)
   app.post(`${ROUTE_PREFIX}/dao/proposals`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -281,8 +520,11 @@ export function registerDaoRoutes(app: Hono): void {
       const { accountId } = auth;
       if (!(await isDaoAdminAsync(accountId))) {
         console.log(`[DAO] Non-admin proposal creation attempt: ${accountId}`);
-        return c.json({ error: "Only DAO admins can create proposals", code: "DAO_NOT_ADMIN" }, 403);
+        return c.json({ error: "Only DAO admins can create proposals. Eligible members post ideas instead.", code: "DAO_NOT_ADMIN" }, 403);
       }
+
+      const hcs = daoHcsGuard(c);
+      if (hcs instanceof Response) return hcs;
 
       // Input validation (outside lock — no state mutations)
       const body = await c.req.json();
@@ -308,9 +550,22 @@ export function registerDaoRoutes(app: Hono): void {
           category, proposer: accountId, status: "active", votesFor: 0, votesAgainst: 0, quorum: q,
           createdAt: now, endsAt: now + days * 86_400_000, voterLog: {}, comments: [],
         };
-        // Write proposal to its own key + add to index
+        try {
+          newP.topicId = await daoHcsCreateTopicAndSubmitProposalCreate({
+            cfg: hcs,
+            proposalId: newP.id,
+            accountId,
+            proposerType: "admin",
+            title: newP.title,
+            category: newP.category,
+            durationDays: days,
+          });
+        } catch (hcsErr) {
+          console.error(`[DAO] HCS TopicCreate/submit failed for create ${newP.id}: ${hcsErr}`);
+          return c.json({ error: "Failed to create HCS topic for proposal", code: "DAO_HCS_SUBMIT_FAILED" }, 503);
+        }
         await Promise.all([saveDaoProposal(newP), addToIndex(newP.id)]);
-        console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}"`);
+        console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}" topic=${newP.topicId}`);
         // Return full list for frontend compatibility
         const allProposals = await loadDaoProposals();
         return c.json({ proposal: newP, proposals: allProposals });
@@ -409,6 +664,9 @@ export function registerDaoRoutes(app: Hono): void {
       const { direction } = body;
       if (direction !== "for" && direction !== "against") return c.json({ error: "Direction must be 'for' or 'against'" }, 400);
 
+      const hcs = daoHcsGuard(c);
+      if (hcs instanceof Response) return hcs;
+
       // Pre-lock: VIP eligibility check (Mirror Node call — keep outside lock to minimize hold time)
       const vipStatus = await verifyVipEligibilityFull(accountId);
       if (!vipStatus.eligible) {
@@ -426,6 +684,23 @@ export function registerDaoRoutes(app: Hono): void {
         if (Date.now() >= proposal.endsAt) return c.json({ error: "Voting period has ended" }, 400);
         if (proposal.voterLog[accountId]) {
           return c.json({ error: "You have already voted on this proposal", code: "DAO_ALREADY_VOTED", existingVote: proposal.voterLog[accountId] }, 409);
+        }
+        if (!proposal.topicId) {
+          return c.json({ error: "Proposal has no HCS topic", code: "DAO_HCS_UNCONFIGURED" }, 503);
+        }
+        try {
+          await daoHcsSubmitVote(hcs, proposal.topicId, {
+            v: 1,
+            type: "VOTE",
+            proposalId,
+            accountId,
+            direction,
+            weight,
+            ts: Date.now(),
+          });
+        } catch (hcsErr) {
+          console.error(`[DAO] HCS VOTE submit failed for ${proposalId}: ${hcsErr}`);
+          return c.json({ error: "Failed to submit vote to HCS", code: "DAO_HCS_SUBMIT_FAILED" }, 503);
         }
         const voted: DAOProposal = {
           ...proposal,
@@ -615,4 +890,130 @@ export function registerDaoRoutes(app: Hono): void {
       return c.json({ error: "Failed to remove admin" }, 500);
     }
   });
+
+  // GET /dao/ideas — Public read (KV-only member ideas)
+  app.get(`${ROUTE_PREFIX}/dao/ideas`, async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+      return c.json({ ideas: await loadDaoIdeas() });
+    } catch (err) {
+      console.error(`[DAO] Error loading ideas: ${err}`);
+      return c.json({ ideas: [], error: "Failed to load ideas" }, 500);
+    }
+  });
+
+  // POST /dao/ideas — Eligible members, KV only (not HCS)
+  app.post(`${ROUTE_PREFIX}/dao/ideas`, async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+      const auth = await requireAuth(c);
+      if (auth instanceof Response) return auth;
+      const { accountId } = auth;
+      const vipStatus = await verifyVipEligibilityFull(accountId);
+      if (!vipStatus.eligible) {
+        return c.json({ error: "Hold HBAR.ħ tokens, VIP NFTs, or LP tokens to post an idea", code: "DAO_INELIGIBLE" }, 403);
+      }
+      const body = await c.req.json();
+      const { title, description, category } = body;
+      if (!title || typeof title !== "string" || title.trim().length < 5) return c.json({ error: "Title must be at least 5 characters" }, 400);
+      if (!description || typeof description !== "string" || description.trim().length < 20) return c.json({ error: "Description must be at least 20 characters" }, 400);
+      if (!category || !DAO_VALID_CATEGORIES.includes(category)) return c.json({ error: "Invalid category" }, 400);
+
+      const result = await withKvLock(DAO_IDEA_LOCK_CONFIG, async () => {
+        const ids: string[] = (await kv.get(DAO_IDEA_INDEX_KEY)) || [];
+        if (ids.length >= DAO_MAX_IDEAS) return c.json({ error: `Maximum ${DAO_MAX_IDEAS} ideas reached` }, 400);
+        const idBuf = new Uint8Array(4);
+        crypto.getRandomValues(idBuf);
+        const idHex = Array.from(idBuf).map(b => b.toString(16).padStart(2, "0")).join("");
+        const idea: DaoIdea = {
+          id: `idea-${idHex}`,
+          title: sanitizeString(title.trim(), 120),
+          description: sanitizeString(description.trim(), 2000),
+          category,
+          author: accountId,
+          createdAt: Date.now(),
+          status: "open",
+        };
+        await saveDaoIdea(idea);
+        await kv.set(DAO_IDEA_INDEX_KEY, [idea.id, ...ids]);
+        console.log(`[DAO] Idea posted by ${accountId}: ${idea.id}`);
+        return c.json({ idea, ideas: await loadDaoIdeas() });
+      });
+      return result;
+    } catch (err: any) {
+      if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
+      console.error(`[DAO] Error posting idea: ${err}`);
+      return c.json({ error: "Failed to post idea" }, 500);
+    }
+  });
+
+  // POST /dao/ideas/:id/promote — Admin promotes an idea into a vote proposal
+  app.post(`${ROUTE_PREFIX}/dao/ideas/:id/promote`, async (c) => {
+    try {
+      const ip = getClientIp(c);
+      if (await isRateLimited(ip)) return c.json({ error: "Rate limited" }, 429);
+      const auth = await requireAuth(c);
+      if (auth instanceof Response) return auth;
+      const { accountId } = auth;
+      if (!(await isDaoAdminAsync(accountId))) {
+        return c.json({ error: "Only DAO admins can promote ideas", code: "DAO_NOT_ADMIN" }, 403);
+      }
+      const hcs = daoHcsGuard(c);
+      if (hcs instanceof Response) return hcs;
+      const ideaId = c.req.param("id");
+      if (!ideaId || !isValidIdeaId(ideaId)) return c.json({ error: "Invalid idea ID format" }, 400);
+      const body = await c.req.json().catch(() => ({}));
+      const days = Number(body?.durationDays) || 7;
+      const q = Number(body?.quorum) || 10;
+      if (days < 1 || days > 30) return c.json({ error: "Duration must be 1-30 days" }, 400);
+      if (q < 1 || q > 10000) return c.json({ error: "Quorum must be 1-10000" }, 400);
+
+      const idea = await loadDaoIdea(ideaId);
+      if (!idea) return c.json({ error: "Idea not found" }, 404);
+      if (idea.status !== "open") return c.json({ error: "Idea already promoted", code: "IDEA_ALREADY_PROMOTED" }, 409);
+
+      const result = await withKvLock(DAO_INDEX_LOCK_CONFIG, async () => {
+        const currentLen = await getIndexLength();
+        if (currentLen >= DAO_MAX_PROPOSALS) return c.json({ error: `Maximum ${DAO_MAX_PROPOSALS} proposals reached` }, 400);
+        const idBuf = new Uint8Array(4);
+        crypto.getRandomValues(idBuf);
+        const idHex = Array.from(idBuf).map(b => b.toString(16).padStart(2, "0")).join("");
+        const now = Date.now();
+        const newP: DAOProposal = {
+          id: `prop-${idHex}`, title: idea.title, description: idea.description,
+          category: idea.category as DAOProposalCategory, proposer: idea.author, status: "active",
+          votesFor: 0, votesAgainst: 0, quorum: q,
+          createdAt: now, endsAt: now + days * 86_400_000, voterLog: {}, comments: [],
+        };
+        try {
+          newP.topicId = await daoHcsCreateTopicAndSubmitProposalCreate({
+            cfg: hcs,
+            proposalId: newP.id,
+            accountId,
+            proposerType: "promote",
+            title: newP.title,
+            category: newP.category,
+            durationDays: days,
+            ideaId: idea.id,
+          });
+        } catch (hcsErr) {
+          console.error(`[DAO] HCS TopicCreate/submit failed for promote ${newP.id}: ${hcsErr}`);
+          return c.json({ error: "Failed to create HCS topic for proposal", code: "DAO_HCS_SUBMIT_FAILED" }, 503);
+        }
+        idea.status = "promoted";
+        idea.proposalId = newP.id;
+        await Promise.all([saveDaoProposal(newP), addToIndex(newP.id), saveDaoIdea(idea)]);
+        console.log(`[DAO] Idea ${idea.id} promoted to ${newP.id} by admin ${accountId} topic=${newP.topicId}`);
+        return c.json({ proposal: newP, idea, proposals: await loadDaoProposals(), ideas: await loadDaoIdeas() });
+      });
+      return result;
+    } catch (err: any) {
+      if (err?.code === "LOCK_TIMEOUT") return c.json({ error: "DAO service is busy — please retry", code: "DAO_BUSY" }, 503);
+      console.error(`[DAO] Error promoting idea: ${err}`);
+      return c.json({ error: "Failed to promote idea" }, 500);
+    }
+  });
+
 }

@@ -8,14 +8,25 @@
 
 import type { Hono } from "npm:hono@4.6.3";
 import * as kv from "./kv_store.tsx";
-import { getClientIp, isRateLimited, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET, mirrorNodeBreaker, isHttpFailure } from "./shared.ts";
+import { getClientIp, isRateLimited, ROUTE_PREFIX, HEDERA_MIRROR_MAINNET, HEDERA_MIRROR_TESTNET, mirrorNodeBreaker, isHttpFailure } from "./shared.ts";
 import { requireAuth } from "./auth.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
+// Area 51: token IDs come from env (testnet copies Kyle mints). Mainnet IDs are
+// fallbacks only — not the only IDs. Thresholds unchanged (100M FT OR 1 NFT).
+const HEDERA_TOKEN_ID_RE = /^0\.0\.\d+$/;
+function envTokenId(name: string, fallback: string): string {
+  const v = (Deno.env.get(name) || "").trim();
+  return HEDERA_TOKEN_ID_RE.test(v) ? v : fallback;
+}
+function eligibilityMirror(): string {
+  const n = (Deno.env.get("DAO_MIRROR_NETWORK") || "").trim().toLowerCase();
+  return n === "testnet" ? HEDERA_MIRROR_TESTNET : HEDERA_MIRROR_MAINNET;
+}
 
-const VIP_HBARH_TOKEN_ID = "0.0.9356476";
+const VIP_HBARH_TOKEN_ID = envTokenId("DAO_HBARH_TOKEN_ID", "0.0.9356476");
 const VIP_GATE_THRESHOLD = 100_000_000;
-const VIP_NFT_TOKEN_ID = "0.0.10146181";
+const VIP_NFT_TOKEN_ID = envTokenId("DAO_NFT_TOKEN_ID", "0.0.10146181");
 const VIP_STATUS_CACHE_PREFIX = "vip_status_";
 const VIP_STATUS_CACHE_TTL_MS = 5 * 60 * 1000; // 5-minute server-side cache
 
@@ -40,7 +51,7 @@ export interface VipStatusResult {
 
 async function verifyVipBalance(accountId: string): Promise<{ eligible: boolean; balance: number }> {
   try {
-    const url = `${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}/tokens?token.id=${VIP_HBARH_TOKEN_ID}&limit=1`;
+    const url = `${eligibilityMirror()}/api/v1/accounts/${accountId}/tokens?token.id=${VIP_HBARH_TOKEN_ID}&limit=1`;
     const res = await mirrorNodeBreaker.call(
       () => fetch(url, { signal: AbortSignal.timeout(8000) }),
       isHttpFailure,
@@ -68,7 +79,7 @@ async function verifyVipBalance(accountId: string): Promise<{ eligible: boolean;
 
 async function verifyVipNftOwnership(accountId: string): Promise<{ hasNft: boolean; nftCount: number }> {
   try {
-    const url = `${HEDERA_MIRROR_MAINNET}/api/v1/accounts/${accountId}/tokens?token.id=${VIP_NFT_TOKEN_ID}&limit=1`;
+    const url = `${eligibilityMirror()}/api/v1/accounts/${accountId}/tokens?token.id=${VIP_NFT_TOKEN_ID}&limit=1`;
     const res = await mirrorNodeBreaker.call(
       () => fetch(url, { signal: AbortSignal.timeout(8000) }),
       isHttpFailure,

@@ -17,6 +17,7 @@
 import type { HederaTokenBalance } from "./hedera";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "./logger";
+import { ENV } from "./env";
 import { getSessionToken, authHeaders } from "./auth";
 
 // ── API Base ────────────────────────────────────────────────────────
@@ -50,8 +51,8 @@ export function setAdminListCache(admins: string[]): void {
 // ── HBAR.ħ Protocol Token Configuration ──────────────────────────────
 
 export const HBARH_TOKEN_ID: Record<string, string> = {
-  testnet: "0.0.9356476",
-  mainnet: "0.0.9356476",
+  testnet: ENV.DAO_HBARH_TOKEN_ID,
+  mainnet: ENV.DAO_HBARH_TOKEN_ID,
 };
 
 export const HBARH_DECIMALS = 8;
@@ -60,7 +61,7 @@ export const TOKENS_PER_VOTE = 100_000_000;
 
 // ── VIP NFT Configuration ────────────────────────────────────────────
 
-export const VIP_NFT_TOKEN_ID = "0.0.10146181";
+export const VIP_NFT_TOKEN_ID = ENV.DAO_NFT_TOKEN_ID;
 export const NFTS_PER_VOTE = 3;
 export const MAX_TOKEN_VOTES = 10;
 export const MAX_NFT_VOTES = 1;
@@ -157,6 +158,19 @@ export interface Proposal {
   endsAt: number;
   voterLog: Record<string, { direction: "for" | "against"; weight: number }>;
   comments: ProposalComment[];
+  topicId?: string;
+}
+
+export type IdeaStatus = "open" | "promoted";
+export interface DaoIdea {
+  id: string;
+  title: string;
+  description: string;
+  category: ProposalCategory;
+  author: string;
+  createdAt: number;
+  status: IdeaStatus;
+  proposalId?: string;
 }
 
 // ── Helper: build authenticated headers for DAO endpoints ────────────
@@ -240,7 +254,7 @@ async function _fetchProposals(): Promise<Proposal[]> {
 }
 
 /**
- * Create a new proposal. Admin-only (server-enforced).
+ * Create a new proposal. Admin-only (server-enforced). Eligible members post ideas instead.
  * Returns the updated proposals list from the server.
  */
 export async function createProposal(
@@ -256,7 +270,7 @@ export async function createProposal(
       method: "POST",
       headers: walletHeaders(accountId),
       body: JSON.stringify({ title, description, category, durationDays, quorum }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -274,6 +288,76 @@ export async function createProposal(
 /**
  * Edit a proposal. Admin or proposer (server-enforced).
  */
+
+export async function loadIdeas(): Promise<DaoIdea[]> {
+  try {
+    const res = await fetch(`${API_BASE}/dao/ideas`, {
+      headers: publicHeaders,
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      log.error("DAO", `Failed to load ideas: ${data.error || res.status}`);
+      return [];
+    }
+    return (data.ideas ?? []) as DaoIdea[];
+  } catch (err) {
+    log.error("DAO", "Error loading ideas", err);
+    return [];
+  }
+}
+
+export async function postIdea(
+  accountId: string,
+  title: string,
+  description: string,
+  category: ProposalCategory,
+): Promise<{ ideas: DaoIdea[]; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/dao/ideas`, {
+      method: "POST",
+      headers: walletHeaders(accountId),
+      body: JSON.stringify({ title, description, category }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      log.error("DAO", `Submit idea failed: ${data.error}`);
+      return { ideas: [], error: data.error || "Failed to post idea" };
+    }
+    return { ideas: data.ideas as DaoIdea[] };
+  } catch (err: any) {
+    log.error("DAO", "Error posting idea", err);
+    return { ideas: [], error: err?.message || "Network error" };
+  }
+}
+
+export async function promoteIdea(
+  accountId: string,
+  ideaId: string,
+  durationDays = 7,
+  quorum = 10,
+): Promise<{ proposals: Proposal[]; ideas: DaoIdea[]; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/dao/ideas/${ideaId}/promote`, {
+      method: "POST",
+      headers: walletHeaders(accountId),
+      body: JSON.stringify({ durationDays, quorum }),
+      signal: AbortSignal.timeout(45000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      log.error("DAO", `Promote idea failed: ${data.error}`);
+      return { proposals: [], ideas: [], error: data.error || "Failed to promote idea" };
+    }
+    invalidateProposalsCache();
+    return { proposals: data.proposals as Proposal[], ideas: data.ideas as DaoIdea[] };
+  } catch (err: any) {
+    log.error("DAO", "Error promoting idea", err);
+    return { proposals: [], ideas: [], error: err?.message || "Network error" };
+  }
+}
+
 export async function editProposal(
   accountId: string,
   proposalId: string,
@@ -339,7 +423,7 @@ export async function castVote(
       method: "POST",
       headers: walletHeaders(accountId),
       body: JSON.stringify({ direction }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
     const data = await res.json();
     if (!res.ok) {
