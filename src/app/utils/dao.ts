@@ -17,6 +17,7 @@
 import type { HederaTokenBalance } from "./hedera";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
 import { log } from "./logger";
+import { ENV } from "./env";
 import { getSessionToken, authHeaders } from "./auth";
 
 // ── API Base ────────────────────────────────────────────────────────
@@ -50,8 +51,8 @@ export function setAdminListCache(admins: string[]): void {
 // ── HBAR.ħ Protocol Token Configuration ──────────────────────────────
 
 export const HBARH_TOKEN_ID: Record<string, string> = {
-  testnet: "0.0.9356476",
-  mainnet: "0.0.9356476",
+  testnet: ENV.DAO_HBARH_TOKEN_ID,
+  mainnet: ENV.DAO_HBARH_TOKEN_ID,
 };
 
 export const HBARH_DECIMALS = 8;
@@ -60,7 +61,7 @@ export const TOKENS_PER_VOTE = 100_000_000;
 
 // ── VIP NFT Configuration ────────────────────────────────────────────
 
-export const VIP_NFT_TOKEN_ID = "0.0.10146181";
+export const VIP_NFT_TOKEN_ID = ENV.DAO_NFT_TOKEN_ID;
 export const NFTS_PER_VOTE = 3;
 export const MAX_TOKEN_VOTES = 10;
 export const MAX_NFT_VOTES = 1;
@@ -240,7 +241,7 @@ async function _fetchProposals(): Promise<Proposal[]> {
 }
 
 /**
- * Create a new proposal. Admin-only (server-enforced).
+ * Create a new proposal. Eligible wallet (server-enforced Mirror gate), not admin-only.
  * Returns the updated proposals list from the server.
  */
 export async function createProposal(

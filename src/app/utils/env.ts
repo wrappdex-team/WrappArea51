@@ -88,6 +88,9 @@ export const ENV = {
   DAO_HCS_TOPIC_ID: (import.meta.env.VITE_DAO_HCS_TOPIC_ID as string | undefined) || "",
   DAO_HCS_NETWORK: "testnet" as const,
   HASHSCAN_TESTNET_URL: "https://hashscan.io/testnet",
+  // Eligibility token IDs for Area 51 (testnet copies). Fall back to mainnet IDs if unset.
+  DAO_HBARH_TOKEN_ID: (import.meta.env.VITE_DAO_HBARH_TOKEN_ID as string | undefined) || "0.0.9356476",
+  DAO_NFT_TOKEN_ID: (import.meta.env.VITE_DAO_NFT_TOKEN_ID as string | undefined) || "0.0.10146181",
   // Resolver backend (Railway in prod, localhost in dev). Set VITE_RESOLVER_URL in Vercel when switching.
   // Current live Railway (update this default + the Vercel env var whenever Railway gives a new hostname on redeploy).
   // We normalize here so that if someone pastes a bare domain (without https://) the fetch sites below

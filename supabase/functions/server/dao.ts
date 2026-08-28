@@ -313,7 +313,7 @@ export function registerDaoRoutes(app: Hono): void {
     }
   });
 
-  // POST /dao/proposals — Admin-only create
+  // POST /dao/proposals — Authenticated + eligible (Mirror gate). Not admin-only.
   app.post(`${ROUTE_PREFIX}/dao/proposals`, async (c) => {
     try {
       const ip = getClientIp(c);
@@ -321,13 +321,15 @@ export function registerDaoRoutes(app: Hono): void {
       const auth = await requireAuth(c);
       if (auth instanceof Response) return auth;
       const { accountId } = auth;
-      if (!(await isDaoAdminAsync(accountId))) {
-        console.log(`[DAO] Non-admin proposal creation attempt: ${accountId}`);
-        return c.json({ error: "Only DAO admins can create proposals", code: "DAO_NOT_ADMIN" }, 403);
-      }
 
       const hcs = daoHcsGuard(c);
       if (hcs instanceof Response) return hcs;
+
+      const vipStatus = await verifyVipEligibilityFull(accountId);
+      if (!vipStatus.eligible) {
+        console.log(`[DAO] Ineligible create attempt: ${accountId} balance=${vipStatus.tokenBalance} nfts=${vipStatus.nftCount} lp=${vipStatus.lpBalance}`);
+        return c.json({ error: "Hold HBAR.ħ tokens, VIP NFTs, or LP tokens to create a proposal", code: "DAO_INELIGIBLE" }, 403);
+      }
 
       // Input validation (outside lock — no state mutations)
       const body = await c.req.json();
@@ -355,7 +357,7 @@ export function registerDaoRoutes(app: Hono): void {
         };
         // Write proposal to its own key + add to index
         await Promise.all([saveDaoProposal(newP), addToIndex(newP.id)]);
-        console.log(`[DAO] Proposal created by admin ${accountId}: ${newP.id} "${newP.title}"`);
+        console.log(`[DAO] Proposal created by ${accountId}: ${newP.id} "${newP.title}"`);
         // Return full list for frontend compatibility
         const allProposals = await loadDaoProposals();
         return c.json({ proposal: newP, proposals: allProposals });

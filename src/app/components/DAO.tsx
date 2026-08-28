@@ -647,7 +647,7 @@ export function DAO() {
 
   return (
     <div className="space-y-6">
-      {isAdmin && daoTab === "governance" && (
+      {daoTab === "governance" && (isOwner || eligible) && (
         <div className="flex justify-end gap-2">
           {/* Admin management — OWNER ONLY (0.0.518487) */}
           {isOwner && <button
@@ -778,7 +778,7 @@ export function DAO() {
         <SpinWheel accountId={accountId} />
       )}
 
-      {showCreate && isAdmin && (
+      {showCreate && eligible && (
         <CreateProposalModal
           accountId={accountId}
           onClose={() => setShowCreate(false)}
@@ -1083,7 +1083,7 @@ function ProposalList({
             </div>
             <h3 className="text-slate-400 mb-1">No Proposals Yet</h3>
             <p className="text-xs text-slate-600 max-w-xs">
-              Governance proposals will appear here once the DAO admin publishes them. Check back soon.
+              Governance proposals will appear here once an eligible wallet publishes one. Check back soon.
             </p>
           </div>
         )}
